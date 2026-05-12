@@ -31,9 +31,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "top_n_industry": 5,
     "top_n_concept": 5,
     "top_n_flow": 3,
+    "top_n_rotation": 5,
     "persistence_days": 3,
     "rotation_lookback_days": 3,
-    "rotation_rank_jump_threshold": 5,
+    "rotation_rank_jump_threshold": 50,
 }
 
 

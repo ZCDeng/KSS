@@ -30,14 +30,24 @@ def _format_pct(v: float | int | None) -> str:
     return f"{float(v):+.2f}%"
 
 
-def _format_amount_yi(v: float | int | None) -> str:
-    """金额（元）→ 亿元，2 位小数；None → ``—``.
+def _format_amount_yi(v: float | int | None, unit: str = "yuan") -> str:
+    """金额 → 亿元，2 位小数；None → ``—``.
 
-    Tushare ``net_amount`` 等字段单位是元；除 1e8 → 亿元更可读.
+    Args:
+        v: 原始金额数值.
+        unit: 输入单位.
+            - ``"yuan"`` (元) → 除 1e8.
+              ``moneyflow_ind_dc.net_amount`` 用元.
+            - ``"wan"`` (万元) → 除 1e4.
+              个股 ``moneyflow`` 用万元.
+            - ``"baiwan"`` (百万元) → 除 100.
+              ``moneyflow_cnt_ths.net_amount`` 板块聚合按百万元上报.
     """
     if v is None or pd.isna(v):
         return "—"
-    return f"{float(v) / 1e8:+.2f} 亿"
+    divisors = {"yuan": 1e8, "wan": 1e4, "baiwan": 100.0}
+    divisor = divisors.get(unit, 1e8)
+    return f"{float(v) / divisor:+.2f} 亿"
 
 
 def _kcb_badge(count: int) -> str:
@@ -134,7 +144,7 @@ def _render_concept_heat(
             str(idx),
             str(row.get("name", "—")),
             _format_pct(row.get("pct_change")),
-            _format_amount_yi(row.get("net_amount")),
+            _format_amount_yi(row.get("net_amount"), unit="baiwan"),
             f"{float(row.get('heat_score', 0)):.2f}",
             _kcb_badge(overlay.count_for_concept(row.get("name", ""))),
         ])

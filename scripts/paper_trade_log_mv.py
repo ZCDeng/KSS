@@ -42,8 +42,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from kss.backtest.cost_model import ExecutionModel  # noqa: E402
 from kss.backtest.metrics import Metrics  # noqa: E402
 from kss.features.pipeline import FactorPipeline  # noqa: E402
-from kss.notifications import TelegramBot  # noqa: E402
-from kss.notifications.console import ConsoleNotifier  # noqa: E402
+from kss.notifications.manager import (  # noqa: E402
+    CHANNEL_CHOICES,
+    build_channels as _build_channels,
+    send_to_channels as _send_notification,
+)
 from kss.prediction.cross_sectional_forecast import CrossSectionalForecast  # noqa: E402
 
 # ---------------------------------------------------------------------- #
@@ -223,70 +226,9 @@ def summarize_log_dir(lookback_days: int | None = None) -> dict:
 
 
 # ---------------------------------------------------------------------- #
-# 通知通道
+# 通知通道 —— 路由实现位于 kss.notifications.manager，模块级 import 别名
+# `_build_channels` / `_send_notification` 保留以兼容 test_paper_trade_notify.py.
 # ---------------------------------------------------------------------- #
-
-CHANNEL_CHOICES = ("console", "telegram", "all")
-
-
-def _build_channels(channel: str) -> list[str]:
-    """展开 ``channel`` 参数 → 通道名列表 (``console`` / ``telegram``).
-
-    Args:
-        channel: ``console`` / ``telegram`` / ``all`` 之一.
-
-    Returns:
-        要发送的通道名列表（保留顺序便于测试断言）.
-    """
-    if channel == "console":
-        return ["console"]
-    if channel == "telegram":
-        return ["telegram"]
-    if channel == "all":
-        return ["console", "telegram"]
-    return ["console"]  # 兜底（argparse 已限制 choices）
-
-
-def _send_notification(
-    message: str, channel: str, title: str | None = None,
-) -> dict[str, bool]:
-    """按 ``channel`` 分发推送，cron 友好——任何单一通道异常都不打断后续通道.
-
-    各通道接口差异：
-
-    - ``console`` 走 :class:`ConsoleNotifier` （需要 title），
-      title 缺省时用 message 第一行（截断）当 title.
-    - ``telegram`` 走 :class:`TelegramBot` ，title 以 ``*title*\\n\\n`` 前置进 message
-      正文（Telegram 无单独 title 概念）.
-
-    Args:
-        message: 消息正文（推荐 Markdown）.
-        channel: ``console`` / ``telegram`` / ``all`` 之一.
-        title: 可选标题，console 通道必需；telegram 通道作为 message 前缀.
-
-    Returns:
-        ``{channel_name: success_bool}``.
-    """
-    results: dict[str, bool] = {}
-    for ch in _build_channels(channel):
-        try:
-            if ch == "console":
-                n = ConsoleNotifier()
-                results[ch] = n.send(
-                    title=title or message.splitlines()[0][:60],
-                    message=message,
-                )
-            elif ch == "telegram":
-                bot = TelegramBot()
-                full = f"*{title}*\n\n{message}" if title else message
-                ok = bot.send(full)
-                if not ok:
-                    logger.error("通道 telegram 发送失败（返回 False）")
-                results[ch] = ok
-        except Exception as exc:  # noqa: BLE001 —— cron 友好：永不外抛
-            logger.error("通道 %s 发送异常：%s", ch, exc)
-            results[ch] = False
-    return results
 
 
 # ---------------------------------------------------------------------- #
