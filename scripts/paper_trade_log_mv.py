@@ -399,6 +399,28 @@ def main() -> None:
         sys.exit(1)
     actual_date = pd.Timestamp(pool.attrs["target_date"])
 
+    # ---- 附上股票名称 + 申万行业，让推送表格更可读 ----
+    nm_path = Path("storage") / "stock_names.csv"
+    if nm_path.exists():
+        try:
+            nm_df = pd.read_csv(nm_path, dtype=str)
+            if "ts_code" in nm_df.columns and "name" in nm_df.columns:
+                _attrs = pool.attrs  # merge 会丢失 .attrs，先保存
+                pool = pool.merge(
+                    nm_df[["ts_code", "name", "industry"]].rename(
+                        columns={"name": "stock_name", "ts_code": forecast.symbol_col}
+                    ),
+                    on=forecast.symbol_col, how="left",
+                )
+                pool.attrs = _attrs
+                pool["stock_name"] = pool["stock_name"].fillna("")
+                pool["industry"] = pool["industry"].fillna("")
+            else:
+                logger.warning("stock_names.csv 缺少 ts_code/name 列，跳过名称注入")
+        except Exception as exc:
+            logger.warning("加载 stock_names.csv 失败: %s，推送表格不含名称/行业", exc)
+    # ---------------------------------------------------------
+
     md = forecast.format_pool_markdown(pool)
     log_path = save_log_entry(pool, actual_date, use_execution=not args.no_execution)
     print(md)
