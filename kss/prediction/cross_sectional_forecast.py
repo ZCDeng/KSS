@@ -346,7 +346,10 @@ class CrossSectionalForecast:
     # ------------------------------------------------------------------ #
 
     def format_pool_markdown(self, pool: pd.DataFrame, max_rows: int = 20) -> str:
-        """整池预测 → Markdown 表格.
+        """整池预测 → Telegram 友好的竖排卡片 Markdown.
+
+        每只股票渲染为 2-3 行 block（代码+名称 / 行业·概念 / factor·rank），
+        替代了早期的 8 列表格——V1 Markdown 不渲染表格，pipe 在手机窄屏上是噪音.
 
         Args:
             pool: :meth:`predict_pool` 返回的 DataFrame.
@@ -363,54 +366,58 @@ class CrossSectionalForecast:
         direction = pool.attrs.get("direction", self.direction)
         top_pct = pool.attrs.get("top_pct", self.top_pct)
         date_str = pd.Timestamp(date).date() if date is not None else "?"
-        dir_label = "高分买入 (long_high)" if direction == "long_high" else "低分买入 / 反向 (long_low)"
+        dir_short = "正向" if direction == "long_high" else "反向"
 
         in_top = pool[pool["in_top"]]
         has_name = "stock_name" in pool.columns
         has_industry = "industry" in pool.columns
         has_concept = "concept" in pool.columns
 
-        factor_label = _md_v1_escape(factor)
-        cols = ["排名", "代码", factor_label, "rank%", "计划权重"]
-        if has_name:
-            cols.append("名称")
-        if has_industry:
-            cols.append("行业")
-        if has_concept:
-            cols.append("概念板块")
-        header_cols = "| " + " | ".join(cols) + " |"
-        sep_cols = "|" + "|".join("-" * (len(c) + 2) for c in cols) + "|"
+        # 等权占比（占 in_top 全部数量），与 planned_weight 字段一致；偏好按实际字段取
+        equal_weight_pct = f"{(100 / max(len(in_top), 1)):.1f}%"
 
         lines = [
-            f"# {date_str} 横截面选股 (`{factor}` / {_md_v1_escape(dir_label)})",
+            f"📊 {date_str} 横截面选股",
+            f"`{factor}` {dir_short} · Top {top_pct:.0%} · 入选 {len(in_top)}/{len(pool)} 只",
             "",
-            f"**策略**：截面 rank 取 Top {top_pct:.0%}，等权（或按可成交比例调权）",
-            f"**入选**：{len(in_top)} 只 / 全池 {len(pool)} 只",
+            f"▎T+1 买入名单（等权 {equal_weight_pct}）",
             "",
-            "## 买入名单（T+1 开盘建仓）",
-            "",
-            header_cols,
-            sep_cols,
         ]
+
+        rank_width = len(str(min(len(in_top), max_rows))) + 1  # ≥2 位
         for _, r in in_top.head(max_rows).iterrows():
-            cells = [
-                str(int(r["rank_position"])),
-                f"`{r[self.symbol_col]}`",
-                f"{r['factor_value']:.3f}",
-                f"{r['rank_pct']*100:.1f}%",
-                f"{r['planned_weight']*100:.1f}%",
-            ]
-            if has_name:
-                cells.append(_md_v1_escape(str(r.get("stock_name", ""))))
+            rank = str(int(r["rank_position"])).rjust(rank_width)
+            code = f"`{r[self.symbol_col]}`"
+            name = _md_v1_escape(str(r.get("stock_name", ""))) if has_name else ""
+
+            first = f"{rank}. {code}"
+            if name:
+                first = f"{first}  {name}"
+            lines.append(first)
+
+            # 行业 · 概念（任一非空才渲染该行；都为空就跳过）
+            tags: list[str] = []
             if has_industry:
-                cells.append(_md_v1_escape(str(r.get("industry", ""))))
+                ind = _md_v1_escape(str(r.get("industry", "")).strip())
+                if ind:
+                    tags.append(ind)
             if has_concept:
-                cells.append(_md_v1_escape(str(r.get("concept", ""))))
-            lines.append("| " + " | ".join(cells) + " |")
+                con = _md_v1_escape(str(r.get("concept", "")).strip())
+                if con:
+                    tags.append(con)
+            if tags:
+                lines.append(f"    {' · '.join(tags)}")
+
+            lines.append(
+                f"    factor {r['factor_value']:.3f}"
+                f" · rank {r['rank_pct']*100:.1f}%"
+            )
+            lines.append("")
+
         if len(in_top) > max_rows:
-            pad = " | ".join([""] * (len(cols) - 2))
-            lines.append(f"| … | 还有 {len(in_top) - max_rows} 只省略 | {pad} |")
-        lines.append("")
+            lines.append(f"... 还有 {len(in_top) - max_rows} 只（见日志）")
+            lines.append("")
+
         return "\n".join(lines)
 
     def format_single_markdown(self, info: dict[str, Any]) -> str:

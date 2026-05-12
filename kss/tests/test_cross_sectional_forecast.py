@@ -286,30 +286,50 @@ class TestFormat:
         assert "999999.SH" in md
         assert "不在当前截面" in md or "数据陈旧" in md
 
+    def test_pool_markdown_header_summary(self) -> None:
+        """卡片版表头：含 emoji、日期、factor、方向、Top%、入选/全池."""
+        panel = _make_panel(n_dates=10, n_stocks=20)
+        f = CrossSectionalForecast(top_pct=0.2, direction="long_low")
+        out = f.predict_pool(panel)
+        md = f.format_pool_markdown(out)
+        assert "📊" in md
+        assert "横截面选股" in md
+        assert "`log_mv`" in md
+        assert "反向" in md
+        assert "Top 20%" in md
+        n_in_top = int(out["in_top"].sum())
+        assert f"入选 {n_in_top}/{len(out)} 只" in md
+
     @pytest.mark.parametrize(
-        "extra_cols, expected_headers",
+        "extra_cols",
         [
-            ([], []),
-            (["stock_name"], ["名称"]),
-            (["stock_name", "industry"], ["名称", "行业"]),
-            (["stock_name", "industry", "concept"], ["名称", "行业", "概念板块"]),
+            [],
+            ["stock_name"],
+            ["stock_name", "industry"],
+            ["stock_name", "industry", "concept"],
         ],
     )
-    def test_pool_markdown_optional_columns(
-        self, extra_cols: list[str], expected_headers: list[str]
-    ) -> None:
-        """has_name/has_industry/has_concept 各分支：表头随注入列动态扩展."""
+    def test_pool_markdown_card_optional_fields(self, extra_cols: list[str]) -> None:
+        """has_name / has_industry / has_concept 各分支：缺失字段不出现在卡片里."""
         panel = _make_panel(n_dates=10, n_stocks=20)
         f = CrossSectionalForecast(top_pct=0.2)
         out = f.predict_pool(panel)
         for c in extra_cols:
-            out[c] = "x"  # 注入虚拟元数据列
+            out[c] = "x"
         md = f.format_pool_markdown(out)
-        for h in expected_headers:
-            assert h in md, f"expected header {h!r} in markdown when extra={extra_cols}"
-        unexpected = {"名称", "行业", "概念板块"} - set(expected_headers)
-        for h in unexpected:
-            assert h not in md, f"unexpected header {h!r} present when extra={extra_cols}"
+        # 代码反引号 + header 始终在
+        assert "688000.SH" in md or "688001.SH" in md
+        assert "`log_mv`" in md  # factor 名在 header 反引号内
+
+        # name 列：值 'x' 应该出现在某一行的第一行；没有 stock_name 时不应出现
+        if "stock_name" in extra_cols:
+            assert "x" in md
+        else:
+            # 没有 stock_name 时不该出现孤立的 'x' 名称 token（防止 industry/concept 也没注入）
+            assert " x\n" not in md
+        # industry / concept 都没注入时：不应出现 "  · " 形式的 tag 行
+        if "industry" not in extra_cols and "concept" not in extra_cols:
+            assert "   · " not in md and "    · " not in md
 
     def test_pool_markdown_escapes_v1_reserved_chars_in_name(self) -> None:
         """*ST 等含 V1 保留字的名称必须被 escape，否则 Telegram 推送整条挂."""
@@ -317,31 +337,40 @@ class TestFormat:
         f = CrossSectionalForecast(top_pct=0.2)
         out = f.predict_pool(panel)
         in_top_mask = out["in_top"]
-        # 给入选股的第一只塞一个 *ST 名称 + 含 _ 的概念
         first_idx = out[in_top_mask].index[0]
         out["stock_name"] = ""
         out["concept"] = ""
         out.loc[first_idx, "stock_name"] = "*ST航图"
         out.loc[first_idx, "concept"] = "5G_概念"
         md = f.format_pool_markdown(out)
-        # 关键断言：保留字必须被反斜杠保护
+        # 用户数据保留字必须被反斜杠保护
         assert r"\*ST航图" in md, "* must be escaped to \\* to avoid V1 entity parser break"
         assert r"5G\_概念" in md, "_ must be escaped to \\_ to avoid V1 entity parser break"
-        # factor 列名 (log_mv) 也必须被 escape
-        assert r"log\_mv" in md, "factor name with _ must be escaped in column header"
+        # factor 名只在 header 反引号 code span 内，V1 不解析内部内容，免转义
+        assert "`log_mv`" in md, "factor in header must be backtick-wrapped"
 
-    def test_pool_markdown_truncation_row_cell_count(self) -> None:
-        """截断行的 cell 数必须与表头列数一致（避免 6/7/8 列表格的尾行错位）."""
+    def test_pool_markdown_truncation_message(self) -> None:
+        """超过 max_rows：尾行显式说明剩余数量，无残留 pipe."""
         panel = _make_panel(n_dates=10, n_stocks=50)
-        f = CrossSectionalForecast(top_pct=0.5)  # 50 * 0.5 = 25 > max_rows=20
+        f = CrossSectionalForecast(top_pct=0.5)
         out = f.predict_pool(panel)
-        out["stock_name"] = "x"
-        out["industry"] = "y"
-        out["concept"] = "z"
-        md = f.format_pool_markdown(out, max_rows=20)
-        truncation_lines = [ln for ln in md.splitlines() if "只省略" in ln]
-        assert len(truncation_lines) == 1
-        # 头表 8 列 → 截断行也必须 8 列 → 9 个管道符
-        assert truncation_lines[0].count("|") == 9, (
-            f"truncation row pipe count mismatch: {truncation_lines[0]!r}"
-        )
+        n_in_top = int(out["in_top"].sum())
+        md = f.format_pool_markdown(out, max_rows=5)
+        assert n_in_top > 5, "fixture sanity: need >5 in_top to test truncation"
+        assert f"还有 {n_in_top - 5} 只" in md
+        # 卡片版不应再有 pipe 表格残留
+        assert "|" not in md
+
+    def test_pool_markdown_no_pipe_table(self) -> None:
+        """卡片版正常路径不再产生 V1 不渲染的 pipe 表格."""
+        panel = _make_panel(n_dates=10, n_stocks=20)
+        f = CrossSectionalForecast(top_pct=0.2)
+        out = f.predict_pool(panel)
+        out["stock_name"] = "name"
+        out["industry"] = "行业A"
+        out["concept"] = "概念A"
+        md = f.format_pool_markdown(out)
+        # pipe 表格痕迹（含表头分隔行 |-|-|-| 等）必须全无
+        assert "|" not in md
+        # 每张卡片末行 factor 描述
+        assert "rank " in md

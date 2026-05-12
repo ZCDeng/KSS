@@ -433,8 +433,9 @@ def main() -> None:
     print(f"\n📝 日志已保存: {log_path}")
 
     if notify_channel:
+        push_md = f"{md}📝 完整日志 `{log_path}`"
         _send_notification(
-            message=md,
+            message=push_md,
             channel=notify_channel,
             title=f"log_mv 选股 {actual_date.date()}",
         )

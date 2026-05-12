@@ -8,6 +8,8 @@ created: 2026-05-12
 
 # Telegram Markdown V1 推送静默丢失：诊断与防御
 
+> **更新 2026-05-12 晚**：原 8 列 pipe 表格随后被重写为**竖排卡片布局**（V1 不渲染表格、手机窄屏 pipe 是噪音）。`_md_v1_escape()` helper 和 `chat_id=0` 探针技术仍然是规范做法 —— 用户数据 (`stock_name` / `industry` / `concept`) 在新布局里依旧 escape 后注入。下文"截断行列数派生"小节是历史上下文，新布局直接用一句"还有 N 只"代替.
+
 ## 问题
 
 `format_pool_markdown` + `paper_trade_log_mv.py` 组装的每日推送在 cell 含**未配对** Markdown V1 保留字 (`_ * `` ` `` [`) 时被 Telegram parser 拒收：API 返回 `400 Bad Request: can't parse entities`，`TelegramBot.send()` 返回 `False`（不抛异常），cron 退出码 `0`，**整条推送丢失但没有任何告警**。
