@@ -13,10 +13,12 @@
   理论 Sharpe **1.93**、含 ExecutionModel 后实盘可达 **1.74**、p=0.025、DSR 通过。
 - **第 9 轮 Qlib 对比**：port Alpha158（158 因子）+ DDG-DA sample_weight 都未带来新 alpha；
   唯一正面收益是 Qlib Exchange 的停牌建模思路 → Survivorship bias 彻底关闭。
-- 测试覆盖：**459 passed** / 3 xfailed / 6 deselected (DL)。
+- 测试覆盖：**455 passed** / 3 xfailed / 6 deselected (DL)。
 - 想跑：`python3 scripts/paper_trade_log_mv.py`。
 - 全部细节见 [`docs/solutions/lookahead_bias_lessons.md`](docs/solutions/lookahead_bias_lessons.md)
   和 [`docs/solutions/qlib_paper_comparison.md`](docs/solutions/qlib_paper_comparison.md)。
+
+![KSS 系统架构](storage/reports/images/kss_architecture.png)
 
 ## 这是什么
 
@@ -217,7 +219,7 @@ python3 scripts/paper_trade_log_mv.py --summary
 ## 测试 / 开发
 
 ```bash
-# 全部测试（当前 459 passed / 3 xfailed / 6 deselected DL）
+# 全部测试（当前 455 passed / 3 xfailed / 6 deselected DL）
 pytest kss/tests -v
 
 # 仅对抗测试（看 KSS 防不防得住已知 bias）
