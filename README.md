@@ -182,6 +182,11 @@ python3 scripts/paper_trade_log_mv.py --summary
 7. **不要把"加 hyper-param"当作"调优"**。sample_weight 第 9 轮验证：在小池
    (51 股 × 2.3 年) 上 LGB 加权后 Sharpe 反而从 -0.05 跌到 -0.23。
    瓶颈是数据规模，不是漂移建模。
+8. **不要为对齐论文做 premature interface abstraction**。第 10 轮 FinRL-X 论文
+   对比验证：weight-centric / 4 层 modular pipeline 在 A 股涨跌停 + T+1 场景下
+   是 leaky abstraction（target weight 在涨停板物理不可达）。当前只有 1 个
+   deployable 策略，重构成"统一接口"是纯维护成本无 alpha 增量。抽象不创造
+   alpha，抽象消耗维护预算。详见 `docs/solutions/finrl_x_paper_comparison.md`.
 
 ## 路线图
 

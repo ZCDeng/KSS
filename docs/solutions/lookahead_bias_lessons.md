@@ -142,6 +142,12 @@ KSS 仓库过去几周跑了 7 轮回测，从单股票 macd_hist Sharpe **1.18*
 2. `StrategyRegistry.register` 硬性拒绝（见 `kss/strategies/registry.py:60`）
 3. 在报告里**明确暴露**实际尝试的全部组合数
 
+**类似场景延伸（2026-05 FinRL-X 论文对比补）**：DRL allocator 与 LLM
+sentiment 信号同属 hidden n_trials 范畴——DRL 每轮 policy update 都是一次
+implicit trial、LLM prompt-engineering 调一版就是一次 trial，但论文里通常
+不报告这两类 trial 数。**进入 KSS 必须按 `mined` 族 (n_trials ≥ 100) 处理**，
+不是按 `tuned` 或 `single_factor`. 详见 `finrl_x_paper_comparison.md` 桶 C1.
+
 **口号**：跑得快 → bias 多 → 必须用更严的门槛抵消。否则就是"自动化生产 false positive 的工厂"。
 
 ## 四、看到高 Sharpe 第一反应清单
