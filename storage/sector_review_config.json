@@ -1,0 +1,17 @@
+{
+  "industry_heat_weights": {
+    "pct_change": 0.5,
+    "net_amount_rate": 0.3,
+    "buy_elg_amount_rate": 0.2
+  },
+  "concept_heat_weights": {
+    "pct_change": 0.6,
+    "net_amount": 0.4
+  },
+  "top_n_industry": 5,
+  "top_n_concept": 5,
+  "top_n_flow": 3,
+  "persistence_days": 3,
+  "rotation_lookback_days": 3,
+  "rotation_rank_jump_threshold": 5
+}
