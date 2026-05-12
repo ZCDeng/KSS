@@ -169,3 +169,78 @@ class TushareClient:
             ),
             f"fetch_daily_basic {ts_code} ({start}~{end})",
         )
+
+    # ------------------------------------------------------------------ #
+    # 板块层面 API（用于收盘后板块复盘 / 资金轮动分析）
+    # ------------------------------------------------------------------ #
+
+    def fetch_moneyflow_ind_dc(self, trade_date: str) -> pd.DataFrame | None:
+        """东方财富行业资金流（单日切片，含指数退避重试）.
+
+        Tushare ``moneyflow_ind_dc`` 单日返回 1000+ 行，含 ``content_type``
+        列区分「行业 / 概念 / 地域」。调用方需要按 ``content_type == '行业'``
+        过滤；保留原始 17 列含 ``net_amount_rate`` / ``buy_elg_amount_rate``
+        等关键资金流指标.
+
+        Args:
+            trade_date: 交易日，``YYYYMMDD`` 格式.
+
+        Returns:
+            DataFrame；失败或空响应返回 ``None``.
+        """
+        return _fetch_with_retry(
+            lambda: self._pro.moneyflow_ind_dc(trade_date=trade_date),
+            f"fetch_moneyflow_ind_dc ({trade_date})",
+        )
+
+    def fetch_moneyflow_cnt_ths(self, trade_date: str) -> pd.DataFrame | None:
+        """同花顺概念板块资金流（单日切片，含指数退避重试）.
+
+        与 ``concept_detail`` 共用同花顺概念命名空间，保证概念名能与
+        ``storage/stock_names.csv`` 的 ``concept`` 字段一致.
+
+        Args:
+            trade_date: 交易日，``YYYYMMDD`` 格式.
+
+        Returns:
+            DataFrame；失败或空响应返回 ``None``.
+        """
+        return _fetch_with_retry(
+            lambda: self._pro.moneyflow_cnt_ths(trade_date=trade_date),
+            f"fetch_moneyflow_cnt_ths ({trade_date})",
+        )
+
+    def fetch_sw_daily(self, trade_date: str) -> pd.DataFrame | None:
+        """申万行业指数日线（单日切片，含 L1/L2/L3 全量，含指数退避重试）.
+
+        返回的 DataFrame 含 ``ts_code`` / ``name`` / ``pct_change`` / ``amount``
+        等列。**调用方需自行按 ts_code 前缀过滤所需层级**（申万一级为
+        ``801001-801999.SI`` 的特定子集）；本方法不做过滤，保持薄封装.
+
+        Args:
+            trade_date: 交易日，``YYYYMMDD`` 格式.
+
+        Returns:
+            DataFrame；失败或空响应返回 ``None``.
+        """
+        return _fetch_with_retry(
+            lambda: self._pro.sw_daily(trade_date=trade_date),
+            f"fetch_sw_daily ({trade_date})",
+        )
+
+    def fetch_moneyflow_hsgt(self, trade_date: str) -> pd.DataFrame | None:
+        """沪深港通资金流向（含北向 / 南向单日累计，含指数退避重试）.
+
+        单日返回 1 行，含 ``north_money`` / ``south_money`` 等汇总字段
+        （金额单位：万元）。用于复盘报告的「外资态度」section.
+
+        Args:
+            trade_date: 交易日，``YYYYMMDD`` 格式.
+
+        Returns:
+            DataFrame；失败或空响应返回 ``None``.
+        """
+        return _fetch_with_retry(
+            lambda: self._pro.moneyflow_hsgt(trade_date=trade_date),
+            f"fetch_moneyflow_hsgt ({trade_date})",
+        )
