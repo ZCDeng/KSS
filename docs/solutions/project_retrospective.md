@@ -217,7 +217,7 @@ python3 scripts/paper_trade_log_mv.py --summary       # 累计 real vs theory
 | 未做 6 个月严格 holdout | 中-高 | 路线图 #38 | 信念：需验证 |
 | 停牌/退市数据缺真实 Tushare suspend_d（当前用 amount=0 代用） | 中 | 需 5000 积分 | limited evidence |
 | 特征级 look-ahead 未防御（`test_lookahead_factor_caught_by_purge_gap` 为 xfail） | 中 | `docs/solutions/known_bias_gaps.md` 已记录 | 信念：purge_gap 防了 label leak 但没防 feature leak |
-| 行业映射粗糙（fallback_kcb 三分类） | 低 | 需接 Tushare sw_l1 | limited evidence |
+| ~~行业映射粗糙（fallback_kcb 三分类）~~ | ~~低~~ | **RESOLVED 2026-05-12** | PR #1 (申万行业) + PR #2 (Tushare 概念板块) joint，commits `b652b9e` + `f37c3d9`；25/51 活跃池有概念覆盖 |
 
 ### 7.2 短期路线图（按优先级）
 
@@ -249,4 +249,4 @@ python3 scripts/paper_trade_log_mv.py --summary       # 累计 real vs theory
 
 ---
 
-_Last updated: 2026-05-12. 基于 12 轮迭代 + 9 份文档 + 13 份回测报告。不 commit，待 review。_
+_Last updated: 2026-05-12. 基于 12 轮迭代 + 9 份文档 + 13 份回测报告。_

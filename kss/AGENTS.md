@@ -125,6 +125,12 @@ class MyNotifier(BaseNotifier):
 
 ---
 
+## 知识库
+
+`docs/solutions/` — 项目历史经验沉淀（bug 复盘、运维约定、最佳实践、外部论文对照、bias 防御纪律），扁平组织，每篇带 YAML frontmatter (`module` / `tags` / `problem_type`). 动既有模块、复现旧问题或定方法论前，可按 frontmatter 字段搜索；解决新问题后用 `/ce-compound` 沉淀回此目录。
+
+---
+
 ## 测试指南
 
 ### 运行测试
