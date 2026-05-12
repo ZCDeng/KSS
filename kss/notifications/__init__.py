@@ -8,7 +8,6 @@ from kss.notifications.dingtalk import DingtalkNotifier
 from kss.notifications.email import EmailNotifier
 from kss.notifications.manager import NotificationManager
 from kss.notifications.telegram_bot import TelegramBot
-from kss.notifications.wechat import WechatNotifier
 
 __all__ = [
     "BaseNotifier",
@@ -17,5 +16,4 @@ __all__ = [
     "EmailNotifier",
     "NotificationManager",
     "TelegramBot",
-    "WechatNotifier",
 ]

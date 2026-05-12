@@ -9,7 +9,6 @@ from kss.notifications.base import BaseNotifier
 from kss.notifications.console import ConsoleNotifier
 from kss.notifications.dingtalk import DingtalkNotifier
 from kss.notifications.email import EmailNotifier
-from kss.notifications.wechat import WechatNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +27,6 @@ class NotificationManager:
 
     _NOTIFIER_REGISTRY: dict[str, type[BaseNotifier]] = {
         "console": ConsoleNotifier,
-        "wechat": WechatNotifier,
         "dingtalk": DingtalkNotifier,
         "email": EmailNotifier,
     }
