@@ -285,3 +285,63 @@ class TestFormat:
         md = f.format_single_markdown(info)
         assert "999999.SH" in md
         assert "不在当前截面" in md or "数据陈旧" in md
+
+    @pytest.mark.parametrize(
+        "extra_cols, expected_headers",
+        [
+            ([], []),
+            (["stock_name"], ["名称"]),
+            (["stock_name", "industry"], ["名称", "行业"]),
+            (["stock_name", "industry", "concept"], ["名称", "行业", "概念板块"]),
+        ],
+    )
+    def test_pool_markdown_optional_columns(
+        self, extra_cols: list[str], expected_headers: list[str]
+    ) -> None:
+        """has_name/has_industry/has_concept 各分支：表头随注入列动态扩展."""
+        panel = _make_panel(n_dates=10, n_stocks=20)
+        f = CrossSectionalForecast(top_pct=0.2)
+        out = f.predict_pool(panel)
+        for c in extra_cols:
+            out[c] = "x"  # 注入虚拟元数据列
+        md = f.format_pool_markdown(out)
+        for h in expected_headers:
+            assert h in md, f"expected header {h!r} in markdown when extra={extra_cols}"
+        unexpected = {"名称", "行业", "概念板块"} - set(expected_headers)
+        for h in unexpected:
+            assert h not in md, f"unexpected header {h!r} present when extra={extra_cols}"
+
+    def test_pool_markdown_escapes_v1_reserved_chars_in_name(self) -> None:
+        """*ST 等含 V1 保留字的名称必须被 escape，否则 Telegram 推送整条挂."""
+        panel = _make_panel(n_dates=10, n_stocks=20)
+        f = CrossSectionalForecast(top_pct=0.2)
+        out = f.predict_pool(panel)
+        in_top_mask = out["in_top"]
+        # 给入选股的第一只塞一个 *ST 名称 + 含 _ 的概念
+        first_idx = out[in_top_mask].index[0]
+        out["stock_name"] = ""
+        out["concept"] = ""
+        out.loc[first_idx, "stock_name"] = "*ST航图"
+        out.loc[first_idx, "concept"] = "5G_概念"
+        md = f.format_pool_markdown(out)
+        # 关键断言：保留字必须被反斜杠保护
+        assert r"\*ST航图" in md, "* must be escaped to \\* to avoid V1 entity parser break"
+        assert r"5G\_概念" in md, "_ must be escaped to \\_ to avoid V1 entity parser break"
+        # factor 列名 (log_mv) 也必须被 escape
+        assert r"log\_mv" in md, "factor name with _ must be escaped in column header"
+
+    def test_pool_markdown_truncation_row_cell_count(self) -> None:
+        """截断行的 cell 数必须与表头列数一致（避免 6/7/8 列表格的尾行错位）."""
+        panel = _make_panel(n_dates=10, n_stocks=50)
+        f = CrossSectionalForecast(top_pct=0.5)  # 50 * 0.5 = 25 > max_rows=20
+        out = f.predict_pool(panel)
+        out["stock_name"] = "x"
+        out["industry"] = "y"
+        out["concept"] = "z"
+        md = f.format_pool_markdown(out, max_rows=20)
+        truncation_lines = [ln for ln in md.splitlines() if "只省略" in ln]
+        assert len(truncation_lines) == 1
+        # 头表 8 列 → 截断行也必须 8 列 → 9 个管道符
+        assert truncation_lines[0].count("|") == 9, (
+            f"truncation row pipe count mismatch: {truncation_lines[0]!r}"
+        )

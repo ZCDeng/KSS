@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Literal
 
 import pandas as pd
@@ -31,6 +32,22 @@ logger = logging.getLogger(__name__)
 
 Direction = Literal["long_high", "long_low"]
 Verdict = Literal["buy", "hold", "ignore"]
+
+# Telegram Markdown V1 reserved chars that must be backslash-escaped when they
+# appear in unbalanced positions (e.g. *ST stock names, factor IDs like log_mv).
+# Code spans (`...`) are immune, but we cannot wrap every cell in backticks
+# without changing the visible monospace rendering, so we escape instead.
+_MD_V1_ESCAPE_RE = re.compile(r"([_*`\[])")
+
+
+def _md_v1_escape(s: str) -> str:
+    """Escape Telegram Markdown V1 reserved chars (_ * ` [) for a single cell.
+
+    Why: the daily push uses ``parse_mode="Markdown"`` (V1). A single unbalanced
+    ``*`` (e.g. ``*ST航图``) or ``_`` (e.g. ``5G_概念``) makes Telegram return
+    ``Bad Request: can't parse entities`` and the whole push silently drops.
+    """
+    return _MD_V1_ESCAPE_RE.sub(r"\\\1", s)
 
 
 class CrossSectionalForecast:
@@ -353,7 +370,8 @@ class CrossSectionalForecast:
         has_industry = "industry" in pool.columns
         has_concept = "concept" in pool.columns
 
-        cols = ["排名", "代码", factor, "rank%", "计划权重"]
+        factor_label = _md_v1_escape(factor)
+        cols = ["排名", "代码", factor_label, "rank%", "计划权重"]
         if has_name:
             cols.append("名称")
         if has_industry:
@@ -364,7 +382,7 @@ class CrossSectionalForecast:
         sep_cols = "|" + "|".join("-" * (len(c) + 2) for c in cols) + "|"
 
         lines = [
-            f"# {date_str} 横截面选股 (`{factor}` / {dir_label})",
+            f"# {date_str} 横截面选股 (`{factor}` / {_md_v1_escape(dir_label)})",
             "",
             f"**策略**：截面 rank 取 Top {top_pct:.0%}，等权（或按可成交比例调权）",
             f"**入选**：{len(in_top)} 只 / 全池 {len(pool)} 只",
@@ -383,14 +401,15 @@ class CrossSectionalForecast:
                 f"{r['planned_weight']*100:.1f}%",
             ]
             if has_name:
-                cells.append(str(r.get("stock_name", "")))
+                cells.append(_md_v1_escape(str(r.get("stock_name", ""))))
             if has_industry:
-                cells.append(str(r.get("industry", "")))
+                cells.append(_md_v1_escape(str(r.get("industry", ""))))
             if has_concept:
-                cells.append(str(r.get("concept", "")))
+                cells.append(_md_v1_escape(str(r.get("concept", ""))))
             lines.append("| " + " | ".join(cells) + " |")
         if len(in_top) > max_rows:
-            lines.append(f"| … | 还有 {len(in_top) - max_rows} 只省略 | | | |")
+            pad = " | ".join([""] * (len(cols) - 2))
+            lines.append(f"| … | 还有 {len(in_top) - max_rows} 只省略 | {pad} |")
         lines.append("")
         return "\n".join(lines)
 

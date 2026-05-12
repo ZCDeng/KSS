@@ -57,7 +57,7 @@ print(TelegramBot().send('hello from KSS'))
 - **`ok=false, description="Unauthorized"`** → token 错或 bot 被 BotFather revoke 了，重发 `/token` 给 BotFather.
 - **`ok=false, description="chat not found"`** → 你**还没主动给 bot 发过任何消息**. Telegram 规则：bot 不能主动发消息给从未交互过的用户. 解法：手机 TG 搜 `@<你的 bot username>` → 点 Start → 重新发一遍.
 - **国内访问 `api.telegram.org` 偶发超时** → 网络抖动，cron 失败下次重试即可；KSS `TelegramBot.send` 失败 return False、不抛异常，不会让 paper_trade 整体崩.
-- **Markdown 报 `Bad Request: can't parse entities`** → 消息里含 Telegram Markdown V1 保留字符（`_*[]()`），改用 `parse_mode="HTML"` 或 escape.
+- **Markdown 报 `Bad Request: can't parse entities`** → 消息里含 Telegram Markdown V1 保留字符（实际是 `_ * ` `` ` `` ` [`——`()[]` 是 MarkdownV2 才保留的），用反斜杠 escape (`\_` / `\*` 等) 或改 `parse_mode="HTML"`. KSS 的 `cross_sectional_forecast._md_v1_escape()` 已对推送表格的用户数据列（名称/行业/概念/factor）做反斜杠 escape；如新增类似输入源记得复用同一 helper.
 
 ## Cron 集成
 
