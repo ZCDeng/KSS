@@ -64,6 +64,13 @@ KSS 仓库过去几周跑了 7 轮回测，从单股票 macd_hist Sharpe **1.18*
 
 **修复**：阈值要么 prior 选定（如 ±1σ 经验值），要么用 walk-forward 滚动选；in-sample 网格最优单点严禁直接投产。
 
+**反面教材（2026-05 AlphaQuanter 论文 ablation, arxiv 2510.14264）**：
+论文在最终配置 θ=0.05 附近做 θ±0.005（即 θ ∈ {0.045, 0.05, 0.055}）的
+ablation"灵敏度分析"，三档结果相近就声称模型稳健. 但 ±0.005 是同一网格里
+**相邻格点**，等价于本节"邻域 robust_sharpe" 替代真稳健性检验——in-sample
+阈值调参伪装成 robustness 论证. 真稳健要做的是 walk-forward 阈值滚动选
++ DSR 矫正，而非在最优 θ 旁边平移 1%. 详见 `alpha_quanter_paper_comparison.md` 桶 C3.
+
 ### 3.3 静态权重偏差
 
 **现象**：第 3 轮事后 `Sharpe 加权 Top5` 组合 Sharpe **1.09**，walk-forward 化以后掉到 **0.42**（ΔSharpe -0.67，年化 -32.9pp，事后偏差吃掉约 60% 的 Sharpe）。等权 Top5 更惨：1.00 → 0.24（事后偏差吃掉 **76%**）。
@@ -147,6 +154,21 @@ sentiment 信号同属 hidden n_trials 范畴——DRL 每轮 policy update 都�
 implicit trial、LLM prompt-engineering 调一版就是一次 trial，但论文里通常
 不报告这两类 trial 数。**进入 KSS 必须按 `mined` 族 (n_trials ≥ 100) 处理**，
 不是按 `tuned` 或 `single_factor`. 详见 `finrl_x_paper_comparison.md` 桶 C1.
+
+**2026-05 第 11 轮 3 篇论文同范式案例集（hidden n_trials 教科书）**：
+
+| 论文 | 范式 | hidden n_trials 来源 | 论文报告值 | mined 矫正后预估 |
+|------|------|---------------------|-----------|------------------|
+| QuantaAlpha (arxiv 2602.07085) | LLM mutation/crossover 因子挖掘 | iter 11-12 ≈ 350 候选因子 | CSI 300 IC 0.1501 | DSR(n=350) 大概率 < 0.4 |
+| AlphaResearch (arxiv 2511.08522) | LLM idea→verify→optimize 双环境 RM 训练 | peer-review RM 隐式过滤 N 轮 | 8 数学问题 2/8 超 human | finance 域 0 重叠，不适用 |
+| AlphaQuanter (arxiv 2510.14264) | GRPO + ReAct + Qwen2.5 7B 单 agent | 3 seeds × ablation × hyperparam | 5 股 122 天 ARR 34.94% | effective n≈2-3, DSR 不可信 |
+
+**共同特征**：(a) 跑 N 次报告最优、(b) N 不在表格里、(c) 无 DSR / 无 multiple
+testing 矫正 / 无 α-β 拆分. **检验它们的统一姿势**：把论文表面 Sharpe
+带入 `Significance.deflated_sharpe(sharpe, n_trials=<上表 N>, T=<样本天数>)`
+重算——本节 RD-Agent 案例已演示 N=200 让 Sharpe 1.8 → DSR < 0.2 的算式.
+
+详见 `qlib_paper_comparison.md` / `finrl_x_paper_comparison.md` / `quanta_alpha_paper_comparison.md` / `alpha_research_paper_comparison.md` / `alpha_quanter_paper_comparison.md` 桶 C 系列.
 
 **口号**：跑得快 → bias 多 → 必须用更严的门槛抵消。否则就是"自动化生产 false positive 的工厂"。
 
