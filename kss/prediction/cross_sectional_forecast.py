@@ -349,6 +349,17 @@ class CrossSectionalForecast:
         dir_label = "高分买入 (long_high)" if direction == "long_high" else "低分买入 / 反向 (long_low)"
 
         in_top = pool[pool["in_top"]]
+        has_name = "stock_name" in pool.columns
+        has_industry = "industry" in pool.columns
+
+        cols = ["排名", "代码", factor, "rank%", "计划权重"]
+        if has_name:
+            cols.append("名称")
+        if has_industry:
+            cols.append("行业")
+        header_cols = "| " + " | ".join(cols) + " |"
+        sep_cols = "|" + "|".join("-" * (len(c) + 2) for c in cols) + "|"
+
         lines = [
             f"# {date_str} 横截面选股 (`{factor}` / {dir_label})",
             "",
@@ -357,15 +368,22 @@ class CrossSectionalForecast:
             "",
             "## 买入名单（T+1 开盘建仓）",
             "",
-            f"| 排名 | 代码 | {factor} | rank% | 计划权重 |",
-            "|------|------|--------|-------|----------|",
+            header_cols,
+            sep_cols,
         ]
         for _, r in in_top.head(max_rows).iterrows():
-            lines.append(
-                f"| {int(r['rank_position'])} | `{r[self.symbol_col]}` | "
-                f"{r['factor_value']:.3f} | {r['rank_pct']*100:.1f}% | "
-                f"{r['planned_weight']*100:.1f}% |"
-            )
+            cells = [
+                str(int(r["rank_position"])),
+                f"`{r[self.symbol_col]}`",
+                f"{r['factor_value']:.3f}",
+                f"{r['rank_pct']*100:.1f}%",
+                f"{r['planned_weight']*100:.1f}%",
+            ]
+            if has_name:
+                cells.append(str(r.get("stock_name", "")))
+            if has_industry:
+                cells.append(str(r.get("industry", "")))
+            lines.append("| " + " | ".join(cells) + " |")
         if len(in_top) > max_rows:
             lines.append(f"| … | 还有 {len(in_top) - max_rows} 只省略 | | | |")
         lines.append("")

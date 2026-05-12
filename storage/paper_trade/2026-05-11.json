@@ -1,6 +1,6 @@
 {
   "prediction_date": "2026-05-11",
-  "generated_at": "2026-05-12T15:40:42.934011",
+  "generated_at": "2026-05-12T20:40:10.569914",
   "strategy": "log_mv_reverse",
   "use_execution": true,
   "top_pct": 0.2,
