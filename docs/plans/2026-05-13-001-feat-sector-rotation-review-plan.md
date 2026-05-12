@@ -1,6 +1,6 @@
 ---
 title: "feat: 收盘后板块热度 + 资金轮动复盘 (含科创板池子持仓标注)"
-status: active
+status: completed
 created: 2026-05-13
 type: feat
 depth: standard
