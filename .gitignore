@@ -1,0 +1,44 @@
+# Secrets / env
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtualenv
+.venv/
+venv/
+env/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Claude / agents 私有状态
+.claude/
+
+# 数据（由 scripts/update_cs_data.py 重建，体积大）
+storage/*.db
+storage/*.db-journal
+storage/*.db-wal
+
+# 日志 / 临时
+*.log
+/tmp/*
+
+# Jupyter
+.ipynb_checkpoints/
+
+# 临时回测产物（保留 storage/reports/ 的 *.md，不保留 png 中间结果）
+*.parquet

@@ -1,0 +1,18 @@
+{
+  "688322": {
+    "threshold": 3,
+    "hold_days": 60,
+    "stop_loss": 0.15,
+    "stop_profit": 0.2,
+    "expected_return": 3.219491899740003,
+    "win_rate": 0.6428571428571429
+  },
+  "688017": {
+    "threshold": 6,
+    "hold_days": 60,
+    "stop_loss": 0.05,
+    "stop_profit": 0.5,
+    "expected_return": 3.0285489737000018,
+    "win_rate": 0.5454545454545454
+  }
+}

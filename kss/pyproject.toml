@@ -1,0 +1,80 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kss"
+version = "0.1.0"
+description = "Keda Stock System — 科创50成分股专业分析跟踪系统"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Keda", email = "keda@example.com"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+]
+dependencies = [
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "statsmodels>=0.14.0",
+    "lightgbm>=4.0.0",
+    "xgboost>=2.0.0",
+    "matplotlib>=3.7.0",
+    "tushare>=1.2.0",
+    "akshare>=1.10.0",
+    "pyyaml>=6.0",
+    "jinja2>=3.1.0",
+    "requests>=2.31.0",
+    "joblib>=1.3.0",
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "python-dateutil>=2.8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.5.0",
+]
+deep = [
+    "torch>=2.0.0",
+    "scikit-learn>=1.3.0",
+]
+
+[project.scripts]
+kss = "kss.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["kss*"]
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+markers = [
+    "dl: 需要 torch / DL 后端的测试。完整套件默认不收集（与 LGB/matplotlib 同进程时 MPS 偶发死锁）；手动运行 `pytest kss/tests/test_dl_models.py --no-default-skip` 或独立 python 进程跑。",
+]
+# 默认 deselect DL 测试；显式 override：
+#   pytest kss/tests/test_dl_models.py -o addopts=
+addopts = "-m 'not dl'"

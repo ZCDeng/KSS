@@ -1,0 +1,20 @@
+# 股票池定义
+
+kcb50:
+  name: "科创板50"
+  description: "上证科创板50成分股"
+  source: "kcb50_symbols.csv"
+  exchange: "SH"
+  symbols_file: "./kcb50_symbols.csv"
+
+cyb50:
+  name: "创业板50"
+  description: "深证创业板50成分股"
+  source: "cyb50_symbols.csv"
+  exchange: "SZ"
+  symbols_file: "./cyb50_symbols.csv"
+
+custom:
+  name: "自定义股票池"
+  description: "用户自定义股票列表"
+  symbols: []

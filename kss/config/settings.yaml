@@ -1,0 +1,144 @@
+# KSS 主配置文件
+
+# 股票池配置
+stock_pool:
+  default: "kcb50"           # 默认使用科创50
+  available:
+    - "kcb50"               # 科创板50
+    - "cyb50"               # 创业板50
+    - "custom"              # 自定义
+
+# 数据配置
+data:
+  cache_dir: "."             # 数据缓存目录（相对项目根，与现有cs_data_*.csv兼容）
+  start_date: "20230101"     # 历史数据起始日期
+  # end_date: 动态获取当前日期
+  update_mode: "incremental" # incremental=增量更新, full=全量重下
+  stale_threshold_days: 1    # 数据过期阈值（交易日）
+
+# 交易成本
+costs:
+  buy: 0.001       # 买入成本：佣金0.03% + 冲击成本0.07%
+  sell: 0.002      # 卖出成本：佣金0.03% + 印花税0.1% + 冲击成本0.07%
+
+# 模型配置
+models:
+  lightgbm:
+    objective: "regression"
+    metric: "rmse"
+    boosting_type: "gbdt"
+    num_leaves: 31
+    learning_rate: 0.05
+    feature_fraction: 0.8
+    bagging_fraction: 0.8
+    bagging_freq: 5
+    verbose: -1
+    random_state: 42
+    num_boost_round: 500
+    early_stopping_rounds: 50
+
+# 回测配置
+backtest:
+  train_window: 120          # 训练窗口（交易日）
+  retrain_freq: 5            # 重训频率（交易日）
+  top_pct: 0.2               # 选股比例（Top 20%）
+  periods: [5, 10, 20]       # 预测周期（日）
+  min_train_samples: 300     # 最小训练样本数
+  min_test_samples: 30       # 最小测试样本数
+  min_stocks_per_day: 10     # 每天最少股票数
+
+  # 基准对比（Phase 2）—— 用于 alpha/beta/IR 归因
+  benchmark:
+    enabled: true
+    path: "./cs_index_000688_SH.csv"   # 默认科创50；可被 CLI --benchmark 覆盖
+    rf_annual: 0.02                     # 无风险年利率（小数）
+
+  # 诊断（Phase 1）
+  diagnostics:
+    enabled: false                      # 默认 off，避免与现有 CLI 冲突
+    n_quantiles: 5                      # 分位数分组数量
+    ic_method: "spearman"              # spearman / pearson
+
+  # 稳健性扫描（Phase 3）
+  robustness:
+    cost_grid:                          # cost_sensitivity 默认 grid
+      buy_cost: [0.0005, 0.001, 0.002]
+      sell_cost: [0.0015, 0.002, 0.003]
+      slippage_bps: [0, 5, 10]
+
+  # 滑点（Phase 3 - 已迁入 CostModel）
+  slippage_bps: 0                       # 默认 0，bps 单位
+
+  # 特征工程（Phase 4）
+  feature_selection:
+    enabled: false                      # 默认 off
+    gain_pct: 0.85                      # 累计 gain 截断比例
+    n_folds: 4                          # 时间分折数
+
+  # 多模型集成（Phase 4）
+  ensemble:
+    enabled: false
+    period_weights: {5: 0.3, 10: 0.5, 20: 0.2}
+    lgb_weight: 0.6                     # 与 DL 融合权重（DL 缺失时自动归 1）
+    dl_weight: 0.4
+
+# 预测配置
+prediction:
+  default_period: 10         # 默认预测周期
+  thresholds:
+    strong_up: 0.05
+    mild_up: 0.02
+    neutral: -0.02
+    mild_down: -0.05
+
+# 通知配置
+notifications:
+  enabled: true
+  level: "info"              # info / warning / alert
+  channels:
+    - "console"              # 默认必启
+    - "wechat_ilink"         # iLink 微信个人号（复用 Hermes Agent 网关）
+    # - "wechat"             # 企业微信群机器人 Webhook
+    # - "dingtalk"
+    # - "email"
+  quiet_hours:
+    start: "22:00"
+    end: "08:00"
+
+  # iLink 微信个人号配置（与 Hermes Agent .env 完全兼容）.
+  # 推荐用 env 变量（与 Hermes 共享，避免在配置文件里硬编码 token）：
+  #   export WEIXIN_TOKEN="<bot_id>@im.bot:<secret>"        # 同 Hermes .env
+  #   export WEIXIN_HOME_CHANNEL="<peer_id>@im.wechat"      # 同 Hermes .env
+  #   export HERMES_WEIXIN_DIR=...   # 仅当 Hermes 不在默认路径时需要
+  # 启用步骤：
+  #   (1) 上方 channels 取消注释 - "wechat_ilink"
+  #   (2) 设置上述 env 或填下方 token/to_user_id
+  #   (3) 运行 kss notify --channel wechat_ilink -m 测试 验证
+  # 优先级：构造参数 > env 变量 > 本配置 > 兜底
+  wechat_ilink:
+    # token: "80db80564184@im.bot:xxxx"
+    # to_user_id: "o9cq80_O5ZL4HTi-6x3x3Vx3R6RU@im.wechat"
+    # base_url: "https://ilinkai.weixin.qq.com"
+
+  # 企业微信配置
+  wechat:
+    # webhook_url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxxx"
+
+  # 钉钉配置
+  dingtalk:
+    # webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=xxxxx"
+    # secret: "xxx"  # 加签密钥（可选）
+
+  # 邮件配置
+  email:
+    # smtp_host: "smtp.gmail.com"
+    # smtp_port: 587
+    # username: "xxx@gmail.com"
+    # password: "app-password"
+    # to_addrs: ["xxx@example.com"]
+
+# 定时任务配置
+schedule:
+  daily_update: "15:30"      # 每日数据更新+复盘时间
+  weekly_rebalance: "15:30"  # 每周调仓时间（周五）
+  weekly_rebalance_day: 4    # 0=周一, 4=周五

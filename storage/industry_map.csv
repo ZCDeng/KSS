@@ -1,0 +1,20 @@
+# industry_map.csv —— ts_code -> 申万一级行业（手工维护示例）
+# 列说明：
+#   ts_code   Tushare 格式股票代码，例如 688008.SH
+#   industry  申万一级行业名称（建议英文 / 拼音以避免编码问题；中文也可）
+# 维护方式：
+#   1. 优先从 Tushare ``pro.sw_index_member`` 接口拉真实 SW L1 数据；
+#   2. 临时手工补几行以解锁中性化流水线；
+#   3. ``IndustryMapping.from_csv()`` 在文件不存在时返回空映射 + warning，
+#      ``neutralize`` 会自动跳过 by_industry 这一支.
+ts_code,industry
+688008.SH,Semiconductors
+688009.SH,Capital_Goods
+688012.SH,Semiconductors
+688017.SH,Software
+688027.SH,Consumer_Discretionary
+688036.SH,Software
+688100.SH,Capital_Goods
+688116.SH,Capital_Goods
+688322.SH,Software
+688981.SH,Semiconductors

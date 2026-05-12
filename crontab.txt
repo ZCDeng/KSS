@@ -1,0 +1,2 @@
+# 科创板共振扫描 - 每日15:30运行
+30 15 * * 1-5 /Users/zcdeng/projects/KSS/run_scanner.sh
