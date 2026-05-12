@@ -351,12 +351,15 @@ class CrossSectionalForecast:
         in_top = pool[pool["in_top"]]
         has_name = "stock_name" in pool.columns
         has_industry = "industry" in pool.columns
+        has_concept = "concept" in pool.columns
 
         cols = ["排名", "代码", factor, "rank%", "计划权重"]
         if has_name:
             cols.append("名称")
         if has_industry:
             cols.append("行业")
+        if has_concept:
+            cols.append("概念板块")
         header_cols = "| " + " | ".join(cols) + " |"
         sep_cols = "|" + "|".join("-" * (len(c) + 2) for c in cols) + "|"
 
@@ -383,6 +386,8 @@ class CrossSectionalForecast:
                 cells.append(str(r.get("stock_name", "")))
             if has_industry:
                 cells.append(str(r.get("industry", "")))
+            if has_concept:
+                cells.append(str(r.get("concept", "")))
             lines.append("| " + " | ".join(cells) + " |")
         if len(in_top) > max_rows:
             lines.append(f"| … | 还有 {len(in_top) - max_rows} 只省略 | | | |")

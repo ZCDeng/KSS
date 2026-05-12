@@ -406,8 +406,11 @@ def main() -> None:
             nm_df = pd.read_csv(nm_path, dtype=str)
             if "ts_code" in nm_df.columns and "name" in nm_df.columns:
                 _attrs = pool.attrs  # merge 会丢失 .attrs，先保存
+                merge_cols = ["ts_code", "name", "industry"]
+                if "concept" in nm_df.columns:
+                    merge_cols.append("concept")
                 pool = pool.merge(
-                    nm_df[["ts_code", "name", "industry"]].rename(
+                    nm_df[merge_cols].rename(
                         columns={"name": "stock_name", "ts_code": forecast.symbol_col}
                     ),
                     on=forecast.symbol_col, how="left",
@@ -415,6 +418,8 @@ def main() -> None:
                 pool.attrs = _attrs
                 pool["stock_name"] = pool["stock_name"].fillna("")
                 pool["industry"] = pool["industry"].fillna("")
+                if "concept" in pool.columns:
+                    pool["concept"] = pool["concept"].fillna("")
             else:
                 logger.warning("stock_names.csv 缺少 ts_code/name 列，跳过名称注入")
         except Exception as exc:
