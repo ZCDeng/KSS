@@ -119,8 +119,8 @@ def test_load_duplicate_concept_name_across_themes_allowed(tmp_path: Path) -> No
 
 
 def test_load_real_default_yaml_exists() -> None:
-    """仓库内 storage/themes_15th_5y.yaml 真实加载得到 6 个主题（防止 PR 引入回归）."""
+    """仓库内 storage/themes_15th_5y.yaml 真实加载得到 7 个主题（防止 PR 引入回归）."""
     themes = load_themes()
-    assert len(themes) == 6
-    expected = {"半导体", "AI算力", "新能源储能", "生物医药", "高端制造", "数字经济"}
+    assert len(themes) == 7
+    expected = {"半导体", "AI算力", "新能源储能", "生物医药", "具身智能", "工业母机·低空·航天", "数字经济"}
     assert set(themes.keys()) == expected
