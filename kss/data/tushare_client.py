@@ -244,3 +244,29 @@ class TushareClient:
             lambda: self._pro.moneyflow_hsgt(trade_date=trade_date),
             f"fetch_moneyflow_hsgt ({trade_date})",
         )
+
+    def fetch_index_daily(
+        self,
+        ts_code: str,
+        start: str,
+        end: str,
+    ) -> pd.DataFrame | None:
+        """指数日线 OHLCV（含 ``pct_chg`` / ``amount``，用于大盘量价复盘）.
+
+        Tushare ``index_daily`` 接口；支持上证 / 深证 / 创业板 / 科创 50 等
+        宽基指数代码（如 ``000001.SH`` / ``399006.SZ`` / ``000688.SH``）.
+
+        Args:
+            ts_code: 指数代码（如 ``000001.SH``）.
+            start: 起始日期，``YYYYMMDD`` 格式.
+            end: 截止日期，``YYYYMMDD`` 格式.
+
+        Returns:
+            DataFrame；失败或空响应返回 ``None``.
+        """
+        return _fetch_with_retry(
+            lambda: self._pro.index_daily(
+                ts_code=ts_code, start_date=start, end_date=end
+            ),
+            f"fetch_index_daily {ts_code} ({start}~{end})",
+        )

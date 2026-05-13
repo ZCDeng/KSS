@@ -14,9 +14,11 @@ import pytest
 
 from kss.data.tushare_client import TushareClient
 from kss.sector.data_fetcher import (
+    MARKET_INDEX_TS_CODES,
     SectorSnapshot,
     _filter_industry_only,
     _hsgt_row_to_dict,
+    fetch_market_indices,
     load_sector_snapshot,
 )
 
@@ -269,3 +271,140 @@ class TestLoadSectorSnapshot:
         assert isinstance(snap, SectorSnapshot)
         assert snap.trade_date == "20260512"
         assert len(snap.missing) == 4
+
+
+# ====================================================================== #
+# fetch_market_indices —— 大盘指数量价获取 (U2)
+# ====================================================================== #
+
+
+def _make_index_daily(
+    ts_code: str,
+    *,
+    today_amount: float = 150000.0,
+    today_pct: float = 1.5,
+    today_close: float = 3500.0,
+    history_amounts: list[float] | None = None,
+) -> pd.DataFrame:
+    """构造 ``index_daily`` 返回值：当日 + 历史 5 个交易日.
+
+    Tushare 默认 trade_date 倒序，所以行顺序是 today, t-1, t-2, ...
+    """
+    if history_amounts is None:
+        history_amounts = [100000.0] * 5
+    dates = ["20260512", "20260509", "20260508", "20260507", "20260506", "20260505"]
+    amounts = [today_amount, *history_amounts]
+    closes = [today_close] + [today_close * 0.99] * 5
+    pct_changes = [today_pct] + [0.1] * 5
+    return pd.DataFrame({
+        "ts_code": [ts_code] * 6,
+        "trade_date": dates,
+        "close": closes,
+        "pct_chg": pct_changes,
+        "amount": amounts,
+    })
+
+
+class _FakeIndexClient:
+    """TushareClient 替身，按 ts_code 返回不同 DataFrame."""
+
+    def __init__(self, payloads: dict[str, pd.DataFrame | None]) -> None:
+        self._payloads = payloads
+        self.calls: list[tuple[str, str, str]] = []
+
+    def fetch_index_daily(
+        self,
+        ts_code: str,
+        start: str,
+        end: str,
+    ) -> pd.DataFrame | None:
+        self.calls.append((ts_code, start, end))
+        return self._payloads.get(ts_code)
+
+
+class TestFetchMarketIndices:
+    """fetch_market_indices 测试."""
+
+    def test_happy_path_all_four_indices(self) -> None:
+        """4 个指数全有数据 → 返回 4 个 key，含 close/pct_chg/amount/volume_ratio."""
+        payloads = {
+            ts: _make_index_daily(ts) for ts in MARKET_INDEX_TS_CODES
+        }
+        client = _FakeIndexClient(payloads)
+        out = fetch_market_indices("20260512", client=client)  # type: ignore[arg-type]
+        assert set(out.keys()) == set(MARKET_INDEX_TS_CODES.values())
+        for alias, metrics in out.items():
+            assert "close" in metrics
+            assert "pct_chg" in metrics
+            assert "amount" in metrics
+            assert "volume_ratio" in metrics
+            # 当日 amount=150000 vs 历史均值=100000 → volume_ratio = 1.5
+            assert metrics["volume_ratio"] == pytest.approx(1.5, abs=0.01)
+
+    def test_partial_failure_keeps_other_indices(self) -> None:
+        """科创 50 拉取失败 → 该 key 缺失，其他 3 个 key 完整."""
+        payloads = {ts: _make_index_daily(ts) for ts in MARKET_INDEX_TS_CODES}
+        payloads["000688.SH"] = None  # 科创板失败
+        client = _FakeIndexClient(payloads)
+        out = fetch_market_indices("20260512", client=client)  # type: ignore[arg-type]
+        assert "科创板" not in out
+        assert "上证主板" in out and "深证主板" in out and "创业板" in out
+
+    def test_all_failure_returns_empty_dict(self) -> None:
+        """全部指数失败 → 返回空 dict（不抛）."""
+        payloads = {ts: None for ts in MARKET_INDEX_TS_CODES}
+        client = _FakeIndexClient(payloads)
+        out = fetch_market_indices("20260512", client=client)  # type: ignore[arg-type]
+        assert out == {}
+
+    def test_today_row_missing_in_window_skips(self) -> None:
+        """窗口内有数据但没有 trade_date 当日行（节假日交易日历对不上）→ 跳过."""
+        # 窗口内最近日期是 20260509，trade_date 是 20260512 → 当日不在
+        df = pd.DataFrame({
+            "ts_code": ["000001.SH"] * 3,
+            "trade_date": ["20260509", "20260508", "20260507"],
+            "close": [3500.0, 3490.0, 3480.0],
+            "pct_chg": [0.1, 0.2, 0.3],
+            "amount": [100000.0, 100000.0, 100000.0],
+        })
+        payloads = {"000001.SH": df}
+        for ts in MARKET_INDEX_TS_CODES:
+            if ts != "000001.SH":
+                payloads[ts] = None
+        client = _FakeIndexClient(payloads)
+        out = fetch_market_indices("20260512", client=client)  # type: ignore[arg-type]
+        assert "上证主板" not in out
+
+    def test_volume_ratio_omitted_when_no_history(self) -> None:
+        """历史窗口只有当日 1 行 → 不计算量比，但 close/pct_chg/amount 仍返回."""
+        df = pd.DataFrame({
+            "ts_code": ["000001.SH"],
+            "trade_date": ["20260512"],
+            "close": [3500.0],
+            "pct_chg": [1.5],
+            "amount": [150000.0],
+        })
+        payloads: dict[str, pd.DataFrame | None] = {"000001.SH": df}
+        for ts in MARKET_INDEX_TS_CODES:
+            if ts != "000001.SH":
+                payloads[ts] = None
+        client = _FakeIndexClient(payloads)
+        out = fetch_market_indices("20260512", client=client)  # type: ignore[arg-type]
+        assert "上证主板" in out
+        assert out["上证主板"]["close"] == 3500.0
+        assert "volume_ratio" not in out["上证主板"]
+
+    def test_volume_ratio_calculation(self) -> None:
+        """当日 amount=300000，历史 5 日均值=100000 → volume_ratio = 3.0."""
+        df = _make_index_daily(
+            "000001.SH",
+            today_amount=300000.0,
+            history_amounts=[100000.0] * 5,
+        )
+        payloads: dict[str, pd.DataFrame | None] = {"000001.SH": df}
+        for ts in MARKET_INDEX_TS_CODES:
+            if ts != "000001.SH":
+                payloads[ts] = None
+        client = _FakeIndexClient(payloads)
+        out = fetch_market_indices("20260512", client=client)  # type: ignore[arg-type]
+        assert out["上证主板"]["volume_ratio"] == pytest.approx(3.0, abs=0.01)

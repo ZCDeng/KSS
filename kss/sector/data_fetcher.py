@@ -19,12 +19,24 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 
 import pandas as pd
 
 from kss.data.tushare_client import TushareClient
 
 logger = logging.getLogger(__name__)
+
+
+# 大盘指数代码 → 中文别名（沪深主板/创业板/科创板，复盘叙述用）.
+# 上证综指代表沪市主板（含科创板个股流通），深证成指代表深市主板；创业板指
+# 与科创 50 各自代表创业板 / 科创板 单板块表现.
+MARKET_INDEX_TS_CODES: dict[str, str] = {
+    "000001.SH": "上证主板",
+    "399001.SZ": "深证主板",
+    "399006.SZ": "创业板",
+    "000688.SH": "科创板",
+}
 
 
 @dataclass
@@ -142,3 +154,70 @@ def load_sector_snapshot(
         )
 
     return snap
+
+
+def fetch_market_indices(
+    trade_date: str,
+    client: TushareClient | None = None,
+    *,
+    volume_ratio_window: int = 5,
+) -> dict[str, dict[str, float]]:
+    """获取沪深主板 / 创业板 / 科创板等大盘指数当日量价 + N 日量比.
+
+    用于 17:30 复盘投顾文字「大盘总览」段落。每个指数返回 dict：
+
+    - ``close``: 收盘点位
+    - ``pct_chg``: 当日涨跌幅（百分比）
+    - ``amount``: 成交额（Tushare 单位：千元）
+    - ``volume_ratio``: 量比 = 当日 amount / 过去 N 个交易日均 amount.
+      历史窗口数据不足时该字段不出现.
+
+    Args:
+        trade_date: 目标交易日，``YYYYMMDD`` 格式.
+        client: ``TushareClient`` 实例；``None`` 时用默认单例.
+        volume_ratio_window: 量比计算的回看窗口（默认 5 个交易日）.
+
+    Returns:
+        指数中文别名 → 量价字典；单个指数拉取失败 → 该 key 缺失，
+        其他 key 不受影响. 全部失败返回 ``{}`` 并 log warning.
+    """
+    if client is None:
+        client = TushareClient()
+
+    # 拉 trade_date 前 N+5 个自然日的窗口，覆盖周末 + 节假日.
+    end_dt = datetime.strptime(trade_date, "%Y%m%d")
+    start_dt = end_dt - timedelta(days=volume_ratio_window * 3 + 7)
+    start_str = start_dt.strftime("%Y%m%d")
+
+    out: dict[str, dict[str, float]] = {}
+    for ts_code, alias in MARKET_INDEX_TS_CODES.items():
+        df = client.fetch_index_daily(ts_code, start_str, trade_date)
+        if df is None or df.empty:
+            logger.warning("fetch_index_daily %s (%s) 无数据", ts_code, trade_date)
+            continue
+        # Tushare index_daily 默认按 trade_date 倒序返回；取当日行.
+        df = df.sort_values("trade_date", ascending=False).reset_index(drop=True)
+        today_rows = df[df["trade_date"] == trade_date]
+        if today_rows.empty:
+            logger.warning(
+                "fetch_index_daily %s 窗口内无 %s 当日数据", ts_code, trade_date,
+            )
+            continue
+        today = today_rows.iloc[0]
+        metrics: dict[str, float] = {
+            "close": float(today["close"]),
+            "pct_chg": float(today["pct_chg"]),
+            "amount": float(today["amount"]),
+        }
+        # 过去 N 日 amount 均值（不含今日）→ 量比.
+        prior = df[df["trade_date"] < trade_date].head(volume_ratio_window)
+        if len(prior) >= 1:
+            avg_amount = float(prior["amount"].mean())
+            if avg_amount > 0:
+                metrics["volume_ratio"] = metrics["amount"] / avg_amount
+        out[alias] = metrics
+
+    if not out:
+        logger.warning("fetch_market_indices(%s) 全部指数拉取失败", trade_date)
+
+    return out
