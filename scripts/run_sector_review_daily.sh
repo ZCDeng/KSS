@@ -48,8 +48,12 @@ fi
 # commentary 模块走 OPENAI SDK，key 优先级：OPENAI_API_KEY > DEEPSEEK_API_KEY.
 HERMES_ENV="/Users/zcdeng/projects/agentos-stack/hermes_agent/.env"
 if [ -f "$HERMES_ENV" ]; then
+  # set -e + pipefail 下，grep 未匹配返回 1 会杀整脚本.
+  # 用 local 变量 + `|| true` 吞掉 pipeline 失败，让缺失 key 视为空字符串.
   _load_env_val() {
-    grep -E "^$1=" "$HERMES_ENV" 2>/dev/null | head -1 | cut -d= -f2- | sed 's/^"//;s/"$//'
+    local val
+    val=$(grep -E "^$1=" "$HERMES_ENV" 2>/dev/null | head -1 | cut -d= -f2- | sed 's/^"//;s/"$//') || true
+    printf '%s' "$val"
   }
   OPENAI_API_KEY=$(_load_env_val "OPENAI_API_KEY")
   OPENAI_BASE_URL=$(_load_env_val "OPENAI_BASE_URL")
