@@ -164,3 +164,40 @@ class TestLLMClientComplete:
             client.complete(system="x", user="y")
             kwargs = instance.chat.completions.create.call_args.kwargs
             assert kwargs["model"] == "gpt-4o"
+
+    def test_kss_llm_timeout_env_overrides_default(
+        self, with_openai_env: None, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """KSS_LLM_TIMEOUT env 应被传给 OpenAI SDK 的 timeout."""
+        monkeypatch.setenv("KSS_LLM_TIMEOUT", "120")
+        with patch("openai.OpenAI") as MockOpenAI:
+            instance = MagicMock()
+            instance.chat.completions.create.return_value = _make_resp("ok")
+            MockOpenAI.return_value = instance
+            LLMClient()
+            kwargs = MockOpenAI.call_args.kwargs
+            assert kwargs["timeout"] == 120.0
+
+    def test_constructor_timeout_overrides_env(
+        self, with_openai_env: None, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """构造时显式传 timeout 优先于 env."""
+        monkeypatch.setenv("KSS_LLM_TIMEOUT", "120")
+        with patch("openai.OpenAI") as MockOpenAI:
+            instance = MagicMock()
+            MockOpenAI.return_value = instance
+            LLMClient(timeout=45.0)
+            kwargs = MockOpenAI.call_args.kwargs
+            assert kwargs["timeout"] == 45.0
+
+    def test_kss_llm_timeout_invalid_falls_back_to_default(
+        self, with_openai_env: None, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """env 是垃圾字符串 → 用默认值，不抛."""
+        monkeypatch.setenv("KSS_LLM_TIMEOUT", "abc")
+        with patch("openai.OpenAI") as MockOpenAI:
+            instance = MagicMock()
+            MockOpenAI.return_value = instance
+            LLMClient()
+            kwargs = MockOpenAI.call_args.kwargs
+            assert kwargs["timeout"] == 90.0  # _DEFAULT_TIMEOUT_SEC

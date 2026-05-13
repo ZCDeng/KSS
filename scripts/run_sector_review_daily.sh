@@ -55,10 +55,12 @@ if [ -f "$HERMES_ENV" ]; then
   OPENAI_BASE_URL=$(_load_env_val "OPENAI_BASE_URL")
   DEEPSEEK_API_KEY=$(_load_env_val "DEEPSEEK_API_KEY")
   KSS_LLM_MODEL=$(_load_env_val "KSS_LLM_MODEL")
+  KSS_LLM_TIMEOUT=$(_load_env_val "KSS_LLM_TIMEOUT")
   [ -n "$OPENAI_API_KEY" ] && { export OPENAI_API_KEY; echo "[wrapper] loaded OPENAI_API_KEY length=${#OPENAI_API_KEY}"; }
   [ -n "$OPENAI_BASE_URL" ] && { export OPENAI_BASE_URL; echo "[wrapper] loaded OPENAI_BASE_URL=$OPENAI_BASE_URL"; }
   [ -n "$DEEPSEEK_API_KEY" ] && { export DEEPSEEK_API_KEY; echo "[wrapper] loaded DEEPSEEK_API_KEY length=${#DEEPSEEK_API_KEY}"; }
   [ -n "$KSS_LLM_MODEL" ] && { export KSS_LLM_MODEL; echo "[wrapper] loaded KSS_LLM_MODEL=$KSS_LLM_MODEL"; }
+  [ -n "$KSS_LLM_TIMEOUT" ] && { export KSS_LLM_TIMEOUT; echo "[wrapper] loaded KSS_LLM_TIMEOUT=$KSS_LLM_TIMEOUT"; }
 fi
 
 cd "$PROJECT_ROOT"

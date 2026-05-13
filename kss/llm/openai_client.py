@@ -19,8 +19,12 @@ logger = logging.getLogger(__name__)
 _DEEPSEEK_BASE_URL: Final[str] = "https://api.deepseek.com/v1"
 _DEFAULT_MODEL_OPENAI: Final[str] = "gpt-4o-mini"
 _DEFAULT_MODEL_DEEPSEEK: Final[str] = "deepseek-chat"
-_DEFAULT_TIMEOUT_SEC: Final[float] = 30.0
-_DEFAULT_MAX_RETRIES: Final[int] = 2  # OpenAI SDK 内置一次 + 我们一次
+# 生成 1000-1500 中文字（非 streaming）通常 30-60s，DeepSeek 偶尔 >60s；
+# 取 90s 余量。cron 链路 17:30 不抢时，余量充足.
+_DEFAULT_TIMEOUT_SEC: Final[float] = 90.0
+# OpenAI SDK 自带一次重试，我们再加一次；超过这个值 cron 链路会卡 5+ 分钟
+# （3 × 90s + 退避），不值得，宁可走 fallback.
+_DEFAULT_MAX_RETRIES: Final[int] = 1
 _DEFAULT_TEMPERATURE: Final[float] = 0.6
 
 
@@ -42,13 +46,18 @@ class LLMClient:
     def __init__(
         self,
         model: str | None = None,
-        timeout: float = _DEFAULT_TIMEOUT_SEC,
+        timeout: float | None = None,
         max_retries: int = _DEFAULT_MAX_RETRIES,
         temperature: float = _DEFAULT_TEMPERATURE,
     ) -> None:
         api_key, base_url, default_model = _resolve_credentials()
         self._model = model or os.getenv("KSS_LLM_MODEL") or default_model
         self._temperature = temperature
+        effective_timeout = (
+            timeout
+            if timeout is not None
+            else _coerce_float(os.getenv("KSS_LLM_TIMEOUT"), _DEFAULT_TIMEOUT_SEC)
+        )
 
         # Lazy import：openai SDK ~50ms import 成本，commentary fallback 路径不需要
         try:
@@ -60,7 +69,7 @@ class LLMClient:
 
         kwargs: dict[str, object] = {
             "api_key": api_key,
-            "timeout": timeout,
+            "timeout": effective_timeout,
             "max_retries": max_retries,
         }
         if base_url:
@@ -123,3 +132,14 @@ def _resolve_credentials() -> tuple[str, str | None, str]:
         "未配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY；"
         "wrapper 应从 Hermes .env grep 注入"
     )
+
+
+def _coerce_float(raw: str | None, default: float) -> float:
+    """env 字符串安全转 float；空 / 非数 → default."""
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("[llm] 无法解析为 float，使用默认: %r → %.1f", raw, default)
+        return default
