@@ -11,7 +11,7 @@
 #   bash scripts/run_paper_trade_weekly.sh
 #
 # cron 部署（每周五 17:00 收盘后）：
-#   0 17 * * 5 /Users/zcdeng/projects/KSS/scripts/run_paper_trade_weekly.sh >> /tmp/kss_weekly.log 2>&1
+#   0 17 * * 5 /Users/zcdeng/projects/KSS/scripts/run_paper_trade_weekly.sh >> /Users/zcdeng/projects/KSS/storage/logs/cron/paper_trade_weekly.log 2>&1
 
 set -e
 set -o pipefail

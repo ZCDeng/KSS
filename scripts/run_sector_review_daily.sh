@@ -12,7 +12,7 @@
 #   bash scripts/run_sector_review_daily.sh --date 2026-05-12    # 指定日期
 #
 # cron 部署（每个交易日 17:30 收盘后，等 Tushare pro 数据准备好）：
-#   30 17 * * 1-5 /Users/zcdeng/projects/KSS/scripts/run_sector_review_daily.sh >> /tmp/kss_sector_review.log 2>&1
+#   30 17 * * 1-5 /Users/zcdeng/projects/KSS/scripts/run_sector_review_daily.sh >> /Users/zcdeng/projects/KSS/storage/logs/cron/sector_review_daily.log 2>&1
 
 set -e
 set -o pipefail
