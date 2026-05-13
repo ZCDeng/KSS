@@ -41,7 +41,11 @@ def build_channels(channel: str) -> list[str]:
 
 
 def send_to_channels(
-    message: str, channel: str, title: str | None = None,
+    message: str,
+    channel: str,
+    title: str | None = None,
+    *,
+    parse_mode: str = "Markdown",
 ) -> dict[str, bool]:
     """按 ``channel`` 分发推送，cron 友好——任何单一通道异常都不打断后续通道.
 
@@ -53,9 +57,11 @@ def send_to_channels(
       正文（Telegram 无单独 title 概念）.
 
     Args:
-        message: 消息正文（推荐 Markdown）.
+        message: 消息正文.
         channel: ``console`` / ``telegram`` / ``all`` 之一.
         title: 可选标题，console 通道必需；telegram 通道作为 message 前缀.
+        parse_mode: Telegram 通道的 ``parse_mode``（``Markdown`` / ``HTML`` / …）.
+            ``console`` 通道忽略.
 
     Returns:
         ``{channel_name: success_bool}``.
@@ -71,8 +77,14 @@ def send_to_channels(
                 )
             elif ch == "telegram":
                 bot = TelegramBot()
-                full = f"*{title}*\n\n{message}" if title else message
-                ok = bot.send(full)
+                if parse_mode == "HTML" and title:
+                    # HTML 模式用 <b> 包 title，避免 Markdown * 和 HTML 混用
+                    full = f"<b>{title}</b>\n\n{message}"
+                elif title:
+                    full = f"*{title}*\n\n{message}"
+                else:
+                    full = message
+                ok = bot.send(full, parse_mode=parse_mode)
                 if not ok:
                     logger.error("通道 telegram 发送失败（返回 False）")
                 results[ch] = ok

@@ -44,5 +44,22 @@ else
   echo "[wrapper] WARNING: $KSS_ENV 不存在，telegram 推送将降级到 console"
 fi
 
+# 加载 Hermes .env 里的 LLM 凭据（OpenAI / DeepSeek / 可选 model）.
+# commentary 模块走 OPENAI SDK，key 优先级：OPENAI_API_KEY > DEEPSEEK_API_KEY.
+HERMES_ENV="/Users/zcdeng/projects/agentos-stack/hermes_agent/.env"
+if [ -f "$HERMES_ENV" ]; then
+  _load_env_val() {
+    grep -E "^$1=" "$HERMES_ENV" 2>/dev/null | head -1 | cut -d= -f2- | sed 's/^"//;s/"$//'
+  }
+  OPENAI_API_KEY=$(_load_env_val "OPENAI_API_KEY")
+  OPENAI_BASE_URL=$(_load_env_val "OPENAI_BASE_URL")
+  DEEPSEEK_API_KEY=$(_load_env_val "DEEPSEEK_API_KEY")
+  KSS_LLM_MODEL=$(_load_env_val "KSS_LLM_MODEL")
+  [ -n "$OPENAI_API_KEY" ] && { export OPENAI_API_KEY; echo "[wrapper] loaded OPENAI_API_KEY length=${#OPENAI_API_KEY}"; }
+  [ -n "$OPENAI_BASE_URL" ] && { export OPENAI_BASE_URL; echo "[wrapper] loaded OPENAI_BASE_URL=$OPENAI_BASE_URL"; }
+  [ -n "$DEEPSEEK_API_KEY" ] && { export DEEPSEEK_API_KEY; echo "[wrapper] loaded DEEPSEEK_API_KEY length=${#DEEPSEEK_API_KEY}"; }
+  [ -n "$KSS_LLM_MODEL" ] && { export KSS_LLM_MODEL; echo "[wrapper] loaded KSS_LLM_MODEL=$KSS_LLM_MODEL"; }
+fi
+
 cd "$PROJECT_ROOT"
 exec "$PYTHON" scripts/sector_review.py --channel all "$@"
