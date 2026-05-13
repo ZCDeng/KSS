@@ -10,7 +10,7 @@
 #   bash scripts/run_paper_trade_daily.sh
 #
 # cron 部署（每个交易日 9:00）：
-#   0 9 * * 1-5 /Users/zcdeng/projects/KSS/scripts/run_paper_trade_daily.sh >> /tmp/kss_daily.log 2>&1
+#   5 9 * * 1-5 /Users/zcdeng/projects/KSS/scripts/run_paper_trade_daily.sh >> /Users/zcdeng/projects/KSS/storage/logs/cron/paper_trade_daily.log 2>&1
 
 set -e
 set -o pipefail

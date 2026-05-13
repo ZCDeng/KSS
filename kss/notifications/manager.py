@@ -9,8 +9,89 @@ from kss.notifications.base import BaseNotifier
 from kss.notifications.console import ConsoleNotifier
 from kss.notifications.dingtalk import DingtalkNotifier
 from kss.notifications.email import EmailNotifier
+from kss.notifications.telegram_bot import TelegramBot
 
 logger = logging.getLogger(__name__)
+
+
+# ====================================================================== #
+# 轻量函数式 API：cron 脚本用，不需要 NotificationManager 整套配置体系
+# ====================================================================== #
+
+CHANNEL_CHOICES = ("console", "telegram", "all")
+
+
+def build_channels(channel: str) -> list[str]:
+    """``channel`` 参数 → 通道名列表 (``console`` / ``telegram``).
+
+    Args:
+        channel: ``console`` / ``telegram`` / ``all`` 之一.
+
+    Returns:
+        要发送的通道名列表（保留顺序便于测试断言；``all`` 时 console
+        在前 telegram 在后，避免 cron 日志被 telegram 网络抖动堵在前）.
+    """
+    if channel == "console":
+        return ["console"]
+    if channel == "telegram":
+        return ["telegram"]
+    if channel == "all":
+        return ["console", "telegram"]
+    return ["console"]  # 兜底（调用方 argparse 已限制 choices）
+
+
+def send_to_channels(
+    message: str,
+    channel: str,
+    title: str | None = None,
+    *,
+    parse_mode: str = "Markdown",
+) -> dict[str, bool]:
+    """按 ``channel`` 分发推送，cron 友好——任何单一通道异常都不打断后续通道.
+
+    各通道接口差异：
+
+    - ``console`` 走 :class:`ConsoleNotifier` （需要 title），
+      title 缺省时用 message 第一行（截断）当 title.
+    - ``telegram`` 走 :class:`TelegramBot` ，title 以 ``*title*\\n\\n`` 前置进 message
+      正文（Telegram 无单独 title 概念）.
+
+    Args:
+        message: 消息正文.
+        channel: ``console`` / ``telegram`` / ``all`` 之一.
+        title: 可选标题，console 通道必需；telegram 通道作为 message 前缀.
+        parse_mode: Telegram 通道的 ``parse_mode``（``Markdown`` / ``HTML`` / …）.
+            ``console`` 通道忽略.
+
+    Returns:
+        ``{channel_name: success_bool}``.
+    """
+    results: dict[str, bool] = {}
+    for ch in build_channels(channel):
+        try:
+            if ch == "console":
+                n = ConsoleNotifier()
+                results[ch] = n.send(
+                    title=title or message.splitlines()[0][:60],
+                    message=message,
+                )
+            elif ch == "telegram":
+                bot = TelegramBot()
+                if parse_mode == "HTML" and title:
+                    # HTML 模式用 <b> 包 title，避免 Markdown * 和 HTML 混用
+                    full = f"<b>{title}</b>\n\n{message}"
+                elif title:
+                    full = f"*{title}*\n\n{message}"
+                else:
+                    full = message
+                ok = bot.send(full, parse_mode=parse_mode)
+                if not ok:
+                    logger.error("通道 telegram 发送失败（返回 False）")
+                results[ch] = ok
+        except Exception as exc:  # noqa: BLE001 —— cron 友好：永不外抛
+            logger.error("通道 %s 发送异常：%s", ch, exc)
+            results[ch] = False
+    return results
 
 
 class NotificationManager:

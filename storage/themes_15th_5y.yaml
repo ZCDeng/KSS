@@ -1,0 +1,111 @@
+# 「十五五」七大热点科技主题映射 —— v1 已审核.
+#
+# 用途：sector_review 17:30 收盘后复盘把全市场行业 / 概念按主题桶聚合，
+# 让 LLM 在投顾文字里能按主题维度叙述（如「AI / 算力主题今日资金涌入...」）。
+#
+# 数据来源契约：
+# - industries 字段匹配 Tushare moneyflow_ind_dc 的 name 列（东财行业，content_type=='行业'）
+# - concepts 字段匹配 Tushare moneyflow_cnt_ths 的 name 列（同花顺概念）
+# - 名字不存在不报错，loader 容错跳过；commentary 模块只用匹配到的部分
+#
+# 调试：
+#   /opt/homebrew/opt/python@3.11/bin/python3.11 -c \
+#       "from kss.sector.themes import load_themes; print(load_themes())"
+#
+# 校验方法：拉一次当日 snapshot，对比 themes.yaml 的 industry/concept 名是否
+# 出现在 snapshot.industry['name'] / snapshot.concept['name'] 列里。
+#
+# 结构（7 大主题）：
+#   半导体 / AI算力 / 新能源储能 / 生物医药 / 具身智能 /
+#   工业母机·低空·航天 / 数字经济
+
+themes:
+  半导体:
+    industries:
+      - 半导体
+    concepts:
+      - 半导体概念
+      - 集成电路概念
+      - 国产芯片
+      - 光刻机概念
+      - 第三代半导体
+      - 存储芯片
+      - 芯片概念
+
+  AI算力:
+    industries:
+      - 软件开发
+      - 互联网服务
+      - IT服务Ⅱ
+    concepts:
+      - ChatGPT概念
+      - 算力概念
+      - 算力租赁
+      - AI服务器
+      - 液冷概念
+      - CPO概念
+      - 光通信
+      - 数据中心
+      - 东数西算
+      - 东数西算(算力)
+
+  新能源储能:
+    industries:
+      - 电池
+      - 光伏设备
+      - 风电设备
+      - 电网设备
+    concepts:
+      - 储能概念
+      - 固态电池
+      - 钠电池
+      - 氢能源
+      - 光伏概念
+      - 风电概念
+      - 虚拟电厂
+
+  生物医药:
+    industries:
+      - 化学制药
+      - 医疗器械
+      - 生物制品
+      - 中药Ⅱ
+    concepts:
+      - 创新药
+      - CXO概念
+      - 减肥药
+      - 医疗AI
+      - 合成生物
+      - 脑机接口
+
+  具身智能:
+    industries:
+      - 通用设备
+      - 专用设备
+      - 自动化设备
+    concepts:
+      - 机器人
+      - 机器人概念
+      - 人形机器人
+
+  工业母机·低空·航天:
+    industries:
+      - 航空装备Ⅱ
+    concepts:
+      - 工业母机
+      - 低空经济
+      - 商业航天
+      - 国防军工
+
+  数字经济:
+    industries:
+      - 计算机设备
+      - 通信设备
+      - 通信服务
+    concepts:
+      - 信创概念
+      - 卫星互联网
+      - 6G概念
+      - 量子科技
+      - 密码概念
+      - 数据要素

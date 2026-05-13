@@ -9,7 +9,7 @@
 #   bash scripts/run_update_data_daily.sh
 #
 # cron 部署（每个交易日 8:30 开盘前 30 分钟）：
-#   30 8 * * 1-5 /Users/zcdeng/projects/KSS/scripts/run_update_data_daily.sh >> /tmp/kss_update.log 2>&1
+#   30 8 * * 1-5 /Users/zcdeng/projects/KSS/scripts/run_update_data_daily.sh >> /Users/zcdeng/projects/KSS/storage/logs/cron/update_data_daily.log 2>&1
 
 set -e
 set -o pipefail

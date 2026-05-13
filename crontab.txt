@@ -1,2 +1,14 @@
-# 科创板共振扫描 - 每日15:30运行
+# 科创板共振扫描 - 每个交易日 15:30 收盘前
 30 15 * * 1-5 /Users/zcdeng/projects/KSS/run_scanner.sh
+
+# cs_data 增量更新 - 每个交易日 8:30 开盘前拉 Tushare
+30 8 * * 1-5 /Users/zcdeng/projects/KSS/scripts/run_update_data_daily.sh >> /tmp/kss_update.log 2>&1
+
+# log_mv 反向纸交易 - 每个交易日 9:05 开盘选股 + Telegram 推送
+5 9 * * 1-5 /Users/zcdeng/projects/KSS/scripts/run_paper_trade_daily.sh >> /tmp/kss_daily.log 2>&1
+
+# 板块复盘 - 每个交易日 17:30 收盘后（Tushare pro 数据延迟 buffer）
+30 17 * * 1-5 /Users/zcdeng/projects/KSS/scripts/run_sector_review_daily.sh >> /tmp/kss_sector_review.log 2>&1
+
+# log_mv 反向周报 - 每周五 17:00 收盘后
+0 17 * * 5 /Users/zcdeng/projects/KSS/scripts/run_paper_trade_weekly.sh >> /tmp/kss_weekly.log 2>&1

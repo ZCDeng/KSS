@@ -370,7 +370,7 @@ class TestCacheManagerGapDetection:
 
 
 class _FakePro:
-    """Tushare _pro 替身：daily / daily_basic 都委托给一个统一的可注入函数."""
+    """Tushare _pro 替身：所有 API 方法都委托给一个统一的可注入函数."""
 
     def __init__(self, fn) -> None:  # type: ignore[no-untyped-def]
         self.fn = fn
@@ -379,6 +379,19 @@ class _FakePro:
         return self.fn(**kwargs)
 
     def daily_basic(self, **kwargs: object) -> pd.DataFrame | None:
+        return self.fn(**kwargs)
+
+    # 板块层面 API（U1 板块复盘扩展）
+    def moneyflow_ind_dc(self, **kwargs: object) -> pd.DataFrame | None:
+        return self.fn(**kwargs)
+
+    def moneyflow_cnt_ths(self, **kwargs: object) -> pd.DataFrame | None:
+        return self.fn(**kwargs)
+
+    def sw_daily(self, **kwargs: object) -> pd.DataFrame | None:
+        return self.fn(**kwargs)
+
+    def moneyflow_hsgt(self, **kwargs: object) -> pd.DataFrame | None:
         return self.fn(**kwargs)
 
 
@@ -480,3 +493,192 @@ class TestTushareRetry:
         result = client.fetch_daily_basic("688008.SH", "20240101", "20240131")
         assert result is not None
         assert call_count["n"] == 2
+
+
+# ====================================================================== #
+# U1: 板块层面 API（行业/概念资金流 + 申万行业 + 北向）
+# ====================================================================== #
+
+
+class TestTushareBoardAPIs:
+    """板块级 fetch 方法（U1 收盘后板块复盘）.
+
+    全部走 _fetch_with_retry，验证重试 / 空响应 / kwargs 透传行为.
+    """
+
+    @staticmethod
+    def _reset_singleton() -> None:
+        TushareClient._instance = None
+        TushareClient._pro = None
+
+    def test_fetch_moneyflow_ind_dc_returns_dataframe(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """成功路径：返回含 content_type / ts_code / pct_change / net_amount_rate 列的 DataFrame."""
+        self._reset_singleton()
+        client = TushareClient()
+
+        sample = pd.DataFrame({
+            "trade_date": ["20260512"],
+            "content_type": ["行业"],
+            "ts_code": ["BK0457.DC"],
+            "name": ["电网设备"],
+            "pct_change": [1.48],
+            "net_amount": [4060351744.0],
+            "net_amount_rate": [4.13],
+            "buy_elg_amount_rate": [4.19],
+        })
+        client._pro = _FakePro(lambda **_: sample)
+        monkeypatch.setattr("kss.data.tushare_client.time.sleep", lambda x: None)
+
+        result = client.fetch_moneyflow_ind_dc("20260512")
+        assert result is not None
+        assert "content_type" in result.columns
+        assert "net_amount_rate" in result.columns
+        assert result.iloc[0]["name"] == "电网设备"
+
+    def test_fetch_moneyflow_ind_dc_retries_then_succeeds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """暂时性失败后重试成功."""
+        self._reset_singleton()
+        client = TushareClient()
+
+        call_count = {"n": 0}
+        sample = pd.DataFrame({"name": ["半导体"], "pct_change": [2.0]})
+
+        def flaky(**kwargs: object) -> pd.DataFrame:
+            call_count["n"] += 1
+            if call_count["n"] < 3:
+                raise RuntimeError("transient")
+            return sample
+
+        client._pro = _FakePro(flaky)
+        monkeypatch.setattr("kss.data.tushare_client.time.sleep", lambda x: None)
+
+        result = client.fetch_moneyflow_ind_dc("20260512")
+        assert result is not None
+        assert call_count["n"] == 3
+
+    def test_fetch_moneyflow_ind_dc_empty_no_retry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """空响应（业务"无数据"）不触发重试，立即返回 None."""
+        self._reset_singleton()
+        client = TushareClient()
+
+        call_count = {"n": 0}
+
+        def empty(**kwargs: object) -> pd.DataFrame:
+            call_count["n"] += 1
+            return pd.DataFrame()
+
+        client._pro = _FakePro(empty)
+        monkeypatch.setattr("kss.data.tushare_client.time.sleep", lambda x: None)
+
+        result = client.fetch_moneyflow_ind_dc("20260512")
+        assert result is None
+        assert call_count["n"] == 1
+
+    def test_fetch_moneyflow_cnt_ths_returns_dataframe(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """同花顺概念资金流：含 ts_code（886xxx.TI 格式）/ name / net_amount 列."""
+        self._reset_singleton()
+        client = TushareClient()
+
+        sample = pd.DataFrame({
+            "trade_date": ["20260512"],
+            "ts_code": ["886101.TI"],
+            "name": ["兵装重组概念"],
+            "pct_change": [2.01],
+            "net_amount": [-1.0],
+        })
+        client._pro = _FakePro(lambda **_: sample)
+        monkeypatch.setattr("kss.data.tushare_client.time.sleep", lambda x: None)
+
+        result = client.fetch_moneyflow_cnt_ths("20260512")
+        assert result is not None
+        assert result.iloc[0]["name"] == "兵装重组概念"
+
+    def test_fetch_moneyflow_cnt_ths_returns_none_on_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """持续失败 3 次后返回 None，不外抛."""
+        self._reset_singleton()
+        client = TushareClient()
+
+        call_count = {"n": 0}
+
+        def always_fail(**kwargs: object) -> pd.DataFrame:
+            call_count["n"] += 1
+            raise RuntimeError("outage")
+
+        client._pro = _FakePro(always_fail)
+        monkeypatch.setattr("kss.data.tushare_client.time.sleep", lambda x: None)
+
+        result = client.fetch_moneyflow_cnt_ths("20260512")
+        assert result is None
+        assert call_count["n"] == 3
+
+    def test_fetch_sw_daily_returns_dataframe(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """sw_daily 单日切片：含 ts_code（801xxx.SI）/ name / pct_change / amount 列."""
+        self._reset_singleton()
+        client = TushareClient()
+
+        sample = pd.DataFrame({
+            "ts_code": ["801001.SI", "801010.SI"],
+            "trade_date": ["20260512", "20260512"],
+            "name": ["申万50", "农林牧渔"],
+            "pct_change": [0.23, 1.05],
+            "amount": [44103509.0, 12345678.0],
+        })
+        client._pro = _FakePro(lambda **_: sample)
+        monkeypatch.setattr("kss.data.tushare_client.time.sleep", lambda x: None)
+
+        result = client.fetch_sw_daily("20260512")
+        assert result is not None
+        assert len(result) == 2
+        assert "pct_change" in result.columns
+
+    def test_fetch_moneyflow_hsgt_returns_single_row(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """北向资金 API 单日返回 1 行，含 north_money / south_money 字段（万元单位）."""
+        self._reset_singleton()
+        client = TushareClient()
+
+        sample = pd.DataFrame({
+            "trade_date": ["20260512"],
+            "north_money": ["405543.48"],
+            "south_money": ["53807.88"],
+        })
+        client._pro = _FakePro(lambda **_: sample)
+        monkeypatch.setattr("kss.data.tushare_client.time.sleep", lambda x: None)
+
+        result = client.fetch_moneyflow_hsgt("20260512")
+        assert result is not None
+        assert len(result) == 1
+        assert "north_money" in result.columns
+
+    def test_fetch_moneyflow_hsgt_retries_and_eventually_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """北向 API 持续失败 → 3 次后返回 None."""
+        self._reset_singleton()
+        client = TushareClient()
+
+        call_count = {"n": 0}
+
+        def always_fail(**kwargs: object) -> pd.DataFrame:
+            call_count["n"] += 1
+            raise RuntimeError("hsgt down")
+
+        client._pro = _FakePro(always_fail)
+        monkeypatch.setattr("kss.data.tushare_client.time.sleep", lambda x: None)
+
+        result = client.fetch_moneyflow_hsgt("20260512")
+        assert result is None
+        assert call_count["n"] == 3

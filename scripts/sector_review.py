@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""收盘后板块复盘命令行入口.
+
+每个交易日 17:30 cron 调用，LLM 生成投顾语气复盘文字，产出 6 段结构：
+
+1. <b>大盘总览</b>（沪深 / 创业板 / 科创板 量价）
+2. <b>热点行业</b>
+3. <b>概念轮动</b>
+4. <b>科技板块资金走向</b>
+5. <b>「十五五」六大主题</b>
+6. <b>加减仓建议</b>
+
+LLM 失败时自动降级为结构化纯文本，不静默失败.
+
+用法::
+
+    python3 scripts/sector_review.py                          # 今日复盘，console 通道
+    python3 scripts/sector_review.py --date 2026-05-12        # 指定日期
+    python3 scripts/sector_review.py --channel telegram       # 推 Telegram
+    python3 scripts/sector_review.py --channel all            # console + telegram
+    python3 scripts/sector_review.py --dry-run                # 仅 print，不推送
+
+lauchd / cron 部署（每个交易日 17:30 收盘后）::
+
+    30 17 * * 1-5 /path/to/KSS/scripts/run_sector_review_daily.sh
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from kss.data.tushare_client import TushareClient  # noqa: E402
+from kss.notifications.manager import (  # noqa: E402
+    CHANNEL_CHOICES,
+    send_to_channels,
+)
+from kss.sector.commentary import generate_commentary  # noqa: E402
+from kss.sector.data_fetcher import (  # noqa: E402
+    fetch_market_indices,
+    load_sector_snapshot,
+)
+from kss.sector.kcb_overlay import build_kcb_overlay  # noqa: E402
+from kss.sector.themes import load_themes  # noqa: E402
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
+
+
+def _today_yyyymmdd() -> str:
+    """返回今日日期，``YYYYMMDD`` 格式."""
+    return datetime.now().strftime("%Y%m%d")
+
+
+def _fmt_display_date(yyyymmdd: str) -> str:
+    """``20260512`` → ``2026-05-12``."""
+    try:
+        return datetime.strptime(yyyymmdd, "%Y%m%d").strftime("%Y-%m-%d")
+    except ValueError:
+        return yyyymmdd
+
+
+def run_review(
+    trade_date: str,
+    client: TushareClient | None = None,
+    llm_client: object | None = None,
+) -> tuple[str, list[str]]:
+    """核心复盘流程：拉数据 → LLM 投顾文字.
+
+    Args:
+        trade_date: 目标交易日 ``YYYYMMDD``.
+        client: TushareClient 实例；``None`` 走单例.
+        llm_client: LLMClient 实例（或 mock）；``None`` 时 ``generate_commentary``
+            内部 lazy 初始化.
+
+    Returns:
+        ``(commentary_text, missing_sources)``.
+    """
+    if client is None:
+        client = TushareClient()
+
+    # ---- 数据装载 ----
+    snap = load_sector_snapshot(trade_date, client=client)
+    indices = fetch_market_indices(trade_date, client=client)
+    overlay = build_kcb_overlay()
+    themes = load_themes()
+
+    # ---- LLM commentary ----
+    commentary = generate_commentary(
+        date_yyyymmdd=trade_date,
+        snapshot=snap,
+        indices=indices,
+        themes=themes,
+        overlay=overlay,
+        client=llm_client,
+    )
+    return commentary, snap.missing
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="收盘后板块复盘 —— LLM 投顾文字")
+    parser.add_argument(
+        "--date", type=str, default=None,
+        help="目标交易日 YYYY-MM-DD（默认今日）",
+    )
+    parser.add_argument(
+        "--channel", type=str, default="console", choices=CHANNEL_CHOICES,
+        help="推送通道：console（默认）/ telegram / all",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="只打印，跳过推送（即便 --channel 指定 telegram）",
+    )
+    args = parser.parse_args()
+
+    # 日期统一为 YYYYMMDD
+    if args.date:
+        try:
+            trade_date = datetime.strptime(args.date, "%Y-%m-%d").strftime("%Y%m%d")
+        except ValueError:
+            trade_date = args.date  # 兼容直接输入 YYYYMMDD
+    else:
+        trade_date = _today_yyyymmdd()
+
+    commentary, missing = run_review(trade_date=trade_date)
+    print(commentary)
+
+    if args.dry_run:
+        logger.info("[dry-run] 跳过推送")
+        return
+
+    if args.channel in ("console", "all", "telegram"):
+        results = send_to_channels(
+            message=commentary,
+            channel=args.channel,
+            title=f"板块复盘 {_fmt_display_date(trade_date)}",
+            parse_mode="HTML",
+        )
+        logger.info("推送结果: %s", results)
+        if not all(results.values()):
+            sys.exit(2)
+
+    # 所有数据源都缺失 → 退出码告警
+    if len(missing) >= 4:
+        logger.warning("所有数据源都缺失，可能 Tushare 当日未准备好")
+        sys.exit(3)
+
+
+if __name__ == "__main__":
+    main()
