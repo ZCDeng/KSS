@@ -8,148 +8,181 @@ created: 2026-05-13
 
 # 收盘后板块复盘部署指南
 
-> 每个交易日 17:30 收盘后，自动拉取全市场行业 / 概念资金流 + 北向，输出
-> 「热度 / 资金持续性 / 轮动信号」三类启发式排序，标注科创板池子持仓重叠，
-> 推送到 Telegram. 与早盘 9:05 选股推送形成「盘前选股 + 盘后复盘」闭环.
+> 每个交易日 17:30 收盘后，自动拉取全市场行业 / 概念资金流 + 大盘指数 + 北向，
+> 经 LLM 生成投资顾问语气的复盘短文（6 段结构含加减仓建议），推送到 Telegram.
+> 与早盘 9:05 选股推送形成「盘前选股 + 盘后复盘」闭环.
+>
+> LLM 失败时自动降级为结构化纯文本，不静默失败.
 
 ## TL;DR
 
 ```bash
-# 1. 配置文件（默认权重适合大多数场景，可调）
-cat storage/sector_review_config.json
+# 1. 配置文件
+cat storage/themes_15th_5y.yaml        # 十五五六大主题候选清单（可热改）
+cat storage/sector_review_config.json  # 评分权重（v2 仅 scorer 保留，commentary 不用）
 
-# 2. 部署 cron（每个交易日 17:30 跑）—— 已在 crontab.txt 同步
-crontab -l | grep sector_review
-# 30 17 * * 1-5 /Users/zcdeng/projects/KSS/scripts/run_sector_review_daily.sh >> /tmp/kss_sector_review.log 2>&1
+# 2. 确认 LLM 凭据（wrapper 自动从 Hermes .env 注入）
+grep -E "OPENAI_API_KEY|DEEPSEEK_API_KEY" /Users/zcdeng/projects/agentos-stack/hermes_agent/.env
 
-# 3. 手动测试
-bash scripts/run_sector_review_daily.sh --dry-run                 # 仅 print
-bash scripts/run_sector_review_daily.sh --date 2026-05-12 --channel telegram  # 真实推送指定日
+# 3. 部署（launchd，每个交易日 17:30 跑）
+launchctl list | grep kss.sector_review
+
+# 4. 手动测试
+bash scripts/run_sector_review_daily.sh --dry-run                           # 仅 print
+bash scripts/run_sector_review_daily.sh --date 2026-05-12 --channel telegram  # 真实推送
 ```
 
 ## 1. 数据流与依赖
 
 ```
-17:30 cron
+17:30 launchd
   ↓
-run_sector_review_daily.sh        # .env 加载 → Python 绝对路径
+run_sector_review_daily.sh        # .env 加载 (Telegram + Tushare + LLM keys)
   ↓
 scripts/sector_review.py
   ↓
-4 个 Tushare API（kss.data.tushare_client）
-  ├── moneyflow_ind_dc       # 东财行业资金流（~85 行，含 pct_change/net_amount_rate/buy_elg_amount_rate）
-  ├── moneyflow_cnt_ths      # 同花顺概念资金流（~380 概念）
-  ├── sw_daily               # 申万指数日线（仅作市场基准，不参与评分）
-  └── moneyflow_hsgt         # 北向汇总（单行）
+数据装载
+  ├── Tushare API (kss.data.tushare_client)
+  │   ├── moneyflow_ind_dc       # 东财行业资金流
+  │   ├── moneyflow_cnt_ths      # 同花顺概念资金流
+  │   ├── sw_daily               # 申万指数日线
+  │   ├── moneyflow_hsgt         # 北向汇总
+  │   └── index_daily            # 大盘指数（沪深/创业/科创）
+  ├── kss.sector.kcb_overlay     # 科创板池子持仓数
+  └── kss.sector.themes          # 十五五主题映射 (YAML)
   ↓
-3 个评分函数（kss.sector.scorer）
-  ├── compute_heat_score      # 加权 min-max 归一化
-  ├── compute_flow_persistence # N 日累计 + 连续净流入天数
-  └── compute_rotation_signal  # 排名跃升 + 今日净流入
+LLM Commentary (kss.sector.commentary)
+  ├── build_context              # 行业/概念/指数 序列化
+  ├── compute_theme_metrics      # 六大主题聚合
+  ├── render_prompt              # system + user prompt
+  └── call_llm (kss.llm.LLMClient)  # OpenAI SDK
   ↓
-KCB 池叠加（kss.sector.kcb_overlay）
-  ├── industry_to_codes  → 申万行业名（来自 stock_names.csv）
-  └── concept_to_codes   → 同花顺概念名
+HTML sanitize + clip_to_max_len
   ↓
-Markdown 5 段（kss.sector.formatter）
-  ↓
-kss.notifications.manager.send_to_channels  # 复用 paper_trade 同款多通道
+kss.notifications.manager.send_to_channels(parse_mode="HTML")
   ↓
 Telegram bot（自建 server，与 paper_trade 共用 .env 凭据）
 ```
 
 ## 2. 配置文件
 
-`storage/sector_review_config.json`：
+### 2.1 主题映射
 
-```json
-{
-  "industry_heat_weights": {
-    "pct_change": 0.5,            // 涨幅权重
-    "net_amount_rate": 0.3,        // 主力净流入率权重
-    "buy_elg_amount_rate": 0.2     // 大单买入率权重
-  },
-  "concept_heat_weights": {
-    "pct_change": 0.6,             // 概念只有 2 维（无大单买入率）
-    "net_amount": 0.4
-  },
-  "top_n_industry": 5,             // 行业热度 Top N
-  "top_n_concept": 5,              // 概念 Top N
-  "top_n_flow": 3,                 // 资金涌入 Top N
-  "top_n_rotation": 5,             // 轮动信号 Top N
-  "persistence_days": 3,           // 资金持续性回看天数
-  "rotation_lookback_days": 3,     // 轮动对照 N 日前数据
-  "rotation_rank_jump_threshold": 50  // 排名跃升触发阈值（500 板块全市场用 50 较合理）
-}
+`storage/themes_15th_5y.yaml`：六大科技主题 → 行业/概念名候选清单.
+
+```yaml
+themes:
+  半导体:
+    industries: [半导体]
+    concepts: [半导体概念, 集成电路概念, 国产芯片, 存储芯片]
+  AI算力:
+    industries: [软件开发]
+    concepts: [算力概念, AI服务器, 数据中心, 东数西算]
+  ...
 ```
 
-权重不需要和为 1（最终 score 数值不影响排序）.
+- 名字按 Tushare `moneyflow_ind_dc`（东财行业）和 `moneyflow_cnt_ths`（同花顺概念）匹配
+- 不存在不报错，loader 容错跳过
+- 用户可热改，commentary 每次加载
 
-## 3. 已知限制（v1）
+### 2.2 评分权重（遗留，scorer 仍可用）
 
-### 3.1 KCB 池行业维度命中率 ≈ 0
+`storage/sector_review_config.json`：formatter / scorer 子系统的权重配置.
+commentary 链路不依赖它，但保留兼容.
 
-**现象**：行业 Top 强势 / 资金涌入两张表的「KCB 池」列大概率全是 `—`.
+## 3. LLM 部署
 
-**原因**：`stock_names.csv` 的 `industry` 字段来自申万一级行业分类（例如「半导体」「软件服务」），
-而 `moneyflow_ind_dc` 用的是东方财富的细分行业分类（例如「半导体设备」「证券Ⅱ」），
-两套命名空间命名不一致，无法直接 string-equal 匹配.
+### 3.1 凭据来源
 
-**v1 决策**：不做跨源映射 —— 任何 fuzzy match 或映射表都会引入新的维护负担和歧义.
-KCB 池标注的价值由概念维度提供（同花顺概念命名与 stock_names.csv 的 concept 字段同源，
-名称匹配命中可靠）.
+wrapper 脚本 `run_sector_review_daily.sh` 从 **两处** 加载环境变量：
 
-**后续可考虑**（已记 deferred）：
-- 维护 `storage/industry_aliases.csv` 显式 N:M 映射表
-- 或：替换 stock_names.csv 的 industry 字段为东财细分行业（需追加 Tushare API 调用）
+| 来源 | 变量 | 说明 |
+|------|------|------|
+| KSS `.env` | `TELEGRAM_BOT_TOKEN` `TELEGRAM_CHAT_ID` `TUSHARE_TOKEN` | 推送 + 数据 |
+| Hermes `.env` | `OPENAI_API_KEY` `OPENAI_BASE_URL` `DEEPSEEK_API_KEY` `KSS_LLM_MODEL` | LLM 调用 |
 
-### 3.2 概念资金流单位
+Hermes `.env` 路径：
+`/Users/zcdeng/projects/agentos-stack/hermes_agent/.env`
 
-`moneyflow_cnt_ths.net_amount` Tushare 文档未明确标单位；
-v1 通过观察板块聚合幅度推断为「百万元」（formatter 用 `unit="baiwan"` 除以 100 → 亿元）.
-若发现数值显著偏离（例如某概念 +100 亿和实际新闻幅度不一致），需重新核实单位.
+### 3.2 模型选择优先级
 
-### 3.3 历史数据滚动
+1. `KSS_LLM_MODEL` 环境变量（如 `gpt-4o` / `deepseek-chat`）
+2. 无环境变量时：
+   - `OPENAI_API_KEY` 存在 → `gpt-4o-mini`（OpenAI 默认）
+   - 仅 `DEEPSEEK_API_KEY` → `deepseek-chat`（DeepSeek 默认）
+3. `OPENAI_BASE_URL` 可指向 oneAPI 网关（支持 Claude / Gemini 路由）
 
-`compute_flow_persistence` 走窗口式 N+1 个工作日，每天调一次 `moneyflow_ind_dc`.
-默认 `lookback_days=3` → 单次复盘 4 次 industry API + 各 1 次 concept/sw/hsgt = 7 次 Tushare 调用.
-Tushare pro 单日 5000 次额度，远超需求.
+### 3.3 成本估算
 
-## 4. cron 部署
+- 每日 1 次调用
+- prompt ~3000 tokens（含 top 15 行业 + top 15 概念 + 4 个指数 + 主题聚合）
+- completion ~800-1200 tokens
+- gpt-4o-mini：~$0.001/天
+- deepseek-chat：~$0.0001/天
 
-已在 `crontab.txt` 同步（项目根备份）：
+## 4. 已知限制
 
-```cron
-# 板块复盘 (KSS) - 每个交易日 17:30 收盘后（Tushare pro 数据延迟 buffer）
-30 17 * * 1-5 /Users/zcdeng/projects/KSS/scripts/run_sector_review_daily.sh >> /tmp/kss_sector_review.log 2>&1
+### 4.1 KCB 池行业维度命中率低
+
+**现象**：`moneyflow_ind_dc` 用东财细分行业命名（如「半导体设备」），
+而 `stock_names.csv` 的 `industry` 是申万一级（如「半导体」），两套命名空间不一致.
+
+**commentary 处理方式**：prompt 中同时传入两个维度的 KCB 持仓数，
+LLM 自由叙述「半导体相关板块」时不精确要求 string-equal 命中.
+
+### 4.2 LLM 幻觉风险
+
+**现象**：LLM 偶尔编造不存在的数据或板块表现.
+
+**缓解**：
+- prompt 明确约束「所有数字必须复述 JSON 里的数值」
+- `_sanitize_html()` 过滤未授权标签，防止 HTML 解析失败
+- fallback 机制：LLM 失败 → 结构化文本兜底，不静默丢失
+
+### 4.3 Telegram HTML 模式
+
+从 MarkdownV1 切换为 HTML，escape 面只剩 `&lt; &gt; &amp;`
+（参考 `docs/solutions/telegram_markdown_v1_silent_drop.md` 的踩坑记录）.
+_fallback 和 commentary 输出都经过 `_sanitize_html()` 处理._
+
+## 5. launchd 部署
+
+launchd agent：`com.zcdeng.kss.sector_review_daily`
+
+```bash
+# 查看
+launchctl list | grep kss.sector_review
+
+# 手动触发
+launchctl kickstart -k gui/$UID/com.zcdeng.kss.sector_review_daily
 ```
 
-**为什么选 17:30**：A 股 15:00 收盘，Tushare pro 盘后聚合数据通常 16:30+ 才完整准备好；
-17:30 给充分 buffer，避免触发时 API 返回空响应导致整份报告空.
-也错开了周五 17:00 周报（`run_paper_trade_weekly.sh`），两条消息互不干扰.
+日志：`storage/logs/cron/sector_review_daily.log`
 
-## 5. 故障排查
+## 6. 故障排查
 
 | 现象 | 排查路径 |
 |------|---------|
-| 整份报告全 `_数据暂缺_` | 看 `/tmp/kss_sector_review.log`：Tushare token 是否有效？17:30 数据是否到位（可推迟到 18:00 重试） |
-| Telegram 没收到 | `_send_notification` 返回 `{telegram: False}` → 看 telegram bot 容器状态：`docker logs telegram-bot-api` |
+| 整份报告「LLM 复盘失败」| `storage/logs/cron/sector_review_daily.log` 看 OPENAI/DEEPSEEK key 是否注入成功；Hermes `.env` 是否存在 |
+| Telegram 没收到 | `send_to_channels` 返回 `{telegram: False}` → 看 telegram bot 容器状态 |
 | 仅个别板块缺数据 | 报告底部「⚠️ 缺失数据源」列出具体字段；单 API 失败不影响其他段 |
-| 轮动信号空 | 排名跃升阈值默认 50；A 股板块全天波动有限时本就少见，是正常信号 |
-| KCB 池列全 `—` | 见 3.1 已知限制；预期行为，概念维度命中可靠 |
+| LLM 输出 markdown 字符 | `_sanitize_html` 会自动转换，但如遇到漏网之鱼可手动调 prompt 约束 |
+| 报告被截断 | LLM 返回超长（>4000 字）→ 兜底裁剪；调低 prompt 里的字数约束 |
 
-## 6. 验证步骤
+## 7. 验证步骤
 
 新部署后第一天观察：
 
-1. `crontab -l | grep sector_review` 确认条目存在
-2. 等 17:30 后看 `/tmp/kss_sector_review.log`：是否有 timestamp + 推送结果行
-3. Telegram 是否收到 5 段格式报告
+1. `launchctl list | grep kss.sector_review` 确认 agent 已加载
+2. 等 17:30 后看 `storage/logs/cron/sector_review_daily.log`
+3. Telegram 是否收到 HTML 格式复盘（6 段结构，含加减仓建议）
 4. 跑一次手动回放：`bash scripts/run_sector_review_daily.sh --date 上一交易日 --dry-run`
-5. 测试套件：`pytest kss/tests/test_sector_*.py kss/tests/test_data.py -v`
+5. 故意 `unset OPENAI_API_KEY DEEPSEEK_API_KEY` 跑一次，验证 fallback
+6. 测试套件：`pytest kss/tests/test_sector_*.py kss/tests/test_llm_*.py -v`
 
-## 7. 相关文档
+## 8. 相关文档
 
-- `docs/plans/2026-05-13-001-feat-sector-rotation-review-plan.md` —— 实施计划
-- `docs/solutions/paper_trade_deployment.md` —— 早盘选股部署（同模式）
+- `docs/plans/2026-05-13-002-feat-llm-sector-review-commentary-plan.md` —— LLM commentary 实施计划
+- `docs/solutions/paper_trade_deployment.md` —— 早盘选股部署
 - `docs/solutions/telegram_deployment.md` —— Telegram bot 自建 server
+- `docs/solutions/telegram_markdown_v1_silent_drop.md` —— MarkdownV1 静默丢失踩坑记录
