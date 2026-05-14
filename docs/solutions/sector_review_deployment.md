@@ -1,9 +1,10 @@
 ---
 title: 收盘后板块复盘部署指南
-tags: [deployment, sector-review, cron, monitoring, tushare]
+tags: [deployment, sector-review, cron, monitoring, tushare, ths-hot]
 problem_type: operations
 module: scripts/sector_review
 created: 2026-05-13
+updated: 2026-05-14
 ---
 
 # 收盘后板块复盘部署指南
@@ -48,6 +49,7 @@ scripts/sector_review.py
   │   ├── sw_daily               # 申万指数日线
   │   ├── moneyflow_hsgt         # 北向汇总
   │   └── index_daily            # 大盘指数（沪深/创业/科创）
+  ├── 同花顺热点 (kss.data.ths_client)  # 当日强势股 + 人工题材归因 reason 标签
   ├── kss.sector.kcb_overlay     # 科创板池子持仓数
   └── kss.sector.themes          # 十五五主题映射 (YAML)
   ↓
@@ -89,6 +91,27 @@ themes:
 
 `storage/sector_review_config.json`：formatter / scorer 子系统的权重配置.
 commentary 链路不依赖它，但保留兼容.
+
+### 2.3 同花顺热点题材归因（无需配置）
+
+`kss/data/ths_client.py` 调 `zx.10jqka.com.cn/event/api/getharden`（无鉴权 HTTP）
+抓当日 ~125 只强势股，每只附带编辑部人工标注的 `reason` 题材标签
+（形如 `"算力租赁+Token工厂+AI政务"`）.
+
+commentary 在 `build_context` 阶段做两层派生：
+
+- **`hot_reason_tags`**：把全部 `reason` 按 `+/、·` 切分计数 →
+  当日高频题材关键词 Top-10，喂给 LLM 写「概念轮动」段时作为「今天为什么涨」的因果.
+- **`hot_kcb_stocks`**：与 KCB 活跃池（51 只科创板）做代码交集 →
+  「我们关注的票今天上了强势榜」信号，仅供 LLM 推理用，
+  prompt 明确禁止输出股票代码 / 简称.
+
+特性：
+
+- 无 API Key、无 cookie / Referer 校验，仅 UA 即可
+- 调用时点：盘后 **15:30 起 reason 字段才完整**（17:30 cron 时序天然满足）
+- 非交易日返回空 → 数据层契约视为 None，进入 `SectorSnapshot.missing`
+- 失败不影响其他段叙述（与 Tushare 任一字段失败的降级路径一致）
 
 ## 3. LLM 部署
 
@@ -145,6 +168,17 @@ LLM 自由叙述「半导体相关板块」时不精确要求 string-equal 命�
 （参考 `docs/solutions/telegram_markdown_v1_silent_drop.md` 的踩坑记录）.
 _fallback 和 commentary 输出都经过 `_sanitize_html()` 处理._
 
+### 4.4 同花顺端点单点依赖
+
+`zx.10jqka.com.cn` 是无鉴权第三方端点，无 SLA 保证；若上游下线 / 改字段：
+
+- `ths_client.fetch_ths_hot` 已做格式漂移防御（缺 `reason` 字段 → None）
+- 进入 `missing` 列表后，commentary prompt 不会编造题材归因
+- 不影响 Tushare / 北向 / 大盘指数 等其他段叙述
+
+注：`errocode` 字段拼写非标准（不是 `errorcode`），来自上游原样.
+排查脚本里 grep 时不要纠错.
+
 ## 5. launchd 部署
 
 launchd agent：`com.zcdeng.kss.sector_review_daily`
@@ -166,6 +200,7 @@ launchctl kickstart -k gui/$UID/com.zcdeng.kss.sector_review_daily
 | 整份报告「LLM 复盘失败」| `storage/logs/cron/sector_review_daily.log` 看 OPENAI/DEEPSEEK key 是否注入成功；Hermes `.env` 是否存在 |
 | Telegram 没收到 | `send_to_channels` 返回 `{telegram: False}` → 看 telegram bot 容器状态 |
 | 仅个别板块缺数据 | 报告底部「⚠️ 缺失数据源」列出具体字段；单 API 失败不影响其他段 |
+| 「概念轮动」段没有题材关键词 | log 搜 `[ths_hot]`：业务错（`errocode != 0`）/ 网络错 / 非交易日空响应 → `ths_hot` 进入 `missing` |
 | LLM 输出 markdown 字符 | `_sanitize_html` 会自动转换，但如遇到漏网之鱼可手动调 prompt 约束 |
 | 报告被截断 | LLM 返回超长（>4000 字）→ 兜底裁剪；调低 prompt 里的字数约束 |
 

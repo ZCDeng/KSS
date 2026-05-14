@@ -78,6 +78,7 @@ KSS = **K**eda **S**tock **S**ystem。一个 Python 量化回测框架，
 ### 工具链（按模块）
 
 - **数据层** (`kss/data/`)：Tushare / AKShare 双源，CSV + SQLite (`storage/kss_quotes.db`) 缓存。
+  17:30 板块复盘额外接入同花顺当日强势股归因（`ths_client.py`，无鉴权 HTTP）作为题材关键词来源。
 - **因子工程** (`kss/features/`)：49+ 因子（technical / volatility / volume / valuation）
   + `cross_section_selection.make_ic_topk_selector` 行业市值中性化 + 截面 IC scan。
 - **回测引擎** (`kss/backtest/`)：

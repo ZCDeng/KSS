@@ -10,7 +10,8 @@
 
 ## 功能特性
 
-- **数据层**: Tushare / AKShare 双源接入，CSV 本地缓存，自动过期检测
+- **数据层**: Tushare / AKShare 双源接入，CSV 本地缓存，自动过期检测；
+  17:30 板块复盘加接同花顺当日强势股归因端点（无鉴权 HTTP）补「今天为什么涨」的题材标签
 - **因子工程**: 49+ 技术/波动率/成交量/估值因子，截面 Z-Score 标准化
 - **模型训练**: LightGBM 滚动训练，模型版本注册中心（自动清理旧版本）
 - **回测引擎**: Walk-forward 纯多头回测，含换手率与交易成本建模
@@ -101,7 +102,7 @@ kss predict --pool kcb50 --model lgb_kcb50_10d --type daily
 ```
 kss/
 ├── cli/              # Click 命令行接口
-├── data/             # Tushare/AKShare 客户端、CSV 缓存
+├── data/             # Tushare/AKShare 客户端、同花顺热点（ths_client）、CSV 缓存
 ├── features/         # 因子生成管道（技术/波动率/成交量/估值）
 ├── models/           # 模型基类、LightGBM 实现、注册中心
 ├── strategies/       # 策略基类、横截面选股、信号生成器
