@@ -30,6 +30,13 @@ _MAX_MSG_LEN: int = 4000
 _TOP_N_INDUSTRY: int = 15
 _TOP_N_CONCEPT: int = 15
 
+# 同花顺热点：聚合后保留的高频题材关键词数量、池中命中股展示上限.
+_TOP_N_REASON_TAGS: int = 10
+_TOP_N_HOT_KCB_STOCKS: int = 10
+
+# 题材 reason 字段的切分符（同花顺常用 +，偶见 /、、、·）.
+_REASON_SPLIT_PATTERN: str = r"[+/、·]"
+
 # Commentary system role —— 角色 + 格式 + 长度 + 内容约束.
 _SYSTEM_PROMPT: str = """\
 你是一位资深 A 股投资顾问，关注中线（5-20 个交易日）持仓配置。\
@@ -46,7 +53,9 @@ _SYSTEM_PROMPT: str = """\
 【必须包含的 6 段】
 1. <b>大盘总览</b>：沪深主板 / 创业板 / 科创板 各自涨跌幅 + 成交额（如有量比一并提及）
 2. <b>热点行业</b>：今天最强的 2-3 个行业 + 资金有没有跟（净流入率、大单买入率）
-3. <b>概念轮动</b>：今天发动的概念 vs 滞涨/退潮的概念，简单点评
+3. <b>概念轮动</b>：今天发动的概念 vs 滞涨/退潮的概念，简单点评.
+   如 input 含 ``hot_reason_tags``（同花顺当日强势股题材归因聚合），
+   请把出现频次最高的 2-3 个题材关键词织入叙述，作为「今天为什么涨」的因果.
 4. <b>科技板块资金走向</b>：聚焦半导体 / AI / 算力 / 新能源 / 生物医药 / 高端制造 / 数字经济等科技主线
 5. <b>「十五五」七大主题</b>：按下方 themes 数据逐个点评（哪些主题资金涌入、哪些资金离场）
 6. <b>加减仓建议</b>：明确给出 2-3 条可执行建议，每条格式：「板块名/概念名 + 加仓/减仓/观望/持有 + 一句理由」.
@@ -56,6 +65,8 @@ _SYSTEM_PROMPT: str = """\
 - 建议偏稳健，避免「强烈推荐」「必涨」「全仓」等用词
 - 数据缺失维度（input 标注 "数据未到位"）→ 文中诚实说出，不要编造
 - KCB 池子（科创板活跃股池子）持仓数大的板块更值得用户关注，在叙述中带一句
+- ``hot_kcb_stocks`` 列示了今天科创池子在同花顺强势榜的命中（如有），
+  建议中可以提"科创池命中 N 只"作为信号支持，但**禁止**输出具体股票代码 / 简称
 """
 
 
@@ -126,6 +137,8 @@ def build_context(
         "top_industries": _top_industries(snapshot, overlay, _TOP_N_INDUSTRY),
         "top_concepts": _top_concepts(snapshot, overlay, _TOP_N_CONCEPT),
         "northbound": snapshot.northbound,
+        "hot_reason_tags": _hot_reason_tags(snapshot, _TOP_N_REASON_TAGS),
+        "hot_kcb_stocks": _hot_kcb_stocks(snapshot, overlay, _TOP_N_HOT_KCB_STOCKS),
         "missing": list(snapshot.missing),
     }
     # indices 全缺 → 在 missing 显式标注，让 LLM 知道这个维度没数据
@@ -186,6 +199,64 @@ def _top_concepts(
             "pct_change": _safe_float(r.get("pct_change")),
             "net_amount": _safe_float(r.get("net_amount")),  # 单位「亿」
             "kcb_count": overlay.count_for_concept(name),
+        })
+    return rows
+
+
+def _hot_reason_tags(snapshot: SectorSnapshot, n: int) -> list[dict[str, Any]]:
+    """聚合同花顺强势股 ``reason`` 字段 → 高频题材关键词 Counter.
+
+    ``reason`` 形如 ``"算力租赁+Token工厂+AI政务"``，按 ``+/、·`` 切分后
+    去重计数；返回 ``[{tag, count}, ...]`` 按 count desc.
+    """
+    df = snapshot.ths_hot
+    if df is None or df.empty or "reason" not in df.columns:
+        return []
+    counts: dict[str, int] = {}
+    for raw in df["reason"].dropna():
+        s = str(raw).strip()
+        if not s:
+            continue
+        for token in re.split(_REASON_SPLIT_PATTERN, s):
+            tag = token.strip()
+            if not tag:
+                continue
+            counts[tag] = counts.get(tag, 0) + 1
+    if not counts:
+        return []
+    top = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:n]
+    return [{"tag": t, "count": c} for t, c in top]
+
+
+def _hot_kcb_stocks(
+    snapshot: SectorSnapshot,
+    overlay: KcbOverlay,
+    n: int,
+) -> list[dict[str, Any]]:
+    """同花顺强势股 ∩ KCB 活跃池子 → 当日"我们关注的股票上了强势榜"信号.
+
+    KCB 池 ``active_pool`` 形如 ``{"688008.SH", ...}``，同花顺返回 6 位
+    裸码 + ``market`` 字段；按裸码做交集. 不外泄股票代码 / 名称给 LLM
+    输出，只供 LLM 推理用.
+    """
+    df = snapshot.ths_hot
+    if df is None or df.empty or "code" not in df.columns:
+        return []
+    pool_codes = {c.split(".")[0] for c in overlay.active_pool if "." in c}
+    if not pool_codes:
+        return []
+    hit = df[df["code"].astype(str).isin(pool_codes)]
+    if hit.empty:
+        return []
+    if "pct_change" in hit.columns:
+        hit = hit.sort_values("pct_change", ascending=False)
+    rows: list[dict[str, Any]] = []
+    for _, r in hit.head(n).iterrows():
+        rows.append({
+            "code": str(r.get("code", "")),
+            "name": str(r.get("name", "")),
+            "reason": str(r.get("reason", "")),
+            "pct_change": _safe_float(r.get("pct_change")),
         })
     return rows
 
@@ -297,6 +368,8 @@ def render_prompt(
         "top_industries": context["top_industries"],
         "top_concepts": context["top_concepts"],
         "northbound": context["northbound"],
+        "hot_reason_tags": context.get("hot_reason_tags", []),
+        "hot_kcb_stocks": context.get("hot_kcb_stocks", []),
         "themes_15th_5y": theme_metrics,
         "missing_dimensions": context["missing"],
     }

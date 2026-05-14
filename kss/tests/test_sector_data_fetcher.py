@@ -23,6 +23,30 @@ from kss.sector.data_fetcher import (
 )
 
 
+def _make_ths_hot_df() -> pd.DataFrame:
+    """模拟同花顺热点返回（fetch_ths_hot 已重命名为蛇形）."""
+    return pd.DataFrame({
+        "code": ["688008", "300033"],
+        "name": ["澜起科技", "同花顺"],
+        "reason": ["算力租赁+Token工厂", "AI应用+金融科技"],
+        "pct_change": [9.98, 6.5],
+        "market": ["沪", "深"],
+    })
+
+
+@pytest.fixture(autouse=True)
+def _patch_fetch_ths_hot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """全模块默认把 ``fetch_ths_hot`` 替成假实现，避免真实 HTTP.
+
+    需要测 ths_hot 失败路径的用例可在 body 里再次 ``monkeypatch.setattr``
+    覆盖（monkeypatch 同 scope 内顺序应用，后写覆盖先写）.
+    """
+    monkeypatch.setattr(
+        "kss.sector.data_fetcher.fetch_ths_hot",
+        lambda trade_date: _make_ths_hot_df(),
+    )
+
+
 class _FakeClient:
     """TushareClient 子类替身：4 个 fetch_* 方法返回可注入数据."""
 
@@ -270,7 +294,42 @@ class TestLoadSectorSnapshot:
         snap = load_sector_snapshot("20260512")
         assert isinstance(snap, SectorSnapshot)
         assert snap.trade_date == "20260512"
+        # ths_hot 由 autouse fixture 提供（默认成功），所以 missing 仍是 4 项
         assert len(snap.missing) == 4
+
+
+class TestThsHotIntegration:
+    """SectorSnapshot.ths_hot 字段 + load_sector_snapshot 集成（U4 / 补强 1）."""
+
+    def test_ths_hot_populated_in_snapshot(self) -> None:
+        """autouse fixture 返回 DataFrame → snap.ths_hot 应非 None 且不进 missing."""
+        client = _FakeClient(
+            ind=_make_ind_dc(),
+            cnt=_make_cnt_ths(),
+            sw=_make_sw_daily(),
+            hs=_make_hsgt(),
+        )
+        snap = load_sector_snapshot("20260512", client=client)  # type: ignore[arg-type]
+        assert snap.ths_hot is not None
+        assert "reason" in snap.ths_hot.columns
+        assert "ths_hot" not in snap.missing
+
+    def test_ths_hot_failure_isolated(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """fetch_ths_hot 返回 None 时 ths_hot 入 missing，其他字段不受影响."""
+        monkeypatch.setattr(
+            "kss.sector.data_fetcher.fetch_ths_hot",
+            lambda trade_date: None,
+        )
+        client = _FakeClient(
+            ind=_make_ind_dc(),
+            cnt=_make_cnt_ths(),
+            sw=_make_sw_daily(),
+            hs=_make_hsgt(),
+        )
+        snap = load_sector_snapshot("20260512", client=client)  # type: ignore[arg-type]
+        assert snap.ths_hot is None
+        assert "ths_hot" in snap.missing
+        assert snap.industry is not None  # 其他维度不受影响
 
 
 # ====================================================================== #

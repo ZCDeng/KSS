@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 from kss.data.tushare_client import TushareClient
+from kss.data.ths_client import fetch_ths_hot
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,9 @@ class SectorSnapshot:
             失败时为 ``None`` —— 主复盘流不依赖此字段.
         northbound: 北向资金单日汇总，含 ``north_money`` / ``south_money``（万元）.
             失败时为 ``None``.
+        ths_hot: 同花顺当日强势股 + 题材归因（``reason`` 字段），含 ``code`` /
+            ``name`` / ``reason`` / ``pct_change``. 用于在板块复盘文中织入
+            「今天为什么涨」的题材关键词. 失败时为 ``None``.
         missing: 拉取失败的字段名列表，供报告生成时显示「⚠️ 缺失」提示.
     """
 
@@ -62,6 +66,7 @@ class SectorSnapshot:
     concept: pd.DataFrame | None = None
     industry_index: pd.DataFrame | None = None
     northbound: dict[str, float] | None = None
+    ths_hot: pd.DataFrame | None = None
     missing: list[str] = field(default_factory=list)
 
 
@@ -146,6 +151,11 @@ def load_sector_snapshot(
     snap.northbound = _hsgt_row_to_dict(raw_hs)
     if snap.northbound is None:
         snap.missing.append("northbound")
+
+    # 同花顺热点是无鉴权 HTTP（非 Tushare），fetcher 自己处理失败 → 返回 None
+    snap.ths_hot = fetch_ths_hot(trade_date)
+    if snap.ths_hot is None:
+        snap.missing.append("ths_hot")
 
     if snap.missing:
         logger.warning(

@@ -59,6 +59,7 @@ def _make_snapshot(
     industry: pd.DataFrame | None = None,
     concept: pd.DataFrame | None = None,
     northbound: dict[str, float] | None = None,
+    ths_hot: pd.DataFrame | None = None,
     missing: list[str] | None = None,
 ) -> SectorSnapshot:
     return SectorSnapshot(
@@ -66,8 +67,26 @@ def _make_snapshot(
         industry=industry,
         concept=concept,
         northbound=northbound,
+        ths_hot=ths_hot,
         missing=missing or [],
     )
+
+
+def _make_ths_hot_df() -> pd.DataFrame:
+    """同花顺热点 mock：含一只科创池中的强势股 + 几只非池中股."""
+    return pd.DataFrame({
+        "code": ["688008", "688322", "300033", "002230", "688999"],
+        "name": ["澜起科技", "希荻微", "同花顺", "科大讯飞", "未知股"],
+        "reason": [
+            "算力租赁+Token工厂+AI政务",
+            "算力租赁+AI应用",
+            "AI应用+金融科技",
+            "AI应用+大模型",
+            "算力租赁",
+        ],
+        "pct_change": [9.98, 7.5, 6.5, 5.2, 4.0],
+        "market": ["沪", "沪", "深", "深", "沪"],
+    })
 
 
 def _make_indices() -> dict[str, dict[str, float]]:
@@ -98,15 +117,19 @@ def _make_themes() -> dict[str, ThemeBucket]:
     }
 
 
-def _make_overlay(industry_counts: dict[str, int] | None = None,
-                  concept_counts: dict[str, int] | None = None) -> KcbOverlay:
-    """构造一个 KcbOverlay mock，按 name 返回固定 count."""
+def _make_overlay(
+    industry_counts: dict[str, int] | None = None,
+    concept_counts: dict[str, int] | None = None,
+    active_pool: set[str] | None = None,
+) -> KcbOverlay:
+    """构造一个 KcbOverlay mock，按 name 返回固定 count；可注入 active_pool."""
     ind_map = industry_counts or {}
     cnt_map = concept_counts or {}
 
     overlay = MagicMock(spec=KcbOverlay)
     overlay.count_for_industry.side_effect = lambda n: ind_map.get(n, 0)
     overlay.count_for_concept.side_effect = lambda n: cnt_map.get(n, 0)
+    overlay.active_pool = active_pool if active_pool is not None else set()
     return overlay
 
 
@@ -226,6 +249,108 @@ class TestRenderPrompt:
         _, user = render_prompt("20260512", ctx, tm)
         assert "```json" in user
         assert "半导体" in user  # 主题名 + 行业名都在
+
+
+# ====================================================================== #
+# 同花顺热点题材归因 (U4 / 补强 1)
+# ====================================================================== #
+
+
+class TestHotReasonTagsAggregation:
+    """``hot_reason_tags`` 聚合：reason 字段切分 + 计数 + 排序."""
+
+    def test_aggregates_and_sorts_by_count_desc(self) -> None:
+        snap = _make_snapshot(
+            industry=_make_industry_df(),
+            concept=_make_concept_df(),
+            ths_hot=_make_ths_hot_df(),
+        )
+        overlay = _make_overlay()
+        ctx = build_context(snap, _make_indices(), _make_themes(), overlay)
+        tags = ctx["hot_reason_tags"]
+        assert tags  # 非空
+        # _make_ths_hot_df 里 "AI应用" 出现 3 次、"算力租赁" 3 次（并列）；
+        # "Token工厂" / "AI政务" / "金融科技" / "大模型" 各 1 次.
+        tag_to_count = {t["tag"]: t["count"] for t in tags}
+        assert tag_to_count["AI应用"] == 3
+        assert tag_to_count["算力租赁"] == 3
+        assert tag_to_count["Token工厂"] == 1
+
+    def test_returns_empty_when_ths_hot_missing(self) -> None:
+        snap = _make_snapshot(industry=_make_industry_df(), ths_hot=None)
+        overlay = _make_overlay()
+        ctx = build_context(snap, _make_indices(), _make_themes(), overlay)
+        assert ctx["hot_reason_tags"] == []
+
+    def test_handles_alternative_separators(self) -> None:
+        """reason 偶见 / 或 、 作分隔；同样应正确切分."""
+        df = pd.DataFrame({
+            "code": ["111111"],
+            "name": ["X"],
+            "reason": ["算力/AI、机器人"],
+            "pct_change": [5.0],
+        })
+        snap = _make_snapshot(industry=_make_industry_df(), ths_hot=df)
+        overlay = _make_overlay()
+        ctx = build_context(snap, _make_indices(), _make_themes(), overlay)
+        tags = {t["tag"] for t in ctx["hot_reason_tags"]}
+        assert tags == {"算力", "AI", "机器人"}
+
+
+class TestHotKcbStocksFilter:
+    """``hot_kcb_stocks``：同花顺强势股 ∩ KCB 活跃池 交集."""
+
+    def test_returns_only_pool_hits(self) -> None:
+        snap = _make_snapshot(
+            industry=_make_industry_df(),
+            ths_hot=_make_ths_hot_df(),
+        )
+        # 池里只有 688008 和 688322
+        overlay = _make_overlay(active_pool={"688008.SH", "688322.SH"})
+        ctx = build_context(snap, _make_indices(), _make_themes(), overlay)
+        hits = ctx["hot_kcb_stocks"]
+        codes = {h["code"] for h in hits}
+        assert codes == {"688008", "688322"}
+        # 按 pct_change desc 排序：688008 (9.98) 在前
+        assert hits[0]["code"] == "688008"
+        assert hits[0]["reason"] == "算力租赁+Token工厂+AI政务"
+
+    def test_returns_empty_when_pool_disjoint(self) -> None:
+        snap = _make_snapshot(industry=_make_industry_df(), ths_hot=_make_ths_hot_df())
+        # 用一个 _make_ths_hot_df 里不会出现的代码
+        overlay = _make_overlay(active_pool={"688001.SH"})
+        ctx = build_context(snap, _make_indices(), _make_themes(), overlay)
+        assert ctx["hot_kcb_stocks"] == []
+
+    def test_returns_empty_when_pool_empty(self) -> None:
+        snap = _make_snapshot(industry=_make_industry_df(), ths_hot=_make_ths_hot_df())
+        overlay = _make_overlay(active_pool=set())
+        ctx = build_context(snap, _make_indices(), _make_themes(), overlay)
+        assert ctx["hot_kcb_stocks"] == []
+
+    def test_returns_empty_when_ths_hot_missing(self) -> None:
+        snap = _make_snapshot(industry=_make_industry_df(), ths_hot=None)
+        overlay = _make_overlay(active_pool={"688008.SH"})
+        ctx = build_context(snap, _make_indices(), _make_themes(), overlay)
+        assert ctx["hot_kcb_stocks"] == []
+
+
+class TestRenderPromptWithThsHot:
+    """render_prompt 应把 hot_reason_tags / hot_kcb_stocks 注入 payload."""
+
+    def test_payload_includes_hot_fields(self) -> None:
+        snap = _make_snapshot(
+            industry=_make_industry_df(),
+            concept=_make_concept_df(),
+            ths_hot=_make_ths_hot_df(),
+        )
+        overlay = _make_overlay(active_pool={"688008.SH"})
+        ctx = build_context(snap, _make_indices(), _make_themes(), overlay)
+        tm = compute_theme_metrics(snap, _make_themes(), overlay)
+        _, user = render_prompt("20260512", ctx, tm)
+        assert "hot_reason_tags" in user
+        assert "hot_kcb_stocks" in user
+        assert "AI应用" in user  # 至少一个题材标签进入 payload
 
 
 # ====================================================================== #
