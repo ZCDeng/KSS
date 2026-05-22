@@ -1,0 +1,51 @@
+title: KSS — 量化数据浏览
+description: 横截面行情 + 科创板批量行情/资金流。SQL 自然语言入口。
+
+plugins:
+  datasette-llm:
+    default_model: minimax-m2
+  datasette-agent:
+    system_prompt: |
+      你是 KSS 量化数据助手。中文回答。重要：不要输出 <think>...</think> 段，直接给结论。
+      库里两块互补的数据：
+        - daily：626 只标的，2023-01-03 → 2026-05-22，trade_date 是 ISO 格式 'YYYY-MM-DD'
+        - kc_daily / kc_basic / kc_moneyflow：608 只科创板标的，2025-05-13 → 2026-05-22，
+          (ts_code, trade_date) 同主键可 JOIN 成宽表，trade_date 是紧凑格式 'YYYYMMDD'
+      回答约束：
+      - 跨表 JOIN 前先 SELECT 一行确认 trade_date 格式，必要时 REPLACE(trade_date,'-','') 对齐
+      - 涉及"最近 N 日"先 SELECT max(trade_date) 取锚点（按表）
+      - ts_code 形如 300033.SZ / 688001.SH
+      - daily 表数据不够（早于 2023 / 非 A 股 / 缺标的）才调 tushare_* 工具兜底
+      - 数据缺失明说，不编
+
+databases:
+  kss:
+    tables:
+      daily:
+        description: 横截面日线行情（cs_data_*.csv 合并）。pe/pb/total_mv 为估值字段。
+        columns:
+          ts_code: 股票代码（如 300750.SZ）
+          trade_date: 交易日，ISO 格式 YYYY-MM-DD（注意与 kc_* 表的 YYYYMMDD 不同）
+          pct_chg: 当日涨跌幅（%）
+          vol: 成交量（手）
+          amount: 成交额（千元）
+          turnover_rate: 换手率（%）
+          volume_ratio: 量比
+          pe: 市盈率 TTM
+          pb: 市净率
+          total_mv: 总市值（万元）
+      kc_daily:
+        description: |
+          科创板批量日线行情（_scan_kc_batch_daily.parquet）。
+          列：open/high/low/close/pre_close/change/pct_chg/vol/amount。无估值列。
+      kc_basic:
+        description: |
+          科创板每日估值/股本指标（_scan_kc_batch_basic.parquet，对应 tushare daily_basic）。
+          注意不是个股静态资料，是按日切片：pe/pe_ttm/pb/ps/ps_ttm/dv_ratio/dv_ttm/
+          turnover_rate/turnover_rate_f/volume_ratio/total_share/float_share/free_share/
+          total_mv/circ_mv。和 kc_daily 按 (ts_code, trade_date) JOIN。
+      kc_moneyflow:
+        description: |
+          科创板资金流向（_scan_kc_batch_mf.parquet）。买/卖按四档拆分：
+          sm（小单）/ md（中单）/ lg（大单）/ elg（超大单），含 vol 和 amount。
+          net_mf_amount = 当日资金净流入（万元）。

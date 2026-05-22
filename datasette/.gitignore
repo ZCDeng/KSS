@@ -1,0 +1,11 @@
+# Built artifacts — regenerate via build_db.py
+kss.db
+kss.db-*
+
+# Virtualenv
+.venv/
+
+# Python build
+*.egg-info/
+__pycache__/
+.pytest_cache/

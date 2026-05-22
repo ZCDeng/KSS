@@ -1,0 +1,30 @@
+[project]
+name = "datasette-kss-tushare"
+version = "0.0.1"
+description = "Tushare data tools for datasette-agent (KSS workbench)"
+requires-python = ">=3.10"
+dependencies = [
+    "datasette>=1.0a0",
+    "datasette-agent",
+    "tushare>=1.4",
+    "pandas",
+    "matplotlib>=3.7",
+]
+
+[project.entry-points.datasette]
+kss_tushare = "datasette_kss_tushare"
+
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["datasette_kss_tushare*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
