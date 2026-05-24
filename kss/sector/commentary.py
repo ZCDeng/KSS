@@ -10,6 +10,7 @@ from __future__ import annotations
 import html
 import logging
 import re
+from pathlib import Path
 from typing import Any
 
 from kss.llm import LLMClient, LLMUnavailable
@@ -18,6 +19,12 @@ from kss.sector.kcb_overlay import KcbOverlay
 from kss.sector.themes import ThemeBucket
 
 logger = logging.getLogger(__name__)
+
+# storage/macro/regime_daily.parquet 的相对路径（项目根三级上）。
+# 由 scripts/backfill_regime_history.py 和 scripts/update_macro_daily.py 维护.
+_REGIME_PARQUET = (
+    Path(__file__).resolve().parents[2] / "storage" / "macro" / "regime_daily.parquet"
+)
 
 
 # Telegram HTML 模式允许的标签白名单（其他标签会被 strip）.
@@ -50,7 +57,14 @@ _SYSTEM_PROMPT: str = """\
 - 段落之间空一行
 - 严禁编造数据；所有数字必须复述输入 JSON 里的数值；输入没有的字段不要提及
 
-【必须包含的 6 段】
+【必须包含的 6 段（首段为宏观环境，2-7 段为板块复盘）】
+0. <b>宏观环境</b>（2-3 句，仅在 input 含 ``macro_regime`` 且非 Unknown 时输出）：
+   - 第一句："当前宏观阶段 [阶段 X]（置信度 Y）：[一句话翻译]"
+   - 阶段映射：I=谷底前（E↑/r↓/流动性松）；II=扩张（E↑↑/r↑缓）；
+     III=顶部（E减速/r↑↑/流动性收紧）；IV=衰退（E↓/r↓/曲线倒挂）
+   - 第二句（仅在含 ``preferred_sectors`` / ``avoid_sectors`` 时输出）：
+     "本阶段历史规律倾向于 [preferred 前 3 个板块] 占优，回避 [avoid 前 3 个板块]"
+   - 配合下方建议时，III/IV 阶段语气更谨慎；I/II 阶段可适度提示加仓
 1. <b>大盘总览</b>：沪深主板 / 创业板 / 科创板 各自涨跌幅 + 成交额（如有量比一并提及）
 2. <b>热点行业</b>：今天最强的 2-3 个行业 + 资金有没有跟（净流入率、大单买入率）
 3. <b>概念轮动</b>：今天发动的概念 vs 滞涨/退潮的概念，简单点评.
@@ -60,6 +74,9 @@ _SYSTEM_PROMPT: str = """\
 5. <b>「十五五」七大主题</b>：按下方 themes 数据逐个点评（哪些主题资金涌入、哪些资金离场）
 6. <b>加减仓建议</b>：明确给出 2-3 条可执行建议，每条格式：「板块名/概念名 + 加仓/减仓/观望/持有 + 一句理由」.
    注：只到板块/概念粒度，不要给具体股票代码；建议要谨慎，标注「中线视角」.
+   若 macro_regime 为 III/IV，建议偏防御；I/II 可适度进攻.
+   若 ``preferred_sectors`` 与当日热点行业重合，优先加仓建议；
+   若 ``avoid_sectors`` 与当日热点行业重合，标注"短期跟风但与阶段轮换相左，谨慎追高".
 
 【风险口径】
 - 建议偏稳健，避免「强烈推荐」「必涨」「全仓」等用词
@@ -97,7 +114,7 @@ def generate_commentary(
         HTML 格式投顾文本，长度 ≤ ``_MAX_MSG_LEN``.
         LLM 失败 → 返回结构化 fallback 文本（仍含日期 + Top 数据 + ⚠️ 标记）.
     """
-    context = build_context(snapshot, indices, themes, overlay)
+    context = build_context(snapshot, indices, themes, overlay, trade_date=date_yyyymmdd)
     theme_metrics = compute_theme_metrics(snapshot, themes, overlay)
 
     system, user = render_prompt(date_yyyymmdd, context, theme_metrics)
@@ -125,12 +142,18 @@ def build_context(
     indices: dict[str, dict[str, float]],
     themes: dict[str, ThemeBucket],
     overlay: KcbOverlay,
+    trade_date: str | None = None,
 ) -> dict[str, Any]:
     """把 snapshot + indices + themes 序列化成紧凑 dict（喂给 LLM）.
 
+    Args:
+        trade_date: ``YYYYMMDD``；用于从 ``regime_daily.parquet`` 取宏观阶段标签.
+            ``None`` 时跳过宏观阶段注入（向后兼容老调用方）.
+
     Returns:
         含 ``indices`` / ``top_industries`` / ``top_concepts`` / ``northbound``
-        / ``missing`` 五个键的 dict.
+        / ``hot_reason_tags`` / ``hot_kcb_stocks`` / ``macro_regime`` /
+        ``missing`` 八个键的 dict.
     """
     ctx: dict[str, Any] = {
         "indices": indices,  # 已是 dict[alias -> metrics]
@@ -139,6 +162,7 @@ def build_context(
         "northbound": snapshot.northbound,
         "hot_reason_tags": _hot_reason_tags(snapshot, _TOP_N_REASON_TAGS),
         "hot_kcb_stocks": _hot_kcb_stocks(snapshot, overlay, _TOP_N_HOT_KCB_STOCKS),
+        "macro_regime": load_macro_regime(trade_date) if trade_date else None,
         "missing": list(snapshot.missing),
     }
     # indices 全缺 → 在 missing 显式标注，让 LLM 知道这个维度没数据
@@ -147,7 +171,65 @@ def build_context(
     # themes 全缺 → 标记，让 LLM 不要硬写「十五五」段
     if not themes:
         ctx["missing"].append("themes")
+    if ctx["macro_regime"] is None:
+        ctx["missing"].append("macro_regime")
     return ctx
+
+
+def load_macro_regime(trade_date: str) -> dict[str, Any] | None:
+    """从 ``regime_daily.parquet`` 取 ``trade_date`` 的宏观阶段标签 + 部门轮换提示.
+
+    Args:
+        trade_date: ``YYYYMMDD``.
+
+    Returns:
+        ``{"stage": str, "confidence": float, "n_signals": int,
+        "preferred_sectors": list[str], "avoid_sectors": list[str],
+        "rationale": str}`` 或 ``None``（文件不存在 / 当日无记录 / stage 为
+        Unknown 时均返回 None，让 LLM 跳过这段而非强行说"未知"）.
+
+        ``preferred_sectors`` / ``avoid_sectors`` 来自 P2 sector_rotation.yaml；
+        加载失败时仅省略该字段，不影响 stage 主体.
+    """
+    if not _REGIME_PARQUET.exists():
+        return None
+    try:
+        import pandas as pd
+        df = pd.read_parquet(_REGIME_PARQUET)
+    except Exception as exc:    # noqa: BLE001
+        logger.warning("[commentary] 读取 regime_daily.parquet 失败: %s", exc)
+        return None
+    df["trade_date"] = df["trade_date"].astype(str)
+    row = df[df["trade_date"] == str(trade_date)]
+    if row.empty:
+        return None
+    r = row.iloc[-1]
+    stage = str(r.get("stage", "Unknown"))
+    if stage == "Unknown":
+        return None
+
+    result: dict[str, Any] = {
+        "stage": stage,
+        "confidence": float(r.get("confidence", 0.0)),
+        "n_signals": int(r.get("n_signals", 0)),
+    }
+    # P2 部门轮换提示（缺 yaml 时容错降级）
+    try:
+        from kss.macro.rotation import (
+            get_avoid_industries,
+            get_preferred_industries,
+            get_rationale,
+        )
+        prefs = get_preferred_industries(stage)
+        avoid = get_avoid_industries(stage)
+        if prefs or avoid:
+            result["preferred_sectors"] = prefs
+            result["avoid_sectors"] = avoid
+            result["rationale"] = get_rationale(stage)
+    except Exception as exc:    # noqa: BLE001
+        logger.debug("[commentary] sector_rotation 加载失败，仅返回 stage: %s", exc)
+
+    return result
 
 
 def _top_industries(
@@ -364,6 +446,7 @@ def render_prompt(
     import json
     payload = {
         "date": date_yyyymmdd,
+        "macro_regime": context.get("macro_regime"),
         "indices": context["indices"],
         "top_industries": context["top_industries"],
         "top_concepts": context["top_concepts"],

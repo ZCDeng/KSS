@@ -1,0 +1,28 @@
+# Macro Regime 分类器配置 —— P1 of Bolton 周期框架
+#
+# 修改任一值后无需重启服务，下一次 classify_today() 调用会读最新值.
+
+# 历史分位数阈值（用历史数据自动算，不写死）
+quantiles:
+  low: 0.33      # 低分位（rising/high 信号的下界）
+  high: 0.66     # 高分位（cooling/peaking 信号的上界）
+
+# 滞后窗口（避免单日噪声切换 stage）
+hysteresis:
+  min_consecutive_days: 3   # 连续 N 天同标签才切换 stage
+  flip_protection: true     # 切换前要求前 1 个 stage 至少持续 N 天
+
+# 历史数据要求
+history:
+  min_days_for_quantile: 252   # 少于一年的历史时退化为 rule-based（不能算分位数）
+  use_rolling: false           # true 则用滚动 252 日窗口，false 用全量历史
+
+# 各维度权重（信心度计算用，加权后归一化）
+weights:
+  e_trend: 1.0       # 分子端 E（PMI + VAI）
+  r_trend: 1.0       # 分母端 r（Δyld_10y_20d / Δshibor_3m_20d）
+  liquidity: 0.7     # 流动性（M2 + hsgt + margin）
+  yc_shape: 0.6      # 收益率曲线形状（slope + slope_d20）
+
+# 用于诊断的最小有效维度数；少于此数 stage='Unknown'
+min_signals_required: 2

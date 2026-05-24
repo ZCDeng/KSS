@@ -270,3 +270,68 @@ class TushareClient:
             ),
             f"fetch_index_daily {ts_code} ({start}~{end})",
         )
+
+    # ------------------------------------------------------------------ #
+    # 基本面 / 股票信息（用于风险前过滤）
+    # ------------------------------------------------------------------ #
+
+    def fetch_fina_indicator(
+        self,
+        ts_code: str,
+        start: str | None = None,
+        end: str | None = None,
+        period: str | None = None,
+    ) -> pd.DataFrame | None:
+        """财务指标（季频，含 ``debt_to_assets`` / ``current_ratio`` 等）.
+
+        Tushare ``fina_indicator`` 单股查询；按 ``period`` 取单季 / ``start``
+        ``end`` 取窗口. 财报披露滞后约 30 天，调用方应当用 trade_date - 30d
+        作为可见上限.
+
+        Args:
+            ts_code: Tushare 代码.
+            start: 起始公告日期 ``YYYYMMDD``，可空.
+            end: 截止公告日期 ``YYYYMMDD``，可空.
+            period: 报告期 ``YYYYMMDD``（如 ``20240930`` = 2024Q3），可空.
+
+        Returns:
+            DataFrame 含 ``ts_code`` / ``end_date`` / ``debt_to_assets`` /
+            ``current_ratio`` / ``n_income_attr_p`` 等；失败 ``None``.
+        """
+        kwargs: dict = {"ts_code": ts_code}
+        if start:
+            kwargs["start_date"] = start
+        if end:
+            kwargs["end_date"] = end
+        if period:
+            kwargs["period"] = period
+        return _fetch_with_retry(
+            lambda: self._pro.fina_indicator(**kwargs),
+            f"fetch_fina_indicator {ts_code} ({start or ''}~{end or ''} period={period or ''})",
+        )
+
+    def fetch_stock_basic(
+        self,
+        exchange: str = "",
+        list_status: str = "L",
+    ) -> pd.DataFrame | None:
+        """股票基础信息（``name`` / ``list_date`` / ``delist_date`` / ``market``）.
+
+        Tushare ``stock_basic`` 返回全市场清单. ``list_status='L'`` 仅在
+        市股；含 ``'D'``（退市）/ ``'P'``（暂停上市）可换参. ST 检测：
+        ``name`` 含 ``'ST'`` / ``'*ST'`` 前缀.
+
+        Args:
+            exchange: ``'SSE'`` 上交 / ``'SZSE'`` 深交，空则全市场.
+            list_status: ``'L'`` 上市 / ``'D'`` 退市 / ``'P'`` 暂停.
+
+        Returns:
+            DataFrame；失败 ``None``.
+        """
+        return _fetch_with_retry(
+            lambda: self._pro.stock_basic(
+                exchange=exchange, list_status=list_status,
+                fields="ts_code,name,industry,market,list_date,delist_date",
+            ),
+            f"fetch_stock_basic (exchange={exchange or 'ALL'} status={list_status})",
+        )

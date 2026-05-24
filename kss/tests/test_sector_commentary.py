@@ -176,6 +176,74 @@ class TestBuildContext:
         pcts = [x["pct_change"] for x in ctx["top_industries"]]
         assert pcts == sorted(pcts, reverse=True)
 
+    def test_macro_regime_injected_when_available(self, monkeypatch) -> None:
+        """有 regime_daily.parquet 且当日有记录时，macro_regime 注入 context (含 P2 部门轮换)."""
+        from kss.sector import commentary as cm
+
+        fake = pd.DataFrame({
+            "trade_date": ["20260101"],
+            "stage": ["II"],
+            "confidence": [0.75],
+            "n_signals": [4],
+        })
+
+        class _FakePath:
+            def exists(self) -> bool:
+                return True
+
+        monkeypatch.setattr(cm, "_REGIME_PARQUET", _FakePath())
+        monkeypatch.setattr(pd, "read_parquet", lambda _p: fake)
+
+        snap = _make_snapshot(industry=_make_industry_df(), concept=_make_concept_df())
+        overlay = _make_overlay()
+        ctx = build_context(snap, _make_indices(), _make_themes(), overlay, trade_date="20260101")
+        # stage / confidence / n_signals 必带；preferred/avoid 视 yaml 加载而定
+        assert ctx["macro_regime"]["stage"] == "II"
+        assert ctx["macro_regime"]["confidence"] == 0.75
+        assert ctx["macro_regime"]["n_signals"] == 4
+        # P2 sector_rotation.yaml 默认存在，应注入 preferred_sectors
+        assert "preferred_sectors" in ctx["macro_regime"]
+        assert "钢铁" in ctx["macro_regime"]["preferred_sectors"]
+        assert "macro_regime" not in ctx["missing"]
+
+    def test_macro_regime_missing_when_no_file(self, monkeypatch) -> None:
+        from kss.sector import commentary as cm
+
+        class _FakePath:
+            def exists(self) -> bool:
+                return False
+
+        monkeypatch.setattr(cm, "_REGIME_PARQUET", _FakePath())
+        snap = _make_snapshot(industry=_make_industry_df(), concept=_make_concept_df())
+        overlay = _make_overlay()
+        ctx = build_context(snap, _make_indices(), _make_themes(), overlay, trade_date="20260101")
+        assert ctx["macro_regime"] is None
+        assert "macro_regime" in ctx["missing"]
+
+    def test_macro_regime_unknown_stage_treated_as_missing(self, monkeypatch) -> None:
+        """stage='Unknown' 返回 None，避免 LLM 硬写"未知"."""
+        from kss.sector import commentary as cm
+
+        fake = pd.DataFrame({
+            "trade_date": ["20260101"],
+            "stage": ["Unknown"],
+            "confidence": [0.0],
+            "n_signals": [0],
+        })
+
+        class _FakePath:
+            def exists(self) -> bool:
+                return True
+
+        monkeypatch.setattr(cm, "_REGIME_PARQUET", _FakePath())
+        monkeypatch.setattr(pd, "read_parquet", lambda _p: fake)
+
+        snap = _make_snapshot(industry=_make_industry_df(), concept=_make_concept_df())
+        overlay = _make_overlay()
+        ctx = build_context(snap, _make_indices(), _make_themes(), overlay, trade_date="20260101")
+        assert ctx["macro_regime"] is None
+        assert "macro_regime" in ctx["missing"]
+
 
 # ====================================================================== #
 # compute_theme_metrics

@@ -1,0 +1,35 @@
+# Stock Risk Pre-Filters 配置 —— P4 of Bolton 周期框架
+#
+# combo_scan 在 bootstrap 模式匹配前，按本表三道线先过滤候选池.
+
+# 总开关：false 时 apply_all_filters 仅返回原列表（用于回测对照 / 紧急止血）
+enabled: true
+
+# ----- 1. 高杠杆过滤 -----
+# 资产负债率超出该股所在行业历史分位数则剔除.
+# 行业内比较避免误杀正常杠杆经营行业（银行 / 地产）.
+leverage:
+  enabled: true
+  industry_quantile: 0.80          # 行业 80 分位为阈值
+  fallback_absolute_max: 0.85      # 行业样本不足时退化到绝对值（85%）
+  industry_level: L1               # 申万一级
+  min_industry_peers: 5            # 行业内至少 N 个样本才用分位过滤
+
+# ----- 2. 低流动性过滤 -----
+# 过去 N 个交易日均成交额低于阈值则剔除.
+# 阈值偏紧时小盘股池被砍较多；冷市可下调.
+liquidity:
+  enabled: true
+  window_days: 20
+  min_daily_amount_yuan: 50000000   # 5000 万元
+  min_valid_days: 10                # 窗口内至少 N 个交易日有数据
+
+# ----- 3. ST / 退市风险 -----
+# 名称含 ST / *ST / 已设 delist_date 直接剔除；
+# 连续 2 年净利润为负 / 净资产为负也剔除（财报兜底）.
+st_risk:
+  enabled: true
+  exclude_st_in_name: true
+  exclude_with_delist_date: true
+  exclude_consecutive_loss_years: 2  # >=2 年连亏剔除（0 则跳过此规则）
+  exclude_negative_equity: true

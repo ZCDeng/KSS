@@ -1,0 +1,82 @@
+# Sector Rotation 映射表 —— P2 of Bolton 周期框架
+#
+# 按 Bolton《稳中求胜》第 4 章附录的部门轮换表，本土化为申万一级行业.
+# 静态表 + 调参靠人工 + plan 文档保留历史决策.
+#
+# 用法：
+#   from kss.macro.rotation import get_preferred_industries, score_industry_fit
+#   prefs = get_preferred_industries("II")          → ["石油石化", ...]
+#   fit = score_industry_fit("钢铁", "II")          → +1.0
+#   fit = score_industry_fit("钢铁", "III")         → -1.0
+#
+# 行业命名以申万一级（SW2021）为准。带破折号的子项（如"医药生物-中药"）
+# 在 :func:`kss.macro.rotation.score_industry_fit` 内用前缀匹配兼容到一级.
+
+version: 1
+country: CN
+
+stages:
+  I:
+    label: 谷底前
+    preferred:
+      - 汽车
+      - 房地产
+      - 家用电器
+      - 建筑材料
+      - 非银金融
+    avoid:
+      - 食品饮料
+      - 公用事业
+      - 医药生物-中药
+    rationale: "利率敏感性高 + 被压抑需求释放"
+
+  II:
+    label: 扩张
+    preferred:
+      - 石油石化
+      - 有色金属
+      - 钢铁
+      - 煤炭
+      - 交通运输-航空
+      - 机械设备
+    avoid:
+      - 食品饮料
+      - 公用事业
+    rationale: "上游资源 + 商品价格 + 周期股盈利顶峰"
+
+  III:
+    label: 顶部
+    preferred:
+      - 食品饮料-白酒
+      - 美容护理
+      - 半导体设备
+      - 国防军工
+      - 银行
+    avoid:
+      - 钢铁
+      - 煤炭
+      - 房地产
+      - 建筑材料
+    rationale: "财富效应 + 资本品扩张 + 利率敏感行业承压"
+
+  IV:
+    label: 衰退
+    preferred:
+      - 公用事业
+      - 食品饮料-必选
+      - 医药生物
+      - 通信运营
+      - 国防军工
+    avoid:
+      - 汽车
+      - 房地产
+      - 钢铁
+      - 有色金属
+      - 煤炭
+    rationale: "防御性 + 利率敏感反向 + 必需消费"
+
+# 评分权重 —— score_industry_fit 的返回区间
+weights:
+  preferred: 1.0
+  avoid: -1.0
+  neutral: 0.0
