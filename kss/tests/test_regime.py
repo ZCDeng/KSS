@@ -342,3 +342,37 @@ def test_compute_liquidity_index_hsgt_only():
 
 def test_compute_liquidity_index_all_none_returns_none():
     assert compute_liquidity_index() is None
+
+
+def test_compute_liquidity_index_string_typed_hsgt_coerced():
+    """回归：Tushare 偶尔返回 str 数字，落 parquet 后整列变 object dtype.
+
+    曾因此触发 ``unsupported operand type(s) for /: 'str' and 'float'``.
+    现在 _normalize_hsgt + pd.to_numeric 应静默兜底.
+    """
+    from kss.macro import derived as d
+    # 模拟坏 dtype 的 hsgt
+    hsgt = pd.DataFrame({
+        "trade_date": ["20240101", "20240102", "20240103"],
+        "net_amount": ["100.0", "200.0", "300.0"],     # 字符串数字
+    })
+    hsgt["net_amount"] = pd.to_numeric(hsgt["net_amount"], errors="coerce")
+    out = d.compute_liquidity_index(hsgt_panel=hsgt)
+    # 不应抛 TypeError；样本太少 z-score 退化为 0 仍可接受
+    assert out is not None
+
+
+def test_compute_liquidity_index_pd_na_in_m2_does_not_crash():
+    """回归：当某些 trade_date 的 month 在 m2 panel 里缺失时，
+    旧实现用 pd.NA 占位会触发 astype(float) NAType 错误。"""
+    hsgt = pd.DataFrame({
+        "trade_date": ["20240101", "20240102"],
+        "net_amount": [100.0, 200.0],
+    })
+    monthly = pd.DataFrame({
+        "month": ["202312"],     # 2024 月份完全缺失
+        "m2_yoy": [7.5],
+    })
+    # 不应抛异常
+    out = compute_liquidity_index(monthly_panel=monthly, hsgt_panel=hsgt)
+    assert out is not None

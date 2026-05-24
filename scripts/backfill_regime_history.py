@@ -277,15 +277,22 @@ def _assemble_e_monthly(pmi: pd.DataFrame | None, vai: pd.DataFrame | None) -> p
 
 def _normalize_hsgt(hsgt: pd.DataFrame | None) -> pd.DataFrame | None:
     """把 Tushare ``moneyflow_hsgt`` 输出 (north_money / south_money) 归一为
-    ``trade_date`` + ``net_amount``（北向净流入，单位亿）."""
+    ``trade_date`` + ``net_amount``（北向净流入，单位亿）.
+
+    Tushare API 偶尔会以 str 形式返回数字（特别是早期返回缺失日），落到
+    parquet 后整列变 object dtype。统一用 :func:`pd.to_numeric` 强制 coerce
+    （非法值 → NaN）后再除法.
+    """
     if hsgt is None or hsgt.empty:
         return None
     df = hsgt.copy()
     df["trade_date"] = df["trade_date"].astype(str)
     if "north_money" in df.columns:
-        df["net_amount"] = df["north_money"] / 100.0     # 万元 → 亿
+        df["net_amount"] = pd.to_numeric(df["north_money"], errors="coerce") / 100.0
     elif "hgt" in df.columns and "sgt" in df.columns:
-        df["net_amount"] = (df["hgt"].fillna(0) + df["sgt"].fillna(0)) / 100.0
+        hgt = pd.to_numeric(df["hgt"], errors="coerce").fillna(0)
+        sgt = pd.to_numeric(df["sgt"], errors="coerce").fillna(0)
+        df["net_amount"] = (hgt + sgt) / 100.0
     else:
         return None
     return df[["trade_date", "net_amount"]]
@@ -295,6 +302,7 @@ def _normalize_margin(margin: pd.DataFrame | None) -> pd.DataFrame | None:
     """归一为 ``trade_date`` + ``rzye``（融资余额，元）.
 
     Tushare ``margin`` 返回 SSE/SZSE 分行，这里按 trade_date 求和.
+    rzye 同样可能是 object 类型，强制 coerce 防御.
     """
     if margin is None or margin.empty:
         return None
@@ -302,6 +310,7 @@ def _normalize_margin(margin: pd.DataFrame | None) -> pd.DataFrame | None:
     df["trade_date"] = df["trade_date"].astype(str)
     if "rzye" not in df.columns:
         return None
+    df["rzye"] = pd.to_numeric(df["rzye"], errors="coerce")
     return df[["trade_date", "rzye"]].copy()
 
 

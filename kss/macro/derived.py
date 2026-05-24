@@ -139,13 +139,16 @@ def compute_liquidity_index(
     aligned = [p.reindex(base_idx) for p in parts]
 
     if monthly_panel is not None and not monthly_panel.empty and "m2_yoy" in monthly_panel.columns:
+        import numpy as np
         m2 = monthly_panel.sort_values("month").reset_index(drop=True).copy()
         m2["month"] = m2["month"].astype(str)
         # 把月 ffill 到日：构造 month-prefix 索引匹配
         m2_series = pd.Series(m2["m2_yoy"].values, index=m2["month"])
-        daily_m2 = pd.Series(
-            [m2_series.get(d[:6], pd.NA) for d in base_idx], index=base_idx
-        ).astype(float).ffill()
+        # 用 np.nan（不是 pd.NA）保证后续 .astype(float) 安全
+        daily_m2_vals = [m2_series.get(d[:6], np.nan) for d in base_idx]
+        daily_m2 = pd.to_numeric(
+            pd.Series(daily_m2_vals, index=base_idx), errors="coerce",
+        ).ffill()
         aligned.append(_zscore(daily_m2))
 
     composite = pd.concat(aligned, axis=1).mean(axis=1, skipna=True)
