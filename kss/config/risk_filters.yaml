@@ -8,10 +8,15 @@ enabled: true
 # ----- 1. 高杠杆过滤 -----
 # 资产负债率超出该股所在行业历史分位数则剔除.
 # 行业内比较避免误杀正常杠杆经营行业（银行 / 地产）.
+# **单位说明**：debt_to_assets 来自 Tushare fina_indicator，单位为百分点
+# （银行约 90，制造业约 40-60，科技约 10-30）。阈值与之同尺度.
 leverage:
   enabled: true
   industry_quantile: 0.80          # 行业 80 分位为阈值
-  fallback_absolute_max: 0.85      # 行业样本不足时退化到绝对值（85%）
+  fallback_absolute_max: 85.0      # 行业样本不足时退化到绝对值（85%）
+  # 绝对下限：低杠杆行业（科技 ~20-30%）即使略超 80 分位也不算高风险，
+  # 实际阈值 = max(行业分位, min_absolute_threshold). 防止过度过滤.
+  min_absolute_threshold: 50.0
   industry_level: L1               # 申万一级
   min_industry_peers: 5            # 行业内至少 N 个样本才用分位过滤
 

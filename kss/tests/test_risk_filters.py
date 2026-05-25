@@ -73,15 +73,18 @@ def test_filter_high_leverage_industry_quantile() -> None:
 
 
 def test_filter_high_leverage_fallback_when_few_peers() -> None:
-    """行业内 < min_industry_peers 时退化到绝对值 fallback_absolute_max=0.85."""
+    """行业内 < min_industry_peers 时退化到绝对值 fallback_absolute_max=85.0.
+
+    Tushare debt_to_assets 单位是百分点（50 = 50%，90 = 90%）.
+    """
     fina = _build_fina([
-        {"ts_code": "A", "end_date": "20240930", "debt_to_assets": 0.50},
-        {"ts_code": "B", "end_date": "20240930", "debt_to_assets": 0.90},
+        {"ts_code": "A", "end_date": "20240930", "debt_to_assets": 50.0},
+        {"ts_code": "B", "end_date": "20240930", "debt_to_assets": 90.0},
     ])
     industry = {"A": "稀缺行业", "B": "稀缺行业"}
     cfg = load_config()
     cfg["leverage"]["min_industry_peers"] = 5
-    cfg["leverage"]["fallback_absolute_max"] = 0.85
+    cfg["leverage"]["fallback_absolute_max"] = 85.0
     kept, removed = filter_high_leverage(["A", "B"], fina, industry, cfg)
     assert "B" in [r["ts_code"] for r in removed]
     assert "A" in kept
@@ -205,11 +208,12 @@ def test_apply_all_filters_combines_three_reasons() -> None:
         {"ts_code": "GOOD", "name": "正常", "delist_date": None},
     ])
     fina = pd.DataFrame([
-        {"ts_code": "HEAVY", "end_date": "20240930", "debt_to_assets": 0.95,
+        # debt_to_assets 单位是百分点（同 Tushare fina_indicator 约定）
+        {"ts_code": "HEAVY", "end_date": "20240930", "debt_to_assets": 95.0,
          "n_income_attr_p": 1e8, "bps": 5.0},
-        {"ts_code": "DEAD", "end_date": "20240930", "debt_to_assets": 0.5,
+        {"ts_code": "DEAD", "end_date": "20240930", "debt_to_assets": 50.0,
          "n_income_attr_p": 1e8, "bps": 5.0},
-        {"ts_code": "GOOD", "end_date": "20240930", "debt_to_assets": 0.5,
+        {"ts_code": "GOOD", "end_date": "20240930", "debt_to_assets": 50.0,
          "n_income_attr_p": 1e8, "bps": 5.0},
     ])
     industry = {"HEAVY": "稀缺", "DEAD": "稀缺", "GOOD": "稀缺"}

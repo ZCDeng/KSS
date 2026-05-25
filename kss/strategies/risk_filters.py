@@ -88,7 +88,10 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     "leverage": {
         "enabled": True,
         "industry_quantile": 0.80,
-        "fallback_absolute_max": 0.85,
+        # Tushare debt_to_assets 单位是百分点（85.0 = 85%）；同尺度比较
+        "fallback_absolute_max": 85.0,
+        # 绝对下限：低杠杆行业即使略超分位也不该误杀
+        "min_absolute_threshold": 50.0,
         "industry_level": "L1",
         "min_industry_peers": 5,
     },
@@ -137,6 +140,7 @@ def filter_high_leverage(
 
     quantile = float(cfg["industry_quantile"])
     fallback_max = float(cfg["fallback_absolute_max"])
+    min_abs = float(cfg.get("min_absolute_threshold", 0.0))
     min_peers = int(cfg["min_industry_peers"])
 
     # 每股取最新一行
@@ -160,17 +164,19 @@ def filter_high_leverage(
         dta = float(dta)
         ind = industry_map.get(code)
         peers = industry_buckets.get(ind, [])
-        threshold: float | None = None
         if len(peers) >= min_peers:
-            threshold = float(pd.Series(peers).quantile(quantile))
+            quantile_th = float(pd.Series(peers).quantile(quantile))
         else:
-            threshold = fallback_max
+            quantile_th = fallback_max
+        # 实际阈值 = max(行业分位, 绝对下限). 低杠杆行业避免被误杀.
+        threshold = max(quantile_th, min_abs)
         if dta > threshold:
             removed.append({
                 "ts_code": code,
                 "reason": "leverage",
                 "detail": f"debt_to_assets={dta:.3f} > {threshold:.3f} "
-                          f"(industry={ind or 'N/A'}, n_peers={len(peers)})",
+                          f"(industry={ind or 'N/A'}, n_peers={len(peers)}, "
+                          f"quantile_th={quantile_th:.3f})",
             })
         else:
             kept.append(code)
