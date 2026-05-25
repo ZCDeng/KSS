@@ -40,6 +40,7 @@ from kss.config.paths import (  # noqa: E402
     DAILY_PARQUET,
     HS300_PE_PARQUET,
     MONTHLY_PARQUET,
+    REGIME_ALERT_SENTINEL,
     REGIME_PARQUET,
     STORAGE_ROOT,
     VALUATION_PARQUET,
@@ -53,6 +54,7 @@ from kss.macro.pipeline import (  # noqa: E402
     ensure_margin,
     ensure_pmi_vai,
 )
+from kss.macro.queries import detect_stage_transition  # noqa: E402
 from kss.macro.regime import classify_history, load_config  # noqa: E402
 from kss.macro.valuation import compute_hs300_n_from_panel  # noqa: E402
 
@@ -108,6 +110,11 @@ def parse_args() -> argparse.Namespace:
         "--skip-valuation",
         action="store_true",
         help="跳过 HS300 估值 n 计算（默认每日刷新 valuation_n_daily.parquet）",
+    )
+    p.add_argument(
+        "--skip-alert",
+        action="store_true",
+        help="跳过宏观阶段切换 Telegram 告警（plan 011）",
     )
     return p.parse_args()
 
@@ -263,9 +270,11 @@ def main() -> int:
     # 宏观阶段：刷新 PMI / margin / hsgt + 重算 regime_daily.parquet
     # Fail-loud: 单步失败让 exit code 非 0，cron 能在 launchd 日志显式报错.
     exit_code = 0
+    regime_ok = False
     if not args.skip_regime:
         try:
             refresh_regime(client, start, end)
+            regime_ok = True
         except Exception as exc:    # noqa: BLE001
             logger.error("regime 刷新失败: %s", exc, exc_info=True)
             exit_code = 2
@@ -278,7 +287,76 @@ def main() -> int:
             logger.error("valuation 刷新失败: %s", exc, exc_info=True)
             exit_code = 2
 
+    # 阶段切换告警 (plan 011)：regime 成功才查；wrap try/except 不阻断主流程.
+    if regime_ok and not args.skip_alert:
+        try:
+            _check_and_send_alert()
+        except Exception as exc:    # noqa: BLE001
+            logger.error("阶段切换告警失败: %s", exc, exc_info=True)
+
     return exit_code
+
+
+def _read_sentinel() -> str:
+    """读阶段切换 sentinel，无文件 / 读失败返回空串."""
+    if not REGIME_ALERT_SENTINEL.exists():
+        return ""
+    try:
+        return REGIME_ALERT_SENTINEL.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        logger.warning("sentinel 读取失败: %s", exc)
+        return ""
+
+
+def _write_sentinel(token: str) -> None:
+    """覆盖写 sentinel 文件 (atomic enough for single-writer cron)."""
+    REGIME_ALERT_SENTINEL.parent.mkdir(parents=True, exist_ok=True)
+    REGIME_ALERT_SENTINEL.write_text(token, encoding="utf-8")
+
+
+def _check_and_send_alert() -> None:
+    """检测 regime_daily.parquet 末两行 stage 切换并推 Telegram (plan 011).
+
+    流程:
+
+    1. ``detect_stage_transition`` 读 parquet 取末两行；无切换 / Unknown 不告警.
+    2. 比对 ``REGIME_ALERT_SENTINEL`` 防同日重复推；sentinel token 为
+       ``"<as_of_date>|<from>|<to>"``.
+    3. 走 ``send_to_channels(channel='telegram', parse_mode='HTML')`` 推送.
+    4. 推送 OK 写 sentinel；推送失败保留旧 sentinel，下次 cron 仍会重试.
+    """
+    transition = detect_stage_transition()
+    if transition is None:
+        logger.info("阶段切换告警: 末两日 stage 无切换或含 Unknown，跳过")
+        return
+
+    token = f"{transition.as_of_date}|{transition.from_stage}|{transition.to_stage}"
+    if _read_sentinel() == token:
+        logger.info(
+            "阶段切换告警: sentinel 已记录 %s，跳过重复推送",
+            token,
+        )
+        return
+
+    # 局部 import 避免增加模块顶部依赖（与 scan_combo_signals.py 同款模式）
+    from kss.notifications.manager import send_to_channels
+    from kss.notifications.templates.regime_transition import render_transition_alert
+
+    message = render_transition_alert(transition)
+    date_disp = transition.as_of_date
+    if len(date_disp) == 8 and date_disp.isdigit():
+        date_disp = f"{date_disp[:4]}-{date_disp[4:6]}-{date_disp[6:8]}"
+    results = send_to_channels(
+        message=message,
+        channel="telegram",
+        title=f"宏观阶段切换 {date_disp}",
+        parse_mode="HTML",
+    )
+    logger.info("阶段切换告警推送结果: %s", results)
+    if any(results.values()):
+        _write_sentinel(token)
+    else:
+        logger.warning("所有通道推送失败，保留旧 sentinel 等待下次重试")
 
 
 def refresh_valuation(client: MacroClient, start: str, end: str) -> None:

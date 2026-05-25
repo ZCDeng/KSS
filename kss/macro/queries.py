@@ -64,6 +64,23 @@ class RotationHint:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class StageTransition:
+    """跨日阶段切换事件 (plan 011).
+
+    捕捉 ``regime_daily.parquet`` 末两行 ``stage`` 列发生变化的事件，
+    供告警系统按 (date, from, to) 三元组去重推送.
+    """
+
+    from_stage: str
+    to_stage: str
+    confidence_delta: float
+    as_of_date: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 # ---------------------------------------------------------------------------- #
 # Regime
 # ---------------------------------------------------------------------------- #
@@ -206,6 +223,64 @@ def lookup_rotation(stage: str | None) -> RotationHint | None:
 
 
 # ---------------------------------------------------------------------------- #
+# Stage transition (plan 011)
+# ---------------------------------------------------------------------------- #
+
+
+def detect_stage_transition(
+    parquet_path: Path | None = None,
+) -> StageTransition | None:
+    """对比 ``regime_daily.parquet`` 末两行的 ``stage`` 列，捕捉跨日切换.
+
+    用于 ``scripts/update_macro_daily.py`` 末段触发 Telegram 阶段切换告警.
+    使用 ``stage`` 列（已经过 hysteresis 平滑，对应原计划文档的
+    "stage_smoothed"）；当列名不存在或 panel 不足 2 行时返回 ``None``.
+
+    Args:
+        parquet_path: 自定义 parquet 路径（测试用）；默认 ``REGIME_PARQUET``.
+
+    Returns:
+        :class:`StageTransition` 若末两行 stage 不同且**两端均非 ``Unknown``**.
+        其他情况返回 ``None``（无切换 / 数据不足 / 含 Unknown / 读取失败）.
+    """
+    p = parquet_path or REGIME_PARQUET
+    if not p.exists():
+        return None
+    try:
+        df = pd.read_parquet(p)
+    except Exception as exc:    # noqa: BLE001
+        logger.warning("detect_stage_transition: read parquet 失败 %s", exc)
+        return None
+    if df is None or df.empty or "stage" not in df.columns:
+        return None
+    if len(df) < 2:
+        return None
+
+    df = df.copy()
+    df["trade_date"] = df["trade_date"].astype(str)
+    df = df.sort_values("trade_date").reset_index(drop=True)
+    prev_row = df.iloc[-2]
+    curr_row = df.iloc[-1]
+    from_stage = str(prev_row.get("stage", "Unknown"))
+    to_stage = str(curr_row.get("stage", "Unknown"))
+    if from_stage == to_stage:
+        return None
+    if from_stage == "Unknown" or to_stage == "Unknown":
+        return None
+    try:
+        conf_prev = float(prev_row.get("confidence", 0.0) or 0.0)
+        conf_curr = float(curr_row.get("confidence", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        conf_prev = conf_curr = 0.0
+    return StageTransition(
+        from_stage=from_stage,
+        to_stage=to_stage,
+        confidence_delta=conf_curr - conf_prev,
+        as_of_date=str(curr_row["trade_date"]),
+    )
+
+
+# ---------------------------------------------------------------------------- #
 # Helpers
 # ---------------------------------------------------------------------------- #
 
@@ -223,7 +298,9 @@ def _is_stale(as_of: str, target: str, max_days: int) -> bool:
 __all__ = [
     "RegimeInfo",
     "RotationHint",
+    "StageTransition",
     "ValuationInfo",
+    "detect_stage_transition",
     "lookup_regime",
     "lookup_rotation",
     "lookup_valuation",

@@ -34,6 +34,9 @@ STOCK_BASIC_PARQUET: Path = MACRO_ROOT / "stock_basic.parquet"
 # ----- 信用利差 (CSV 按日存档) -----
 CREDIT_DIR: Path = MACRO_ROOT / "credit_curve"
 
+# ----- 阶段切换告警去重 sentinel (plan 011) -----
+REGIME_ALERT_SENTINEL: Path = MACRO_ROOT / "regime_alert_sentinel.txt"
+
 # ----- 报告输出 -----
 REPORT_DIR: Path = STORAGE_ROOT / "reports"
 
@@ -49,6 +52,7 @@ __all__ = [
     "MONTHLY_PARQUET",
     "PMI_PARQUET",
     "PROJECT_ROOT",
+    "REGIME_ALERT_SENTINEL",
     "REGIME_PARQUET",
     "REPORT_DIR",
     "STOCK_BASIC_PARQUET",
