@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from kss.llm import LLMClient, LLMUnavailable
+from kss.llm.sanitizer import sanitize_llm_input
 from kss.sector.data_fetcher import SectorSnapshot
 from kss.sector.kcb_overlay import KcbOverlay
 from kss.sector.themes import ThemeBucket
@@ -214,6 +215,8 @@ def load_macro_regime(trade_date: str) -> dict[str, Any] | None:
         "n_signals": int(r.get("n_signals", 0)),
     }
     # P2 部门轮换提示（缺 yaml 时容错降级）
+    # sector_rotation.yaml 虽然是手工维护，但内部错装恶意 commit 也能注入 LLM；
+    # 进 prompt 前每个字段都过 sanitize_llm_input（plan 009）.
     try:
         from kss.macro.rotation import (
             get_avoid_industries,
@@ -223,9 +226,13 @@ def load_macro_regime(trade_date: str) -> dict[str, Any] | None:
         prefs = get_preferred_industries(stage)
         avoid = get_avoid_industries(stage)
         if prefs or avoid:
-            result["preferred_sectors"] = prefs
-            result["avoid_sectors"] = avoid
-            result["rationale"] = get_rationale(stage)
+            result["preferred_sectors"] = [
+                sanitize_llm_input(x, max_len=32) for x in prefs
+            ]
+            result["avoid_sectors"] = [
+                sanitize_llm_input(x, max_len=32) for x in avoid
+            ]
+            result["rationale"] = sanitize_llm_input(get_rationale(stage), max_len=128)
     except Exception as exc:    # noqa: BLE001
         logger.debug("[commentary] sector_rotation 加载失败，仅返回 stage: %s", exc)
 
@@ -303,7 +310,12 @@ def _hot_reason_tags(snapshot: SectorSnapshot, n: int) -> list[dict[str, Any]]:
             tag = token.strip()
             if not tag:
                 continue
-            counts[tag] = counts.get(tag, 0) + 1
+            # 外部 HTTP 源（同花顺爬取）—— 进 LLM payload 前做 prompt
+            # injection 清洗（plan 009）；空串 / [REDACTED] 跳过计数防污染.
+            safe_tag = sanitize_llm_input(tag, max_len=32)
+            if not safe_tag or safe_tag == "[REDACTED]":
+                continue
+            counts[safe_tag] = counts.get(safe_tag, 0) + 1
     if not counts:
         return []
     top = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:n]
