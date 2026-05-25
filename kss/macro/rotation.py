@@ -24,11 +24,15 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import yaml
+
+from kss.config.paths import INDUSTRY_MAP_PARQUET, STORAGE_ROOT
 
 logger = logging.getLogger(__name__)
 
 _CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "sector_rotation.yaml"
+_STOCK_NAMES_CSV = STORAGE_ROOT / "stock_names.csv"
 
 
 def load_config(path: Path | str | None = None) -> dict[str, Any]:
@@ -116,6 +120,51 @@ def score_industry_fit(
     if _match_any(industry_name, bucket.get("avoid", [])):
         return float(weights.get("avoid", -1.0))
     return float(weights.get("neutral", 0.0))
+
+
+# ---------------------------------------------------------------------------- #
+# Industry map (ts_code → SW L1 中文行业名)
+# ---------------------------------------------------------------------------- #
+
+
+def load_industry_map(path: Path | str | None = None) -> dict[str, str]:
+    """加载 ``ts_code → 申万一级行业中文名`` 映射，供个股 rotation_score 用.
+
+    优先级（从高到低，命中即返回，缺则降级）：
+
+    1. ``storage/macro/industry_map_swl1.parquet`` —— 由
+       :mod:`scripts.backfill_industry_map` 拉全市场 SW L1 写入；
+       期望列 ``ts_code`` + ``sw_l1_name``.
+    2. ``storage/stock_names.csv`` —— 兜底，列 ``ts_code`` + ``industry``；
+       覆盖 KCB 约 600 只 + 颗粒度可能为 SW L2/L3.
+    3. 都缺则返回空 dict（caller 应能容忍 → :func:`score_industry_fit`
+       传 ``None``/``''`` 仍返回 0.0）.
+
+    Args:
+        path: 自定义 parquet 路径（测试用）；``None`` 走默认.
+
+    Returns:
+        ``{ts_code (带 .SH/.SZ): industry_name}``；缺数据时 ``{}``.
+    """
+    p = Path(path) if path else INDUSTRY_MAP_PARQUET
+    if p.exists():
+        try:
+            df = pd.read_parquet(p)
+            if "ts_code" in df.columns and "sw_l1_name" in df.columns:
+                df = df[df["sw_l1_name"].notna() & (df["sw_l1_name"].astype(str) != "")]
+                return dict(zip(df["ts_code"].astype(str), df["sw_l1_name"].astype(str)))
+        except Exception as exc:    # noqa: BLE001
+            logger.warning("load_industry_map: 读 parquet 失败 %s (%s)，降级 csv", p, exc)
+
+    if _STOCK_NAMES_CSV.exists():
+        try:
+            df = pd.read_csv(_STOCK_NAMES_CSV, usecols=["ts_code", "industry"], encoding="utf-8")
+            df = df[df["industry"].notna() & (df["industry"].astype(str) != "")]
+            return dict(zip(df["ts_code"].astype(str), df["industry"].astype(str)))
+        except Exception as exc:    # noqa: BLE001
+            logger.warning("load_industry_map: 读 csv 失败 %s (%s)", _STOCK_NAMES_CSV, exc)
+
+    return {}
 
 
 # ---------------------------------------------------------------------------- #
