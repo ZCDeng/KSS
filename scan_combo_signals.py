@@ -400,8 +400,20 @@ def collect_entry_hits(today_df: pd.DataFrame, kc_pool: dict, cy_pool: dict) -> 
     return out
 
 
-def top_n_picks(entry_hits: list, top_n: int) -> pd.DataFrame:
-    """对所有入场命中去重 + 按"匹配组合数 desc, 市值 desc"排序, 取 top N"""
+def top_n_picks(entry_hits: list, top_n: int,
+                regime_stage: str | None = None) -> pd.DataFrame:
+    """对所有入场命中去重 + 按 "✓>△ → rotation_score → n_combo → 市值" 排序, 取 top N.
+
+    Args:
+        entry_hits: :func:`collect_entry_hits` 输出.
+        top_n: 取前 N 条.
+        regime_stage: 当前 Bolton 周期阶段（``I/II/III/IV``）；
+            非 ``None`` 时按 :func:`kss.macro.rotation.score_industry_fit` ×0.2
+            算 ``rotation_score`` 加入排序键（plan 007 #41）；``None`` 时退回原行为.
+
+    Returns:
+        排序后 DataFrame；``regime_stage`` 非空时附 ``rotation_score`` 列.
+    """
     all_hits = []
     for h in entry_hits:
         for _, r in h['hit'].iterrows():
@@ -433,16 +445,44 @@ def top_n_picks(entry_hits: list, top_n: int) -> pd.DataFrame:
         w_trend_up=('w_trend_up', 'first'),
         mv=('mv', 'first'),
     ).reset_index()
-    # 优先级: ✓ > △; n_combo desc; mv desc
+    # 优先级: ✓ > △
     agg['has_check'] = agg['verdicts'].str.contains('✓').astype(int)
+
+    # 部门轮换打分 (plan 007 #41)：行业 ↔ 阶段适配 × 0.2 权重
+    if regime_stage:
+        try:
+            from kss.macro.rotation import load_industry_map, score_industry_fit
+        except ImportError:
+            agg = agg.sort_values(['has_check', 'n_combo', 'mv'],
+                                  ascending=[False, False, False]).head(top_n)
+            return agg.drop(columns=['has_check'])
+
+        industry_map = load_industry_map()
+        # sym 是 6 位裸码，industry_map key 是 ts_code 带后缀；做后缀拼装
+        def _score_for(sym: str) -> float:
+            code = str(sym)
+            for suffix in ('.SH', '.SZ', '.BJ'):
+                ts = f'{code}{suffix}'
+                if ts in industry_map:
+                    return score_industry_fit(industry_map[ts], regime_stage) * 0.2
+            return 0.0
+
+        agg['rotation_score'] = agg['sym'].apply(_score_for)
+        agg = agg.sort_values(
+            ['has_check', 'rotation_score', 'n_combo', 'mv'],
+            ascending=[False, False, False, False],
+        ).head(top_n)
+        return agg.drop(columns=['has_check'])
+
     agg = agg.sort_values(['has_check', 'n_combo', 'mv'],
                           ascending=[False, False, False]).head(top_n)
     return agg.drop(columns=['has_check'])
 
 
-def report_entry(today_df: pd.DataFrame, kc_pool: dict, cy_pool: dict, top_entry: int = 5):
+def report_entry(today_df: pd.DataFrame, kc_pool: dict, cy_pool: dict,
+                 top_entry: int = 5, regime_stage: str | None = None):
     entry_hits = collect_entry_hits(today_df, kc_pool, cy_pool)
-    picks = top_n_picks(entry_hits, top_entry)
+    picks = top_n_picks(entry_hits, top_entry, regime_stage=regime_stage)
 
     print('\n' + '=' * 100)
     print(f'  ▲ 当日入场候选 Top-{top_entry} (按"匹配组合数 + 市值"排序, ✓现状判定优先)')
@@ -746,7 +786,10 @@ def main():
     else:
         print('  HS300 估值: 无 valuation_n_daily.parquet (跳过)')
 
-    picks, _ = report_entry(today_df, kc_pool, cy_pool, top_entry=effective_top_entry)
+    picks, _ = report_entry(
+        today_df, kc_pool, cy_pool, top_entry=effective_top_entry,
+        regime_stage=regime['stage'] if regime else None,
+    )
     avoid_hits = report_avoid(today_df, kc_pool, cy_pool)
     if args.show_unmatched:
         report_unmatched_triggers(today_df)

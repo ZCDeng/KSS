@@ -30,6 +30,7 @@ VAI_PARQUET: Path = MACRO_ROOT / "vai_monthly.parquet"
 # ----- 季频 / 一次性快照 -----
 FINA_QUARTERLY_PARQUET: Path = MACRO_ROOT / "fina_quarterly.parquet"
 STOCK_BASIC_PARQUET: Path = MACRO_ROOT / "stock_basic.parquet"
+INDUSTRY_MAP_PARQUET: Path = MACRO_ROOT / "industry_map_swl1.parquet"
 
 # ----- 信用利差 (CSV 按日存档) -----
 CREDIT_DIR: Path = MACRO_ROOT / "credit_curve"
@@ -44,6 +45,7 @@ __all__ = [
     "FINA_QUARTERLY_PARQUET",
     "HS300_PE_PARQUET",
     "HSGT_PARQUET",
+    "INDUSTRY_MAP_PARQUET",
     "MACRO_ROOT",
     "MARGIN_PARQUET",
     "MONTHLY_PARQUET",
