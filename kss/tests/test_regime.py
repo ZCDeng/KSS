@@ -362,6 +362,53 @@ def test_compute_liquidity_index_string_typed_hsgt_coerced():
     assert out is not None
 
 
+def test_classify_history_benchmark_fast_on_2000_row_panel(sample_config):
+    """PERF (#40) regression: classify_history 在 2000-row panel 必须 < 5s.
+
+    旧 O(N²) 实现在真实 2090-row panel 上耗时 ~1.5h (refresh_regime 主因).
+    新向量化实现应在秒级.
+    """
+    import time
+    rng = np.random.default_rng(2026)
+    n = 2000
+    dates = pd.date_range("2018-01-01", periods=n, freq="B").strftime("%Y%m%d")
+    panel = pd.DataFrame({
+        "trade_date": dates,
+        "e_trend": rng.normal(0, 1, n),
+        "r_trend": rng.normal(0, 0.3, n),
+        "liquidity": rng.normal(0, 1, n),
+        "yc_slope": rng.normal(0.6, 0.3, n),
+        "yc_slope_change": rng.normal(0, 0.2, n),
+    })
+    sample_config["history"]["min_days_for_quantile"] = 252
+    start = time.perf_counter()
+    out = classify_history(panel, sample_config)
+    elapsed = time.perf_counter() - start
+    assert len(out) == n
+    assert elapsed < 5.0, f"classify_history took {elapsed:.2f}s (target <5s)"
+
+
+def test_classify_history_expanding_threshold_no_lookahead(sample_config):
+    """阈值用 [0, i) 计算（shift(1)），第 i 行绝不能看到自己."""
+    rng = np.random.default_rng(7)
+    n = 300
+    dates = pd.date_range("2024-01-01", periods=n, freq="B").strftime("%Y%m%d")
+    panel = pd.DataFrame({
+        "trade_date": dates,
+        "e_trend": rng.normal(0, 1, n),
+        "r_trend": rng.normal(0, 0.3, n),
+        "liquidity": rng.normal(0, 1, n),
+        "yc_slope": rng.normal(0.6, 0.3, n),
+        "yc_slope_change": rng.normal(0, 0.2, n),
+    })
+    sample_config["history"]["min_days_for_quantile"] = 30
+    out = classify_history(panel, sample_config)
+    # 前 min_n 行必须全 Unknown
+    assert (out.iloc[:30]["stage_raw"] == UNKNOWN).all()
+    # 第 min_n 行应已有非 Unknown 分类（用 [0, 30) 阈值）
+    assert out.iloc[30]["stage_raw"] != UNKNOWN or out.iloc[30]["n_signals"] >= 2
+
+
 def test_compute_liquidity_index_pd_na_in_m2_does_not_crash():
     """回归：当某些 trade_date 的 month 在 m2 panel 里缺失时，
     旧实现用 pd.NA 占位会触发 astype(float) NAType 错误。"""

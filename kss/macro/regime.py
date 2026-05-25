@@ -298,6 +298,25 @@ def classify_history(
     df["trade_date"] = df["trade_date"].astype(str)
     min_n = cfg.get("history", {}).get("min_days_for_quantile", 252)
     use_rolling = cfg.get("history", {}).get("use_rolling", False)
+    q_low = cfg.get("quantiles", {}).get("low", 0.33)
+    q_high = cfg.get("quantiles", {}).get("high", 0.66)
+
+    # PERF (#40): 预算所有维度的 expanding (low, high) 阈值序列，避免每行
+    # 重切 history + 5 列调 quantile (旧实现 O(N²))。expanding().quantile()
+    # 一次性 sweep 全 panel，shifted by 1 让第 i 行的阈值只看 [0, i).
+    threshold_cols = ("e_trend", "r_trend", "liquidity", "yc_slope", "yc_slope_change")
+    thresholds_low: dict[str, pd.Series] = {}
+    thresholds_high: dict[str, pd.Series] = {}
+    for col in threshold_cols:
+        if col not in df.columns:
+            continue
+        if use_rolling:
+            roll = df[col].rolling(window=min_n, min_periods=min_n)
+        else:
+            roll = df[col].expanding(min_periods=min_n)
+        # shift(1): 第 i 行使用 [0, i) 的统计，确保无未来信息（包含 i 会泄露）
+        thresholds_low[col] = roll.quantile(q_low).shift(1)
+        thresholds_high[col] = roll.quantile(q_high).shift(1)
 
     out_rows: list[dict[str, Any]] = []
     for i in range(len(df)):
@@ -314,12 +333,22 @@ def classify_history(
                 "evidence_yc": None,
             })
             continue
-        if use_rolling:
-            hist = df.iloc[max(0, i - min_n):i]
-        else:
-            hist = df.iloc[:i]
-        thresholds = compute_thresholds(hist, cfg)
-        regime = classify_day(today, thresholds, cfg)
+        # 用预算的阈值序列直接组装 RegimeThresholds，跳过重复的切片 + quantile
+        th = RegimeThresholds(n_history=i)
+        for col, attr in (
+            ("e_trend", "e_trend"),
+            ("r_trend", "r_trend"),
+            ("liquidity", "liquidity"),
+            ("yc_slope", "yc_slope"),
+            ("yc_slope_change", "yc_slope_change"),
+        ):
+            if col not in thresholds_low:
+                continue
+            lo = thresholds_low[col].iat[i]
+            hi = thresholds_high[col].iat[i]
+            if lo == lo and hi == hi:    # both non-NaN
+                setattr(th, attr, (float(lo), float(hi)))
+        regime = classify_day(today, th, cfg)
         out_rows.append({
             "trade_date": today["trade_date"],
             "stage_raw": regime.stage,
