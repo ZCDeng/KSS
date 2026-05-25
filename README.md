@@ -13,10 +13,17 @@
   理论 Sharpe **1.93**、含 ExecutionModel 后实盘可达 **1.74**、p=0.025、DSR 通过。
 - **第 9 轮 Qlib 对比**：port Alpha158（158 因子）+ DDG-DA sample_weight 都未带来新 alpha；
   唯一正面收益是 Qlib Exchange 的停牌建模思路 → Survivorship bias 彻底关闭。
-- 测试覆盖：**455 passed** / 3 xfailed / 6 deselected (DL)。
-- 想跑：`python3 scripts/paper_trade_log_mv.py`。
-- 全部细节见 [`docs/solutions/lookahead_bias_lessons.md`](docs/solutions/lookahead_bias_lessons.md)
-  和 [`docs/solutions/qlib_paper_comparison.md`](docs/solutions/qlib_paper_comparison.md)。
+- **第 11 轮 Bolton 周期框架（2026-05-25 新增）**：建成 5 层宏观基础设施
+  （分母端数据 → 周期阶段分类 → 部门轮换 → 估值时间贴水 n → 个股风险前过滤），
+  注入 `scan_combo_signals` 与 `sector_commentary`，给 combo_scan 按宏观阶段
+  + 估值 n 自动调节 entry 候选数。**这不是新策略**，是给现有信号叠加宏观环境层.
+- 测试覆盖：**727 passed** / 3 xfailed / 6 deselected (DL)。
+- 想跑日常选股：`python3 scripts/paper_trade_log_mv.py`。
+- 想看完整 banner（含宏观阶段 + 部门轮换 + 估值 n + 风险过滤）：
+  `python3 scan_combo_signals.py --board kechuang --dry-run`.
+- 全部细节见 [`docs/solutions/lookahead_bias_lessons.md`](docs/solutions/lookahead_bias_lessons.md)、
+  [`docs/solutions/qlib_paper_comparison.md`](docs/solutions/qlib_paper_comparison.md)
+  与 5 个 Bolton 周期框架 plan 文档（`docs/plans/2026-05-25-001..005-*.md`）。
 
 ![KSS 系统架构](storage/reports/images/kss_architecture.png)
 
@@ -73,12 +80,56 @@ KSS = **K**eda **S**tock **S**ystem。一个 Python 量化回测框架，
 **第 9 轮的核心收获**：用 Microsoft 自家工具二次验证了"**KSS log_mv 反向仍是科创板上唯一通过门槛的真 alpha**"。
 没被工业大厂的工具列表带跑偏。
 
+## 第 11 轮 Bolton 周期框架 (2026-05-25 新增, P0-P4)
+
+读完 Bolton《稳中求胜》后落地的 5 层宏观基础设施。**不是新策略**，是给
+combo_scan + sector_commentary 现有信号叠加一层"现在是周期的哪一阶段 + 
+估值是否过热 + 个股是否高风险"的环境标签。每层都按 plan 文档单独验证.
+
+| 层 | 模块 | Plan | 产出 |
+|----|------|------|------|
+| **P0** 分母端数据 | `kss/macro/snapshot.py` + `kss/data/macro_client.py` | [001](docs/plans/2026-05-25-001-feat-macro-denominator-feed-plan.md) | Shibor / 中债国债收益率曲线 / M2 / CPI / PPI / 信用利差 → `macro_daily.parquet` + `macro_monthly.parquet` |
+| **P1** 周期阶段分类 | `kss/macro/regime.py` | [002](docs/plans/2026-05-25-002-feat-macro-regime-classifier-plan.md) | 4 阶段（I/II/III/IV）historical-quantile 分类器 + 3 日滞后保护 → `regime_daily.parquet`. 实测 2018-2026 共 2090 日 |
+| **P2** 部门轮换映射 | `kss/macro/rotation.py` + `kss/config/sector_rotation.yaml` | [003](docs/plans/2026-05-25-003-feat-sector-rotation-mapping-plan.md) | 阶段 → 申万一级行业 preferred/avoid 静态表 + 双向前缀匹配 |
+| **P3** 估值时间贴水 n | `kss/macro/valuation.py` | [004](docs/plans/2026-05-25-004-feat-valuation-time-premium-plan.md) | Bolton 附录 7B 公式 `n = log(PE·r) / log(1+g)` → 5 档规则 (bubble/hot/normal/cool/reversal) → `valuation_n_daily.parquet` |
+| **P4** 个股风险前过滤 | `kss/strategies/risk_filters.py` + `kss/config/risk_filters.yaml` | [005](docs/plans/2026-05-25-005-feat-stock-risk-prefilters-plan.md) | 高杠杆（行业分位 + 50% 绝对下限）/ 低流动性（20 日均额 5000 万）/ ST·退市·连亏·负净资产 三道硬过滤 |
+
+**集成链路**：
+
+- `scripts/update_macro_daily.py`：每日 8:35 launchd cron 拉取 + 落地全套 parquet（含 PMI / VAI / margin / 北向 / HS300 PE）
+- `scripts/backfill_regime_history.py` + `scripts/backfill_fina_quarterly.py`：一次性历史回填（实跑：fina backfill 5797 股 × 30 季 = 173K 行，108 MB；耗时 4.5h）
+- `scan_combo_signals.py`：scan 之前先跑 risk filter，banner 顶部显示
+  `宏观阶段 / 优先板块 / 回避板块 / HS300 估值 n + 5Y 分位`；按 regime stage + valuation rule 双重收紧 entry 候选数
+- `kss/sector/commentary.py`：17:30 LLM 板块复盘 prompt 注入"当前宏观阶段 + 本阶段优先/回避板块"段
+
+**实跑示例（2026-05-22）**:
+
+```
+[*] 风险过滤后剩 76 只 (剔除 24 只: leverage=13, liquidity=11)
+  宏观阶段: I (置信度 0.76, as_of 20260522)
+  本阶段优先: 汽车 / 房地产 / 家用电器 / 建筑材料 / 非银金融
+  本阶段回避: 食品饮料 / 公用事业 / 医药生物-中药
+  HS300 估值: PE=14.49 n=0.91 [normal], 5Y 分位 88%
+```
+
+**质量门槛**：每个 plan 都跑了 12+ 测试（regime 22 / rotation 17 / risk 19 / valuation 22 / macro_client 17），全栈 PR 后召集 11 个 reviewer 跑 ce-code-review，落地 16 项 P1 修复（crash guard / 原子 parquet 写 / fail-loud / dtype 兜底 / 单位修正 / 等等）。完整 review 见 commit history `e131c6c..bb4115e` 范围.
+
+**已知设计权衡 / 后续争议项**:
+
+- **#13 leverage 过滤阈值**：当前 `max(行业 80 分位, 50% 绝对下限)`，避免低杠杆科技股被行业相对分位误杀。adversarial reviewer 反驳"这等于关掉了低杠杆行业的相对检测"——这是有意 trade-off，下轮可以加 industry-class-aware 双套阈值
+- **#14 prompt injection**：THS 抓取的 `hot_reason_tags` + `sector_rotation.yaml` 内容直接进 LLM prompt。THS 不是用户控制但是外部源，下轮加 length cap + 字符白名单
+- **performance**：`classify_history` 是 O(N²) expanding-window 循环（实测 2090 日 1.5h），下轮重写为 `expanding().quantile()` 向量化
+- **valuation n=0.91 [normal] 但 5Y 分位 88%**：`n` 是前瞻式（含 g 假设），分位是历史式纯 PE。两个信号微妙不同——这是 plan 004 已知的语义差异
+
 ## 当前能力
 
 ### 工具链（按模块）
 
 - **数据层** (`kss/data/`)：Tushare / AKShare 双源，CSV + SQLite (`storage/kss_quotes.db`) 缓存。
   17:30 板块复盘额外接入同花顺当日强势股归因（`ths_client.py`，无鉴权 HTTP）作为题材关键词来源。
+  2026-05-25 新增 `macro_client.py`（Shibor / yc_cb / M2 / CPI / PPI / 信用利差 / PMI / VAI / margin / hsgt / HS300 dailybasic / fina_indicator / stock_basic）.
+- **宏观周期框架** (`kss/macro/`，2026-05-25 第 11 轮新增)：分母端数据快照 + 派生指标
+  + 周期阶段分类 + 部门轮换映射 + 估值时间贴水 n。详见上方"第 11 轮"节.
 - **因子工程** (`kss/features/`)：49+ 因子（technical / volatility / volume / valuation）
   + `cross_section_selection.make_ic_topk_selector` 行业市值中性化 + 截面 IC scan。
 - **回测引擎** (`kss/backtest/`)：
@@ -199,12 +250,23 @@ python3 scripts/paper_trade_log_mv.py --summary
 - **#37** 跨市场验证：把 log_mv 反向放到主板 / 创业板 / 中证 800
 - **#38** 严格 holdout：留出 2026-01 之后 6 个月不喂任何回测
 - **Wave 3 集成**：BARRA 风格归因（size / value / momentum / volatility 残差）
-- **退市 / 停牌建模**：补 `BacktestEngine.report_universe_health()` 与 `delisted_return` 参数
+- ~~**退市 / 停牌建模**：补 `BacktestEngine.report_universe_health()` 与 `delisted_return` 参数~~
+  → P4 风险过滤已含 ST + 退市 + 连亏检测；Universe health 仍 TODO
+
+第 11 轮 Bolton 周期框架延伸 (待办)：
+
+- **#40** `classify_history` O(N²) → `expanding().quantile()` 重写，将 1.5h 日刷新降到秒级
+- **#41** P2 部门轮换 per-stock 评分 — 需要全市场 SW L1 中文名 industry_map（当前仅 13 行英文样本）
+- **#42** 60 个交易日运行后跑 regime 分类 hit-rate 回测（vs 历史牛熊真实对应）
+- **#43** LLM prompt sanitization — THS reason / sector_rotation.yaml 加 length cap + 字符白名单
+- **#44** 跨脚本 import 重构 — `build_indicator_panel` 等从 `scripts/` 提到 `kss/macro/pipeline.py`
+- **#45** Telegram 阶段切换告警（rules: stage I→II, III→IV 立刻推送）
 
 短期 NOT-doing：
 - 接入更多技术指标（边际为零）
 - 调 LGB 超参（已证瓶颈非模型）
 - 加深度学习模型（同上）
+- 加 HMM / Bayesian regime 概率分类（rule-based 跑 60 个交易日先积累验证数据）
 
 ## 文档导航
 
@@ -214,17 +276,24 @@ python3 scripts/paper_trade_log_mv.py --summary
 - [`docs/solutions/qlib_paper_comparison.md`](docs/solutions/qlib_paper_comparison.md) —— Qlib + RD-Agent 论文对比 + 4 借鉴点
 - [`docs/solutions/known_bias_gaps.md`](docs/solutions/known_bias_gaps.md) —— 对抗测试暴露的 gap（Gap 2 已 RESOLVED）
 - [`docs/solutions/paper_trade_deployment.md`](docs/solutions/paper_trade_deployment.md) —— cron 部署 / 监控 / 排查手册
+- `docs/plans/2026-05-25-001..005-*.md` —— 第 11 轮 Bolton 周期框架 5 个 plan 文档
 - `storage/reports/*.md` —— 每轮回测的原始报告（含图表）
-- `scripts/paper_trade_log_mv.py` —— 唯一可用策略的入口脚本
+- `scripts/paper_trade_log_mv.py` —— log_mv 反向策略入口
+- `scan_combo_signals.py` —— combo scan + 宏观叠加层入口（含 banner）
 
 ## 测试 / 开发
 
 ```bash
-# 全部测试（当前 455 passed / 3 xfailed / 6 deselected DL）
+# 全部测试（当前 727 passed / 3 xfailed / 6 deselected DL）
 pytest kss/tests -v
 
 # 仅对抗测试（看 KSS 防不防得住已知 bias）
 pytest kss/tests/test_adversarial.py -v
+
+# 第 11 轮 Bolton 框架专属测试
+pytest kss/tests/test_regime.py kss/tests/test_rotation.py \
+       kss/tests/test_valuation.py kss/tests/test_risk_filters.py \
+       kss/tests/test_macro_client.py -v
 
 # 类型检查 + lint
 ruff check kss/
@@ -233,4 +302,5 @@ mypy kss/
 
 ---
 
-_Last updated: 2026-05-12. 状态：log_mv 反向进入纸交易阶段；其余 6/7 策略不上线。_
+_Last updated: 2026-05-25. 状态：log_mv 反向继续纸交易；第 11 轮 Bolton 周期框架 P0-P4 全栈上线，
+combo_scan 已按宏观阶段 + 估值 n + 部门轮换 + 风险过滤四维叠加；待积累 60 个交易日数据后做 hit-rate 回测._
