@@ -35,8 +35,24 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from kss.config.paths import (  # noqa: E402
+    CREDIT_DIR,
+    DAILY_PARQUET,
+    HS300_PE_PARQUET,
+    MONTHLY_PARQUET,
+    REGIME_PARQUET,
+    STORAGE_ROOT,
+    VALUATION_PARQUET,
+)
 from kss.data.macro_client import MacroClient, pivot_yield_curve  # noqa: E402
 from kss.macro.derived import compute_rate_changes  # noqa: E402
+from kss.macro.pipeline import (  # noqa: E402
+    atomic_to_parquet,
+    build_indicator_panel,
+    ensure_hsgt,
+    ensure_margin,
+    ensure_pmi_vai,
+)
 from kss.macro.regime import classify_history, load_config  # noqa: E402
 from kss.macro.valuation import compute_hs300_n_from_panel  # noqa: E402
 
@@ -44,17 +60,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 
-STORAGE_ROOT = PROJECT_ROOT / "storage" / "macro"
-DAILY_PARQUET = STORAGE_ROOT / "macro_daily.parquet"
-MONTHLY_PARQUET = STORAGE_ROOT / "macro_monthly.parquet"
-CREDIT_DIR = STORAGE_ROOT / "credit_curve"
-PMI_PARQUET = STORAGE_ROOT / "pmi_monthly.parquet"
-VAI_PARQUET = STORAGE_ROOT / "vai_monthly.parquet"
-MARGIN_PARQUET = STORAGE_ROOT / "margin_daily.parquet"
-HSGT_PARQUET = STORAGE_ROOT / "hsgt_daily.parquet"
-REGIME_PARQUET = STORAGE_ROOT / "regime_daily.parquet"
-VALUATION_PARQUET = STORAGE_ROOT / "valuation_n_daily.parquet"
-HS300_PE_PARQUET = STORAGE_ROOT / "hs300_dailybasic.parquet"
+# Path 常量来自 kss.config.paths（plan 010 #44 单点定义）
 
 # HS300 估值默认参数 —— compute_time_premium 的 g/ERP
 HS300_DEFAULT_GROWTH = 0.06       # 6% 长期盈利增长（保守估计）
@@ -183,20 +189,15 @@ def assemble_monthly_panel(
 def upsert_parquet(path: Path, new_df: pd.DataFrame, key: str) -> int:
     """按 ``key`` 列追加 / 覆盖落地 parquet，返回最终行数.
 
-    走 .tmp + os.replace 原子写，避免并发的 ``scan_combo_signals`` 读到半文件.
+    走 ``atomic_to_parquet`` (kss.macro.pipeline) 防 torn read.
     """
-    import os
-    path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         old = pd.read_parquet(path)
-        # 同 key 的新行覆盖旧行
         merged = pd.concat([old[~old[key].isin(new_df[key])], new_df], ignore_index=True)
     else:
         merged = new_df
     merged = merged.sort_values(key).reset_index(drop=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    merged.to_parquet(tmp, index=False)
-    os.replace(tmp, path)
+    atomic_to_parquet(merged, path)
     return len(merged)
 
 
@@ -300,11 +301,7 @@ def refresh_valuation(client: MacroClient, start: str, end: str) -> None:
     if n_df.empty:
         logger.warning("valuation 合成结果为空（PE/yld 无交集？）")
         return
-    import os
-    tmp = VALUATION_PARQUET.with_suffix(VALUATION_PARQUET.suffix + ".tmp")
-    VALUATION_PARQUET.parent.mkdir(parents=True, exist_ok=True)
-    n_df.to_parquet(tmp, index=False)
-    os.replace(tmp, VALUATION_PARQUET)
+    atomic_to_parquet(n_df, VALUATION_PARQUET)
     latest = n_df.tail(1).iloc[0]
     n_val = latest["n_years"]
     n_str = f"{n_val:.2f}" if n_val is not None and n_val == n_val else "N/A"
@@ -317,20 +314,12 @@ def refresh_valuation(client: MacroClient, start: str, end: str) -> None:
 def refresh_regime(client: MacroClient, start: str, end: str) -> None:
     """每日宏观阶段刷新：增量拉 PMI/margin/hsgt → 重算 regime_daily.parquet.
 
-    复用 ``backfill_regime_history`` 的 panel 组装与分类逻辑。增量策略：
+    全部数据组装逻辑在 :mod:`kss.macro.pipeline`（plan 010 #44）.
 
     - PMI 月数据：覆盖性 fetch（接口快，60 行）
     - margin：覆盖窗口内的日期（增量 append）
     - hsgt：仅拉缺失日（单日 API + 限速）
     """
-    # 延迟导入：backfill_regime_history 在 scripts/ 目录，路径已经被 main() 加入 sys.path
-    from scripts.backfill_regime_history import (
-        build_indicator_panel,
-        ensure_hsgt,
-        ensure_margin,
-        ensure_pmi_vai,
-    )
-
     # Fix #4: 缺基础 parquet 时显式跳过而非抛 FileNotFoundError 被 except 吞掉.
     if not DAILY_PARQUET.exists() or not MONTHLY_PARQUET.exists():
         logger.warning(
@@ -351,8 +340,7 @@ def refresh_regime(client: MacroClient, start: str, end: str) -> None:
     panel = build_indicator_panel(daily, monthly, pmi, vai, margin, hsgt)
     cfg = load_config()
     regime_df = classify_history(panel, cfg)
-    REGIME_PARQUET.parent.mkdir(parents=True, exist_ok=True)
-    regime_df.to_parquet(REGIME_PARQUET, index=False)
+    atomic_to_parquet(regime_df, REGIME_PARQUET)
     latest = regime_df.tail(1).iloc[0] if not regime_df.empty else None
     if latest is not None:
         logger.info(

@@ -239,6 +239,26 @@ def classify_day(
     )
 
 
+def modulate_entry_count_by_stage(
+    stage: str | None,
+    requested: int,
+) -> int:
+    """按宏观阶段调整 combo_scan entry 候选数 (plan 010 #17).
+
+    与 :func:`kss.macro.valuation.modulate_entry_count` (按 valuation rule)
+    互补；scan_combo_signals 合成两个结果时取 min/max 视情况.
+
+    - III (顶部): ``max(1, requested // 2)`` 砍半
+    - IV (衰退): ``min(2, requested)`` 几乎全防御
+    - 其他 / None: 原值不变
+    """
+    if stage == "III":
+        return max(1, requested // 2)
+    if stage == "IV":
+        return min(2, requested)
+    return requested
+
+
 def classify_today(
     panel: pd.DataFrame,
     today: str | None = None,

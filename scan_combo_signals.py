@@ -41,61 +41,25 @@ _VALUATION_PARQUET_PATH = os.path.join(ROOT, 'storage', 'macro', 'valuation_n_da
 
 
 def _lookup_regime(trade_date_str: str) -> dict | None:
-    """从 regime_daily.parquet 取目标日的 stage；当日缺记录时取最近一日兜底.
+    """thin wrapper over :func:`kss.macro.queries.lookup_regime`.
 
-    Returns dict 含 ``stale`` 标志：as_of 距 trade_date 超 3 个日历日时为 True，
-    调用方可据此打印警告（避免静默用 stale 数据驱动 modulation）.
+    保留 dict 接口供 build_telegram_message / banner 用，最小改动 caller 代码.
+    Plan 010 (#19) 把实际查询逻辑提到 kss.macro.queries.
     """
-    if not os.path.exists(_REGIME_PARQUET_PATH):
-        return None
     try:
-        df = pd.read_parquet(_REGIME_PARQUET_PATH)
-    except Exception:
+        from kss.macro.queries import lookup_regime
+    except ImportError:
         return None
-    df['trade_date'] = df['trade_date'].astype(str)
-    row = df[df['trade_date'] == str(trade_date_str)]
-    if row.empty:
-        prev = df[df['trade_date'] <= str(trade_date_str)]
-        if prev.empty:
-            return None
-        row = prev.tail(1)
-    r = row.iloc[-1]
-    stage = str(r.get('stage', 'Unknown'))
-    if stage == 'Unknown':
-        return None
-    as_of = str(r.get('trade_date', ''))
-    stale = _is_stale(as_of, trade_date_str, max_days=3)
-    return {
-        'stage': stage,
-        'confidence': float(r.get('confidence', 0.0)),
-        'as_of': as_of,
-        'stale': stale,
-    }
-
-
-def _is_stale(as_of: str, target: str, max_days: int) -> bool:
-    """as_of 是否距 target 超过 max_days 个日历日（粗略检查 staleness）."""
-    try:
-        from datetime import datetime
-        d1 = datetime.strptime(as_of, '%Y%m%d')
-        d2 = datetime.strptime(target, '%Y%m%d')
-        return abs((d2 - d1).days) > max_days
-    except Exception:
-        return False
+    info = lookup_regime(str(trade_date_str), max_stale_days=3)
+    return info.as_dict() if info is not None else None
 
 
 def _modulate_entry_count(stage: str | None, requested: int) -> int:
-    """按宏观阶段调整入场候选展示数.
-
-    - III（顶部）：requested // 2 + 至少 1，强势期反而少推荐进攻
-    - IV（衰退）：min(2, requested)，几乎全防御
-    - 其他：保持原值
+    """thin wrapper over :func:`kss.macro.regime.modulate_entry_count_by_stage`
+    (plan 010 #17). 保留旧名字以兼容现有 caller.
     """
-    if stage == 'III':
-        return max(1, requested // 2)
-    if stage == 'IV':
-        return min(2, requested)
-    return requested
+    from kss.macro.regime import modulate_entry_count_by_stage
+    return modulate_entry_count_by_stage(stage, requested)
 
 
 def _apply_risk_prefilters(symbols: list) -> tuple[list, dict | None]:
@@ -184,73 +148,23 @@ def _apply_risk_prefilters(symbols: list) -> tuple[list, dict | None]:
 
 
 def _lookup_valuation(trade_date_str: str) -> dict | None:
-    """从 valuation_n_daily.parquet 取目标日 n + 5Y 分位 + stage_rule.
-
-    Returns:
-        ``{"n_years": float, "pe": float, "rule": str, "percentile_5y": float}``
-        或 ``None`` (缺文件 / 缺记录).
-    """
-    if not os.path.exists(_VALUATION_PARQUET_PATH):
-        return None
+    """thin wrapper over :func:`kss.macro.queries.lookup_valuation` (plan 010 #19)."""
     try:
-        df = pd.read_parquet(_VALUATION_PARQUET_PATH)
-    except Exception:
-        return None
-    df['trade_date'] = df['trade_date'].astype(str)
-    row = df[df['trade_date'] == str(trade_date_str)]
-    if row.empty:
-        prev = df[df['trade_date'] <= str(trade_date_str)]
-        if prev.empty:
-            return None
-        row = prev.tail(1)
-    r = row.iloc[-1]
-    n_val = r.get('n_years')
-    if n_val is None or n_val != n_val:    # NaN
-        return None
-    n_val = float(n_val)
-    try:
-        from kss.macro.valuation import compute_n_percentile, stage_rule_for_n
+        from kss.macro.queries import lookup_valuation
     except ImportError:
         return None
-    history = df[df['trade_date'] < str(trade_date_str)]['n_years']
-    pct = compute_n_percentile(history, n_val, window=1260)
-    return {
-        'n_years': n_val,
-        'pe': float(r.get('pe')) if pd.notna(r.get('pe')) else None,
-        'rule': stage_rule_for_n(n_val),
-        'percentile_5y': pct,
-        'as_of': str(r['trade_date']),
-    }
+    info = lookup_valuation(str(trade_date_str), percentile_window=1260)
+    return info.as_dict() if info is not None else None
 
 
 def _lookup_rotation(stage: str | None) -> dict | None:
-    """查 sector_rotation.yaml 取该阶段的 preferred/avoid 行业列表.
-
-    Args:
-        stage: 阶段标签 ``I/II/III/IV``；``None`` 时返回 ``None``.
-
-    Returns:
-        ``{"preferred": [...], "avoid": [...], "rationale": str}`` 或 ``None``.
-    """
-    if not stage:
-        return None
+    """thin wrapper over :func:`kss.macro.queries.lookup_rotation` (plan 010 #19)."""
     try:
-        from kss.macro.rotation import (
-            get_avoid_industries,
-            get_preferred_industries,
-            get_rationale,
-        )
+        from kss.macro.queries import lookup_rotation
     except ImportError:
         return None
-    prefs = get_preferred_industries(stage)
-    avoid = get_avoid_industries(stage)
-    if not prefs and not avoid:
-        return None
-    return {
-        'preferred': prefs,
-        'avoid': avoid,
-        'rationale': get_rationale(stage),
-    }
+    info = lookup_rotation(stage)
+    return info.as_dict() if info is not None else None
 
 
 def _load_full_names() -> dict:

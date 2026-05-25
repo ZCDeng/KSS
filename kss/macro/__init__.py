@@ -19,6 +19,21 @@ from kss.macro.derived import (
     yc_slope_change,
     yield_curve_slope,
 )
+from kss.macro.pipeline import (
+    atomic_to_parquet,
+    build_indicator_panel,
+    ensure_hsgt,
+    ensure_margin,
+    ensure_pmi_vai,
+)
+from kss.macro.queries import (
+    RegimeInfo,
+    RotationHint,
+    ValuationInfo,
+    lookup_regime,
+    lookup_rotation,
+    lookup_valuation,
+)
 from kss.macro.regime import (
     MacroRegime,
     RegimeThresholds,
@@ -27,6 +42,7 @@ from kss.macro.regime import (
     classify_today,
     compute_thresholds,
     load_config,
+    modulate_entry_count_by_stage,
 )
 from kss.macro.rotation import (
     get_avoid_industries,
@@ -47,8 +63,13 @@ from kss.macro.valuation import (
 __all__ = [
     "MacroRegime",
     "MacroSnapshot",
+    "RegimeInfo",
     "RegimeThresholds",
+    "RotationHint",
+    "ValuationInfo",
     "ValuationResult",
+    "atomic_to_parquet",
+    "build_indicator_panel",
     "classify_day",
     "classify_history",
     "classify_today",
@@ -59,12 +80,19 @@ __all__ = [
     "compute_rate_changes",
     "compute_thresholds",
     "compute_time_premium",
+    "ensure_hsgt",
+    "ensure_margin",
+    "ensure_pmi_vai",
     "get_avoid_industries",
     "get_preferred_industries",
     "get_rationale",
     "load_config",
     "load_macro_snapshot",
+    "lookup_regime",
+    "lookup_rotation",
+    "lookup_valuation",
     "modulate_entry_count",
+    "modulate_entry_count_by_stage",
     "score_industry_fit",
     "stage_rule_for_n",
     "yc_slope_change",
