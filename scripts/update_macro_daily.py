@@ -181,7 +181,11 @@ def assemble_monthly_panel(
 
 
 def upsert_parquet(path: Path, new_df: pd.DataFrame, key: str) -> int:
-    """按 ``key`` 列追加 / 覆盖落地 parquet，返回最终行数."""
+    """按 ``key`` 列追加 / 覆盖落地 parquet，返回最终行数.
+
+    走 .tmp + os.replace 原子写，避免并发的 ``scan_combo_signals`` 读到半文件.
+    """
+    import os
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         old = pd.read_parquet(path)
@@ -190,7 +194,9 @@ def upsert_parquet(path: Path, new_df: pd.DataFrame, key: str) -> int:
     else:
         merged = new_df
     merged = merged.sort_values(key).reset_index(drop=True)
-    merged.to_parquet(path, index=False)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    merged.to_parquet(tmp, index=False)
+    os.replace(tmp, path)
     return len(merged)
 
 
@@ -254,20 +260,24 @@ def main() -> int:
             logger.warning("信用曲线拉取失败，跳过")
 
     # 宏观阶段：刷新 PMI / margin / hsgt + 重算 regime_daily.parquet
+    # Fail-loud: 单步失败让 exit code 非 0，cron 能在 launchd 日志显式报错.
+    exit_code = 0
     if not args.skip_regime:
         try:
             refresh_regime(client, start, end)
         except Exception as exc:    # noqa: BLE001
-            logger.warning("regime 刷新失败（跳过，下次重试）: %s", exc)
+            logger.error("regime 刷新失败: %s", exc, exc_info=True)
+            exit_code = 2
 
     # 估值 n：拉 HS300 PE + 用本地 yld_10y 算 n + 落地
     if not args.skip_valuation:
         try:
             refresh_valuation(client, start, end)
         except Exception as exc:    # noqa: BLE001
-            logger.warning("valuation 刷新失败（跳过，下次重试）: %s", exc)
+            logger.error("valuation 刷新失败: %s", exc, exc_info=True)
+            exit_code = 2
 
-    return 0
+    return exit_code
 
 
 def refresh_valuation(client: MacroClient, start: str, end: str) -> None:
@@ -290,7 +300,11 @@ def refresh_valuation(client: MacroClient, start: str, end: str) -> None:
     if n_df.empty:
         logger.warning("valuation 合成结果为空（PE/yld 无交集？）")
         return
-    n_df.to_parquet(VALUATION_PARQUET, index=False)
+    import os
+    tmp = VALUATION_PARQUET.with_suffix(VALUATION_PARQUET.suffix + ".tmp")
+    VALUATION_PARQUET.parent.mkdir(parents=True, exist_ok=True)
+    n_df.to_parquet(tmp, index=False)
+    os.replace(tmp, VALUATION_PARQUET)
     latest = n_df.tail(1).iloc[0]
     n_val = latest["n_years"]
     n_str = f"{n_val:.2f}" if n_val is not None and n_val == n_val else "N/A"
@@ -316,6 +330,14 @@ def refresh_regime(client: MacroClient, start: str, end: str) -> None:
         ensure_margin,
         ensure_pmi_vai,
     )
+
+    # Fix #4: 缺基础 parquet 时显式跳过而非抛 FileNotFoundError 被 except 吞掉.
+    if not DAILY_PARQUET.exists() or not MONTHLY_PARQUET.exists():
+        logger.warning(
+            "regime skip: 缺少 %s 或 %s（先跑 update_macro_daily 主流程）",
+            DAILY_PARQUET, MONTHLY_PARQUET,
+        )
+        return
 
     start_m, end_m = start[:6], end[:6]
     pmi, vai = ensure_pmi_vai(client, start_m, end_m, refetch=True)

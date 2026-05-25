@@ -23,8 +23,9 @@ HERMES_ENV="/Users/zcdeng/projects/agentos-stack/hermes_agent/.env"
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') update_macro_daily 开始 ====="
 
 # Tushare token（与 update_data_daily 同源加载逻辑）
+# `|| true` 防止 set -e 在 grep 无匹配（exit 1）时整脚本中断 —— 走 fallback 即可.
 if [ -f "$HERMES_ENV" ]; then
-  TUSHARE_TOKEN=$(grep -E '^TUSHARE_TOKEN=' "$HERMES_ENV" | head -1 | cut -d= -f2-)
+  TUSHARE_TOKEN=$( (grep -E '^TUSHARE_TOKEN=' "$HERMES_ENV" || true) | head -1 | cut -d= -f2-)
   TUSHARE_TOKEN="${TUSHARE_TOKEN%\"}"; TUSHARE_TOKEN="${TUSHARE_TOKEN#\"}"
   if [ -n "$TUSHARE_TOKEN" ]; then
     export TUSHARE_TOKEN

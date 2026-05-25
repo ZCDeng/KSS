@@ -394,7 +394,11 @@ def load_fina_cache(path: Path | None = None) -> pd.DataFrame | None:
 
 
 def save_fina_cache(df: pd.DataFrame, path: Path | None = None) -> None:
-    """落地财务季频缓存（按 ts_code+end_date 去重 + 升级）."""
+    """落地财务季频缓存（按 ts_code+end_date 去重 + 升级）.
+
+    走 .tmp + os.replace 原子写，避免 4 小时 backfill 中断时缓存被截断.
+    """
+    import os
     p = path or _FINA_CACHE
     p.parent.mkdir(parents=True, exist_ok=True)
     if p.exists():
@@ -402,7 +406,10 @@ def save_fina_cache(df: pd.DataFrame, path: Path | None = None) -> None:
         df = pd.concat([old, df]).drop_duplicates(
             subset=["ts_code", "end_date"], keep="last",
         )
-    df.sort_values(["ts_code", "end_date"]).reset_index(drop=True).to_parquet(p, index=False)
+    final = df.sort_values(["ts_code", "end_date"]).reset_index(drop=True)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    final.to_parquet(tmp, index=False)
+    os.replace(tmp, p)
 
 
 def load_stock_basic_cache(path: Path | None = None) -> pd.DataFrame | None:
@@ -440,7 +447,8 @@ def daily_amounts_from_cs_data(
             continue
         try:
             df = pd.read_csv(fp, usecols=["trade_date", "amount"])
-        except Exception:
+        except Exception as exc:    # noqa: BLE001
+            logger.warning("daily_amounts: read %s 失败 (%s)，跳过", fp.name, exc)
             continue
         if "amount" not in df.columns:
             continue

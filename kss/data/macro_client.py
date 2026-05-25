@@ -19,6 +19,8 @@
 from __future__ import annotations
 
 import logging
+import time
+from datetime import datetime, timedelta
 from typing import Any, Callable
 
 import pandas as pd
@@ -103,9 +105,6 @@ class MacroClient:
             DataFrame 含 ``trade_date`` / ``curve_term`` / ``yield``；
             全部片都失败时返回 ``None``；部分片失败保留已成功片.
         """
-        from datetime import datetime, timedelta
-        import time
-
         start_dt = datetime.strptime(start, "%Y%m%d")
         end_dt = datetime.strptime(end, "%Y%m%d")
         parts: list[pd.DataFrame] = []

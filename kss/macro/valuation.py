@@ -34,6 +34,7 @@ import math
 from dataclasses import dataclass
 from typing import Iterable
 
+import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ DEFAULT_EQUITY_RISK_PREMIUM = 0.055    # 5.5%
 _MIN_GROWTH = 1e-4
 
 
-@dataclass
+@dataclass(frozen=True)
 class ValuationResult:
     """单日估值标尺.
 
@@ -53,7 +54,8 @@ class ValuationResult:
         trade_date: ``YYYYMMDD``.
         index_code: 指数代码（如 ``000300.SH``）.
         pe: TTM 市盈率（Tushare ``index_dailybasic.pe_ttm``）.
-        risk_free: 用于折现的无风险利率（小数，如 10Y 国债 2.5% → 0.025）.
+        risk_free_rate: 用于折现的无风险利率（小数，如 10Y 国债 2.5% → 0.025）.
+            字段名与 :func:`compute_time_premium` 的关键字参数完全对齐.
         equity_premium: 股权风险溢价（小数）.
         growth_g: 预期盈利增长率（小数）.
         n_years: 隐含时间贴水年数；公式不可解时为 ``None``.
@@ -63,7 +65,7 @@ class ValuationResult:
     trade_date: str
     index_code: str
     pe: float | None
-    risk_free: float
+    risk_free_rate: float
     equity_premium: float
     growth_g: float
     n_years: float | None
@@ -214,15 +216,22 @@ def compute_hs300_n_from_panel(
     if merged.empty:
         return pd.DataFrame(columns=["trade_date", "pe", "risk_free", "n_years"])
 
-    merged["risk_free"] = merged[rf_col] / 100.0     # pp → decimal
-    merged["n_years"] = [
-        compute_time_premium(
-            pe=float(row[pe_col]) if pd.notna(row[pe_col]) else None,
-            risk_free_rate=float(row["risk_free"]) if pd.notna(row["risk_free"]) else 0.0,
-            growth_rate=growth_rate,
-            equity_premium=equity_premium,
-        )
-        for _, row in merged.iterrows()
-    ]
-    merged["pe"] = merged[pe_col]
-    return merged[["trade_date", "pe", "risk_free", "n_years"]].reset_index(drop=True)
+    # 向量化：n = log(pe * (rf + erp)) / log(1+g)
+    # 单位：rf_col 假设是百分点 → /100 转小数后加 ERP（小数）.
+    pe_arr = pd.to_numeric(merged[pe_col], errors="coerce")
+    rf_arr = pd.to_numeric(merged[rf_col], errors="coerce") / 100.0
+    r_arr = rf_arr + equity_premium
+    # 仅当 pe>0, r>0, g>_MIN_GROWTH, pe*r>0 时算 n；否则 NaN
+    valid = (pe_arr > 0) & (r_arr > 0) & (growth_rate > _MIN_GROWTH)
+    product = pe_arr * r_arr
+    valid &= product > 0
+    log_denom = math.log(1.0 + growth_rate) if growth_rate > _MIN_GROWTH else np.nan
+    n_years = np.where(valid, np.log(product.where(valid)) / log_denom, np.nan)
+
+    out = pd.DataFrame({
+        "trade_date": merged["trade_date"].values,
+        "pe": pe_arr.values,
+        "risk_free": rf_arr.values,
+        "n_years": n_years,
+    })
+    return out.reset_index(drop=True)

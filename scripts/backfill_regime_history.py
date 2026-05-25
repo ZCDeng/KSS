@@ -46,6 +46,20 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 
+def _atomic_to_parquet(df: pd.DataFrame, path: "Path") -> None:
+    """Write parquet via .tmp + os.replace to prevent torn reads by concurrent readers.
+
+    All macro parquet writes go through this helper so ``scan_combo_signals._lookup_*``
+    never sees a half-written file (which would silently fall back to None per the
+    swallow-exception pattern).
+    """
+    import os
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    df.to_parquet(tmp, index=False)
+    os.replace(tmp, path)
+
+
 STORAGE_ROOT = PROJECT_ROOT / "storage" / "macro"
 DAILY_PARQUET = STORAGE_ROOT / "macro_daily.parquet"
 MONTHLY_PARQUET = STORAGE_ROOT / "macro_monthly.parquet"
@@ -96,24 +110,35 @@ def ensure_pmi_vai(client: MacroClient, start_m: str, end_m: str, refetch: bool)
 
 
 def ensure_margin(client: MacroClient, start: str, end: str, refetch: bool) -> pd.DataFrame | None:
-    """日频两融拉取 + 按 trade_date 聚合（沪深合计）."""
+    """日频两融拉取 + 按 trade_date 聚合（沪深合计）.
+
+    无论 refetch 与否，**都与已有缓存合并**——避免每日刷新窗口（30 天）覆盖
+    多年历史导致 ``compute_liquidity_index`` 的 ``pct_change(252)`` yoy 全 NaN.
+    """
+    # 非 refetch + 缓存够新 → 直接返回
     if MARGIN_PARQUET.exists() and not refetch:
         df = pd.read_parquet(MARGIN_PARQUET)
-        if df["trade_date"].max() >= end:
+        if not df.empty and "trade_date" in df.columns and df["trade_date"].max() >= end:
             return df
 
     raw = client.fetch_margin(start, end)
     if raw is None or raw.empty:
         logger.warning("margin 拉取无数据")
+        # 拉取失败但缓存存在 → 返回旧缓存（fail-safe）
+        if MARGIN_PARQUET.exists():
+            cached = pd.read_parquet(MARGIN_PARQUET)
+            return cached if not cached.empty else None
         return None
     raw["trade_date"] = raw["trade_date"].astype(str)
-    if MARGIN_PARQUET.exists() and not refetch:
+    # 不管 refetch，都 merge 老缓存——窗口 fetch 不能覆盖历史
+    if MARGIN_PARQUET.exists():
         old = pd.read_parquet(MARGIN_PARQUET)
-        raw = pd.concat([old, raw]).drop_duplicates(
-            subset=["trade_date", "exchange_id"], keep="last"
-        )
+        if not old.empty:
+            raw = pd.concat([old, raw]).drop_duplicates(
+                subset=["trade_date", "exchange_id"], keep="last"
+            )
     MARGIN_PARQUET.parent.mkdir(parents=True, exist_ok=True)
-    raw.to_parquet(MARGIN_PARQUET, index=False)
+    _atomic_to_parquet(raw, MARGIN_PARQUET)
     logger.info("margin %s 共 %d 行", MARGIN_PARQUET, len(raw))
     return raw
 
@@ -148,8 +173,7 @@ def ensure_hsgt(client: MacroClient, trade_dates: list[str], refetch: bool) -> p
     merged = pd.concat(rows, ignore_index=True).drop_duplicates(
         subset=["trade_date"], keep="last"
     )
-    HSGT_PARQUET.parent.mkdir(parents=True, exist_ok=True)
-    merged.to_parquet(HSGT_PARQUET, index=False)
+    _atomic_to_parquet(merged, HSGT_PARQUET)
     return merged
 
 
@@ -161,8 +185,7 @@ def _load_or_fetch(path: Path, fetcher, key: str, refetch: bool) -> pd.DataFrame
     if df is None or df.empty:
         logger.warning("fetch %s 无数据", path.name)
         return None
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(path, index=False)
+    _atomic_to_parquet(df, path)
     logger.info("落地 %s (%d 行)", path, len(df))
     return df
 
@@ -376,8 +399,7 @@ def main() -> int:
 
     cfg = load_config()
     regime_df = classify_history(panel, cfg)
-    REGIME_PARQUET.parent.mkdir(parents=True, exist_ok=True)
-    regime_df.to_parquet(REGIME_PARQUET, index=False)
+    _atomic_to_parquet(regime_df, REGIME_PARQUET)
 
     stage_counts = regime_df["stage"].value_counts().to_dict()
     logger.info("regime_daily.parquet 写入 %d 行，stage 分布: %s",

@@ -40,5 +40,11 @@
     <false/>
     <key>ThrottleInterval</key>
     <integer>60</integer>
+
+    <!-- 防止 Tushare 卡死阻塞次日 cron 槽位：90 分钟超时强制 SIGTERM -->
+    <key>TimeoutStopInterval</key>
+    <integer>5400</integer>
+    <key>AbandonProcessGroup</key>
+    <true/>
 </dict>
 </plist>

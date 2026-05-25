@@ -41,7 +41,11 @@ _VALUATION_PARQUET_PATH = os.path.join(ROOT, 'storage', 'macro', 'valuation_n_da
 
 
 def _lookup_regime(trade_date_str: str) -> dict | None:
-    """从 regime_daily.parquet 取目标日的 stage；当日缺记录时取最近一日兜底."""
+    """从 regime_daily.parquet 取目标日的 stage；当日缺记录时取最近一日兜底.
+
+    Returns dict 含 ``stale`` 标志：as_of 距 trade_date 超 3 个日历日时为 True，
+    调用方可据此打印警告（避免静默用 stale 数据驱动 modulation）.
+    """
     if not os.path.exists(_REGIME_PARQUET_PATH):
         return None
     try:
@@ -59,11 +63,25 @@ def _lookup_regime(trade_date_str: str) -> dict | None:
     stage = str(r.get('stage', 'Unknown'))
     if stage == 'Unknown':
         return None
+    as_of = str(r.get('trade_date', ''))
+    stale = _is_stale(as_of, trade_date_str, max_days=3)
     return {
         'stage': stage,
         'confidence': float(r.get('confidence', 0.0)),
-        'as_of': str(r.get('trade_date', '')),
+        'as_of': as_of,
+        'stale': stale,
     }
+
+
+def _is_stale(as_of: str, target: str, max_days: int) -> bool:
+    """as_of 是否距 target 超过 max_days 个日历日（粗略检查 staleness）."""
+    try:
+        from datetime import datetime
+        d1 = datetime.strptime(as_of, '%Y%m%d')
+        d2 = datetime.strptime(target, '%Y%m%d')
+        return abs((d2 - d1).days) > max_days
+    except Exception:
+        return False
 
 
 def _modulate_entry_count(stage: str | None, requested: int) -> int:
@@ -638,8 +656,11 @@ def build_telegram_message(today_df: pd.DataFrame, picks: pd.DataFrame,
     if valuation:
         pct_str = (f", 5Y 分位 {valuation['percentile_5y']*100:.0f}%"
                    if valuation['percentile_5y'] is not None else '')
+        pe_str = f"{valuation['pe']:.1f}" if valuation.get('pe') is not None else 'N/A'
+        n_str = (f"{valuation['n_years']:.1f}"
+                 if valuation.get('n_years') is not None else 'N/A')
         lines.append(
-            f"<i>HS300 PE={valuation['pe']:.1f} n={valuation['n_years']:.1f} "
+            f"<i>HS300 PE={pe_str} n={n_str} "
             f"[{valuation['rule']}]{pct_str}</i>"
         )
     if rotation_hint:
@@ -763,12 +784,21 @@ def main():
     )
     rotation_hint = _lookup_rotation(regime['stage'] if regime else None)
 
-    # 估值 n —— 与 regime 独立计算，最终 top_entry 取两者较小者
+    # 估值 n —— 与 regime 独立计算，合成 effective_top_entry.
+    # Fix #7: 不能简单 min() — 否则 valuation 'cool' (扩到 7) 永远被 regime 收紧覆盖.
+    # 规则：(a) 任一为 0 → 全程 suppress；(b) 两者均扩 (>requested) → max；
+    # (c) 一扩一缩 → 收紧优先 (用 min 但保证 <=requested 的方向)；(d) 都收缩 → min.
     valuation = _lookup_valuation(last_date.strftime('%Y%m%d'))
     if valuation:
         from kss.macro.valuation import modulate_entry_count as _val_mod
         val_top = _val_mod(valuation['rule'], args.top_entry)
-        effective_top_entry = min(regime_top, val_top)
+        if regime_top == 0 or val_top == 0:
+            effective_top_entry = 0
+        elif regime_top > args.top_entry and val_top > args.top_entry:
+            effective_top_entry = max(regime_top, val_top)
+        else:
+            # 至少有一边在收缩 → 取收缩方
+            effective_top_entry = min(regime_top, val_top)
     else:
         effective_top_entry = regime_top
 
@@ -776,9 +806,10 @@ def main():
         adj = ''
         if effective_top_entry != args.top_entry:
             adj = f' → entry 候选 {args.top_entry}→{effective_top_entry}'
+        stale_warn = ' ⚠️ STALE' if regime.get('stale') else ''
         print(
             f"  宏观阶段: {regime['stage']} "
-            f"(置信度 {regime['confidence']:.2f}, as_of {regime['as_of']}){adj}"
+            f"(置信度 {regime['confidence']:.2f}, as_of {regime['as_of']}){stale_warn}{adj}"
         )
         if rotation_hint:
             prefs = ' / '.join(rotation_hint['preferred'][:5]) or '—'
@@ -791,8 +822,11 @@ def main():
     if valuation:
         pct_str = (f", 5Y 分位 {valuation['percentile_5y']*100:.0f}%"
                    if valuation['percentile_5y'] is not None else '')
+        pe_str = f"{valuation['pe']:.2f}" if valuation.get('pe') is not None else 'N/A'
+        n_str = (f"{valuation['n_years']:.2f}"
+                 if valuation.get('n_years') is not None else 'N/A')
         print(
-            f"  HS300 估值: PE={valuation['pe']:.2f} n={valuation['n_years']:.2f} "
+            f"  HS300 估值: PE={pe_str} n={n_str} "
             f"[{valuation['rule']}]{pct_str}"
         )
     else:

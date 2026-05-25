@@ -102,17 +102,26 @@ kss predict --pool kcb50 --model lgb_kcb50_10d --type daily
 ```
 kss/
 ├── cli/              # Click 命令行接口
-├── data/             # Tushare/AKShare 客户端、同花顺热点（ths_client）、CSV 缓存
+├── data/             # Tushare/AKShare 客户端、同花顺热点（ths_client）、MacroClient、CSV 缓存
+├── macro/            # Bolton 周期框架：分母端数据 + 阶段分类 + 部门轮换 + 估值 n
 ├── features/         # 因子生成管道（技术/波动率/成交量/估值）
 ├── models/           # 模型基类、LightGBM 实现、注册中心
-├── strategies/       # 策略基类、横截面选股、信号生成器
+├── strategies/       # 策略基类、横截面选股、信号生成器、风险前过滤
 ├── backtest/         # Walk-forward 引擎、绩效指标、成本模型
 ├── prediction/       # 日度/周度/周期预测与格式化输出
 ├── notifications/    # 通知通道抽象与具体实现
-├── config/           # YAML 配置文件
-├── scripts/          # 自动化脚本（setup.sh、daily_run.sh）
+├── config/           # YAML 配置文件（macro_regime / sector_rotation / risk_filters）
+├── scripts/          # 自动化脚本（setup.sh、daily_run.sh、update_macro_daily）
 └── tests/            # pytest 测试套件
 ```
+
+`kss/macro/` 模块（Bolton 周期框架 P0-P4）:
+
+- `snapshot.py` — 单日宏观快照（Shibor / 国债收益率 / M2 / CPI / PPI / 信用利差）
+- `derived.py` — Δr / 收益率曲线斜率 / E_trend / 流动性指数 派生指标
+- `regime.py` — 周期阶段 (I/II/III/IV) 分类器，历史分位数 + 滞后保护
+- `rotation.py` — 申万一级行业 → 阶段偏好映射
+- `valuation.py` — Bolton 时间贴水 n = log(PE·r) / log(1+g) 估值标尺
 
 ---
 

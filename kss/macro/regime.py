@@ -67,7 +67,7 @@ class RegimeThresholds:
     n_history: int = 0
 
 
-@dataclass
+@dataclass(frozen=True)
 class MacroRegime:
     """单日宏观阶段标签.
 

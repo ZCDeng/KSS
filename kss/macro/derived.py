@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
+import numpy as np
 import pandas as pd
 
 
@@ -139,7 +140,6 @@ def compute_liquidity_index(
     aligned = [p.reindex(base_idx) for p in parts]
 
     if monthly_panel is not None and not monthly_panel.empty and "m2_yoy" in monthly_panel.columns:
-        import numpy as np
         m2 = monthly_panel.sort_values("month").reset_index(drop=True).copy()
         m2["month"] = m2["month"].astype(str)
         # 把月 ffill 到日：构造 month-prefix 索引匹配
