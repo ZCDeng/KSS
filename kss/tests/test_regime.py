@@ -273,6 +273,22 @@ def test_classify_history_returns_dataframe(history_panel, sample_config):
     assert (out.iloc[:30]["stage_raw"] == UNKNOWN).all()
 
 
+def test_classify_history_object_dtype_column_does_not_crash(history_panel, sample_config):
+    """回归：某维度数据源缺失时（如 hsgt 无数据），build_indicator_panel 会
+    用全 None 的 Python list 构出 object dtype 列，旧实现直接对其 expanding().quantile()
+    抛 'No numeric types to aggregate' 令整个 regime 刷新崩溃（cron 2026-05-26 现场）。
+    现在该列被 coerce 成 NaN，liquidity 维度优雅跳过，regime 仍用其余维度分类。
+    """
+    # liquidity 整列 None → object dtype，复现崩溃前置条件
+    history_panel["liquidity"] = [None] * len(history_panel)
+    assert history_panel["liquidity"].dtype == object
+
+    out = classify_history(history_panel, sample_config)  # 不应抛异常
+    assert len(out) == len(history_panel)
+    # min_days 之后仍能分类（不是整列 Unknown），证明其余维度照常工作
+    assert (out.iloc[30:]["stage_raw"] != UNKNOWN).any()
+
+
 def test_classify_today_picks_last_day(history_panel, sample_config):
     """未指定 today 时取 panel 最大 trade_date."""
     # 强力构造最后一日的指标，确认是被分类的
