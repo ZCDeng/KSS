@@ -92,8 +92,13 @@ def next_trade_date(today_yyyymmdd: str) -> str:
             return d.strftime('%Y%m%d')
 
 
-def _ensure_stock_data(sym: str, target_date: str) -> pd.DataFrame:
-    """加载或增量更新 cs_data csv 到目标日期."""
+def _ensure_stock_data(sym: str, target_date: str) -> tuple[pd.DataFrame, bool]:
+    """加载或增量更新 cs_data csv 到目标日期.
+
+    返回 ``(df, fell_back)``：``fell_back=True`` 表示本想拉到 target 但 Tushare
+    失败、退化到了缓存（用于在复盘正文标注数据截止日）。假期等"无新数据"场景
+    不算退化（不抛异常），``fell_back`` 保持 False。
+    """
     fp = PROJECT_ROOT / f'cs_data_{sym}.csv'
     if not fp.exists():
         raise FileNotFoundError(f"{fp} 不存在")
@@ -101,6 +106,7 @@ def _ensure_stock_data(sym: str, target_date: str) -> pd.DataFrame:
     df['trade_date'] = pd.to_datetime(df['trade_date'])
     df = df.sort_values('trade_date').reset_index(drop=True)
     last = df['trade_date'].max().strftime('%Y%m%d')
+    fell_back = False
     if last < target_date:
         try:
             pro = _pro()
@@ -120,7 +126,8 @@ def _ensure_stock_data(sym: str, target_date: str) -> pd.DataFrame:
                     logger.info(f"  {sym} 新增 {len(new_rows)} 行")
         except Exception as e:
             logger.warning(f"  {sym} 增量更新失败, 退化到缓存 (截止 {last}): {e}")
-    return df
+            fell_back = True
+    return df, fell_back
 
 
 def _ensure_index_data(code: str, target_date: str) -> pd.DataFrame:
@@ -592,12 +599,20 @@ def _title_for(today_str: str, t1_str: str, sym: str = '', name: str = '') -> st
     return f"KSS {rf}"
 
 
-def render(stocks: list[dict], idx_dfs: dict, today_str: str, t1_str: str) -> list[str]:
-    """生成 Markdown 推送正文, 返回多段消息列表 (Telegram 单条上限 4096)."""
+def render(stocks: list[dict], idx_dfs: dict, today_str: str, t1_str: str,
+           stale_through: str | None = None) -> list[str]:
+    """生成 Markdown 推送正文, 返回多段消息列表 (Telegram 单条上限 4096).
+
+    ``stale_through`` 非空表示实时数据源拉取失败、正文基于缓存数据（截止该日），
+    在第一段顶部插入醒目告警横幅。
+    """
     chunks: list[str] = []
 
     # ===== 第一段: 标题 + 大盘背景 =====
     lines = [f"📊 *{_title_for(today_str, t1_str)}*", ""]
+    if stale_through:
+        lines.append(f"⚠️ *数据截止 {stale_through}*：实时源拉取失败，以下为缓存数据，当日行情可能未反映")
+        lines.append("")
     lines.append("🌐 *大盘背景*")
     for code, name in INDICES:
         idx = idx_dfs.get(code)
@@ -704,8 +719,12 @@ def main():
             idx_dfs[code] = None
 
     stocks_data = []
+    stale_through: str | None = None  # 实时源失败退化到缓存时的最早数据截止日
     for sym, name, category in STOCKS:
-        df = _ensure_stock_data(sym, target)
+        df, fell_back = _ensure_stock_data(sym, target)
+        if fell_back:
+            last_date = df['trade_date'].max().strftime('%Y-%m-%d')
+            stale_through = last_date if stale_through is None else min(stale_through, last_date)
         df = add_indicators(df)
         mf = _ensure_moneyflow(sym, target)
         mf_today = None
@@ -721,7 +740,7 @@ def main():
         s['category'] = category
         stocks_data.append(s)
 
-    chunks = render(stocks_data, idx_dfs, today_str, t1_str)
+    chunks = render(stocks_data, idx_dfs, today_str, t1_str, stale_through=stale_through)
 
     # 存档: 不论 dry-run / 实际推送, 都落盘到 storage/daily_review/YYYY-MM-DD.md
     archive_dir = PROJECT_ROOT / 'storage' / 'daily_review'
