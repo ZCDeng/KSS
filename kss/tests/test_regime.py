@@ -18,6 +18,7 @@ import pandas as pd
 import pytest
 
 from kss.macro.derived import compute_e_trend, compute_liquidity_index
+from kss.macro.pipeline import build_indicator_panel
 from kss.macro.regime import (
     UNKNOWN,
     MacroRegime,
@@ -271,6 +272,61 @@ def test_classify_history_returns_dataframe(history_panel, sample_config):
     assert "stage_raw" in out.columns
     # 前 30 天应为 Unknown（min_days_for_quantile=30）
     assert (out.iloc[:30]["stage_raw"] == UNKNOWN).all()
+
+
+def test_classify_history_object_dtype_column_does_not_crash(history_panel, sample_config):
+    """回归：某维度数据源缺失时（如 hsgt 无数据），build_indicator_panel 会
+    用全 None 的 Python list 构出 object dtype 列，旧实现直接对其 expanding().quantile()
+    抛 'No numeric types to aggregate' 令整个 regime 刷新崩溃（cron 2026-05-26 现场）。
+    现在该列被 coerce 成 NaN，liquidity 维度优雅跳过，regime 仍用其余维度分类。
+    """
+    # liquidity 整列 None → object dtype，复现崩溃前置条件
+    history_panel["liquidity"] = [None] * len(history_panel)
+    assert history_panel["liquidity"].dtype == object
+
+    out = classify_history(history_panel, sample_config)  # 不应抛异常
+    assert len(out) == len(history_panel)
+    # min_days 之后仍能分类（不是整列 Unknown），证明其余维度照常工作
+    assert (out.iloc[30:]["stage_raw"] != UNKNOWN).any()
+
+
+def test_build_panel_numeric_dtype_when_sources_missing():
+    """源头契约：所有数据源缺失时，build_indicator_panel 仍须返回数值 dtype 列。
+
+    旧实现会用 pd.NA / 全 None list 赋值 → object dtype → 下游 classify_history
+    的 expanding().quantile() 抛 'No numeric types to aggregate'。
+    """
+    dates = pd.date_range("2024-01-01", periods=40, freq="B").strftime("%Y%m%d")
+    daily = pd.DataFrame({"trade_date": dates})  # 只有日期，无收益率列
+    monthly = pd.DataFrame({"month": [], "m2_yoy": []})
+    panel = build_indicator_panel(daily, monthly, None, None, None, None)
+
+    for col in ("e_trend", "r_trend", "liquidity", "yc_slope", "yc_slope_change"):
+        assert pd.api.types.is_numeric_dtype(panel[col]), f"{col} 非数值 dtype"
+    # 不应崩溃
+    classify_history(panel, load_config())
+
+
+def test_build_panel_liquidity_survives_without_hsgt():
+    """leftover #2：HSGT 缺失时 liquidity 仍由 margin + M2 兜底，不会整列为空。"""
+    dates = pd.date_range("2023-01-01", periods=300, freq="B")
+    ds = dates.strftime("%Y%m%d")
+    rng = np.random.default_rng(7)
+    daily = pd.DataFrame({
+        "trade_date": ds,
+        "yld_10y": rng.normal(2.5, 0.1, 300),
+        "yld_1y": rng.normal(1.8, 0.1, 300),
+        "yld_10y_d20": rng.normal(0, 0.05, 300),
+    })
+    months = pd.period_range("2023-01", periods=15, freq="M").strftime("%Y%m")
+    monthly = pd.DataFrame({"month": months, "m2_yoy": rng.normal(9, 0.5, 15)})
+    margin = pd.DataFrame({"trade_date": ds, "rzye": np.linspace(1.5e12, 1.7e12, 300)})
+
+    panel = build_indicator_panel(daily, monthly, None, None, margin, hsgt=None)
+
+    assert pd.api.types.is_numeric_dtype(panel["liquidity"])
+    # margin yoy (pct_change 252) + M2 → 后段应有非 NaN，证明无 HSGT 也能算
+    assert panel["liquidity"].notna().any(), "无 HSGT 时 liquidity 整列为空"
 
 
 def test_classify_today_picks_last_day(history_panel, sample_config):

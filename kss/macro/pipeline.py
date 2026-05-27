@@ -250,6 +250,14 @@ def build_indicator_panel(
     else:
         panel["liquidity"] = pd.NA
 
+    # 契约保证：5 列指标恒为数值 dtype。某数据源全缺时上面会用 pd.NA / 全 None
+    # list 赋值，留成 object dtype，下游 classify_history 的 expanding().quantile()
+    # 直接抛 "No numeric types to aggregate"。统一 coerce 成 float，缺失即 NaN，
+    # 由 classify_history 按 NaN 阈值优雅跳过该维度（hsgt 缺失时 liquidity 仍由
+    # margin + M2 兜底计算，不会整列变空）。
+    for _col in ("e_trend", "r_trend", "liquidity", "yc_slope", "yc_slope_change"):
+        panel[_col] = pd.to_numeric(panel[_col], errors="coerce")
+
     return panel
 
 

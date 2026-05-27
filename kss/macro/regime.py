@@ -330,10 +330,15 @@ def classify_history(
     for col in threshold_cols:
         if col not in df.columns:
             continue
+        # 强制数值化：某维度数据源缺失时（如 hsgt 无数据 → liquidity 整列 None）
+        # 该列会是 object dtype，rolling/expanding.quantile() 直接抛
+        # "No numeric types to aggregate"。coerce 成 float 后该维度退化为 NaN
+        # 阈值，被下方 `lo == lo` 判空跳过，regime 仍用其余维度分类而非整体崩溃。
+        series = pd.to_numeric(df[col], errors="coerce")
         if use_rolling:
-            roll = df[col].rolling(window=min_n, min_periods=min_n)
+            roll = series.rolling(window=min_n, min_periods=min_n)
         else:
-            roll = df[col].expanding(min_periods=min_n)
+            roll = series.expanding(min_periods=min_n)
         # shift(1): 第 i 行使用 [0, i) 的统计，确保无未来信息（包含 i 会泄露）
         thresholds_low[col] = roll.quantile(q_low).shift(1)
         thresholds_high[col] = roll.quantile(q_high).shift(1)
