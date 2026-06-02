@@ -401,8 +401,9 @@ def collect_entry_hits(today_df: pd.DataFrame, kc_pool: dict, cy_pool: dict) -> 
 
 
 def top_n_picks(entry_hits: list, top_n: int,
-                regime_stage: str | None = None) -> pd.DataFrame:
-    """对所有入场命中去重 + 按 "✓>△ → rotation_score → n_combo → 市值" 排序, 取 top N.
+                regime_stage: str | None = None,
+                chain_registry: object | None = None) -> pd.DataFrame:
+    """对所有入场命中去重 + 按 "✓>△ → rotation → perilla → n_combo → 市值" 排序, 取 top N.
 
     Args:
         entry_hits: :func:`collect_entry_hits` 输出.
@@ -410,9 +411,11 @@ def top_n_picks(entry_hits: list, top_n: int,
         regime_stage: 当前 Bolton 周期阶段（``I/II/III/IV``）；
             非 ``None`` 时按 :func:`kss.macro.rotation.score_industry_fit` ×0.2
             算 ``rotation_score`` 加入排序键（plan 007 #41）；``None`` 时退回原行为.
+        chain_registry: 紫苏叶产业链注册表（``ChainRegistry`` 实例）；
+            非 ``None`` 时按 ``perilla_score × ranking_multiplier`` 加入排序键.
 
     Returns:
-        排序后 DataFrame；``regime_stage`` 非空时附 ``rotation_score`` 列.
+        排序后 DataFrame；附 ``rotation_score`` / ``perilla_score`` 列（如有）.
     """
     all_hits = []
     for h in entry_hits:
@@ -448,17 +451,27 @@ def top_n_picks(entry_hits: list, top_n: int,
     # 优先级: ✓ > △
     agg['has_check'] = agg['verdicts'].str.contains('✓').astype(int)
 
-    # 部门轮换打分 (plan 007 #41)：行业 ↔ 阶段适配 × 0.2 权重
+    # ── 紫苏叶产业链评分 (plan 2026-06-02-001) ──
+    if chain_registry is not None and hasattr(chain_registry, 'score'):
+        mult = getattr(getattr(chain_registry, '_config', None),
+                       'ranking_multiplier', 0.3)
+        agg['perilla_score'] = agg['sym'].apply(
+            lambda s: chain_registry.score(str(s)) * mult
+        )
+    else:
+        agg['perilla_score'] = 0.0
+
+    # ── 部门轮换打分 (plan 007 #41) ──
     if regime_stage:
         try:
             from kss.macro.rotation import load_industry_map, score_industry_fit
         except ImportError:
-            agg = agg.sort_values(['has_check', 'n_combo', 'mv'],
-                                  ascending=[False, False, False]).head(top_n)
+            sort_keys = ['has_check', 'perilla_score', 'n_combo', 'mv']
+            agg = agg.sort_values(sort_keys,
+                                  ascending=[False, False, False, False]).head(top_n)
             return agg.drop(columns=['has_check'])
 
         industry_map = load_industry_map()
-        # sym 是 6 位裸码，industry_map key 是 ts_code 带后缀；做后缀拼装
         def _score_for(sym: str) -> float:
             code = str(sym)
             for suffix in ('.SH', '.SZ', '.BJ'):
@@ -469,20 +482,22 @@ def top_n_picks(entry_hits: list, top_n: int,
 
         agg['rotation_score'] = agg['sym'].apply(_score_for)
         agg = agg.sort_values(
-            ['has_check', 'rotation_score', 'n_combo', 'mv'],
-            ascending=[False, False, False, False],
+            ['has_check', 'rotation_score', 'perilla_score', 'n_combo', 'mv'],
+            ascending=[False, False, False, False, False],
         ).head(top_n)
         return agg.drop(columns=['has_check'])
 
-    agg = agg.sort_values(['has_check', 'n_combo', 'mv'],
-                          ascending=[False, False, False]).head(top_n)
+    agg = agg.sort_values(['has_check', 'perilla_score', 'n_combo', 'mv'],
+                          ascending=[False, False, False, False]).head(top_n)
     return agg.drop(columns=['has_check'])
 
 
 def report_entry(today_df: pd.DataFrame, kc_pool: dict, cy_pool: dict,
-                 top_entry: int = 5, regime_stage: str | None = None):
+                 top_entry: int = 5, regime_stage: str | None = None,
+                 chain_registry: object | None = None):
     entry_hits = collect_entry_hits(today_df, kc_pool, cy_pool)
-    picks = top_n_picks(entry_hits, top_entry, regime_stage=regime_stage)
+    picks = top_n_picks(entry_hits, top_entry, regime_stage=regime_stage,
+                        chain_registry=chain_registry)
 
     print('\n' + '=' * 100)
     print(f'  ▲ 当日入场候选 Top-{top_entry} (按"匹配组合数 + 市值"排序, ✓现状判定优先)')
@@ -600,7 +615,8 @@ def build_telegram_message(today_df: pd.DataFrame, picks: pd.DataFrame,
                             regime: dict | None = None,
                             rotation_hint: dict | None = None,
                             risk_summary: dict | None = None,
-                            valuation: dict | None = None) -> str:
+                            valuation: dict | None = None,
+                            chain_registry: object | None = None) -> str:
     lines = []
     lines.append(f'📊 <b>组合扫描 {last_date.strftime("%Y-%m-%d")}</b>')
     if regime:
@@ -646,6 +662,11 @@ def build_telegram_message(today_df: pd.DataFrame, picks: pd.DataFrame,
                 f"{r['pct_chg']:+.2f}% RPS{rps_s} W{wtu} {mv_s} "
                 f"<i>{int(r['n_combo'])}组合命中</i>"
             )
+            # 紫苏叶产业链标签 (plan 2026-06-02-001)
+            if chain_registry is not None and hasattr(chain_registry, 'format_tag'):
+                tag = chain_registry.format_tag(str(sym))
+                if tag:
+                    lines.append(f"   {tag}")
     lines.append('')
     lines.append('✗ <b>避雷 (持仓自查)</b>')
     shown = 0
@@ -733,6 +754,14 @@ def main():
 
     # 宏观阶段标签 — 缺数据时 regime=None，行为与未集成时一致
     regime = _lookup_regime(last_date.strftime('%Y%m%d'))
+    # Phase 3: 前一交易日 stage, 用于检测 regime 切换
+    _prev_regime_stage = None
+    try:
+        _prev_date = last_date - pd.tseries.offsets.BDay(1)
+        _prev_regime = _lookup_regime(_prev_date.strftime('%Y%m%d'))
+        _prev_regime_stage = _prev_regime['stage'] if _prev_regime else None
+    except Exception:
+        pass
     regime_top = _modulate_entry_count(
         regime['stage'] if regime else None, args.top_entry,
     )
@@ -786,9 +815,40 @@ def main():
     else:
         print('  HS300 估值: 无 valuation_n_daily.parquet (跳过)')
 
+    # ── 紫苏叶产业链注册表 (plan 2026-06-02-001) ──
+    _chain_reg = None
+    try:
+        from kss.supply_chain import ChainRegistry
+        from kss.supply_chain.updater import check_staleness, check_demand_chain_health
+        _chain_reg = ChainRegistry.from_yaml()
+        if _chain_reg.n_stocks > 0:
+            scored = _chain_reg.candidates(min_score=0.3)
+            print(f"  产业链覆盖: {_chain_reg.n_stocks} 只已标注, "
+                  f"紫苏叶候选 {len(scored)} 只 (score≥0.3)")
+            # Phase 3: 过期检查
+            staleness = check_staleness()
+            if staleness["is_stale"]:
+                print(f"  ⚠️  supply_chain.yaml 已过期 "
+                      f"({staleness['age_days']} 天, 阈值 {staleness['threshold_days']} 天)"
+                      f" → 运行 python -m kss.supply_chain.updater 刷新")
+            # Phase 3: regime 切换 → demand_locked 复查告警
+            if regime and _prev_regime_stage:
+                demand_alerts = check_demand_chain_health(
+                    regime['stage'], _prev_regime_stage)
+                if demand_alerts:
+                    print(f"  ⚠️  宏观阶段切换 {_prev_regime_stage}→{regime['stage']}, "
+                          f"{len(demand_alerts)} 只 demand_locked 票需复查:")
+                    for a in demand_alerts[:5]:
+                        print(f"      {a['ts_code']} {a['name']}")
+        else:
+            print('  产业链覆盖: 无 supply_chain.yaml (跳过)')
+    except Exception:
+        print('  产业链覆盖: 模块不可用 (跳过)')
+
     picks, _ = report_entry(
         today_df, kc_pool, cy_pool, top_entry=effective_top_entry,
         regime_stage=regime['stage'] if regime else None,
+        chain_registry=_chain_reg,
     )
     avoid_hits = report_avoid(today_df, kc_pool, cy_pool)
     if args.show_unmatched:
@@ -806,6 +866,7 @@ def main():
             today_df, picks, avoid_hits, last_date,
             regime=regime, rotation_hint=rotation_hint,
             risk_summary=risk_summary, valuation=valuation,
+            chain_registry=_chain_reg,
         )
         results = send_to_channels(
             message=msg,

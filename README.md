@@ -1,6 +1,6 @@
 # KSS — Keda Stock System
 
-> A 股量化回测框架，专注科创板 51 只样本池的"实事求是"派。
+> A 股量化回测框架，专注科创板 + 创业板 100 只样本池的"实事求是"派。
 > 目标不是"算出 Sharpe 3 的策略"，而是"诚实告诉你哪些 Sharpe 其实是 bias"。
 
 ## TL;DR
@@ -17,13 +17,19 @@
   （分母端数据 → 周期阶段分类 → 部门轮换 → 估值时间贴水 n → 个股风险前过滤），
   注入 `scan_combo_signals` 与 `sector_commentary`，给 combo_scan 按宏观阶段
   + 估值 n 自动调节 entry 候选数。**这不是新策略**，是给现有信号叠加宏观环境层.
-- 测试覆盖：**727 passed** / 3 xfailed / 6 deselected (DL)。
+- **第 12 轮紫苏叶产业链卡位评分（2026-06-02 新增）**：融合 Serenity「紫苏叶理论」——
+  沿产业链下钻找不可替代的卡脖子供应商，四维评分（链层深度 × 竞争护城河 × 需求锁定 × 分析师覆盖缺口），
+  科创 50 + 创业 50 共 100 只全量标注。筛出 24 只紫苏叶候选（全球 ≤3 家供应商 + 需求锁定），
+  集成到 combo_scan 排序 + Telegram 消息 + LLM 板块复盘。
+  含动态化管线：Tushare `report_rc` 自动刷新分析师覆盖数 + 宏观阶段切换时 demand_locked 复查告警 + 标注过期检测。
+- 测试覆盖：**779 passed** / 3 xfailed / 6 deselected (DL)。
 - 想跑日常选股：`python3 scripts/paper_trade_log_mv.py`。
-- 想看完整 banner（含宏观阶段 + 部门轮换 + 估值 n + 风险过滤）：
+- 想看完整 banner（含宏观阶段 + 部门轮换 + 估值 n + 风险过滤 + 紫苏叶产业链覆盖）：
   `python3 scan_combo_signals.py --board kechuang --dry-run`.
 - 全部细节见 [`docs/solutions/lookahead_bias_lessons.md`](docs/solutions/lookahead_bias_lessons.md)、
-  [`docs/solutions/qlib_paper_comparison.md`](docs/solutions/qlib_paper_comparison.md)
-  与 5 个 Bolton 周期框架 plan 文档（`docs/plans/2026-05-25-001..005-*.md`）。
+  [`docs/solutions/qlib_paper_comparison.md`](docs/solutions/qlib_paper_comparison.md)、
+  5 个 Bolton 周期框架 plan 文档（`docs/plans/2026-05-25-001..005-*.md`）
+  与 [紫苏叶 plan 文档](docs/plans/2026-06-02-001-feat-perilla-leaf-supply-chain-scoring-plan.md)。
 
 ![KSS 系统架构](storage/reports/images/kss_architecture.png)
 
@@ -40,7 +46,7 @@ KSS = **K**eda **S**tock **S**ystem。一个 Python 量化回测框架，
 
 它**不是**：
 - 不是实盘下单系统（仅纸交易日志）；
-- 不是覆盖全 A 股的因子库（当前股票池仅科创板 51 只）；
+- 不是覆盖全 A 股的因子库（当前回测股票池科创板 50 只 + 创业板 50 只，产业链标注 100 只）；
 - 不是另一个 backtrader / qlib（依赖少，规模小）。
 
 ## 8 轮实验：Sharpe 1.18 → 1.74 的真实之路
@@ -121,6 +127,90 @@ combo_scan + sector_commentary 现有信号叠加一层"现在是周期的哪一
 - **performance**：`classify_history` 是 O(N²) expanding-window 循环（实测 2090 日 1.5h），下轮重写为 `expanding().quantile()` 向量化
 - **valuation n=0.91 [normal] 但 5Y 分位 88%**：`n` 是前瞻式（含 g 假设），分位是历史式纯 PE。两个信号微妙不同——这是 plan 004 已知的语义差异
 
+## 第 12 轮紫苏叶产业链卡位评分 (2026-06-02 新增)
+
+融合 Serenity「紫苏叶理论」——沿产业链从终端需求逐层下钻，找到**不可替代 + 全球供应商 ≤2 + 尚未被市场定价**的卡脖子公司。这套定性分析框架与 KSS 的量化因子天然互补：`log_mv` 反向在统计维度选小市值，紫苏叶从产业链结构维度解释**为什么某些小市值比其他更值得持有**。
+
+**方法论六步**：
+
+1. **产业链下钻** — 从终端需求逐层追问：这层要工作，下一层什么东西不可替代？
+2. **竞争格局判定** — 全球玩家数：1 家（垄断）→ 最强；2 家 → 高分；3+ → pass
+3. **需求锁定度** — 扩产周期 > 1 年 + 无替代技术路线 → 供需缺口锁定
+4. **定价偏差识别** — 分析师覆盖低 + 市值小 → 被市场低估
+5. **对抗检验** — 回测 + OOS + regime 交叉确认（替代 Serenity 的"公开等人骂"）
+6. **持续监控** — 新进入者 / 技术路线替代 / 宏观阶段恶化 → 重评估
+
+**四维评分公式**（权重走 YAML 配置）：
+
+| 分项 | 权重 | 计算 |
+|------|------|------|
+| **链层深度** layer | 0.25 | Layer 1=0, Layer 5=1（越深越稀缺） |
+| **竞争护城河** moat | 0.35 | 独家→1.0, 双寡头→0.7, 三家→0.3, 4+→0 |
+| **需求锁定** lock | 0.25 | demand_locked × (扩产周期 / 3) |
+| **覆盖缺口** coverage_gap | 0.15 | 1 - min(analyst_count / 20, 1) |
+
+**100 只全量标注**（科创 50 + 创业 50），筛出 **24 只紫苏叶候选**（score ≥ 0.3），Top 10：
+
+| # | 股票 | 板 | 得分 | 产业链卡位 |
+|---|------|----|------|-----------|
+| 1 | 凯赛生物 | KCB | 0.84 | L5 生物法长链二元酸，全球实质独家 |
+| 2 | 南大光电 | CYB | 0.84 | L5 ArF 光刻胶，全球双寡头 |
+| 3 | 中科飞测 | KCB | 0.77 | L4 晶圆光学检测，全球双寡头 (KLA/) |
+| 4 | 华海清科 | KCB | 0.74 | L4 CMP 设备，全球双寡头 (AMAT/) |
+| 5 | 晶盛机电 | CYB | 0.70 | L4 单晶炉，全球双寡头，光伏 + SiC 双链 |
+| 6 | 天岳先进 | KCB | 0.68 | L5 SiC 衬底，全球前三，第三代半导体核心 |
+| 7 | 菲利华 | CYB | 0.68 | L5 半导体石英玻璃，全球前三 |
+| 8 | 绿的谐波 | KCB | 0.67 | L4 谐波减速器，全球双寡头，机器人关节核心 |
+| 9 | 西部超导 | KCB | 0.67 | L5 航空钛合金 + 超导线材，国内独家 |
+| 10 | 天孚通信 | CYB | 0.64 | L4 光无源器件，全球双寡头，光模块必配 |
+
+**集成架构**：
+
+```
+scan_combo_signals.py
+  │
+  ├─ Bolton 周期 (P0-P4)    ← 宏观环境层
+  ├─ 风险过滤 (risk_filter)  ← 个股硬门槛
+  └─ 紫苏叶 (supply_chain/)  ← 产业链结构层 [NEW]
+      │
+      ├─ config/supply_chain.yaml    100 只标注 + 权重 + 需求链
+      ├─ supply_chain/registry.py    YAML 加载 / 查询 / 评分 / 标签
+      ├─ supply_chain/scoring.py     四维评分公式
+      └─ supply_chain/updater.py     动态化管线
+          ├─ analyst_count 刷新      Tushare report_rc → 独立机构数
+          ├─ 过期检测                 YAML updated > 90天 → banner ⚠️
+          └─ demand_locked 复查       regime II/III→IV → 列出需复查票
+```
+
+**排序键更新**：`top_n_picks()` 从 `has_check → rotation → n_combo → mv` 变为 `has_check → rotation → perilla_score → n_combo → mv`。紫苏叶评分在 rotation 之后、combo 数之前，不改变统计检验流程。
+
+**实跑示例（2026-06-02）**：
+
+```
+  产业链覆盖: 100 只已标注, 紫苏叶候选 24 只 (score≥0.3)
+```
+
+**动态化管线**（Phase 3）：
+
+```bash
+# 检查标注是否过期
+python -m kss.supply_chain.updater --check-only
+
+# 从 Tushare 刷新全部 analyst_count (约 100×2s)
+python -m kss.supply_chain.updater
+
+# dry-run 看变更不写入
+python -m kss.supply_chain.updater --dry-run
+```
+
+**质量门槛**：52 个测试（scoring 35 + updater 17），含 6 个紫苏叶理论行为验证（deep > shallow / monopoly > competitive / locked > unlocked / low_coverage > high / ideal_stock > 0.9 / anti_stock < 0.05）。
+
+**已知设计权衡**：
+
+- **chain_layer / n_competitors / demand_locked 仍为静态人工标注**：产业链结构是低频变量（年级别），YAML 标注合理。只有 analyst_count 做了月频动态化。
+- **标注主观性**：不同研究者可能对同一只票给出不同 chain_layer / n_competitors 值。缓解：每条标注附 `analyst_notes` 说明判断依据。
+- **A 股特殊性**：Serenity 案例均为美股/瑞典股，科创板/创业板的定价效率不同。紫苏叶评分在 KSS 框架内不替代统计检验，而是作为 overlay 叠加。
+
 ## 当前能力
 
 ### 工具链（按模块）
@@ -130,6 +220,9 @@ combo_scan + sector_commentary 现有信号叠加一层"现在是周期的哪一
   2026-05-25 新增 `macro_client.py`（Shibor / yc_cb / M2 / CPI / PPI / 信用利差 / PMI / VAI / margin / hsgt / HS300 dailybasic / fina_indicator / stock_basic）.
 - **宏观周期框架** (`kss/macro/`，2026-05-25 第 11 轮新增)：分母端数据快照 + 派生指标
   + 周期阶段分类 + 部门轮换映射 + 估值时间贴水 n。详见上方"第 11 轮"节.
+- **紫苏叶产业链** (`kss/supply_chain/`，2026-06-02 第 12 轮新增)：产业链卡位评分
+  + 注册表查询 + 动态 analyst_count 刷新 + 过期检测 + demand_locked 复查告警。
+  详见上方"第 12 轮"节.
 - **因子工程** (`kss/features/`)：49+ 因子（technical / volatility / volume / valuation）
   + `cross_section_selection.make_ic_topk_selector` 行业市值中性化 + 截面 IC scan。
 - **回测引擎** (`kss/backtest/`)：
@@ -164,7 +257,7 @@ combo_scan + sector_commentary 现有信号叠加一层"现在是周期的哪一
 | p-value | 0.025 |
 | DSR (n_trials=1, prior) | 通过 ✓ |
 | 平均换手 | 3.1% |
-| 适用池 | 科创板 51 只 (`cs_data_688*.csv`) |
+| 适用池 | 科创板 50 只 + 创业板 50 只（`cs_data_688*.csv` + `cs_data_300*.csv`） |
 
 > 注：旧版用 `n_trials=10` 时 Sharpe 为 1.50 / DSR=0.45。
 > 改用 `strategy_family="prior"` 后 DSR 不再扣 trials（log_mv 是文献多次验证的
@@ -210,7 +303,7 @@ python3 scripts/paper_trade_log_mv.py --summary
 4. **特征级 look-ahead 未防御**：`walk_forward` 的 `purge_gap` 只防 label leak；
    feature 若含 `next_day_return` 衍生值仍会作弊。`test_lookahead_factor_caught_by_purge_gap`
    当前为 xfail（详见 `docs/solutions/known_bias_gaps.md`）。
-5. **跨市场未验证**：所有结论只在科创板 51 只票上跑过。
+5. **跨市场未验证**：所有回测结论只在科创板 50 只票上跑过；紫苏叶产业链标注已扩展到创业板 50 只，但尚未做创业板独立的 combo_scan OOS 验证。
 6. **行业 / 市值中性化**：当前用 `fallback_kcb` 三分类（STAR_TECH / STAR_MFG / STAR_BIO），
    粗略；真实生产需接 Tushare sw_l1。
 7. ~~**ExecutionModel 仅建模开盘涨停 + 滑点 + 部分成交**，盘中触板 / ST / 停牌未建模。~~
@@ -262,6 +355,12 @@ python3 scripts/paper_trade_log_mv.py --summary
 - **#44** 跨脚本 import 重构 — `build_indicator_panel` 等从 `scripts/` 提到 `kss/macro/pipeline.py`
 - **#45** Telegram 阶段切换告警（rules: stage I→II, III→IV 立刻推送）
 
+第 12 轮紫苏叶产业链延伸 (待办)：
+
+- **#46** perilla_score 因子化 → 走 `Significance.is_deployable` 统计检验，验证产业链评分是否真的带来独立于 log_mv 的 alpha
+- **#47** 产业链变动自动检测 — 季度级公告/新闻扫描，发现新进入者或技术路线替代时弹 warning
+- **#48** 创业板独立 combo_scan OOS 验证 — 当前创业板标注已到位但 OOS 统计尚未跑
+
 短期 NOT-doing：
 - 接入更多技术指标（边际为零）
 - 调 LGB 超参（已证瓶颈非模型）
@@ -277,14 +376,15 @@ python3 scripts/paper_trade_log_mv.py --summary
 - [`docs/solutions/known_bias_gaps.md`](docs/solutions/known_bias_gaps.md) —— 对抗测试暴露的 gap（Gap 2 已 RESOLVED）
 - [`docs/solutions/paper_trade_deployment.md`](docs/solutions/paper_trade_deployment.md) —— cron 部署 / 监控 / 排查手册
 - `docs/plans/2026-05-25-001..005-*.md` —— 第 11 轮 Bolton 周期框架 5 个 plan 文档
+- [`docs/plans/2026-06-02-001-feat-perilla-leaf-supply-chain-scoring-plan.md`](docs/plans/2026-06-02-001-feat-perilla-leaf-supply-chain-scoring-plan.md) —— 第 12 轮紫苏叶 plan
 - `storage/reports/*.md` —— 每轮回测的原始报告（含图表）
 - `scripts/paper_trade_log_mv.py` —— log_mv 反向策略入口
-- `scan_combo_signals.py` —— combo scan + 宏观叠加层入口（含 banner）
+- `scan_combo_signals.py` —— combo scan + 宏观叠加 + 紫苏叶产业链 入口（含 banner）
 
 ## 测试 / 开发
 
 ```bash
-# 全部测试（当前 727 passed / 3 xfailed / 6 deselected DL）
+# 全部测试（当前 779 passed / 3 xfailed / 6 deselected DL）
 pytest kss/tests -v
 
 # 仅对抗测试（看 KSS 防不防得住已知 bias）
@@ -295,6 +395,9 @@ pytest kss/tests/test_regime.py kss/tests/test_rotation.py \
        kss/tests/test_valuation.py kss/tests/test_risk_filters.py \
        kss/tests/test_macro_client.py -v
 
+# 第 12 轮紫苏叶产业链专属测试
+pytest kss/tests/test_supply_chain.py kss/tests/test_supply_chain_updater.py -v
+
 # 类型检查 + lint
 ruff check kss/
 mypy kss/
@@ -302,5 +405,6 @@ mypy kss/
 
 ---
 
-_Last updated: 2026-05-25. 状态：log_mv 反向继续纸交易；第 11 轮 Bolton 周期框架 P0-P4 全栈上线，
-combo_scan 已按宏观阶段 + 估值 n + 部门轮换 + 风险过滤四维叠加；待积累 60 个交易日数据后做 hit-rate 回测._
+_Last updated: 2026-06-02. 状态：log_mv 反向继续纸交易；第 11 轮 Bolton 周期框架 P0-P4 全栈上线；
+第 12 轮紫苏叶产业链卡位评分全栈上线（科创 50 + 创业 50 共 100 只标注，24 只候选，含动态化管线）；
+combo_scan 已按宏观阶段 + 估值 n + 部门轮换 + 风险过滤 + 紫苏叶产业链 五维叠加._

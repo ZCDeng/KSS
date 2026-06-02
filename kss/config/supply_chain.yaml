@@ -1,0 +1,1327 @@
+version: 1
+updated: '2026-06-02'
+scoring_weights:
+  layer: 0.25
+  moat: 0.35
+  lock: 0.25
+  coverage_gap: 0.15
+moat_tiers:
+  1: 1.0
+  2: 0.7
+  3: 0.3
+  default: 0.0
+ranking_multiplier: 0.3
+demand_chains:
+  AI算力:
+    layers:
+    - depth: 1
+      desc: 云平台/AI应用 (MSFT/GOOG/字节)
+    - depth: 2
+      desc: GPU/AI加速芯片 (NVDA/AMD)
+    - depth: 3
+      desc: 光模块/内存接口/HBM (中际旭创/澜起)
+    - depth: 4
+      desc: 激光器/光芯片/特种气体
+    - depth: 5
+      desc: 衬底材料/磷化铟/砷化镓 ($AXTI)
+  半导体:
+    layers:
+    - depth: 1
+      desc: 终端设备 (手机/PC/汽车)
+    - depth: 2
+      desc: 晶圆代工 (TSMC/SMIC)
+    - depth: 3
+      desc: IC设计 (海思/展锐)
+    - depth: 4
+      desc: 半导体设备 (ASML/中微/北方华创)
+    - depth: 5
+      desc: 关键材料 (光刻胶/硅片/靶材)
+  具身智能:
+    layers:
+    - depth: 1
+      desc: 整机厂商 (特斯拉Optimus/小米/优必选)
+    - depth: 2
+      desc: 控制系统/AI芯片
+    - depth: 3
+      desc: 伺服驱动/减速器/传感器
+    - depth: 4
+      desc: 精密轴承/编码器/特种电机
+    - depth: 5
+      desc: 稀土永磁/碳纤维
+stocks:
+  688008.SH:
+    name: 澜起科技
+    demand_chains:
+    - AI算力
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 3
+    n_competitors_domestic: 1
+    substitutability: low
+    expansion_cycle_years: 2.0
+    demand_locked: true
+    analyst_count: 15
+    analyst_notes: DDR5 RCD/MDB全球三家(Montage/IDT/Rambus),国内独家
+  688009.SH:
+    name: 中国通号
+    demand_chains: []
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 5
+    n_competitors_domestic: 1
+    substitutability: high
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 12
+    analyst_notes: 铁路列控国内垄断,但全球竞争充分
+  688012.SH:
+    name: 中微公司
+    demand_chains:
+    - 半导体
+    chain_layer: 4
+    chain_role: equipment
+    n_competitors_global: 3
+    n_competitors_domestic: 1
+    substitutability: medium
+    expansion_cycle_years: 3.0
+    demand_locked: true
+    analyst_count: 20
+    analyst_notes: CCP刻蚀全球前三(Lam/TEL/中微),国产替代不可逆
+  688017.SH:
+    name: 绿的谐波
+    demand_chains:
+    - 具身智能
+    chain_layer: 4
+    chain_role: component
+    n_competitors_global: 2
+    n_competitors_domestic: 1
+    substitutability: low
+    expansion_cycle_years: 2.0
+    demand_locked: true
+    analyst_count: 10
+    analyst_notes: 谐波减速器全球双寡头(哈默纳科/绿的),机器人关节核心
+  688027.SH:
+    name: 国盾量子
+    demand_chains:
+    - 数字经济
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 3
+    n_competitors_domestic: 1
+    substitutability: low
+    expansion_cycle_years: 2.0
+    demand_locked: false
+    analyst_count: 6
+    analyst_notes: 量子密钥分发国内龙头,但需求未规模化
+  688036.SH:
+    name: 传音控股
+    demand_chains: []
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 8
+    n_competitors_domestic: 5
+    substitutability: high
+    expansion_cycle_years: 0.5
+    demand_locked: false
+    analyst_count: 18
+    analyst_notes: 非洲手机品牌,终端竞争充分
+  688041.SH:
+    name: 海光信息
+    demand_chains:
+    - AI算力
+    chain_layer: 2
+    chain_role: component
+    n_competitors_global: 3
+    n_competitors_domestic: 1
+    substitutability: medium
+    expansion_cycle_years: 2.0
+    demand_locked: false
+    analyst_count: 20
+    analyst_notes: x86 CPU国产替代,全球三家但技术代差
+  688047.SH:
+    name: 龙芯中科
+    demand_chains:
+    - 数字经济
+    chain_layer: 2
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: medium
+    expansion_cycle_years: 2.0
+    demand_locked: false
+    analyst_count: 12
+    analyst_notes: LoongArch自主指令集,信创有份额但通用市场竞争力不足
+  688065.SH:
+    name: 凯赛生物
+    demand_chains: []
+    chain_layer: 5
+    chain_role: material
+    n_competitors_global: 2
+    n_competitors_domestic: 1
+    substitutability: low
+    expansion_cycle_years: 3.0
+    demand_locked: true
+    analyst_count: 8
+    analyst_notes: 生物法长链二元酸全球双寡头(凯赛/Verdezyne已退出→实质独家)
+  688072.SH:
+    name: 拓荆科技
+    demand_chains:
+    - 半导体
+    chain_layer: 4
+    chain_role: equipment
+    n_competitors_global: 3
+    n_competitors_domestic: 1
+    substitutability: medium
+    expansion_cycle_years: 3.0
+    demand_locked: true
+    analyst_count: 15
+    analyst_notes: CVD/ALD全球三家(AMAT/TEL/拓荆),国产替代确定
+  688082.SH:
+    name: 盛美上海
+    demand_chains:
+    - 半导体
+    chain_layer: 4
+    chain_role: equipment
+    n_competitors_global: 3
+    n_competitors_domestic: 1
+    substitutability: medium
+    expansion_cycle_years: 2.5
+    demand_locked: true
+    analyst_count: 15
+    analyst_notes: 单片清洗全球前三(DNS/LAM/盛美)
+  688099.SH:
+    name: 晶晨股份
+    demand_chains: []
+    chain_layer: 2
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: high
+    expansion_cycle_years: 1.5
+    demand_locked: false
+    analyst_count: 15
+    analyst_notes: 机顶盒/智能TV SoC,竞争充分
+  688111.SH:
+    name: 金山办公
+    demand_chains: []
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: high
+    expansion_cycle_years: 0.5
+    demand_locked: false
+    analyst_count: 22
+    analyst_notes: 办公软件终端,竞争充分
+  688120.SH:
+    name: 华海清科
+    demand_chains:
+    - 半导体
+    chain_layer: 4
+    chain_role: equipment
+    n_competitors_global: 2
+    n_competitors_domestic: 1
+    substitutability: low
+    expansion_cycle_years: 3.0
+    demand_locked: true
+    analyst_count: 12
+    analyst_notes: CMP全球双寡头(AMAT/华海清科),晶圆厂必配
+  688122.SH:
+    name: 西部超导
+    demand_chains:
+    - 工业母机·低空·航天
+    chain_layer: 5
+    chain_role: material
+    n_competitors_global: 3
+    n_competitors_domestic: 1
+    substitutability: low
+    expansion_cycle_years: 3.0
+    demand_locked: true
+    analyst_count: 12
+    analyst_notes: 航空钛合金+低温超导线材,国内独家量产
+  688126.SH:
+    name: 沪硅产业
+    demand_chains:
+    - 半导体
+    chain_layer: 5
+    chain_role: material
+    n_competitors_global: 5
+    n_competitors_domestic: 1
+    substitutability: low
+    expansion_cycle_years: 3.0
+    demand_locked: true
+    analyst_count: 12
+    analyst_notes: 12寸硅片全球第五,国内唯一量产
+  688169.SH:
+    name: 石头科技
+    demand_chains: []
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 5
+    n_competitors_domestic: 3
+    substitutability: high
+    expansion_cycle_years: 0.5
+    demand_locked: false
+    analyst_count: 18
+    analyst_notes: 扫地机器人终端,竞争充分
+  688183.SH:
+    name: 生益电子
+    demand_chains:
+    - AI算力
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: medium
+    expansion_cycle_years: 1.5
+    demand_locked: false
+    analyst_count: 10
+    analyst_notes: 高频PCB,竞争者较多
+  688187.SH:
+    name: 时代电气
+    demand_chains:
+    - 新能源储能
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: medium
+    expansion_cycle_years: 2.0
+    demand_locked: false
+    analyst_count: 18
+    analyst_notes: IGBT模块,竞争者多
+  688188.SH:
+    name: 柏楚电子
+    demand_chains:
+    - 工业母机·低空·航天
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 3
+    n_competitors_domestic: 1
+    substitutability: low
+    expansion_cycle_years: 1.5
+    demand_locked: true
+    analyst_count: 10
+    analyst_notes: 激光切割控制国内垄断(60%+),追赶Beckhoff/Siemens
+  688213.SH:
+    name: 思特威
+    demand_chains: []
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: high
+    expansion_cycle_years: 1.5
+    demand_locked: false
+    analyst_count: 12
+    analyst_notes: 安防CIS国内第一,但全球竞争充分
+  688220.SH:
+    name: 翱捷科技
+    demand_chains: []
+    chain_layer: 2
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: high
+    expansion_cycle_years: 2.0
+    demand_locked: false
+    analyst_count: 10
+    analyst_notes: 4G/5G基带SoC,竞争充分
+  688223.SH:
+    name: 晶科能源
+    demand_chains:
+    - 新能源储能
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 8
+    n_competitors_domestic: 5
+    substitutability: high
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 22
+    analyst_notes: 光伏组件全球第一但竞争充分
+  688234.SH:
+    name: 天岳先进
+    demand_chains:
+    - 新能源储能
+    - 半导体
+    chain_layer: 5
+    chain_role: material
+    n_competitors_global: 3
+    n_competitors_domestic: 1
+    substitutability: low
+    expansion_cycle_years: 3.0
+    demand_locked: true
+    analyst_count: 10
+    analyst_notes: SiC衬底全球前三(Wolfspeed/Coherent/天岳),第三代半导体核心
+  688249.SH:
+    name: 晶合集成
+    demand_chains:
+    - 半导体
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 8
+    n_competitors_domestic: 3
+    substitutability: high
+    expansion_cycle_years: 3.0
+    demand_locked: false
+    analyst_count: 10
+    analyst_notes: 显示驱动IC代工,竞争充分
+  688256.SH:
+    name: 寒武纪
+    demand_chains:
+    - AI算力
+    chain_layer: 2
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: medium
+    expansion_cycle_years: 2.0
+    demand_locked: false
+    analyst_count: 18
+    analyst_notes: AI芯片国产替代,但代差2-3代
+  688271.SH:
+    name: 联影医疗
+    demand_chains:
+    - 生物医药
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 4
+    n_competitors_domestic: 1
+    substitutability: medium
+    expansion_cycle_years: 2.0
+    demand_locked: false
+    analyst_count: 20
+    analyst_notes: CT/MRI全球前四,国内替代
+  688278.SH:
+    name: 特宝生物
+    demand_chains:
+    - 生物医药
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 8
+    n_competitors_domestic: 3
+    substitutability: high
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 10
+    analyst_notes: 药品终端,竞争充分
+  688297.SH:
+    name: 中无人机
+    demand_chains:
+    - 工业母机·低空·航天
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: medium
+    expansion_cycle_years: 2.0
+    demand_locked: false
+    analyst_count: 8
+    analyst_notes: 翼龙军用无人机,国内军工但出口竞争
+  688303.SH:
+    name: 大全能源
+    demand_chains:
+    - 新能源储能
+    chain_layer: 4
+    chain_role: material
+    n_competitors_global: 5
+    n_competitors_domestic: 4
+    substitutability: high
+    expansion_cycle_years: 2.0
+    demand_locked: false
+    analyst_count: 18
+    analyst_notes: 多晶硅产能过剩,竞争充分
+  688322.SH:
+    name: 奥比中光
+    demand_chains:
+    - 具身智能
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 4
+    n_competitors_domestic: 1
+    substitutability: medium
+    expansion_cycle_years: 1.5
+    demand_locked: false
+    analyst_count: 8
+    analyst_notes: 3D视觉国内领先,但ToF替代方案存在
+  688349.SH:
+    name: 三一重能
+    demand_chains:
+    - 新能源储能
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 8
+    n_competitors_domestic: 5
+    substitutability: high
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 15
+    analyst_notes: 风电整机终端,竞争充分
+  688361.SH:
+    name: 中科飞测
+    demand_chains:
+    - 半导体
+    chain_layer: 4
+    chain_role: equipment
+    n_competitors_global: 2
+    n_competitors_domestic: 1
+    substitutability: low
+    expansion_cycle_years: 3.0
+    demand_locked: true
+    analyst_count: 8
+    analyst_notes: 晶圆光学检测全球双寡头(KLA/中科飞测),晶圆厂良率必配
+  688375.SH:
+    name: 国博电子
+    demand_chains:
+    - 工业母机·低空·航天
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: medium
+    expansion_cycle_years: 1.5
+    demand_locked: false
+    analyst_count: 6
+    analyst_notes: 军用T/R组件,非全球竞争赛道
+  688396.SH:
+    name: 华润微
+    demand_chains:
+    - 半导体
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 8
+    n_competitors_domestic: 3
+    substitutability: high
+    expansion_cycle_years: 2.0
+    demand_locked: false
+    analyst_count: 18
+    analyst_notes: MOSFET/IGBT IDM,竞争充分
+  688469.SH:
+    name: 芯联集成
+    demand_chains:
+    - 半导体
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 8
+    n_competitors_domestic: 3
+    substitutability: high
+    expansion_cycle_years: 2.0
+    demand_locked: false
+    analyst_count: 12
+    analyst_notes: SiC/IGBT代工,竞争充分
+  688472.SH:
+    name: 阿特斯
+    demand_chains:
+    - 新能源储能
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 8
+    n_competitors_domestic: 5
+    substitutability: high
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 12
+    analyst_notes: 光伏组件+储能,竞争充分
+  688506.SH:
+    name: 百利天恒
+    demand_chains:
+    - 生物医药
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 10
+    n_competitors_domestic: 5
+    substitutability: high
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 15
+    analyst_notes: ADC创新药,药品终端竞争充分
+  688521.SH:
+    name: 芯原股份
+    demand_chains:
+    - 半导体
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 1
+    substitutability: medium
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 10
+    analyst_notes: IP授权+芯片设计服务,全球竞争充分
+  688525.SH:
+    name: 佰维存储
+    demand_chains:
+    - AI算力
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 8
+    n_competitors_domestic: 3
+    substitutability: high
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 8
+    analyst_notes: 存储模组,竞争充分
+  688538.SH:
+    name: 和辉光电
+    demand_chains: []
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 5
+    n_competitors_domestic: 3
+    substitutability: high
+    expansion_cycle_years: 2.0
+    demand_locked: false
+    analyst_count: 5
+    analyst_notes: OLED面板,竞争充分
+  688568.SH:
+    name: 中科星图
+    demand_chains:
+    - 工业母机·低空·航天
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: medium
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 8
+    analyst_notes: GEOVIS数字地球平台
+  688578.SH:
+    name: 艾力斯
+    demand_chains:
+    - 生物医药
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 8
+    n_competitors_domestic: 3
+    substitutability: high
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 12
+    analyst_notes: EGFR靶向药,同靶点竞争多
+  688599.SH:
+    name: 天合光能
+    demand_chains:
+    - 新能源储能
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 8
+    n_competitors_domestic: 5
+    substitutability: high
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 22
+    analyst_notes: 光伏组件全球前三,竞争充分
+  688608.SH:
+    name: 恒玄科技
+    demand_chains: []
+    chain_layer: 2
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: high
+    expansion_cycle_years: 1.5
+    demand_locked: false
+    analyst_count: 15
+    analyst_notes: BT SoC,竞争充分
+  688617.SH:
+    name: 惠泰医疗
+    demand_chains:
+    - 生物医药
+    chain_layer: 2
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: medium
+    expansion_cycle_years: 1.5
+    demand_locked: false
+    analyst_count: 12
+    analyst_notes: 电生理导管国产替代,全球竞争充分
+  688702.SH:
+    name: 盛科通信
+    demand_chains:
+    - AI算力
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 3
+    n_competitors_domestic: 1
+    substitutability: low
+    expansion_cycle_years: 2.0
+    demand_locked: true
+    analyst_count: 6
+    analyst_notes: 以太网交换芯片全球三家(Broadcom/Marvell/盛科),国内独家
+  688728.SH:
+    name: 格科微
+    demand_chains: []
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 3
+    substitutability: high
+    expansion_cycle_years: 1.5
+    demand_locked: false
+    analyst_count: 8
+    analyst_notes: 低端CIS,竞争充分
+  688777.SH:
+    name: 中控技术
+    demand_chains:
+    - 数字经济
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 5
+    n_competitors_domestic: 1
+    substitutability: medium
+    expansion_cycle_years: 1.5
+    demand_locked: false
+    analyst_count: 15
+    analyst_notes: DCS国内第一但全球竞争充分
+  688981.SH:
+    name: 中芯国际
+    demand_chains:
+    - 半导体
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 5
+    n_competitors_domestic: 1
+    substitutability: high
+    expansion_cycle_years: 3.0
+    demand_locked: false
+    analyst_count: 30
+    analyst_notes: 晶圆代工全球第五,先进制程受管制
+  300002.SZ:
+    name: 神州泰岳
+    demand_chains: []
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 10
+    n_competitors_domestic: 5
+    substitutability: high
+    expansion_cycle_years: 0.5
+    demand_locked: false
+    analyst_count: 12
+    analyst_notes: 飞信运维+游戏,终端服务商,竞争充分
+  300014.SZ:
+    name: 亿纬锂能
+    demand_chains:
+    - 新能源储能
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 3
+    substitutability: medium
+    expansion_cycle_years: 2.0
+    demand_locked: false
+    analyst_count: 25
+    analyst_notes: 锂电池(圆柱/软包/方形),全球竞争充分(CATL/LG/Samsung SDI/Panasonic/亿纬)
+  300015.SZ:
+    name: 爱尔眼科
+    demand_chains:
+    - 生物医药
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 5
+    n_competitors_domestic: 1
+    substitutability: high
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 25
+    analyst_notes: 眼科连锁终端,国内龙头但医疗服务竞争充分
+  300017.SZ:
+    name: 网宿科技
+    demand_chains:
+    - AI算力
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 5
+    n_competitors_domestic: 3
+    substitutability: high
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 10
+    analyst_notes: CDN/边缘计算,竞争充分(阿里云/网宿/ChinaCache)
+  300024.SZ:
+    name: 机器人
+    demand_chains:
+    - 具身智能
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 8
+    n_competitors_domestic: 3
+    substitutability: high
+    expansion_cycle_years: 1.5
+    demand_locked: false
+    analyst_count: 15
+    analyst_notes: 工业机器人整机,全球竞争充分(Fanuc/ABB/安川/KUKA等)
+  300033.SZ:
+    name: 同花顺
+    demand_chains: []
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: high
+    expansion_cycle_years: 0.5
+    demand_locked: false
+    analyst_count: 15
+    analyst_notes: 金融信息终端,C端流量型
+  300058.SZ:
+    name: 蓝色光标
+    demand_chains: []
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 10
+    n_competitors_domestic: 5
+    substitutability: high
+    expansion_cycle_years: 0.5
+    demand_locked: false
+    analyst_count: 8
+    analyst_notes: 数字营销,终端服务
+  300059.SZ:
+    name: 东方财富
+    demand_chains: []
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: high
+    expansion_cycle_years: 0.5
+    demand_locked: false
+    analyst_count: 25
+    analyst_notes: 互联网券商+基金销售,终端平台
+  300073.SZ:
+    name: 当升科技
+    demand_chains:
+    - 新能源储能
+    chain_layer: 4
+    chain_role: material
+    n_competitors_global: 5
+    n_competitors_domestic: 3
+    substitutability: medium
+    expansion_cycle_years: 2.0
+    demand_locked: false
+    analyst_count: 18
+    analyst_notes: 锂电正极材料(高镍三元),全球五家(容百/当升/长远锂科/Umicore/POSCO)竞争
+  300115.SZ:
+    name: 长盈精密
+    demand_chains:
+    - 具身智能
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 3
+    substitutability: high
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 12
+    analyst_notes: 精密连接器/机器人丝杠,竞争者较多
+  300122.SZ:
+    name: 智飞生物
+    demand_chains:
+    - 生物医药
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 8
+    n_competitors_domestic: 3
+    substitutability: high
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 20
+    analyst_notes: 疫苗代理+自研,终端产品层
+  300124.SZ:
+    name: 汇川技术
+    demand_chains:
+    - 具身智能
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 1
+    substitutability: medium
+    expansion_cycle_years: 1.5
+    demand_locked: true
+    analyst_count: 22
+    analyst_notes: 工业伺服驱动国内第一(份额25%+),全球前五(Siemens/Yaskawa/Mitsubishi/ABB/汇川),机器人关节核心
+  300136.SZ:
+    name: 信维通信
+    demand_chains: []
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: high
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 10
+    analyst_notes: 手机天线/无线充电,竞争充分
+  300207.SZ:
+    name: 欣旺达
+    demand_chains:
+    - 新能源储能
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 3
+    substitutability: high
+    expansion_cycle_years: 1.5
+    demand_locked: false
+    analyst_count: 15
+    analyst_notes: 消费+动力电池,竞争充分
+  300223.SZ:
+    name: 北京君正
+    demand_chains: []
+    chain_layer: 2
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: high
+    expansion_cycle_years: 1.5
+    demand_locked: false
+    analyst_count: 12
+    analyst_notes: DRAM(ISSI)+MCU,竞争充分
+  300251.SZ:
+    name: 光线传媒
+    demand_chains: []
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 10
+    n_competitors_domestic: 5
+    substitutability: high
+    expansion_cycle_years: 0.5
+    demand_locked: false
+    analyst_count: 12
+    analyst_notes: 影视娱乐终端
+  300255.SZ:
+    name: 常山药业
+    demand_chains:
+    - 生物医药
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 8
+    n_competitors_domestic: 3
+    substitutability: high
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 5
+    analyst_notes: 肝素/GLP-1药,终端药企
+  300274.SZ:
+    name: 阳光电源
+    demand_chains:
+    - 新能源储能
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: medium
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 25
+    analyst_notes: 光伏逆变器全球前二(Huawei/阳光),但竞争者持续进入
+  300308.SZ:
+    name: 中际旭创
+    demand_chains:
+    - AI算力
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 3
+    n_competitors_domestic: 1
+    substitutability: low
+    expansion_cycle_years: 1.5
+    demand_locked: true
+    analyst_count: 25
+    analyst_notes: 800G/1.6T光模块全球前三(旭创/Coherent/Lumentum),AI数据中心刚需,产能扩张中但供不应求
+  300316.SZ:
+    name: 晶盛机电
+    demand_chains:
+    - 新能源储能
+    - 半导体
+    chain_layer: 4
+    chain_role: equipment
+    n_competitors_global: 2
+    n_competitors_domestic: 1
+    substitutability: low
+    expansion_cycle_years: 3.0
+    demand_locked: true
+    analyst_count: 18
+    analyst_notes: 单晶炉+碳化硅长晶炉全球双寡头(晶盛/PVA TePla),光伏+SiC双需求链锁定
+  300339.SZ:
+    name: 润和软件
+    demand_chains: []
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 10
+    n_competitors_domestic: 5
+    substitutability: high
+    expansion_cycle_years: 0.5
+    demand_locked: false
+    analyst_count: 8
+    analyst_notes: 金融IT+鸿蒙生态,终端服务
+  300346.SZ:
+    name: 南大光电
+    demand_chains:
+    - 半导体
+    chain_layer: 5
+    chain_role: material
+    n_competitors_global: 2
+    n_competitors_domestic: 1
+    substitutability: low
+    expansion_cycle_years: 3.0
+    demand_locked: true
+    analyst_count: 8
+    analyst_notes: ArF光刻胶+MO源全球双寡头(TOK+南大/JSR),先进制程光刻必需,国产替代卡脖子
+  300347.SZ:
+    name: 泰格医药
+    demand_chains:
+    - 生物医药
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: high
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 18
+    analyst_notes: CRO临床试验,全球竞争(IQVIA/Covance等)
+  300373.SZ:
+    name: 扬杰科技
+    demand_chains:
+    - 半导体
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 8
+    n_competitors_domestic: 3
+    substitutability: high
+    expansion_cycle_years: 1.5
+    demand_locked: false
+    analyst_count: 12
+    analyst_notes: 功率器件IDM(二极管/MOSFET),竞争充分
+  300394.SZ:
+    name: 天孚通信
+    demand_chains:
+    - AI算力
+    chain_layer: 4
+    chain_role: component
+    n_competitors_global: 2
+    n_competitors_domestic: 1
+    substitutability: low
+    expansion_cycle_years: 2.0
+    demand_locked: true
+    analyst_count: 15
+    analyst_notes: 光无源器件(准直器/隔离器/适配器)全球双寡头(天孚/Hoya Senko),光模块必配零件,AI算力产业链深层卡脖子
+  300395.SZ:
+    name: 菲利华
+    demand_chains:
+    - 半导体
+    chain_layer: 5
+    chain_role: material
+    n_competitors_global: 3
+    n_competitors_domestic: 1
+    substitutability: low
+    expansion_cycle_years: 3.0
+    demand_locked: true
+    analyst_count: 10
+    analyst_notes: 半导体用石英玻璃全球前三(Heraeus/Momentive/菲利华),光刻机+扩散炉+刻蚀腔必需材料
+  300408.SZ:
+    name: 三环集团
+    demand_chains: []
+    chain_layer: 4
+    chain_role: material
+    n_competitors_global: 3
+    n_competitors_domestic: 1
+    substitutability: low
+    expansion_cycle_years: 2.0
+    demand_locked: true
+    analyst_count: 12
+    analyst_notes: MLCC陶瓷基体+光通信陶瓷插芯全球前三(Murata/TDK/三环),被动元件上游,国内独家量产
+  300418.SZ:
+    name: 昆仑万维
+    demand_chains:
+    - AI算力
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 10
+    n_competitors_domestic: 5
+    substitutability: high
+    expansion_cycle_years: 0.5
+    demand_locked: false
+    analyst_count: 12
+    analyst_notes: AI应用+游戏终端
+  300433.SZ:
+    name: 蓝思科技
+    demand_chains: []
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: high
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 15
+    analyst_notes: 手机玻璃盖板,竞争充分(伯恩/蓝思/比亚迪电子)
+  300442.SZ:
+    name: 润泽科技
+    demand_chains:
+    - AI算力
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 8
+    n_competitors_domestic: 5
+    substitutability: high
+    expansion_cycle_years: 2.0
+    demand_locked: false
+    analyst_count: 10
+    analyst_notes: IDC数据中心,竞争充分(万国数据/秦淮/世纪互联等)
+  300450.SZ:
+    name: 先导智能
+    demand_chains:
+    - 新能源储能
+    chain_layer: 4
+    chain_role: equipment
+    n_competitors_global: 3
+    n_competitors_domestic: 1
+    substitutability: medium
+    expansion_cycle_years: 2.0
+    demand_locked: false
+    analyst_count: 15
+    analyst_notes: 锂电设备全球前三(先导/赢合/韩国PNE),但锂电设备进入产能过剩周期
+  300458.SZ:
+    name: 全志科技
+    demand_chains: []
+    chain_layer: 2
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 3
+    substitutability: high
+    expansion_cycle_years: 1.5
+    demand_locked: false
+    analyst_count: 12
+    analyst_notes: AIoT SoC,竞争充分(瑞芯微/晶晨/全志)
+  300474.SZ:
+    name: 景嘉微
+    demand_chains: []
+    chain_layer: 2
+    chain_role: component
+    n_competitors_global: 3
+    n_competitors_domestic: 1
+    substitutability: medium
+    expansion_cycle_years: 2.0
+    demand_locked: false
+    analyst_count: 10
+    analyst_notes: 军用GPU国内独家(JM9系列),但民用市场尚未放量,需求不确定
+  300476.SZ:
+    name: 胜宏科技
+    demand_chains:
+    - AI算力
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 8
+    n_competitors_domestic: 3
+    substitutability: high
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 12
+    analyst_notes: AI服务器PCB,竞争充分
+  300496.SZ:
+    name: 中科创达
+    demand_chains: []
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: high
+    expansion_cycle_years: 0.5
+    demand_locked: false
+    analyst_count: 12
+    analyst_notes: 智能OS/嵌入式软件,终端服务
+  300502.SZ:
+    name: 新易盛
+    demand_chains:
+    - AI算力
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: medium
+    expansion_cycle_years: 1.5
+    demand_locked: true
+    analyst_count: 20
+    analyst_notes: 光模块(400G/800G),全球前五(旭创/Coherent/Lumentum/新易盛/InnoLight),AI数据中心需求锁定但竞争者>3
+  300548.SZ:
+    name: 长芯博创
+    demand_chains:
+    - AI算力
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: medium
+    expansion_cycle_years: 1.5
+    demand_locked: false
+    analyst_count: 8
+    analyst_notes: 通信芯片/光通信,竞争充分
+  300604.SZ:
+    name: 长川科技
+    demand_chains:
+    - 半导体
+    chain_layer: 4
+    chain_role: equipment
+    n_competitors_global: 3
+    n_competitors_domestic: 1
+    substitutability: medium
+    expansion_cycle_years: 2.0
+    demand_locked: true
+    analyst_count: 12
+    analyst_notes: 半导体测试设备(探针台+分选机),全球前三(Teradyne/Advantest/长川),国内独家量产
+  300724.SZ:
+    name: 捷佳伟创
+    demand_chains:
+    - 新能源储能
+    chain_layer: 4
+    chain_role: equipment
+    n_competitors_global: 3
+    n_competitors_domestic: 1
+    substitutability: medium
+    expansion_cycle_years: 2.0
+    demand_locked: true
+    analyst_count: 15
+    analyst_notes: 光伏电池片设备(PECVD+湿法),全球前三(梅耶博格/捷佳/迈为),HJT/TOPCon扩产锁定
+  300748.SZ:
+    name: 金力永磁
+    demand_chains:
+    - 具身智能
+    - 新能源储能
+    chain_layer: 5
+    chain_role: material
+    n_competitors_global: 3
+    n_competitors_domestic: 2
+    substitutability: low
+    expansion_cycle_years: 2.0
+    demand_locked: true
+    analyst_count: 12
+    analyst_notes: 高性能稀土永磁材料,全球前三(金力/中科三环/日立金属),电机核心材料,新能源车+机器人双需求链
+  300750.SZ:
+    name: 宁德时代
+    demand_chains:
+    - 新能源储能
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 5
+    n_competitors_domestic: 1
+    substitutability: medium
+    expansion_cycle_years: 2.0
+    demand_locked: false
+    analyst_count: 35
+    analyst_notes: 动力电池全球第一(份额37%),但竞争者多(LG/BYD/Samsung SDI),且分析师覆盖极高
+  300759.SZ:
+    name: 康龙化成
+    demand_chains:
+    - 生物医药
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: high
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 15
+    analyst_notes: CRO/CDMO,全球竞争充分
+  300760.SZ:
+    name: 迈瑞医疗
+    demand_chains:
+    - 生物医药
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 5
+    n_competitors_domestic: 1
+    substitutability: medium
+    expansion_cycle_years: 1.5
+    demand_locked: false
+    analyst_count: 30
+    analyst_notes: 医疗器械(监护/超声/体外诊断),全球第二梯队但国内第一,覆盖极高
+  300763.SZ:
+    name: 锦浪科技
+    demand_chains:
+    - 新能源储能
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 5
+    n_competitors_domestic: 3
+    substitutability: medium
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 18
+    analyst_notes: 组串式逆变器,竞争充分(阳光/华为/锦浪/固德威)
+  300782.SZ:
+    name: 卓胜微
+    demand_chains: []
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 5
+    n_competitors_domestic: 1
+    substitutability: medium
+    expansion_cycle_years: 1.5
+    demand_locked: false
+    analyst_count: 12
+    analyst_notes: 射频前端(LNA/Switch)国内第一,但全球竞争(Skyworks/Qorvo/Murata)
+  300803.SZ:
+    name: 指南针
+    demand_chains: []
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 5
+    n_competitors_domestic: 3
+    substitutability: high
+    expansion_cycle_years: 0.5
+    demand_locked: false
+    analyst_count: 8
+    analyst_notes: 股票软件终端
+  300857.SZ:
+    name: 协创数据
+    demand_chains:
+    - AI算力
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 8
+    n_competitors_domestic: 3
+    substitutability: high
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 8
+    analyst_notes: AI服务器ODM,竞争充分
+  301236.SZ:
+    name: 软通动力
+    demand_chains: []
+    chain_layer: 1
+    chain_role: platform
+    n_competitors_global: 10
+    n_competitors_domestic: 5
+    substitutability: high
+    expansion_cycle_years: 0.5
+    demand_locked: false
+    analyst_count: 8
+    analyst_notes: IT外包/华为生态,终端服务
+  301308.SZ:
+    name: 江波龙
+    demand_chains:
+    - AI算力
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 5
+    n_competitors_domestic: 2
+    substitutability: high
+    expansion_cycle_years: 1.0
+    demand_locked: false
+    analyst_count: 12
+    analyst_notes: 存储模组(嵌入式+企业级),竞争充分
+  302132.SZ:
+    name: 中航成飞
+    demand_chains:
+    - 工业母机·低空·航天
+    chain_layer: 2
+    chain_role: assembler
+    n_competitors_global: 5
+    n_competitors_domestic: 1
+    substitutability: medium
+    expansion_cycle_years: 3.0
+    demand_locked: false
+    analyst_count: 15
+    analyst_notes: 歼-20等军机总装,国内独家但军工体制内非市场化竞争

@@ -335,3 +335,32 @@ class TushareClient:
             ),
             f"fetch_stock_basic (exchange={exchange or 'ALL'} status={list_status})",
         )
+
+    def fetch_report_rc(
+        self,
+        ts_code: str,
+        start_date: str,
+        end_date: str,
+    ) -> pd.DataFrame | None:
+        """研报评级明细（``report_rc``，含机构名、评级、报告类型）.
+
+        用于计算"最近 12 个月覆盖该股的独立券商机构数"，作为
+        紫苏叶评分 ``coverage_gap_score`` 的动态数据源.
+
+        Args:
+            ts_code: 股票代码，如 ``688012.SH``.
+            start_date: 起始日期 ``YYYYMMDD``.
+            end_date: 截止日期 ``YYYYMMDD``.
+
+        Returns:
+            DataFrame（含 ``org_name`` / ``report_type`` / ``report_date`` 等）；
+            失败 ``None``.
+        """
+        return _fetch_with_retry(
+            lambda: self._pro.report_rc(
+                ts_code=ts_code,
+                start_date=start_date,
+                end_date=end_date,
+            ),
+            f"fetch_report_rc ({ts_code} {start_date}-{end_date})",
+        )

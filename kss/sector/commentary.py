@@ -239,6 +239,43 @@ def load_macro_regime(trade_date: str) -> dict[str, Any] | None:
     return result
 
 
+def _load_chain_highlights() -> list[dict[str, Any]] | None:
+    """从 supply_chain.yaml 读取紫苏叶候选 (score >= 0.4).
+
+    给 LLM prompt 注入"产业链卡位个股"维度，让复盘文字提及深层卡脖子公司.
+    加载失败 → 返回 None，不影响其他 prompt 组装.
+    """
+    try:
+        from kss.supply_chain import ChainRegistry
+    except ImportError:
+        return None
+    try:
+        reg = ChainRegistry.from_yaml()
+        if reg.n_stocks == 0:
+            return None
+        cands = reg.candidates(min_score=0.4)
+        if not cands:
+            return None
+        highlights = []
+        for ts_code, score in cands[:8]:  # 最多 8 只, 控制 prompt 长度
+            info = reg.get(ts_code)
+            if info is None:
+                continue
+            highlights.append({
+                "ts_code": ts_code,
+                "name": sanitize_llm_input(info.name, max_len=20),
+                "chain_layer": info.chain_layer,
+                "chain_role": info.chain_role,
+                "n_competitors_global": info.n_competitors_global,
+                "demand_locked": info.demand_locked,
+                "perilla_score": round(score, 2),
+                "demand_chains": list(info.demand_chains)[:3],
+            })
+        return highlights if highlights else None
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[commentary] supply_chain 加载失败: %s", exc)
+        return None
+
 def _top_industries(
     snapshot: SectorSnapshot,
     overlay: KcbOverlay,
@@ -468,6 +505,12 @@ def render_prompt(
         "themes_15th_5y": theme_metrics,
         "missing_dimensions": context["missing"],
     }
+
+    # 紫苏叶产业链卡位标注 (plan 2026-06-02-001)
+    # 从 supply_chain.yaml 加载高分候选, 给 LLM 额外的产业链维度
+    chain_highlights = _load_chain_highlights()
+    if chain_highlights:
+        payload["supply_chain_highlights"] = chain_highlights
     # ensure_ascii=False 保留中文；indent 让 LLM 容易解析
     payload_json = json.dumps(payload, ensure_ascii=False, indent=2)
 
