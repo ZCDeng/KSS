@@ -37,14 +37,25 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 OUT_DIR = PROJECT_ROOT / "storage" / "reports" / "bj50_scan"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# 评分维度权重
+# 评分维度权重 (V2: 北证特化, 加入相对动量 + 关注度代理)
 WEIGHTS = {
-    "quality": 0.30,
-    "growth": 0.25,
-    "value": 0.20,
-    "momentum": 0.15,
-    "liquidity": 0.10,
+    "quality": 0.30,      # 财务质量 (ROE/毛利/资负/净利率)
+    "growth": 0.25,       # 成长 (4Q净利+营收+季度连续性)
+    "value": 0.20,        # 估值 (PE_TTM 历史分位 + 绝对值)
+    "momentum": 0.10,     # **相对动量** (个股收益 - 北证50指数收益)
+    "attention": 0.10,    # 关注度代理 (股东户数趋势 + 换手率突破)
+    "liquidity": 0.05,    # 流动性 (北证整体差, 降权)
 }
+
+
+def _safe_float(v: Any) -> float:
+    """安全 float 转换: None / NaN / 字符串均→ nan, 不抛异常."""
+    try:
+        if v is None:
+            return float("nan")
+        return float(v)
+    except (TypeError, ValueError):
+        return float("nan")
 
 
 # ---------------------------------------------------------------------------
@@ -140,12 +151,50 @@ def fetch_fina(pro: Any, ts_code: str, force: bool = False) -> pd.DataFrame:
     return df
 
 
+def fetch_holdernumber(pro: Any, ts_code: str, force: bool = False) -> pd.DataFrame:
+    """拉股东户数 (季度披露, 含缓存).
+
+    用于关注度代理: 户数减少 → 筹码集中 → 价值发现先行信号.
+    """
+    cache = _cache_path(ts_code, "holder")
+    if cache.exists() and not force:
+        df = pd.read_csv(cache, parse_dates=["ann_date", "end_date"])
+        return df
+    df = pro.stk_holdernumber(ts_code=ts_code, start_date="20230101", end_date="20260601")
+    if df is None or df.empty:
+        return pd.DataFrame()
+    df["ann_date"] = pd.to_datetime(df["ann_date"])
+    df["end_date"] = pd.to_datetime(df["end_date"])
+    df = df.sort_values("end_date").reset_index(drop=True)
+    df.to_csv(cache, index=False)
+    return df
+
+
+def fetch_bj50_index(pro: Any, force: bool = False) -> pd.DataFrame:
+    """拉北证 50 指数日线 (全局共享, 不按个股缓存).
+
+    用于相对动量计算: ``stock_ret - bj50_ret``.
+    """
+    cache = CACHE_DIR / "_bj50_index.csv"
+    if cache.exists() and not force:
+        df = pd.read_csv(cache, parse_dates=["trade_date"])
+        return df
+    df = pro.index_daily(ts_code="899050.BJ", start_date="20230101", end_date="20260607")
+    if df is None or df.empty:
+        raise RuntimeError("北证50指数日线拉取失败")
+    df["trade_date"] = pd.to_datetime(df["trade_date"])
+    df = df.sort_values("trade_date").reset_index(drop=True)
+    df.to_csv(cache, index=False)
+    return df
+
+
 def fetch_all(pro: Any, ts_code: str, force: bool = False) -> dict[str, pd.DataFrame]:
-    """并行拉 daily + db + fina."""
+    """并行拉 daily + db + fina + holdernumber."""
     return {
         "daily": fetch_daily(pro, ts_code, force=force),
         "db": fetch_daily_basic(pro, ts_code, force=force),
         "fina": fetch_fina(pro, ts_code, force=force),
+        "holder": fetch_holdernumber(pro, ts_code, force=force),
     }
 
 
@@ -157,9 +206,15 @@ def fetch_all(pro: Any, ts_code: str, force: bool = False) -> dict[str, pd.DataF
 def calc_indicators(
     ts_code: str, name: str, industry: str, list_date: str,
     daily: pd.DataFrame, db: pd.DataFrame, fina: pd.DataFrame,
+    holder: pd.DataFrame, bj50_index: pd.DataFrame,
     today: pd.Timestamp,
 ) -> dict[str, Any] | None:
-    """计算单只票全部指标 (未打分阶段)."""
+    """计算单只票全部指标 (未打分阶段).
+
+    Args:
+        bj50_index: 北证 50 指数日线 DataFrame (trade_date / close), 用于相对动量.
+        holder: 股东户数 DataFrame (end_date / holder_num), 用于关注度代理.
+    """
     if daily.empty or len(daily) < 20:
         return None
 
@@ -187,6 +242,36 @@ def calc_indicators(
     dd_now = float(equity.iloc[-1] / equity.cummax().iloc[-1] - 1)
     max_dd = float((equity / equity.cummax() - 1).min())
 
+    # ---- 相对动量 (vs 北证 50) ----
+    # 把指数对齐到个股交易日, 用同期收益差 stock_ret - idx_ret 表示相对强度.
+    rel_ret_20d = rel_ret_60d = rel_ret_120d = np.nan
+    idx_ret_60d = np.nan
+    if not bj50_index.empty:
+        idx = bj50_index[bj50_index["trade_date"] <= today].copy()
+        if len(idx) > 20:
+            # 用日线对齐: 找个股开始日对应的指数收盘
+            idx_close = idx.set_index("trade_date")["close"]
+            stock_dates = daily["trade_date"].values
+            for h, key in [(20, "rel_ret_20d"), (60, "rel_ret_60d"), (120, "rel_ret_120d")]:
+                if len(close) > h:
+                    d_now = stock_dates[-1]
+                    d_ref = stock_dates[-(h + 1)]
+                    # 个股收益
+                    s_ret = float(close.iloc[-1] / close.iloc[-(h + 1)] - 1)
+                    # 指数收益: 用 asof 找最近的指数收盘
+                    try:
+                        idx_now = float(idx_close.asof(pd.Timestamp(d_now)))
+                        idx_ref = float(idx_close.asof(pd.Timestamp(d_ref)))
+                        i_ret = idx_now / idx_ref - 1 if idx_ref > 0 else np.nan
+                        rel = s_ret - i_ret if pd.notna(i_ret) else np.nan
+                        if h == 20: rel_ret_20d = rel
+                        elif h == 60:
+                            rel_ret_60d = rel
+                            idx_ret_60d = i_ret
+                        else: rel_ret_120d = rel
+                    except Exception:
+                        pass
+
     # ---- 估值 ----
     pe_ttm = float(last.get("close", np.nan))  # placeholder; 真值在 db
     pe_ttm = np.nan
@@ -197,9 +282,9 @@ def calc_indicators(
         db = db[db["trade_date"] <= today].copy()
         if not db.empty:
             db_last = db.iloc[-1]
-            pe_ttm = float(db_last.get("pe_ttm", np.nan))
-            pb = float(db_last.get("pb", np.nan))
-            total_mv_yi = float(db_last.get("total_mv", np.nan)) / 10000  # 万元→亿元
+            pe_ttm = _safe_float(db_last.get("pe_ttm"))
+            pb = _safe_float(db_last.get("pb"))
+            total_mv_yi = _safe_float(db_last.get("total_mv")) / 10000
             # PE_TTM 历史分位
             pe_series = db["pe_ttm"].dropna()
             pe_series = pe_series[pe_series > 0]  # 只看正 PE
@@ -209,6 +294,34 @@ def calc_indicators(
     # ---- 流动性 ----
     amount_mean_wan = float(daily["amount"].mean())  # 千元单位
     turnover_mean = float(db["turnover_rate"].mean()) if not db.empty and "turnover_rate" in db else np.nan
+
+    # ---- 关注度代理 (V2 新增) ----
+    # (1) 股东户数趋势: 最新 / 4 季度前 → 越小越好 (筹码集中)
+    holder_latest = np.nan
+    holder_change_4q = np.nan  # +20% = 散户涌入, -20% = 筹码集中
+    holder_n_quarters = 0
+    if not holder.empty:
+        h = holder.sort_values("end_date").copy()
+        # 取披露日 <= today
+        h = h[h["ann_date"] <= today]
+        if len(h) >= 1:
+            holder_n_quarters = len(h)
+            holder_latest = float(h["holder_num"].iloc[-1])
+            # 用最近 4 季前作基准 (退化到现有最长样本)
+            ref_idx = max(0, len(h) - 5)
+            holder_ref = float(h["holder_num"].iloc[ref_idx])
+            if holder_ref > 0:
+                holder_change_4q = (holder_latest / holder_ref) - 1
+
+    # (2) 关注度突破: 最近 20 日换手 / 过去 60 日换手 → > 1 = 升温
+    attention_ratio = np.nan
+    if not db.empty and "turnover_rate" in db.columns:
+        tr = db.sort_values("trade_date")["turnover_rate"].dropna()
+        if len(tr) >= 60:
+            t20 = tr.iloc[-20:].mean()
+            t60 = tr.iloc[-60:].mean()
+            if t60 > 0.01:
+                attention_ratio = float(t20 / t60)
 
     # ---- 财务 ----
     roe_ttm = np.nan
@@ -223,17 +336,17 @@ def calc_indicators(
         fi = fina.sort_values("end_date").reset_index(drop=True)
         # ROE TTM: 用最新季度年度 ROE (年报或最新季 cumulative)
         fi_last = fi.iloc[-1]
-        netprofit_yoy_q = float(fi_last.get("netprofit_yoy", np.nan))
-        gp_margin = float(fi_last.get("grossprofit_margin", np.nan))
-        np_margin = float(fi_last.get("netprofit_margin", np.nan))
-        debt_ratio = float(fi_last.get("debt_to_assets", np.nan))
+        netprofit_yoy_q = _safe_float(fi_last.get("netprofit_yoy"))
+        gp_margin = _safe_float(fi_last.get("grossprofit_margin"))
+        np_margin = _safe_float(fi_last.get("netprofit_margin"))
+        debt_ratio = _safe_float(fi_last.get("debt_to_assets"))
         # 找最新年报 ROE
         end_dates = fi["end_date"]
         annual_mask = end_dates.dt.month == 12
         if annual_mask.any():
-            roe_ttm = float(fi.loc[annual_mask, "roe"].iloc[-1])
+            roe_ttm = _safe_float(fi.loc[annual_mask, "roe"].iloc[-1])
         else:
-            roe_ttm = float(fi_last.get("roe", np.nan))
+            roe_ttm = _safe_float(fi_last.get("roe"))
         # 4 季度 YoY 平均
         last_4 = fi.tail(4)
         if "netprofit_yoy" in last_4.columns:
@@ -268,6 +381,11 @@ def calc_indicators(
         "max_dd": max_dd,
         "ann_ret": ann_ret,
         "vol_ann": vol_ann,
+        # 相对动量 (V2)
+        "rel_ret_20d": rel_ret_20d,
+        "rel_ret_60d": rel_ret_60d,
+        "rel_ret_120d": rel_ret_120d,
+        "idx_ret_60d": idx_ret_60d,
         # 估值
         "pe_ttm": pe_ttm,
         "pb": pb,
@@ -276,6 +394,11 @@ def calc_indicators(
         # 流动性
         "amount_mean_wan": amount_mean_wan / 1000,  # 万元
         "turnover_mean": turnover_mean,
+        # 关注度 (V2)
+        "holder_latest": holder_latest,
+        "holder_change_4q": holder_change_4q,
+        "holder_n_quarters": holder_n_quarters,
+        "attention_ratio": attention_ratio,
         # 财务
         "roe_ttm": roe_ttm,
         "netprofit_yoy_q": netprofit_yoy_q,
@@ -392,41 +515,86 @@ def score_value(row: pd.Series) -> float:
 
 
 def score_momentum(row: pd.Series) -> float:
-    """动量分: 多周期动量 + 均线状态."""
+    """相对动量分 (V2): 个股相对北证 50 指数的超额收益.
+
+    在普跌环境下, 跌得少也是 alpha; 在普涨环境下, 跑赢指数才算强势.
+    阈值在相对收益上设置, 比绝对动量更稳定.
+    """
     s = 0.0
-    r20 = row.get("ret_20d", np.nan)
-    r60 = row.get("ret_60d", np.nan)
-    r120 = row.get("ret_120d", np.nan)
+    rr20 = row.get("rel_ret_20d", np.nan)
+    rr60 = row.get("rel_ret_60d", np.nan)
+    rr120 = row.get("rel_ret_120d", np.nan)
     above_ma60 = row.get("above_ma60", False)
-    dd_now = row.get("dd_now", np.nan)
+    # 个股绝对走势仅作均线补充, 不主导
 
-    if pd.notna(r20):
-        if r20 > 0.15: s += 0.20
-        elif r20 > 0.05: s += 0.12
-        elif r20 > 0: s += 0.05
-        elif r20 < -0.15: s -= 0.15
+    # 20 日相对动量 (短期)
+    if pd.notna(rr20):
+        if rr20 > 0.10: s += 0.20
+        elif rr20 > 0.03: s += 0.12
+        elif rr20 > 0: s += 0.05
+        elif rr20 < -0.10: s -= 0.15
+        elif rr20 < -0.03: s -= 0.05
 
-    if pd.notna(r60):
-        if r60 > 0.30: s += 0.25
-        elif r60 > 0.10: s += 0.15
-        elif r60 > 0: s += 0.08
-        elif r60 < -0.30: s -= 0.20
+    # 60 日相对动量 (中期, 权重最高)
+    if pd.notna(rr60):
+        if rr60 > 0.20: s += 0.30
+        elif rr60 > 0.10: s += 0.22
+        elif rr60 > 0.03: s += 0.15
+        elif rr60 > 0: s += 0.08
+        elif rr60 < -0.20: s -= 0.20
+        elif rr60 < -0.10: s -= 0.10
 
-    if pd.notna(r120):
-        if r120 > 0.50: s += 0.20
-        elif r120 > 0.20: s += 0.12
-        elif r120 > 0: s += 0.05
-        elif r120 < -0.30: s -= 0.10
+    # 120 日相对动量 (长期趋势)
+    if pd.notna(rr120):
+        if rr120 > 0.30: s += 0.20
+        elif rr120 > 0.10: s += 0.12
+        elif rr120 > 0: s += 0.05
+        elif rr120 < -0.30: s -= 0.10
 
+    # 均线状态 (个股自身 MA60)
     if above_ma60: s += 0.15
     else: s -= 0.05
 
-    # 不在严重回撤中
-    if pd.notna(dd_now):
-        if dd_now > -0.10: s += 0.20  # 距高点不远
-        elif dd_now < -0.40: s -= 0.20
-
     return max(0.0, min(s, 1.0))
+
+
+def score_attention(row: pd.Series) -> float:
+    """关注度分 (V2 新增): 股东户数趋势 + 换手率突破.
+
+    替代 Serenity 紫苏叶框架的 coverage_gap 维度
+    (北证分析师覆盖近乎为 0, 该维度退化为常数).
+
+    - 股东户数减少 → 筹码集中 → 价值发现先行信号
+    - 近 20 日换手 vs 过去 60 日换手 → 关注度升温
+    """
+    s = 0.0
+    hc = row.get("holder_change_4q", np.nan)
+    ar = row.get("attention_ratio", np.nan)
+    n_q = row.get("holder_n_quarters", 0)
+
+    # (1) 股东户数 4 季度变化
+    if pd.notna(hc) and n_q >= 2:
+        if hc < -0.25: s += 0.45    # 户数减少 25%+ → 强筹码集中
+        elif hc < -0.10: s += 0.30  # 减少 10%+ → 弱筹码集中
+        elif hc < -0.05: s += 0.15
+        elif hc < 0.10: s += 0.05   # 基本不变
+        elif hc < 0.30: s -= 0.10   # 散户涌入
+        else: s -= 0.25             # 散户暴增 (减持/解禁/炒作进场)
+
+    # (2) 关注度突破: t20/t60 比值
+    if pd.notna(ar):
+        if ar > 2.0: s += 0.30      # 急剧升温 (突破 / 题材点燃)
+        elif ar > 1.5: s += 0.22
+        elif ar > 1.2: s += 0.15
+        elif ar > 0.8: s += 0.08    # 平稳
+        elif ar > 0.5: s -= 0.05
+        else: s -= 0.15             # 关注度暴跌
+
+    # 数据缺失 → 中性 (北证小票披露不规则)
+    if pd.isna(hc) and pd.isna(ar):
+        return 0.4
+
+    return max(0.0, min(s + 0.3, 1.0))  # 起点 +0.3 防全员低分
 
 
 def score_liquidity(row: pd.Series) -> float:
@@ -507,6 +675,7 @@ def perilla_tag(row: pd.Series) -> str:
 def scan_one(
     pro: Any,
     con_row: pd.Series,
+    bj50_index: pd.DataFrame,
     today: pd.Timestamp,
     force: bool,
 ) -> dict[str, Any] | None:
@@ -525,7 +694,9 @@ def scan_one(
 
     ind = calc_indicators(
         ts_code, str(name), str(industry), str(list_date),
-        data["daily"], data["db"], data["fina"], today,
+        data["daily"], data["db"], data["fina"],
+        data["holder"], bj50_index,
+        today,
     )
     if ind is None:
         return None
@@ -543,11 +714,12 @@ def score_all(df: pd.DataFrame) -> pd.DataFrame:
     df["pass"] = filters.map(lambda x: x[0])
     df["reject_reason"] = filters.map(lambda x: x[1])
 
-    # 五维分
+    # 六维分 (V2: 新增 s_attention)
     df["s_quality"] = df.apply(score_quality, axis=1)
     df["s_growth"] = df.apply(score_growth, axis=1)
     df["s_value"] = df.apply(score_value, axis=1)
     df["s_momentum"] = df.apply(score_momentum, axis=1)
+    df["s_attention"] = df.apply(score_attention, axis=1)
     df["s_liquidity"] = df.apply(score_liquidity, axis=1)
 
     df["total_score"] = (
@@ -555,6 +727,7 @@ def score_all(df: pd.DataFrame) -> pd.DataFrame:
         + df["s_growth"] * WEIGHTS["growth"]
         + df["s_value"] * WEIGHTS["value"]
         + df["s_momentum"] * WEIGHTS["momentum"]
+        + df["s_attention"] * WEIGHTS["attention"]
         + df["s_liquidity"] * WEIGHTS["liquidity"]
     )
     # 未通过硬过滤的票, total_score 仍计算但排序时下沉
@@ -607,15 +780,23 @@ def render_top_row(rank: int, row: pd.Series, detailed: bool = True) -> str:
         f"营收 YoY 均值 {fmt_pct_raw(row['or_yoy_mean_4q'])}, 最新季净利同比 {fmt_pct_raw(row['netprofit_yoy_q'])}"
     )
     lines.append(
-        f"- 动量: 20d {fmt_pct(row['ret_20d'])} / 60d {fmt_pct(row['ret_60d'])} / 120d {fmt_pct(row['ret_120d'])}, "
+        f"- 动量(绝对): 20d {fmt_pct(row['ret_20d'])} / 60d {fmt_pct(row['ret_60d'])} / 120d {fmt_pct(row['ret_120d'])}, "
         f"MA60 {'上' if row['above_ma60'] else '下'}, 现回撤 {fmt_pct(row['dd_now'])}"
+    )
+    lines.append(
+        f"- **动量(相对北证50)**: 20d {fmt_pct(row['rel_ret_20d'])} / 60d {fmt_pct(row['rel_ret_60d'])} / 120d {fmt_pct(row['rel_ret_120d'])} "
+        f"(同期指数 60d {fmt_pct(row['idx_ret_60d'])})"
+    )
+    lines.append(
+        f"- **关注度**: 股东户数 {row['holder_latest']:.0f} 户, 4季度变化 {fmt_pct(row['holder_change_4q'])}, "
+        f"换手 t20/t60 = {row['attention_ratio']:.2f}x" if pd.notna(row.get('attention_ratio', np.nan)) else f"- **关注度**: 数据不全"
     )
     lines.append(
         f"- 流动性: 日均 {row['amount_mean_wan']:.0f} 万 · 换手 {row['turnover_mean']:.1f}%"
     )
     lines.append(
-        f"- 五维分: 质量 {row['s_quality']:.2f} · 成长 {row['s_growth']:.2f} · 估值 {row['s_value']:.2f} · "
-        f"动量 {row['s_momentum']:.2f} · 流动性 {row['s_liquidity']:.2f}"
+        f"- 六维分: 质量 {row['s_quality']:.2f} · 成长 {row['s_growth']:.2f} · 估值 {row['s_value']:.2f} · "
+        f"动量 {row['s_momentum']:.2f} · 关注度 {row['s_attention']:.2f} · 流动性 {row['s_liquidity']:.2f}"
     )
     if not row["pass"]:
         lines.append(f"- ⚠️ **未通过硬过滤**: {row['reject_reason']}")
@@ -632,8 +813,11 @@ def render_report(df: pd.DataFrame, today: pd.Timestamp) -> str:
     )
     lines.append(
         f"- 评分: 质量 {WEIGHTS['quality']*100:.0f}% · 成长 {WEIGHTS['growth']*100:.0f}% · "
-        f"估值 {WEIGHTS['value']*100:.0f}% · 动量 {WEIGHTS['momentum']*100:.0f}% · "
-        f"流动性 {WEIGHTS['liquidity']*100:.0f}%"
+        f"估值 {WEIGHTS['value']*100:.0f}% · **相对动量** {WEIGHTS['momentum']*100:.0f}% · "
+        f"**关注度** {WEIGHTS['attention']*100:.0f}% · 流动性 {WEIGHTS['liquidity']*100:.0f}%"
+    )
+    lines.append(
+        f"- V2 北证特化: 动量改用相对北证50指数; 关注度用股东户数趋势+换手率突破\n"
     )
     lines.append(
         f"- 硬过滤: 上市<60日 / Q1净利同比<-60% / PE_TTM>200 / ROE<-5%\n"
@@ -651,17 +835,18 @@ def render_report(df: pd.DataFrame, today: pd.Timestamp) -> str:
     # Top 10
     lines.append("## Top 10 总览\n")
     lines.append(
-        "| 排名 | 代码 | 名称 | 行业 | 卡位 | 总分 | 质量 | 成长 | 估值 | 动量 | 流动 | PE | ROE | 4Q净利YoY | 60d涨跌 |"
+        "| 排名 | 代码 | 名称 | 行业 | 卡位 | 总分 | 质 | 长 | 估 | **势** | **注** | 流 | PE | ROE | 4Q净利YoY | **rel60d** | 户数Δ |"
     )
-    lines.append("|---:|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    lines.append("|---:|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for i, (_, row) in enumerate(passed.head(10).iterrows(), 1):
         lines.append(
             f"| {i} | {row['ts_code']} | {row['name']} | {row['industry']} | "
             f"{row['perilla_tag']} | {row['total_score']:.2f} | "
-            f"{row['s_quality']:.2f} | {row['s_growth']:.2f} | "
-            f"{row['s_value']:.2f} | {row['s_momentum']:.2f} | {row['s_liquidity']:.2f} | "
+            f"{row['s_quality']:.2f} | {row['s_growth']:.2f} | {row['s_value']:.2f} | "
+            f"{row['s_momentum']:.2f} | {row['s_attention']:.2f} | {row['s_liquidity']:.2f} | "
             f"{row['pe_ttm']:.0f} | {fmt_pct_raw(row['roe_ttm'])} | "
-            f"{fmt_pct_raw(row['netprofit_yoy_mean_4q'])} | {fmt_pct(row['ret_60d'])} |"
+            f"{fmt_pct_raw(row['netprofit_yoy_mean_4q'])} | {fmt_pct(row['rel_ret_60d'])} | "
+            f"{fmt_pct(row['holder_change_4q'])} |"
         )
     lines.append("")
 
@@ -680,17 +865,17 @@ def render_report(df: pd.DataFrame, today: pd.Timestamp) -> str:
     # 全榜
     lines.append("## 全 50 只评分表\n")
     lines.append(
-        "| # | 代码 | 名称 | 行业 | 总分 | 卡位 | PE | ROE | 4Q净利YoY | 60d | 现回撤 |"
+        "| # | 代码 | 名称 | 行业 | 总分 | 卡位 | PE | ROE | 4Q净利YoY | rel60d | 户数Δ | 现回撤 |"
     )
-    lines.append("|---:|---|---|---|---:|---|---:|---:|---:|---:|---:|")
+    lines.append("|---:|---|---|---|---:|---|---:|---:|---:|---:|---:|---:|")
     for i, (_, row) in enumerate(df.iterrows(), 1):
         flag = "" if row["pass"] else "❌"
         lines.append(
             f"| {i}{flag} | {row['ts_code']} | {row['name']} | {row['industry']} | "
             f"{row['total_score']:.2f} | {row['perilla_tag']} | "
             f"{row['pe_ttm']:.0f} | {fmt_pct_raw(row['roe_ttm'])} | "
-            f"{fmt_pct_raw(row['netprofit_yoy_mean_4q'])} | {fmt_pct(row['ret_60d'])} | "
-            f"{fmt_pct(row['dd_now'])} |"
+            f"{fmt_pct_raw(row['netprofit_yoy_mean_4q'])} | {fmt_pct(row['rel_ret_60d'])} | "
+            f"{fmt_pct(row['holder_change_4q'])} | {fmt_pct(row['dd_now'])} |"
         )
     lines.append("")
 
@@ -716,12 +901,16 @@ def main() -> None:
     print(f"  → {len(constituents)} 只成分股, 调样日 {constituents['trade_date'].iloc[0]}")
     print(f"  → 权重 top5: {constituents.head(5)[['con_code', 'name', 'weight']].values.tolist()}")
 
+    print("  → 拉北证 50 指数日线 (相对动量基准) ...")
+    bj50_index = fetch_bj50_index(pro, force=args.force_refresh)
+    print(f"  → 指数样本 {len(bj50_index)} 日 ({bj50_index['trade_date'].iloc[0].strftime('%Y-%m-%d')} → {bj50_index['trade_date'].iloc[-1].strftime('%Y-%m-%d')})")
+
     print(f"[2/3] 批量扫描 (并发 {args.threads}) ...")
     rows: list[dict[str, Any]] = []
     start = time.time()
     with ThreadPoolExecutor(max_workers=args.threads) as pool:
         futs = {
-            pool.submit(scan_one, pro, row, today, args.force_refresh): row["ts_code"]
+            pool.submit(scan_one, pro, row, bj50_index, today, args.force_refresh): row["ts_code"]
             for _, row in constituents.iterrows()
         }
         for fut in as_completed(futs):
@@ -766,8 +955,8 @@ def main() -> None:
             f"  #{i} {row['name']} ({row['ts_code']}) {row['industry']:8s} "
             f"总分 {row['total_score']:.2f} | "
             f"质 {row['s_quality']:.2f} 长 {row['s_growth']:.2f} 估 {row['s_value']:.2f} "
-            f"势 {row['s_momentum']:.2f} 流 {row['s_liquidity']:.2f} | "
-            f"PE {row['pe_ttm']:.0f} ROE {row['roe_ttm']:.1f}% 60d {row['ret_60d']*100:+.0f}%"
+            f"势 {row['s_momentum']:.2f} 注 {row['s_attention']:.2f} 流 {row['s_liquidity']:.2f} | "
+            f"PE {row['pe_ttm']:.0f} ROE {row['roe_ttm']:.1f}% rel60d {row['rel_ret_60d']*100:+.0f}% 户数Δ {row['holder_change_4q']*100:+.0f}%"
         )
 
     if len(df) - len(passed) > 0:
