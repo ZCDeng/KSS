@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 STOCKS = [
     ('688322', '奥比中光', 'alpha'),
     ('688017', '绿的谐波', 'alpha'),
-    ('688268', '华特气体', 'speculation'),
+    # ('688268', '华特气体', 'speculation'),  # 2026-06-07 移除: 预测校验显示其 n=16 条件分布接近均匀, 无信息量
 ]
 CATEGORY_LABEL = {
     'alpha': '🚀 板块龙头 (alpha 主升)',
@@ -742,14 +742,19 @@ def main():
 
     chunks = render(stocks_data, idx_dfs, today_str, t1_str, stale_through=stale_through)
 
-    # 存档: 不论 dry-run / 实际推送, 都落盘到 storage/daily_review/YYYY-MM-DD.md
+    # 存档: 落盘到 storage/daily_review/YYYY-MM-DD.md
+    # dry-run 不覆盖已存在的档案——存档是预测校验 (validate_predictions.py) 的审计底稿,
+    # 回放旧日期重新生成 (STOCKS 变更 / 数据修订) 会静默改写历史预测记录
     archive_dir = PROJECT_ROOT / 'storage' / 'daily_review'
     archive_dir.mkdir(parents=True, exist_ok=True)
     archive_path = archive_dir / f'{today_str}.md'
     header = f"# KSS {today_str} 复盘 / {t1_str} 预测\n\n"
     body = "\n\n---\n\n".join(chunks)
-    archive_path.write_text(header + body, encoding='utf-8')
-    logger.info(f"  存档: {archive_path}")
+    if args.dry_run and archive_path.exists():
+        logger.warning(f"  dry-run: 档案已存在, 跳过覆盖 {archive_path}")
+    else:
+        archive_path.write_text(header + body, encoding='utf-8')
+        logger.info(f"  存档: {archive_path}")
 
     if args.dry_run:
         for i, c in enumerate(chunks):

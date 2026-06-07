@@ -12,3 +12,6 @@
 
 # log_mv 反向周报 - 每周五 17:00 收盘后
 0 17 * * 5 /Users/zcdeng/projects/KSS/scripts/run_paper_trade_weekly.sh >> /tmp/kss_weekly.log 2>&1
+
+# daily_review 预测校验周报 - 每周五 19:30 (19:00 daily_review 之后)
+30 19 * * 5 /Users/zcdeng/projects/KSS/scripts/run_prediction_validation_weekly.sh >> /tmp/kss_pred_validation.log 2>&1
