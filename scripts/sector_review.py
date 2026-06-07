@@ -28,6 +28,7 @@ lauchd / cron 部署（每个交易日 17:30 收盘后）::
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from datetime import datetime, timedelta
@@ -35,6 +36,10 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
+
+# 雷达存档目录 —— 预测校验周报 (validate_predictions.py) 的审计底稿.
+# first-write-wins: 已存在不覆盖 (复刻 daily_review 的 dry-run 改写存档教训)
+RADAR_ARCHIVE_DIR = PROJECT_ROOT / "storage" / "etf_radar"
 
 from kss.data.tushare_client import TushareClient  # noqa: E402
 from kss.notifications.manager import (  # noqa: E402
@@ -68,6 +73,22 @@ def _fmt_display_date(yyyymmdd: str) -> str:
         return yyyymmdd
 
 
+def _archive_radar(trade_date: str, payload: dict) -> None:
+    """雷达 payload 落盘 ``storage/etf_radar/YYYYMMDD.json``.
+
+    first-write-wins: 存档是校验底稿, 回放旧日期不得改写当时发布的内容.
+    """
+    RADAR_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+    path = RADAR_ARCHIVE_DIR / f"{trade_date}.json"
+    if path.exists():
+        logger.info("雷达存档已存在, 跳过: %s", path)
+        return
+    payload = {"trade_date": trade_date, "source": "live", **payload}
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=1),
+                    encoding="utf-8")
+    logger.info("雷达存档: %s", path)
+
+
 def run_review(
     trade_date: str,
     client: TushareClient | None = None,
@@ -96,6 +117,8 @@ def run_review(
     # 失败 → None, commentary 计入 missing; regime 失败不阻塞雷达)
     regime = build_regime_status(trade_date, client=client)
     etf_radar = build_etf_radar(trade_date, client=client, regime=regime)
+    if etf_radar is not None:
+        _archive_radar(trade_date, etf_radar.to_payload())
 
     # ---- LLM commentary ----
     commentary = generate_commentary(

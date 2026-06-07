@@ -11,6 +11,11 @@
   - 偏差最大条目
   - console 通道额外输出逐条命中明细
 
+雷达 grade 校验段: 读 storage/etf_radar/*.json 存档 (sector_review 每日落盘),
+对成熟信号 (后向 ≥6 个交易日 NAV 可得) 计算后 5 日主题收益, 按 grade 分档
+对比一年回测基线 (强势确认 +3.3%/75% · 中性偏多 +1.05%/71% · 偏弱 ~0%/50%),
+divergence 事件逐条列出. 该段任何失败只降级跳过, 不阻塞预测校验主流程.
+
 用法:
   python3 scripts/validate_predictions.py                    # 近 7 天, console
   python3 scripts/validate_predictions.py --lookback-days 14
@@ -24,9 +29,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import logging
 import re
 import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -39,6 +46,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 REVIEW_DIR = PROJECT_ROOT / "storage" / "daily_review"
+RADAR_ARCHIVE_DIR = PROJECT_ROOT / "storage" / "etf_radar"
+
+# 一年回测基线 (storage/reports/momentum_regime_research_20260607.md, 非重叠抽样)
+GRADE_BASELINE: dict[str, tuple[float, float]] = {
+    "强势确认": (3.3, 75.0),   # (后5日均值 %, 胜率 %)
+    "中性偏多": (1.05, 71.0),
+    "偏弱": (0.0, 50.0),
+}
 
 BUCKETS = ["强势突破上行", "温和上涨", "横盘震荡", "温和回落", "大跌破位"]
 
@@ -208,6 +223,126 @@ def print_details(s: dict) -> None:
               f" {'⚠️' if d['stop_hit'] else '-':>5}")
 
 
+# ====================================================================== #
+# 雷达 grade 校验段
+# ====================================================================== #
+
+
+def load_radar_archives() -> list[dict]:
+    """读全部雷达存档 (累积校验, 不限 lookback), 按日期升序."""
+    out = []
+    for path in sorted(RADAR_ARCHIVE_DIR.glob("*.json")):
+        try:
+            out.append(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("雷达存档损坏, 跳过 %s: %s", path.name, exc)
+    return out
+
+
+def build_radar_panel(start: str, end: str):
+    """拉 basket fund_share + fund_nav → (flows, ret1) 主题日面板.
+
+    与一年回测同一构造 (backtest_etf_radar.build_theme_panel):
+    accum_nav 优先, T-1 份额加权.
+    """
+    import pandas as pd
+
+    from backtest_etf_radar import build_theme_panel
+    from kss.data.tushare_client import TushareClient
+    from kss.sector.etf_radar import ETF_BASKET
+
+    client = TushareClient()
+    frames = []
+    for funds in ETF_BASKET.values():
+        for ts_code, name in funds:
+            sh = client.fetch_fund_share(ts_code, start, end)
+            time.sleep(0.3)
+            nav = client.fetch_fund_nav(ts_code, start, end)
+            time.sleep(0.3)
+            if sh is None or nav is None:
+                raise RuntimeError(f"{ts_code} ({name}) share/nav 拉取失败")
+            nav = nav.rename(columns={"nav_date": "trade_date"})
+            nav["nav"] = nav["accum_nav"].where(
+                nav["accum_nav"].notna(), nav["unit_nav"])
+            m = sh[["trade_date", "fd_share"]].merge(
+                nav[["trade_date", "nav"]], on="trade_date", how="inner")
+            m["ts_code"] = ts_code
+            m["theme"] = next(t for t, fs in ETF_BASKET.items()
+                              if any(c == ts_code for c, _ in fs))
+            frames.append(m)
+    return build_theme_panel(pd.concat(frames, ignore_index=True))
+
+
+def validate_radar_grades(archives: list[dict]) -> dict | None:
+    """按 grade 分档统计成熟信号的后 5 日收益; 无成熟信号返回 None."""
+    import pandas as pd
+
+    from backtest_etf_radar import fwd_return
+
+    if not archives:
+        return None
+    start = (datetime.strptime(archives[0]["trade_date"], "%Y%m%d")
+             - timedelta(days=10)).strftime("%Y%m%d")
+    end = datetime.now().strftime("%Y%m%d")
+    _flows, ret1 = build_radar_panel(start, end)
+    idx = {d: i for i, d in enumerate(ret1.index)}
+
+    rows, n_immature = [], 0
+    for arc in archives:
+        d = arc.get("data_date") or arc["trade_date"]
+        i = idx.get(d)
+        fwd = fwd_return(ret1, i, 5) if i is not None else None
+        if fwd is None:
+            n_immature += 1
+            continue
+        for theme, m in arc.get("themes", {}).items():
+            if m.get("grade") is None or pd.isna(fwd.get(theme)):
+                continue
+            rows.append({"date": d, "theme": theme, "grade": m["grade"],
+                         "divergence": bool(m.get("divergence")),
+                         "fwd5": float(fwd[theme]),
+                         "source": arc.get("source", "live")})
+    if not rows:
+        return None
+    df = pd.DataFrame(rows)
+    grades = {}
+    for g, sub in df.groupby("grade"):
+        grades[g] = {"n": len(sub), "n_dates": sub["date"].nunique(),
+                     "mean": sub["fwd5"].mean(),
+                     "win": (sub["fwd5"] > 0).mean() * 100}
+    div = df[df["divergence"]][["date", "theme", "fwd5"]].to_dict("records")
+    return {"grades": grades, "divergence": div,
+            "n_archives": len(archives), "n_immature": n_immature,
+            "n_backfill": int((df["source"] == "backfill").sum())}
+
+
+def render_radar_section(stats: dict | None) -> str:
+    if stats is None:
+        return ("\n\n*雷达 grade 校验*\n  存档不足或信号未成熟 "
+                "(需后向 ≥6 个交易日), 本周跳过")
+    lines = ["", "", "*雷达 grade 校验* (累积, 后5日收益 vs 一年回测基线)"]
+    for g in ("强势确认", "中性偏多", "偏弱"):
+        if g not in stats["grades"]:
+            continue
+        s = stats["grades"][g]
+        bm, bw = GRADE_BASELINE[g]
+        drift = "✅" if abs(s["win"] - bw) <= 15 else "⚠️"
+        lines.append(
+            f"  {drift} {g}: {s['mean']:+.2f}% / 胜率 {s['win']:.0f}% "
+            f"(n={s['n']}, {s['n_dates']}日) · 基线 {bm:+.1f}%/{bw:.0f}%")
+    if stats["divergence"]:
+        lines.append("  见顶预警事件:")
+        for d in stats["divergence"]:
+            lines.append(f"    · {d['date'][4:6]}-{d['date'][6:]} {d['theme']}: "
+                         f"后5日 {d['fwd5']:+.2f}% (预警基线 -2.0%)")
+    note = f"  存档 {stats['n_archives']} 日 (未成熟 {stats['n_immature']})"
+    if stats["n_backfill"]:
+        note += f" · 含回填样本 {stats['n_backfill']} 条"
+    lines.append(note)
+    lines.append("  _连续两周强势确认档胜率 <60% → 重校 grade 阈值_")
+    return "\n".join(lines)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--lookback-days", type=int, default=7)
@@ -229,6 +364,14 @@ def main() -> int:
 
     s = score(verifiable)
     summary = render_summary(s, args.lookback_days)
+
+    # 雷达 grade 校验段 —— 失败只降级, 不阻塞预测校验主流程
+    try:
+        radar_stats = validate_radar_grades(load_radar_archives())
+        summary += render_radar_section(radar_stats)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("雷达校验段失败 (已降级跳过): %s", exc)
+        summary += f"\n\n*雷达 grade 校验*\n  ⚠️ 本段生成失败: {str(exc)[:80]}"
 
     print(f"📊 {title}\n")
     print(summary)
