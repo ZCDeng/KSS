@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.zcdeng.kss.morning_divergence_alert</string>
+
+    <!-- 开盘前 divergence 快讯 - 每个交易日 9:00 (8:30 数据更新后, 9:30 开盘前) -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+    </array>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/zcdeng/projects/KSS/scripts/run_morning_divergence_alert.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/zcdeng/projects/KSS</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/zcdeng</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/zcdeng/projects/KSS/storage/logs/cron/morning_divergence_alert.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/zcdeng/projects/KSS/storage/logs/cron/morning_divergence_alert.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+</dict>
+</plist>

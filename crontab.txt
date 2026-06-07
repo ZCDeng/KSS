@@ -15,3 +15,6 @@
 
 # daily_review 预测校验周报 - 每周五 19:30 (19:00 daily_review 之后)
 30 19 * * 5 /Users/zcdeng/projects/KSS/scripts/run_prediction_validation_weekly.sh >> /tmp/kss_pred_validation.log 2>&1
+
+# 开盘前 divergence 快讯 - 每个交易日 9:00 (8:30 数据更新后, 有见顶预警才推送)
+0 9 * * 1-5 /Users/zcdeng/projects/KSS/scripts/run_morning_divergence_alert.sh >> /tmp/kss_morning_alert.log 2>&1
