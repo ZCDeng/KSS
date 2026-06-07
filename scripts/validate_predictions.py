@@ -334,7 +334,7 @@ def render_radar_section(stats: dict | None) -> str:
         lines.append("  见顶预警事件:")
         for d in stats["divergence"]:
             lines.append(f"    · {d['date'][4:6]}-{d['date'][6:]} {d['theme']}: "
-                         f"后5日 {d['fwd5']:+.2f}% (预警基线 -2.0%)")
+                         f"后5日 {d['fwd5']:+.2f}% (预警基线 -0.6%)")
     note = f"  存档 {stats['n_archives']} 日 (未成熟 {stats['n_immature']})"
     if stats["n_backfill"]:
         note += f" · 含回填样本 {stats['n_backfill']} 条"

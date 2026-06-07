@@ -195,3 +195,21 @@ def test_payload_and_context_injection():
     ctx = build_context(snap, {}, {}, overlay, etf_radar=radar)
     assert ctx["etf_radar"]["data_date"] == "20260604"
     assert "etf_radar" not in ctx["missing"]
+
+
+def test_fallback_includes_divergence():
+    """LLM fallback 必须播报见顶预警与强势确认 (不依赖 LLM 可用性)."""
+    from kss.sector.commentary import fallback_text
+    from kss.sector.data_fetcher import SectorSnapshot
+
+    radar = EtfRadar(data_date="20260605", themes={
+        "机器人": {"grade": "偏弱", "divergence": True},
+        "科创芯片": {"grade": "强势确认", "divergence": False},
+    })
+    text = fallback_text("20260605", SectorSnapshot(trade_date="20260605"),
+                         {}, reason="no key", etf_radar=radar)
+    assert "见顶预警" in text and "机器人" in text
+    assert "强势确认" in text and "科创芯片" in text
+    # 不传雷达 → 不输出雷达行 (向后兼容)
+    text2 = fallback_text("20260605", SectorSnapshot(trade_date="20260605"), {})
+    assert "ETF 雷达" not in text2

@@ -81,7 +81,7 @@ _SYSTEM_PROMPT: str = """\
      「偏弱」主题 = 申赎转正，历史胜率 ~50%
    - **divergence=true 的主题必须高亮且放在本段最前**，固定句式：
      「⚠️ X 上涨中由赎回转为申购（5日 +N% / 申赎 +M%），历史此形态后 5 日
-     -2.0%、胜率 35%，见顶预警」
+     均值 -0.6%、上涨胜率仅 38%，见顶预警」
    - ``momentum_regime_r3`` 存在时加一句：in_regime=true →
      「当前处于动量期（mom20 +X% / 大阳占比 Y%），申购档主题历史在此环境下
      胜率仅 28-41%，回避申购档」；false → 「当前非动量期」
@@ -149,7 +149,10 @@ def generate_commentary(
         text = client.complete(system=system, user=user)
     except LLMUnavailable as exc:
         logger.warning("[commentary] LLM 不可用，走 fallback: %s", exc)
-        return fallback_text(date_yyyymmdd, snapshot, indices, reason=str(exc))
+        return fallback_text(
+            date_yyyymmdd, snapshot, indices, reason=str(exc),
+            etf_radar=etf_radar,
+        )
 
     text = _sanitize_html(text)
     text = clip_to_max_len(text)
@@ -562,11 +565,15 @@ def fallback_text(
     snapshot: SectorSnapshot,
     indices: dict[str, dict[str, float]],
     reason: str = "",
+    etf_radar: EtfRadar | None = None,
 ) -> str:
     """LLM 不可用时的兜底文本.
 
+    雷达见顶预警是高价值信号, 不依赖 LLM —— fallback 也必须播报
+    (divergence 行 + grade 一句话), 不能因 LLM 失败静默丢失.
+
     Returns:
-        HTML 格式的简化复盘：日期 + 指数 + Top 行业/概念名 + ⚠️ 标记.
+        HTML 格式的简化复盘：日期 + 指数 + Top 行业/概念名 + 雷达行 + ⚠️ 标记.
     """
     date_disp = f"{date_yyyymmdd[:4]}-{date_yyyymmdd[4:6]}-{date_yyyymmdd[6:8]}"
     parts: list[str] = [
@@ -609,6 +616,24 @@ def fallback_text(
         parts.append(f"<b>Top 概念</b>：{names}")
     else:
         parts.append("<b>Top 概念</b>：概念数据未到位")
+
+    if etf_radar is not None and etf_radar.themes:
+        parts.append("")
+        div = [t for t, m in etf_radar.themes.items() if m.get("divergence")]
+        if div:
+            parts.append(
+                "⚠️ <b>见顶预警</b>："
+                + " / ".join(html.escape(t) for t in div)
+                + " 上涨中转申购（历史后5日 -0.6%、上涨胜率 38%）"
+            )
+        confirm = [t for t, m in etf_radar.themes.items()
+                   if m.get("grade") == "强势确认"]
+        radar_line = f"<b>ETF 雷达</b>（{html.escape(etf_radar.data_date)}）："
+        radar_line += (
+            "强势确认 " + " / ".join(html.escape(t) for t in confirm)
+            if confirm else "无强势确认档主题"
+        )
+        parts.append(radar_line)
 
     if snapshot.missing:
         parts.append("")
