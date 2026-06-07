@@ -883,18 +883,192 @@ def render_report(df: pd.DataFrame, today: pd.Timestamp) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Telegram 推送 (V2)
+# ---------------------------------------------------------------------------
+
+
+def _load_prev_scan(today: pd.Timestamp, days_back: int = 7) -> pd.DataFrame:
+    """找前一交易日的扫描 CSV (向前最多 7 天).
+
+    Returns:
+        前一日的 score 表; 找不到返回空 df.
+    """
+    for delta in range(1, days_back + 1):
+        prev = today - pd.Timedelta(days=delta)
+        candidate = OUT_DIR / f"scan_{prev.strftime('%Y%m%d')}.csv"
+        if candidate.exists():
+            try:
+                df = pd.read_csv(candidate)
+                df["_prev_date"] = prev.strftime("%Y-%m-%d")
+                return df
+            except Exception:
+                continue
+    return pd.DataFrame()
+
+
+def _rank_arrow(today_rank: int, prev_rank: int | None) -> str:
+    """生成 ↑↓ 排名变化标记."""
+    if prev_rank is None:
+        return "(NEW)"
+    delta = prev_rank - today_rank  # 正数 = 上升
+    if delta == 0: return "(-)"
+    if delta > 0: return f"(↑{delta})"
+    return f"(↓{-delta})"
+
+
+def build_telegram_message(
+    df_today: pd.DataFrame, df_prev: pd.DataFrame,
+    bj50_index: pd.DataFrame, today: pd.Timestamp,
+) -> str:
+    """构造北证 50 扫描日报 Telegram 消息 (Markdown 格式).
+
+    包含:
+        - 当日指数表现
+        - Top 5 (vs 昨日排名变化)
+        - 户数 +30% 散户涌入 / -25% 筹码集中 警告
+        - 新增硬过滤拒绝 (一季报炸雷)
+    """
+    lines: list[str] = []
+    date_str = today.strftime("%Y-%m-%d")
+    lines.append(f"🌾 *北证50扫描 · {date_str}*")
+
+    # 当日指数
+    if not bj50_index.empty:
+        idx = bj50_index.sort_values("trade_date")
+        idx_today = idx[idx["trade_date"] <= today].iloc[-1] if len(idx) > 0 else None
+        if idx_today is not None:
+            pct = idx_today.get("pct_chg", 0)
+            lines.append(f"📊 指数: {idx_today['close']:.0f} ({pct:+.2f}%)")
+    lines.append("")
+
+    passed = df_today[df_today["pass"]].copy().reset_index(drop=True)
+    rejected = df_today[~df_today["pass"]].copy()
+
+    # 前一日排名映射
+    prev_ranks: dict[str, int] = {}
+    prev_passed_ts: set[str] = set()
+    if not df_prev.empty and "pass" in df_prev.columns:
+        prev_passed = df_prev[df_prev["pass"]].reset_index(drop=True)
+        prev_ranks = {row["ts_code"]: i + 1 for i, row in prev_passed.iterrows()}
+        prev_passed_ts = set(prev_passed["ts_code"])
+
+    # Top 5
+    lines.append("*🏆 Top 5* (vs 昨日)")
+    for i, (_, row) in enumerate(passed.head(5).iterrows(), 1):
+        prev_rank = prev_ranks.get(row["ts_code"])
+        arrow = _rank_arrow(i, prev_rank)
+        lines.append(
+            f"`{i}` *{row['name']}* `{row['ts_code']}` {arrow} *{row['total_score']:.2f}*"
+        )
+        # 六维 + 关键数据
+        lines.append(
+            f"   质{row['s_quality']:.2f} 长{row['s_growth']:.2f} 估{row['s_value']:.2f} "
+            f"势{row['s_momentum']:.2f} 注{row['s_attention']:.2f}"
+        )
+        hc = row.get("holder_change_4q")
+        hc_str = f"{hc*100:+.0f}%" if pd.notna(hc) else "-"
+        rel60 = row.get("rel_ret_60d")
+        rel_str = f"{rel60*100:+.0f}%" if pd.notna(rel60) else "-"
+        lines.append(
+            f"   PE{row['pe_ttm']:.0f} ROE{row['roe_ttm']:.0f}% rel60d {rel_str} 户数Δ {hc_str}"
+        )
+    lines.append("")
+
+    # 关注度警告
+    alerts: list[str] = []
+    if "holder_change_4q" in df_today.columns:
+        # 散户暴增 (>+50%): 顶部信号
+        flood = df_today[
+            df_today["pass"] & (df_today["holder_change_4q"] > 0.50)
+        ].sort_values("holder_change_4q", ascending=False)
+        for _, r in flood.head(5).iterrows():
+            alerts.append(f"⚠️ *{r['name']}* `{r['ts_code']}`: 户数+{r['holder_change_4q']*100:.0f}% 散户暴增")
+
+        # 筹码极度集中 (<-25%)
+        concentr = df_today[
+            df_today["pass"] & (df_today["holder_change_4q"] < -0.25)
+        ].sort_values("holder_change_4q")
+        for _, r in concentr.head(5).iterrows():
+            alerts.append(f"💎 *{r['name']}* `{r['ts_code']}`: 户数{r['holder_change_4q']*100:.0f}% 筹码集中")
+
+    if alerts:
+        lines.append("*🔔 关注度警告*")
+        lines.extend(alerts)
+        lines.append("")
+
+    # 新增硬过滤 (今日新雷)
+    if not df_prev.empty and "pass" in df_prev.columns and len(rejected) > 0:
+        prev_rejected_ts = set(df_prev[~df_prev["pass"]]["ts_code"]) if "pass" in df_prev.columns else set()
+        new_rejects = rejected[~rejected["ts_code"].isin(prev_rejected_ts)]
+        if len(new_rejects) > 0:
+            lines.append("*🔴 今日新雷*")
+            for _, r in new_rejects.head(5).iterrows():
+                lines.append(f"❌ *{r['name']}* `{r['ts_code']}`: {r['reject_reason']}")
+            lines.append("")
+
+    # 出/入榜变化
+    if prev_passed_ts:
+        today_passed_ts = set(passed["ts_code"])
+        new_in_top10 = []
+        dropped_from_top10 = []
+        for i, (_, row) in enumerate(passed.head(10).iterrows(), 1):
+            if row["ts_code"] not in {c for c, r in prev_ranks.items() if r <= 10}:
+                new_in_top10.append(f"{row['name']} ({row['ts_code']})")
+        for code, prev_r in prev_ranks.items():
+            if prev_r <= 10:
+                today_idx = passed.index[passed["ts_code"] == code].tolist()
+                today_r = today_idx[0] + 1 if today_idx else 999
+                if today_r > 10:
+                    dropped_from_top10.append(code)
+        if new_in_top10:
+            lines.append("*📈 新进 Top 10*: " + ", ".join(new_in_top10))
+        if dropped_from_top10:
+            lines.append(f"*📉 跌出 Top 10*: {len(dropped_from_top10)} 只")
+
+    lines.append("")
+    lines.append(f"_扫描 {len(df_today)}/50, 通过硬过滤 {len(passed)}, 拒绝 {len(rejected)}_")
+    lines.append(f"_对比基准: {df_prev['_prev_date'].iloc[0] if not df_prev.empty else '无昨日数据'}_")
+
+    return "\n".join(lines)
+
+
+def push_telegram(message: str) -> bool:
+    """调 TelegramBot 发送 (失败仅 print, 不抛)."""
+    try:
+        from kss.notifications.telegram_bot import TelegramBot
+        bot = TelegramBot()
+        ok = bot.send(message, parse_mode="Markdown")
+        print(f"  [telegram] sent={ok}")
+        return ok
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [telegram] 推送失败: {exc}")
+        return False
+
+
+# ---------------------------------------------------------------------------
 # 主入口
 # ---------------------------------------------------------------------------
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="北证 50 全量扫描")
+    parser = argparse.ArgumentParser(description="北证 50 全量扫描 (V2)")
     parser.add_argument("--force-refresh", action="store_true", help="强制刷新缓存")
     parser.add_argument("--threads", type=int, default=4, help="并发线程数")
+    parser.add_argument(
+        "--today", type=str, default="",
+        help="报告时点 YYYY-MM-DD, 缺省取今天 (cron 用)",
+    )
+    parser.add_argument(
+        "--push-telegram", action="store_true",
+        help="推送 Top 5 + 关键变动到 Telegram (cron 用)",
+    )
     args = parser.parse_args()
 
     pro = TushareClient()._pro
-    today = pd.Timestamp("2026-06-05")  # 报告时点
+    if args.today:
+        today = pd.Timestamp(args.today)
+    else:
+        today = pd.Timestamp.now().normalize()
 
     print("[1/3] 拉北证 50 成分股 ...")
     constituents = fetch_bj50_constituents(pro)
@@ -963,6 +1137,20 @@ def main() -> None:
         print(f"\n硬过滤拒绝 ({len(df) - len(passed)} 只):")
         for _, row in df[~df["pass"]].iterrows():
             print(f"  ✗ {row['name']} ({row['ts_code']}): {row['reject_reason']}")
+
+    # Telegram 推送 (V2 cron)
+    if args.push_telegram:
+        print("\n[push] 构造 Telegram 消息 ...")
+        df_prev = _load_prev_scan(today)
+        if df_prev.empty:
+            print("  [push] 找不到前一日扫描 CSV (向前 7 天), 仍发送当日 Top 5")
+        else:
+            print(f"  [push] 对比基准: {df_prev['_prev_date'].iloc[0]}")
+        msg = build_telegram_message(df, df_prev, bj50_index, today)
+        print("  [push] 消息预览:")
+        for line in msg.split("\n"):
+            print(f"    | {line}")
+        push_telegram(msg)
 
 
 if __name__ == "__main__":
