@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""log_mv 反向纸交易日志 —— 每天预测 Top 20% 选股名单 + 累计真实成交差异.
+"""log_mv 反向纸交易日志 —— 每天预测 Top 5 选股名单 + 累计真实成交差异.
 
 经过 8 轮实验 + Wave 1-3 三波改造，KSS 体系内唯一通过 ``is_deployable`` 门槛
 （``strategy_family="prior"``）的策略是 **`log_mv` 反向选股**：
@@ -55,7 +55,8 @@ from kss.prediction.cross_sectional_forecast import CrossSectionalForecast  # no
 
 DATA_GLOB = str(PROJECT_ROOT / "cs_data_688*.csv")
 LOG_DIR = PROJECT_ROOT / "storage" / "paper_trade"
-TOP_PCT = 0.2
+TOP_PCT = 0.2   # 仅作 fallback 元数据; 实际选股走 TOP_N
+TOP_N = 5       # 2026-06-07 起固定 Top 5 (此前 top 20% ≈ 10 只)
 MIN_STOCKS = 10
 FRESHNESS_DAYS = 7
 
@@ -115,9 +116,18 @@ def save_log_entry(
     picks: pd.DataFrame,
     target_date: pd.Timestamp,
     use_execution: bool,
+    force: bool = False,
 ) -> Path:
-    """保存当日预测到 JSON 日志（供事后对比）."""
+    """保存当日预测到 JSON 日志（供事后对比）.
+
+    日志是周报对账的审计底稿: 已存在的文件默认不覆盖 (回放旧日期会
+    无声改写历史预测, 同 daily_review dry-run 教训), ``force=True`` 强制.
+    """
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+    existing = LOG_DIR / f"{target_date.date()}.json"
+    if existing.exists() and not force:
+        logger.warning("日志已存在, 跳过覆盖 (--force-save 强制): %s", existing)
+        return existing
     in_top = picks[picks["in_top"]] if "in_top" in picks.columns else picks
     entry = {
         "prediction_date": str(target_date.date()),
@@ -125,6 +135,7 @@ def save_log_entry(
         "strategy": "log_mv_reverse",
         "use_execution": use_execution,
         "top_pct": TOP_PCT,
+        "top_n": TOP_N,
         "picks": [
             {
                 "symbol": row["symbol"],
@@ -265,6 +276,10 @@ def main() -> None:
         "--query", type=str, default=None,
         help="单股查询模式（例：688322.SH）",
     )
+    parser.add_argument(
+        "--force-save", action="store_true",
+        help="覆盖已存在的当日日志（默认跳过, 防止回放改写历史）",
+    )
     args = parser.parse_args()
 
     # ===== 决定推送通道 ===== #
@@ -316,6 +331,7 @@ def main() -> None:
         factor_col="log_mv",
         direction="long_low",
         top_pct=TOP_PCT,
+        top_n=TOP_N,
         execution=execution,
         freshness_days=FRESHNESS_DAYS,
         min_stocks=MIN_STOCKS,
@@ -370,7 +386,11 @@ def main() -> None:
     # ---------------------------------------------------------
 
     md = forecast.format_pool_markdown(pool)
-    log_path = save_log_entry(pool, actual_date, use_execution=not args.no_execution)
+    log_path = save_log_entry(
+        pool, actual_date,
+        use_execution=not args.no_execution,
+        force=args.force_save,
+    )
     print(md)
     print(f"\n📝 日志已保存: {log_path}")
 

@@ -58,6 +58,8 @@ class CrossSectionalForecast:
         direction: ``"long_high"`` 取高分（趋势 / 量价类）；``"long_low"`` 取低分
             （估值 / size 类，反向使用）.
         top_pct: 选股比例.
+        top_n: 固定选股只数；设定后覆盖 ``top_pct`` 的比例逻辑
+            （按 ``rank_position <= top_n`` 选，方向无关）.
         execution: 可选 :class:`ExecutionModel`. 启用涨停过滤 + 部分成交.
         freshness_days: 数据陈旧度阈值（日历日）；超过此值的股票被剔除.
         min_stocks: 截面最少股票数；低于此值返回空.
@@ -73,6 +75,7 @@ class CrossSectionalForecast:
         min_stocks: int = 10,
         date_col: str = "trade_date",
         symbol_col: str = "symbol",
+        top_n: int | None = None,
     ) -> None:
         """初始化预测器.
 
@@ -84,17 +87,21 @@ class CrossSectionalForecast:
             freshness_days: 数据陈旧度阈值（日历日）.
             min_stocks: 截面最少股票数.
             date_col / symbol_col: 列名.
+            top_n: 固定选股只数（≥1）；``None`` 走 ``top_pct`` 比例逻辑.
 
         Raises:
-            ValueError: ``top_pct`` 越界 / ``direction`` 非法.
+            ValueError: ``top_pct`` / ``top_n`` 越界 / ``direction`` 非法.
         """
         if not 0 < top_pct <= 1:
             raise ValueError(f"top_pct 必须在 (0, 1] 内，收到: {top_pct}")
+        if top_n is not None and top_n < 1:
+            raise ValueError(f"top_n 必须 >= 1，收到: {top_n}")
         if direction not in ("long_high", "long_low"):
             raise ValueError(f"direction 必须是 long_high|long_low, 收到 {direction!r}")
         self.factor_col = factor_col
         self.direction = direction
         self.top_pct = float(top_pct)
+        self.top_n = int(top_n) if top_n is not None else None
         self.execution = execution
         self.freshness_days = int(freshness_days)
         self.min_stocks = int(min_stocks)
@@ -204,6 +211,9 @@ class CrossSectionalForecast:
                 snap[self.factor_col].rank(method="first", ascending=True).astype(int)
             )
             top_mask = snap["rank_pct"] <= self.top_pct
+        if self.top_n is not None:
+            # 固定只数覆盖比例逻辑；rank_position 已按方向取 1=最优
+            top_mask = snap["rank_position"] <= self.top_n
         snap["in_top"] = top_mask
 
         # execution 涨停过滤 → 重选 top（与 BacktestEngine 同口径）
@@ -212,15 +222,21 @@ class CrossSectionalForecast:
             tradable_top = self.execution.filter_tradable(
                 top_df, side="buy", symbol_col=self.symbol_col,
             )
-            if len(tradable_top) < self.min_stocks:
-                # 降级：扩展到全可成交池再取 top_pct
+            # top_n 模式下补足阈值是 top_n 本身 (5 只全可成交即无需降级);
+            # 比例模式沿用 min_stocks
+            refill_th = self.top_n if self.top_n is not None else self.min_stocks
+            if len(tradable_top) < refill_th:
+                # 降级：扩展到全可成交池再取 top_pct / top_n
                 tradable_all = self.execution.filter_tradable(
                     snap, side="buy", symbol_col=self.symbol_col,
                 )
                 if len(tradable_all) >= self.min_stocks:
-                    n_take = max(
-                        self.min_stocks,
-                        int(round(len(tradable_all) * self.top_pct)),
+                    n_take = (
+                        self.top_n if self.top_n is not None
+                        else max(
+                            self.min_stocks,
+                            int(round(len(tradable_all) * self.top_pct)),
+                        )
                     )
                     if self.direction == "long_high":
                         tradable_top = tradable_all.nlargest(n_take, self.factor_col)
@@ -257,6 +273,7 @@ class CrossSectionalForecast:
         out.attrs["factor_col"] = self.factor_col
         out.attrs["direction"] = self.direction
         out.attrs["top_pct"] = self.top_pct
+        out.attrs["top_n"] = self.top_n
         return out
 
     # ------------------------------------------------------------------ #
@@ -365,6 +382,8 @@ class CrossSectionalForecast:
         factor = pool.attrs.get("factor_col", self.factor_col)
         direction = pool.attrs.get("direction", self.direction)
         top_pct = pool.attrs.get("top_pct", self.top_pct)
+        top_n = pool.attrs.get("top_n", self.top_n)
+        top_label = f"Top {top_n} 只" if top_n is not None else f"Top {top_pct:.0%}"
         date_str = pd.Timestamp(date).date() if date is not None else "?"
         dir_short = "正向" if direction == "long_high" else "反向"
 
@@ -378,7 +397,7 @@ class CrossSectionalForecast:
 
         lines = [
             f"📊 {date_str} 横截面选股",
-            f"`{factor}` {dir_short} · Top {top_pct:.0%} · 入选 {len(in_top)}/{len(pool)} 只",
+            f"`{factor}` {dir_short} · {top_label} · 入选 {len(in_top)}/{len(pool)} 只",
             "",
             f"▎T+1 买入名单（等权 {equal_weight_pct}）",
             "",

@@ -374,3 +374,43 @@ class TestFormat:
         assert "|" not in md
         # 每张卡片末行 factor 描述
         assert "rank " in md
+
+
+class TestTopN:
+    """top_n 固定只数模式 (2026-06-07 paper_trade 改 Top 5)."""
+
+    @staticmethod
+    def _panel(n=30):
+        import pandas as pd
+        rows = []
+        for i in range(n):
+            for d in pd.date_range("2026-05-20", periods=10):
+                rows.append({"trade_date": d, "symbol": f"68800{i}.SH",
+                             "log_mv": float(i),  # i 越小越优 (long_low)
+                             "pre_close": 10.0, "open": 10.0, "close": 10.0,
+                             "amount": 1e6})
+        return pd.DataFrame(rows)
+
+    def test_top_n_overrides_pct(self):
+        from kss.prediction.cross_sectional_forecast import CrossSectionalForecast
+        fc = CrossSectionalForecast(direction="long_low", top_pct=0.2, top_n=5)
+        out = fc.predict_pool(self._panel())
+        assert int(out["in_top"].sum()) == 5  # 30 只 × 20% = 6 ≠ 5, 证明 top_n 生效
+        assert set(out[out["in_top"]]["rank_position"]) == {1, 2, 3, 4, 5}
+        assert out.attrs["top_n"] == 5
+        # 等权 1/5
+        import pytest as _pt
+        assert out[out["in_top"]]["planned_weight"].iloc[0] == _pt.approx(0.2)
+
+    def test_top_n_validation(self):
+        import pytest as _pt
+        from kss.prediction.cross_sectional_forecast import CrossSectionalForecast
+        with _pt.raises(ValueError, match="top_n"):
+            CrossSectionalForecast(top_n=0)
+
+    def test_top_n_none_keeps_pct_behavior(self):
+        from kss.prediction.cross_sectional_forecast import CrossSectionalForecast
+        fc = CrossSectionalForecast(direction="long_low", top_pct=0.2)
+        out = fc.predict_pool(self._panel())
+        assert int(out["in_top"].sum()) == 6  # 30 × 20%
+        assert out.attrs["top_n"] is None
