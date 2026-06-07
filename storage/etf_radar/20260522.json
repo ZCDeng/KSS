@@ -1,0 +1,51 @@
+{
+ "trade_date": "20260522",
+ "data_date": "20260522",
+ "source": "backfill",
+ "stale": false,
+ "momentum_regime_r3": null,
+ "themes": {
+  "人工智能": {
+   "flow_1d": -0.23,
+   "flow_5d": -0.17,
+   "past5_ret": 1.45,
+   "grade": "中性偏多",
+   "divergence": false
+  },
+  "半导体": {
+   "flow_1d": -1.52,
+   "flow_5d": -8.38,
+   "past5_ret": 7.51,
+   "grade": "强势确认",
+   "divergence": false
+  },
+  "机器人": {
+   "flow_1d": 0.59,
+   "flow_5d": -2.53,
+   "past5_ret": 3.81,
+   "grade": "强势确认",
+   "divergence": false
+  },
+  "科创50": {
+   "flow_1d": -1.04,
+   "flow_5d": -6.61,
+   "past5_ret": 5.55,
+   "grade": "强势确认",
+   "divergence": false
+  },
+  "科创芯片": {
+   "flow_1d": -0.85,
+   "flow_5d": -6.62,
+   "past5_ret": 6.13,
+   "grade": "强势确认",
+   "divergence": false
+  },
+  "芯片": {
+   "flow_1d": -0.41,
+   "flow_5d": -3.86,
+   "past5_ret": 8.92,
+   "grade": "强势确认",
+   "divergence": false
+  }
+ }
+}

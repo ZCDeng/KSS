@@ -38,4 +38,20 @@ else
 fi
 
 cd "$PROJECT_ROOT"
-exec "$PYTHON" scripts/validate_predictions.py --channel all "$@"
+set +e
+"$PYTHON" scripts/validate_predictions.py --channel all "$@"
+STATUS=$?
+set -e
+
+# 审计底稿周度入库：只动两个存档目录，失败不影响校验退出码
+if git add storage/daily_review storage/etf_radar 2>/dev/null \
+   && ! git diff --cached --quiet -- storage/daily_review storage/etf_radar; then
+  git commit -m "chore(archive): 复盘/雷达存档周度入库 $(date '+%Y-%m-%d')" \
+    -- storage/daily_review storage/etf_radar \
+    && git push origin "$(git rev-parse --abbrev-ref HEAD)" \
+    || echo "[wrapper] WARNING: 存档 commit/push 失败（不影响校验结果）"
+else
+  echo "[wrapper] 存档无新增，跳过入库"
+fi
+
+exit $STATUS
