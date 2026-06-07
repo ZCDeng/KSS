@@ -48,6 +48,7 @@ from kss.sector.data_fetcher import (  # noqa: E402
 )
 from kss.sector.etf_radar import build_etf_radar  # noqa: E402
 from kss.sector.kcb_overlay import build_kcb_overlay  # noqa: E402
+from kss.sector.momentum_regime import build_regime_status  # noqa: E402
 from kss.sector.themes import load_themes  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -91,8 +92,10 @@ def run_review(
     indices = fetch_market_indices(trade_date, client=client)
     overlay = build_kcb_overlay()
     themes = load_themes()
-    # ETF 份额调仓雷达 (数据日期通常 T-1, 失败 → None, commentary 计入 missing)
-    etf_radar = build_etf_radar(trade_date, client=client)
+    # R3 动量 regime + ETF 份额调仓雷达 (数据日期通常 T-1,
+    # 失败 → None, commentary 计入 missing; regime 失败不阻塞雷达)
+    regime = build_regime_status(trade_date, client=client)
+    etf_radar = build_etf_radar(trade_date, client=client, regime=regime)
 
     # ---- LLM commentary ----
     commentary = generate_commentary(

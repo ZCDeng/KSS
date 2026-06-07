@@ -297,6 +297,33 @@ class TushareClient:
             f"fetch_fund_share {ts_code} ({start}~{end})",
         )
 
+    def fetch_fund_nav(
+        self,
+        ts_code: str,
+        start: str,
+        end: str,
+    ) -> pd.DataFrame | None:
+        """场内 ETF 日度净值（``unit_nav`` / ``accum_nav``；用于主题 5 日收益）.
+
+        Tushare ``fund_nav`` 接口。收益计算优先 ``accum_nav``（规避分红断崖,
+        见 docs/solutions/etf_flow_signal_lessons.md）.
+
+        Args:
+            ts_code: ETF 代码（如 ``588000.SH``）.
+            start: 起始日期，``YYYYMMDD`` 格式.
+            end: 截止日期，``YYYYMMDD`` 格式.
+
+        Returns:
+            DataFrame（``nav_date`` / ``unit_nav`` / ``accum_nav``）；
+            失败或空响应返回 ``None``.
+        """
+        return _fetch_with_retry(
+            lambda: self._pro.fund_nav(
+                ts_code=ts_code, start_date=start, end_date=end
+            ),
+            f"fetch_fund_nav {ts_code} ({start}~{end})",
+        )
+
     # ------------------------------------------------------------------ #
     # 基本面 / 股票信息（用于风险前过滤）
     # ------------------------------------------------------------------ #
