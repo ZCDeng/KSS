@@ -46,6 +46,7 @@ from kss.sector.data_fetcher import (  # noqa: E402
     fetch_market_indices,
     load_sector_snapshot,
 )
+from kss.sector.etf_radar import build_etf_radar  # noqa: E402
 from kss.sector.kcb_overlay import build_kcb_overlay  # noqa: E402
 from kss.sector.themes import load_themes  # noqa: E402
 
@@ -90,6 +91,8 @@ def run_review(
     indices = fetch_market_indices(trade_date, client=client)
     overlay = build_kcb_overlay()
     themes = load_themes()
+    # ETF 份额调仓雷达 (数据日期通常 T-1, 失败 → None, commentary 计入 missing)
+    etf_radar = build_etf_radar(trade_date, client=client)
 
     # ---- LLM commentary ----
     commentary = generate_commentary(
@@ -99,6 +102,7 @@ def run_review(
         themes=themes,
         overlay=overlay,
         client=llm_client,
+        etf_radar=etf_radar,
     )
     return commentary, snap.missing
 

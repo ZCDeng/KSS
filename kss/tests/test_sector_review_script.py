@@ -89,6 +89,10 @@ class _FakeClient:
     def fetch_index_daily(self, ts_code: str, start: str, end: str):
         return self._index.get(ts_code)
 
+    def fetch_fund_share(self, ts_code: str, start: str, end: str):
+        # 默认无 ETF 份额数据 → etf_radar 走 None/missing 降级路径
+        return None
+
 
 def _make_ind_df(rows: list[tuple[str, float, float, float]]) -> pd.DataFrame:
     """构造 industry DataFrame（带 content_type='行业' + 3 维资金流字段）."""

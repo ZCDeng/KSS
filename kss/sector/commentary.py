@@ -16,6 +16,7 @@ from typing import Any
 from kss.llm import LLMClient, LLMUnavailable
 from kss.llm.sanitizer import sanitize_llm_input
 from kss.sector.data_fetcher import SectorSnapshot
+from kss.sector.etf_radar import EtfRadar
 from kss.sector.kcb_overlay import KcbOverlay
 from kss.sector.themes import ThemeBucket
 
@@ -71,7 +72,16 @@ _SYSTEM_PROMPT: str = """\
 3. <b>概念轮动</b>：今天发动的概念 vs 滞涨/退潮的概念，简单点评.
    如 input 含 ``hot_reason_tags``（同花顺当日强势股题材归因聚合），
    请把出现频次最高的 2-3 个题材关键词织入叙述，作为「今天为什么涨」的因果.
-4. <b>科技板块资金走向</b>：聚焦半导体 / AI / 算力 / 新能源 / 生物医药 / 高端制造 / 数字经济等科技主线
+4. <b>科技板块资金走向</b>：聚焦半导体 / AI / 算力 / 新能源 / 生物医药 / 高端制造 / 数字经济等科技主线.
+   如 input 含 ``etf_flow_radar``（ETF 份额调仓雷达，数据日期见其 data_date 字段，通常为 T-1）：
+   - 必须加 2-3 句配置盘观察，**表述直接**：直接说「谁在被赎回、谁在获配置」，
+     禁止「或许 / 可能 / 似乎 / 值得关注 / 一定程度上」这类模糊措辞
+   - 只解读 themes 的**相对差**（rank_5d 首尾对比）和 accel=true 的主题，
+     例：「配置盘 5 日维度在弃 X 配 Y；Z 昨日申赎加速」
+   - **禁止**把申赎方向当成看多/看空信号（该数据与涨跌天然逆向：跌买涨卖），
+     禁止出现「资金撤退 / 看空 / 抄底信号」类引申
+   - data_date 早于复盘日时句首标注「(份额数据截至 MM-DD)」；stale=true 时改为
+     「⚠️ 份额数据滞后」并只陈述事实不做解读
 5. <b>「十五五」七大主题</b>：按下方 themes 数据逐个点评（哪些主题资金涌入、哪些资金离场）
 6. <b>加减仓建议</b>：明确给出 2-3 条可执行建议，每条格式：「板块名/概念名 + 加仓/减仓/观望/持有 + 一句理由」.
    注：只到板块/概念粒度，不要给具体股票代码；建议要谨慎，标注「中线视角」.
@@ -100,6 +110,7 @@ def generate_commentary(
     themes: dict[str, ThemeBucket],
     overlay: KcbOverlay,
     client: LLMClient | None = None,
+    etf_radar: EtfRadar | None = None,
 ) -> str:
     """生成单日板块复盘投顾文字.
 
@@ -110,12 +121,17 @@ def generate_commentary(
         themes: 主题映射，:func:`load_themes` 输出.
         overlay: KCB 池子覆盖度（用于"科创池子有 N 只持仓"标注）.
         client: LLM 客户端；``None`` 时按需 lazy 初始化。失败 → fallback 文本.
+        etf_radar: ETF 份额调仓雷达（:func:`kss.sector.etf_radar.build_etf_radar`
+            输出）；``None`` 时跳过该维度并计入 missing.
 
     Returns:
         HTML 格式投顾文本，长度 ≤ ``_MAX_MSG_LEN``.
         LLM 失败 → 返回结构化 fallback 文本（仍含日期 + Top 数据 + ⚠️ 标记）.
     """
-    context = build_context(snapshot, indices, themes, overlay, trade_date=date_yyyymmdd)
+    context = build_context(
+        snapshot, indices, themes, overlay,
+        trade_date=date_yyyymmdd, etf_radar=etf_radar,
+    )
     theme_metrics = compute_theme_metrics(snapshot, themes, overlay)
 
     system, user = render_prompt(date_yyyymmdd, context, theme_metrics)
@@ -144,17 +160,19 @@ def build_context(
     themes: dict[str, ThemeBucket],
     overlay: KcbOverlay,
     trade_date: str | None = None,
+    etf_radar: EtfRadar | None = None,
 ) -> dict[str, Any]:
     """把 snapshot + indices + themes 序列化成紧凑 dict（喂给 LLM）.
 
     Args:
         trade_date: ``YYYYMMDD``；用于从 ``regime_daily.parquet`` 取宏观阶段标签.
             ``None`` 时跳过宏观阶段注入（向后兼容老调用方）.
+        etf_radar: ETF 份额调仓雷达；``None`` 时该维度计入 missing.
 
     Returns:
         含 ``indices`` / ``top_industries`` / ``top_concepts`` / ``northbound``
         / ``hot_reason_tags`` / ``hot_kcb_stocks`` / ``macro_regime`` /
-        ``missing`` 八个键的 dict.
+        ``etf_radar`` / ``missing`` 九个键的 dict.
     """
     ctx: dict[str, Any] = {
         "indices": indices,  # 已是 dict[alias -> metrics]
@@ -164,6 +182,7 @@ def build_context(
         "hot_reason_tags": _hot_reason_tags(snapshot, _TOP_N_REASON_TAGS),
         "hot_kcb_stocks": _hot_kcb_stocks(snapshot, overlay, _TOP_N_HOT_KCB_STOCKS),
         "macro_regime": load_macro_regime(trade_date) if trade_date else None,
+        "etf_radar": etf_radar.to_payload() if etf_radar else None,
         "missing": list(snapshot.missing),
     }
     # indices 全缺 → 在 missing 显式标注，让 LLM 知道这个维度没数据
@@ -174,6 +193,8 @@ def build_context(
         ctx["missing"].append("themes")
     if ctx["macro_regime"] is None:
         ctx["missing"].append("macro_regime")
+    if ctx["etf_radar"] is None:
+        ctx["missing"].append("etf_radar")
     return ctx
 
 
@@ -502,6 +523,7 @@ def render_prompt(
         "northbound": context["northbound"],
         "hot_reason_tags": context.get("hot_reason_tags", []),
         "hot_kcb_stocks": context.get("hot_kcb_stocks", []),
+        "etf_flow_radar": context.get("etf_radar"),
         "themes_15th_5y": theme_metrics,
         "missing_dimensions": context["missing"],
     }

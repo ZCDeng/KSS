@@ -271,6 +271,32 @@ class TushareClient:
             f"fetch_index_daily {ts_code} ({start}~{end})",
         )
 
+    def fetch_fund_share(
+        self,
+        ts_code: str,
+        start: str,
+        end: str,
+    ) -> pd.DataFrame | None:
+        """场内 ETF 日度份额（``fd_share``，单位万份；用于调仓雷达）.
+
+        Tushare ``fund_share`` 接口。份额 T 日数据通常 T+1 早间可得——
+        17:30 复盘当天取到的最新行一般是 T-1，调用方需自行标注数据日期.
+
+        Args:
+            ts_code: ETF 代码（如 ``588000.SH``）.
+            start: 起始日期，``YYYYMMDD`` 格式.
+            end: 截止日期，``YYYYMMDD`` 格式.
+
+        Returns:
+            DataFrame（``trade_date`` / ``fd_share``）；失败或空响应返回 ``None``.
+        """
+        return _fetch_with_retry(
+            lambda: self._pro.fund_share(
+                ts_code=ts_code, start_date=start, end_date=end
+            ),
+            f"fetch_fund_share {ts_code} ({start}~{end})",
+        )
+
     # ------------------------------------------------------------------ #
     # 基本面 / 股票信息（用于风险前过滤）
     # ------------------------------------------------------------------ #
