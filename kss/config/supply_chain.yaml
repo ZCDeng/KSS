@@ -1325,3 +1325,43 @@ stocks:
     demand_locked: false
     analyst_count: 15
     analyst_notes: 歼-20等军机总装,国内独家但军工体制内非市场化竞争
+  688711.SH:
+    name: 宏微科技
+    demand_chains:
+    - 半导体
+    - 新能源储能
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 8
+    n_competitors_domestic: 6
+    substitutability: high
+    expansion_cycle_years: 1.5
+    demand_locked: false
+    analyst_count: 14
+    analyst_notes: '[补标2026-06-09待审] 车规IGBT芯片+模块IDM,国产第二梯队,全球(英飞凌/富士/三菱/安森美/斯达/士兰/时代/华润)竞争充分,SiC替代压力'
+  688261.SH:
+    name: 东微半导
+    demand_chains:
+    - 半导体
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 8
+    n_competitors_domestic: 5
+    substitutability: high
+    expansion_cycle_years: 1.5
+    demand_locked: false
+    analyst_count: 11
+    analyst_notes: '[补标2026-06-09待审] 高压超结MOSFET/TGBT fabless功率器件设计,高压MOSFET赛道玩家众多,竞争充分'
+  300623.SZ:
+    name: 捷捷微电
+    demand_chains:
+    - 半导体
+    chain_layer: 3
+    chain_role: component
+    n_competitors_global: 6
+    n_competitors_domestic: 4
+    substitutability: medium
+    expansion_cycle_years: 2.0
+    demand_locked: false
+    analyst_count: 10
+    analyst_notes: '[补标2026-06-09待审] 晶闸管国内龙头+MOSFET/防护器件IDM,晶闸管成熟器件,功率器件整体竞争充分'
