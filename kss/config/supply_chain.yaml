@@ -153,7 +153,8 @@ stocks:
     analyst_notes: LoongArch自主指令集,信创有份额但通用市场竞争力不足
   688065.SH:
     name: 凯赛生物
-    demand_chains: []
+    demand_chains:
+    - 生物医药
     chain_layer: 5
     chain_role: material
     n_competitors_global: 2
@@ -1022,7 +1023,9 @@ stocks:
     analyst_notes: 半导体用石英玻璃全球前三(Heraeus/Momentive/菲利华),光刻机+扩散炉+刻蚀腔必需材料
   300408.SZ:
     name: 三环集团
-    demand_chains: []
+    demand_chains:
+    - AI算力
+    - 数字经济
     chain_layer: 4
     chain_role: material
     n_competitors_global: 3
