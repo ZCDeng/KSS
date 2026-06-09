@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -28,10 +29,13 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from kss.data.tushare_client import TushareClient
-
-# 路径
+# 路径 (须在 import kss 之前: cron 用 Homebrew Python, kss 未装包, 靠 sys.path 定位)
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from kss.data.tushare_client import TushareClient  # noqa: E402
+
+
 CACHE_DIR = PROJECT_ROOT / "storage" / "bj_cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 OUT_DIR = PROJECT_ROOT / "storage" / "reports" / "bj50_scan"
