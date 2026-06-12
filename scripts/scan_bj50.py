@@ -23,6 +23,7 @@ import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +34,7 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from kss.data.tushare_client import TushareClient  # noqa: E402
+from kss.data.tushare_client import TushareClient, _fetch_with_retry  # noqa: E402
 
 
 CACHE_DIR = PROJECT_ROOT / "storage" / "bj_cache"
@@ -69,8 +70,14 @@ def _safe_float(v: Any) -> float:
 
 def fetch_bj50_constituents(pro: Any) -> pd.DataFrame:
     """拉北证 50 最新成分股 + 权重 + 基本信息."""
-    iw = pro.index_weight(index_code="899050.BJ", start_date="20260501", end_date="20260607")
-    if iw.empty:
+    # index_weight 是月度截面, 回看 60 天保证覆盖最近一期调样
+    end = datetime.now().strftime("%Y%m%d")
+    start = (datetime.now() - timedelta(days=60)).strftime("%Y%m%d")
+    iw = _fetch_with_retry(
+        lambda: pro.index_weight(index_code="899050.BJ", start_date=start, end_date=end),
+        f"index_weight 899050.BJ ({start}~{end})",
+    )
+    if iw is None:
         raise RuntimeError("北证50成分股拉取失败")
     # 取最新一期
     latest = iw["trade_date"].max()
@@ -79,11 +86,16 @@ def fetch_bj50_constituents(pro: Any) -> pd.DataFrame:
 
     # 拉所有北证基本信息一次, 然后 merge.
     # 注: tushare ``exchange='BJ'`` 返回空 (920 段位识别 bug), 用 ``market='北交所'``.
-    basic_all = pro.stock_basic(
-        market="北交所",
-        list_status="L",
-        fields="ts_code,name,industry,list_date,fullname,area",
+    basic_all = _fetch_with_retry(
+        lambda: pro.stock_basic(
+            market="北交所",
+            list_status="L",
+            fields="ts_code,name,industry,list_date,fullname,area",
+        ),
+        "stock_basic (market=北交所)",
     )
+    if basic_all is None:
+        raise RuntimeError("北交所股票基本信息拉取失败")
     iw = iw.merge(basic_all, left_on="con_code", right_on="ts_code", how="left")
     return iw
 

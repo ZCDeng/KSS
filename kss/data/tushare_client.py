@@ -90,6 +90,7 @@ class TushareClient:
         if self._pro is not None:
             return
 
+        self._bypass_system_proxy()
         token = self._resolve_token()
         if not token:
             logger.warning("Tushare token not found; API calls will likely fail.")
@@ -97,6 +98,25 @@ class TushareClient:
             ts.set_token(token)
 
         self._pro = ts.pro_api()
+
+    @staticmethod
+    def _bypass_system_proxy() -> None:
+        """把 tushare 接口域名加入 NO_PROXY，绕过 macOS 系统代理.
+
+        tushare 是国内直连接口，不需要代理；但 requests 默认 ``trust_env``
+        会读 macOS 系统代理设置（如 Clash 127.0.0.1:7890），代理进程挂起时
+        所有 cron 任务跟着 ReadTimeout。追加而非覆盖已有 NO_PROXY 条目；
+        requests 对 no_proxy/NO_PROXY 大小写均认，两个都写保证不被遮蔽.
+        """
+        bypass_hosts = ("api.tushare.pro", "api.waditu.com")
+        existing = os.environ.get("no_proxy") or os.environ.get("NO_PROXY") or ""
+        hosts = [h.strip() for h in existing.split(",") if h.strip()]
+        for host in bypass_hosts:
+            if host not in hosts:
+                hosts.append(host)
+        merged = ",".join(hosts)
+        os.environ["NO_PROXY"] = merged
+        os.environ["no_proxy"] = merged
 
     @staticmethod
     def _resolve_token() -> str:

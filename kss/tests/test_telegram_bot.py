@@ -167,6 +167,61 @@ def test_send_without_token_short_circuits() -> None:
 
 
 # --------------------------------------------------------------- #
+# Markdown 实体解析失败 → 降级纯文本重发
+# --------------------------------------------------------------- #
+
+
+def test_send_entity_parse_error_falls_back_to_plain_text() -> None:
+    """400 can't parse entities → 去掉 parse_mode 纯文本重发一次，成功返回 True.
+
+    回归: 2026-06-12 周报消息里 ``log_mv`` / ``weekly_summary.py`` 的下划线
+    被 Markdown V1 当斜体开关, 配对错乱后整条告警丢失.
+    """
+    bot = TelegramBot(token="t", chat_id="c")
+    with patch(
+        "kss.notifications.telegram_bot.requests.post",
+        side_effect=[
+            _api_error_response(
+                "Bad Request: can't parse entities: "
+                "Can't find end of the entity starting at byte offset 623"
+            ),
+            _ok_response(),
+        ],
+    ) as mock_post:
+        assert bot.send("_broken markdown", parse_mode="Markdown") is True
+        assert mock_post.call_count == 2
+
+    # 第二次重发必须不带 parse_mode（纯文本），正文原样保留
+    _, kwargs = mock_post.call_args
+    assert "parse_mode" not in kwargs["json"]
+    assert kwargs["json"]["text"] == "_broken markdown"
+
+
+def test_send_entity_parse_error_fallback_fails_returns_false() -> None:
+    """降级纯文本重发仍 4xx → 返回 False，不二次降级（无限递归保护）."""
+    bot = TelegramBot(token="t", chat_id="c")
+    with patch(
+        "kss.notifications.telegram_bot.requests.post",
+        return_value=_api_error_response(
+            "Bad Request: can't parse entities: oops"
+        ),
+    ) as mock_post:
+        assert bot.send("_broken", parse_mode="Markdown") is False
+        assert mock_post.call_count == 2  # 原发 1 次 + 降级重发 1 次
+
+
+def test_send_other_4xx_not_downgraded() -> None:
+    """非实体解析类 4xx（chat not found）不触发降级，仅 1 次调用."""
+    bot = TelegramBot(token="t", chat_id="c")
+    with patch(
+        "kss.notifications.telegram_bot.requests.post",
+        return_value=_api_error_response("chat not found"),
+    ) as mock_post:
+        assert bot.send("hello") is False
+        assert mock_post.call_count == 1
+
+
+# --------------------------------------------------------------- #
 # 默认值 / env 兜底
 # --------------------------------------------------------------- #
 

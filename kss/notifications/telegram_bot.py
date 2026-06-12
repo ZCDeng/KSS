@@ -95,8 +95,9 @@ class TelegramBot:
         payload = {
             "chat_id": self._chat_id,
             "text": message,
-            "parse_mode": parse_mode,
         }
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
 
         # 只有"瞬时"失败才走到循环底部重试；成功与确定性失败都在循环内 return。
         for attempt in range(1, self._max_attempts + 1):
@@ -125,9 +126,19 @@ class TelegramBot:
                     if resp.status_code == 429 or resp.status_code >= 500:
                         reason = f"API {resp.status_code}: {data.get('description')}"
                     else:
+                        desc = str(data.get("description") or "")
+                        # Markdown 实体解析失败是内容问题（如标识符里的 _ 配对
+                        # 错乱），重试同一 payload 无意义——降级纯文本重发一次，
+                        # 告警必达优先于排版。parse_mode 已为空时不会再递归。
+                        if parse_mode and "can't parse entities" in desc.lower():
+                            logger.warning(
+                                "[telegram] %s 实体解析失败（%s），降级纯文本重发",
+                                parse_mode, desc,
+                            )
+                            return self.send(message, parse_mode="")
                         logger.warning(
                             "[telegram] API 错误: status=%s description=%s",
-                            resp.status_code, data.get("description"),
+                            resp.status_code, desc,
                         )
                         return False
 
