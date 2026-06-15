@@ -1,0 +1,16 @@
+# Kronos 隔离依赖（不并入 KSS 主 requirements.txt）.
+#
+# 安装：pip install -r kronos_vendor/requirements.txt
+# 这些是 vendored Kronos（model/ + finetune/）运行所需的最小集合，与上游
+# requirements.txt 对齐，但 torch 放宽下限（KSS 主环境已装 torch>=2.0）。
+#
+# 说明：vendored 源码保持与上游 commit 字节一致（见 UPSTREAM_COMMIT），
+# 仅本目录补充元数据；升级时重新 clone 覆盖 model/ finetune/ 即可。
+
+torch>=2.0.0
+einops==0.8.1
+huggingface_hub>=0.33.1
+safetensors>=0.6.2
+numpy
+pandas
+tqdm

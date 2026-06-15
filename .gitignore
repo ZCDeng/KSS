@@ -33,6 +33,9 @@ storage/*.db
 storage/*.db-journal
 storage/*.db-wal
 
+# Kronos 离线产物：冻结模型 artifact + 预测 sqlite（可由批处理重建，不入库）
+storage/kronos/
+
 # 审计底稿例外：storage/daily_review/ 与 storage/etf_radar/ 是预测校验
 # (validate_predictions.py) 的依据，纳入版本控制；周五校验 cron 自动 commit
 
