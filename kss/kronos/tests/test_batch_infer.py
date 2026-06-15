@@ -6,7 +6,6 @@ import inspect
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from kss.kronos import batch_infer
 from kss.kronos.batch_infer import (
@@ -68,7 +67,7 @@ def test_covers_ae1_targets_strictly_after_cutoff(tmp_path) -> None:
     """Covers AE1: 被预测 bar 全部严格晚于 D；D 及之前不产出."""
     store = KronosPredictionStore(tmp_path / "p.sqlite")
     frames = {"A.SZ": _frame("A.SZ", 120, "2025-01-02")}
-    res = run_batch(
+    run_batch(
         frames, _StubPredictor(), cutoff="2025-03-31", model_id="m1",
         store=store, lookback_bars=60, pred_len=5, mc_samples=4,
     )

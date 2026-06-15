@@ -23,10 +23,6 @@ from __future__ import annotations
 import sys
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:  # pragma: no cover - 仅类型注解
-    from types import ModuleType
 
 # kss/kronos/__init__.py → parents[0]=kronos, [1]=kss, [2]=KSS root.
 PROJECT_ROOT: Path = Path(__file__).resolve().parents[2]

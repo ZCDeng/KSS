@@ -10,8 +10,8 @@ from kss.kronos.shadow import (
     build_shadow_returns,
     score_shadow,
     update_blacklist_state,
-    weekly_validation_metrics,
     week_metrics_ok,
+    weekly_validation_metrics,
 )
 
 

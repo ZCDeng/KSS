@@ -22,7 +22,7 @@ from typing import Iterator
 import numpy as np
 import pandas as pd
 
-from kss.kronos.adapter import normalize_ohlcv, build_inference_input
+from kss.kronos.adapter import build_inference_input, normalize_ohlcv
 from kss.kronos.config import (
     BAND_LOWER_Q,
     BAND_UPPER_Q,
