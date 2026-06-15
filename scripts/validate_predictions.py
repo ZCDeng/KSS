@@ -343,6 +343,57 @@ def render_radar_section(stats: dict | None) -> str:
     return "\n".join(lines)
 
 
+def render_kronos_shadow_section() -> str:
+    """Kronos 影子周校验段（U5）—— Brier/方向/覆盖 + mined 闸门毕业状态.
+
+    自包含、fail-soft：预测库不存在 / 无可验证样本 → 返回提示段，不抛。
+    """
+    from kss.kronos.batch_infer import KronosPredictionStore
+    from kss.kronos.config import PREDICTIONS_DB
+    from kss.kronos.shadow import (
+        build_shadow_returns,
+        score_shadow,
+        week_metrics_ok,
+        weekly_validation_metrics,
+    )
+
+    if not Path(PREDICTIONS_DB).exists():
+        return "\n\n*Kronos 影子*\n  ⚠️ 暂无预测库 (批处理未运行)"
+
+    preds = KronosPredictionStore(PREDICTIONS_DB).load()
+    if preds is None or preds.empty:
+        return "\n\n*Kronos 影子*\n  ⚠️ 预测库为空"
+
+    # 加载预测涉及标的的真实 cs_data（按 ts_code 找对应 CSV）。
+    realized: dict = {}
+    for ts_code in preds["ts_code"].unique():
+        code = str(ts_code).split(".")[0]
+        csv = PROJECT_ROOT / f"cs_data_{code}.csv"
+        if csv.exists():
+            import pandas as pd
+
+            realized[str(ts_code)] = pd.read_csv(csv)
+
+    m = weekly_validation_metrics(preds, realized)
+    if m["n"] == 0:
+        return "\n\n*Kronos 影子*\n  ⚠️ 无可验证样本 (预测目标日真实数据未到)"
+
+    returns = build_shadow_returns(preds, realized)
+    v = score_shadow(returns)
+    ok = week_metrics_ok(m)
+    grad = "✅ 可毕业" if v.graduated else ("只读(未满窗口)" if not v.window_full else "只读(未过 mined 闸门)")
+    return "\n".join([
+        "",
+        "",
+        "*Kronos 影子* (只读, mined 闸门)",
+        f"  {flag(m['dir_rate'] > 0.5)} 方向命中: {m['dir_rate'] * 100:.0f}% (n={m['n']})",
+        f"  {flag(m['brier'] < 0.25)} 方向 Brier: {m['brier']:.3f} (随机 0.25)",
+        f"  {flag(abs(m['coverage'] - 0.8) <= 0.15)} 80% 带覆盖: {m['coverage'] * 100:.0f}%",
+        f"  毕业状态: {grad} | 前向 {v.n_obs} 日, Sharpe {v.sharpe:.2f}, DSR {v.dsr:.2f}",
+        f"  _本周{'达标' if ok else '不达标'}; 连续两周不达标拉黑_",
+    ])
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--lookback-days", type=int, default=7)
@@ -372,6 +423,13 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001
         logger.error("雷达校验段失败 (已降级跳过): %s", exc)
         summary += f"\n\n*雷达 grade 校验*\n  ⚠️ 本段生成失败: {str(exc)[:80]}"
+
+    # Kronos 影子周校验段 —— 失败只降级, 不阻塞预测校验主流程
+    try:
+        summary += render_kronos_shadow_section()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Kronos 影子段失败 (已降级跳过): %s", exc)
+        summary += f"\n\n*Kronos 影子*\n  ⚠️ 本段生成失败: {str(exc)[:80]}"
 
     print(f"📊 {title}\n")
     print(summary)
