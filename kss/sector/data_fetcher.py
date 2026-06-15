@@ -26,6 +26,7 @@ import pandas as pd
 from kss.data.tushare_client import TushareClient
 from kss.data.ths_client import fetch_ths_hot
 from kss.data.dragon_tiger_client import fetch_dragon_tiger
+from kss.data.margin_client import fetch_kcb_margin
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,9 @@ class SectorSnapshot:
         dragon_tiger: 东财当日全市场龙虎榜明细，含 ``code`` / ``name`` /
             ``net_amount``(元) / ``reason``. 聚合后给复盘 prompt 一份席位级
             资金动向. 外部 HTTP 源（非 Tushare），失败时为 ``None``.
+        margin_kcb: 东财当日全科创板个股融资融券明细，含 ``code`` / ``name`` /
+            ``fin_balance``(元) / ``fin_net_buy``(元). 聚合后给复盘 prompt 一份
+            科创板杠杆情绪. 外部 HTTP 源（非 Tushare），失败时为 ``None``.
         missing: 拉取失败的字段名列表，供报告生成时显示「⚠️ 缺失」提示.
     """
 
@@ -72,6 +76,7 @@ class SectorSnapshot:
     northbound: dict[str, float] | None = None
     ths_hot: pd.DataFrame | None = None
     dragon_tiger: pd.DataFrame | None = None
+    margin_kcb: pd.DataFrame | None = None
     missing: list[str] = field(default_factory=list)
 
 
@@ -166,6 +171,11 @@ def load_sector_snapshot(
     snap.dragon_tiger = fetch_dragon_tiger(trade_date)
     if snap.dragon_tiger is None:
         snap.missing.append("dragon_tiger")
+
+    # 东财科创板两融同为无鉴权 HTTP（2 页翻页）；继续串行，不并发.
+    snap.margin_kcb = fetch_kcb_margin(trade_date)
+    if snap.margin_kcb is None:
+        snap.missing.append("margin_kcb")
 
     if snap.missing:
         logger.warning(
