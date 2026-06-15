@@ -511,6 +511,21 @@ class TestFallbackText:
         assert "**" not in text
         assert "__" not in text
 
+    def test_includes_dragon_tiger_when_present(self) -> None:
+        """LLM 故障降级时龙虎榜净买卖聚合不静默丢失（fail-loud parity）."""
+        snap = _make_snapshot(dragon_tiger=_make_dragon_tiger_df())
+        text = fallback_text("20260512", snap, {})
+        assert "<b>龙虎榜</b>" in text
+        assert "上榜 3 只" in text
+        assert "净买 2 / 净卖 1" in text
+        # 降级简表也不泄漏个股代码
+        assert "688507" not in text
+
+    def test_omits_dragon_tiger_when_absent(self) -> None:
+        snap = _make_snapshot(dragon_tiger=None)
+        text = fallback_text("20260512", snap, {})
+        assert "<b>龙虎榜</b>" not in text
+
 
 # ====================================================================== #
 # _sanitize_html

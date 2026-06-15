@@ -665,6 +665,16 @@ def fallback_text(
     else:
         parts.append("<b>Top 概念</b>：概念数据未到位")
 
+    # 龙虎榜净买卖聚合：席位资金情绪是高价值信号，LLM 故障也不静默丢
+    # （口径复用 _dragon_tiger_summary，与 LLM 路径一致；不含个股代码）.
+    lhb = _dragon_tiger_summary(snapshot)
+    if lhb is not None:
+        parts.append(
+            f"<b>龙虎榜</b>：上榜 {lhb['listed_count']} 只，"
+            f"净买 {lhb['net_buy_count']} / 净卖 {lhb['net_sell_count']}，"
+            f"净买入合计 {lhb['net_buy_total_yi']:+.2f} 亿"
+        )
+
     if etf_radar is not None and etf_radar.themes:
         parts.append("")
         div = [t for t, m in etf_radar.themes.items() if m.get("divergence")]
