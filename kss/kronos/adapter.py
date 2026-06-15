@@ -33,8 +33,8 @@ KRONOS_VOL_COL: str = "volume"
 KRONOS_AMT_COL: str = "amount"
 KRONOS_INPUT_COLS: list[str] = KRONOS_PRICE_COLS + [KRONOS_VOL_COL, KRONOS_AMT_COL]
 
-# KSS cs_data 必需列（vol 会被改名为 volume）。
-_REQUIRED_RAW_COLS: tuple[str, ...] = ("trade_date", "open", "high", "low", "close", "vol", "amount")
+# KSS cs_data 必需列（vol 会被改名为 volume；normalize 幂等接受 volume 别名）。
+_REQUIRED_PRICE_COLS: tuple[str, ...] = ("trade_date", "open", "high", "low", "close", "amount")
 
 
 @dataclass(frozen=True)
@@ -58,20 +58,25 @@ def normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
     Args:
         df: cs_data 单票 DataFrame（至少含 :data:`_REQUIRED_RAW_COLS`）.
 
+    幂等：已规范化（含 ``volume`` 而非 ``vol``）的输入可再次传入而不报错.
+
     Returns:
         含 ``trade_date``（datetime64，升序）+ :data:`KRONOS_INPUT_COLS` 的副本.
 
     Raises:
-        ValueError: 缺必需列（契约违例，fail loud）.
+        ValueError: 缺必需价格列或缺成交量列（契约违例，fail loud）.
     """
-    missing = [c for c in _REQUIRED_RAW_COLS if c not in df.columns]
+    missing = [c for c in _REQUIRED_PRICE_COLS if c not in df.columns]
     if missing:
         raise ValueError(f"normalize_ohlcv: 缺必需列 {missing}")
+    if "vol" not in df.columns and KRONOS_VOL_COL not in df.columns:
+        raise ValueError("normalize_ohlcv: 缺成交量列 vol/volume")
 
     out = df.copy()
     out["trade_date"] = pd.to_datetime(out["trade_date"])
     out = out.sort_values("trade_date").reset_index(drop=True)
-    out = out.rename(columns={"vol": KRONOS_VOL_COL})
+    if "vol" in out.columns:
+        out = out.rename(columns={"vol": KRONOS_VOL_COL})
     return out[["trade_date", *KRONOS_INPUT_COLS]]
 
 
