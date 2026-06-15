@@ -44,6 +44,16 @@ def _make_dragon_tiger_df() -> pd.DataFrame:
     })
 
 
+def _make_margin_df() -> pd.DataFrame:
+    """模拟东财科创板两融返回（fetch_kcb_margin 已重命名为蛇形）."""
+    return pd.DataFrame({
+        "code": ["688256", "688008"],
+        "name": ["寒武纪", "澜起科技"],
+        "fin_balance": [2.3e10, 1.5e10],
+        "fin_net_buy": [-1.2e8, 3.8e8],
+    })
+
+
 @pytest.fixture(autouse=True)
 def _patch_external_http(monkeypatch: pytest.MonkeyPatch) -> None:
     """全模块默认把两路无鉴权 HTTP（``fetch_ths_hot`` / ``fetch_dragon_tiger``）
@@ -59,6 +69,10 @@ def _patch_external_http(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "kss.sector.data_fetcher.fetch_dragon_tiger",
         lambda trade_date: _make_dragon_tiger_df(),
+    )
+    monkeypatch.setattr(
+        "kss.sector.data_fetcher.fetch_kcb_margin",
+        lambda trade_date: _make_margin_df(),
     )
 
 
@@ -296,6 +310,33 @@ class TestLoadSectorSnapshot:
         snap = load_sector_snapshot("20260512", client=client)  # type: ignore[arg-type]
         assert snap.dragon_tiger is not None and len(snap.dragon_tiger) == 2
         assert "dragon_tiger" not in snap.missing
+
+    def test_margin_failure_isolated(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """科创两融（外部 HTTP）失败 → 字段 None + 计入 missing，不影响其他维度."""
+        monkeypatch.setattr(
+            "kss.sector.data_fetcher.fetch_kcb_margin",
+            lambda trade_date: None,
+        )
+        client = _FakeClient(
+            ind=_make_ind_dc(), cnt=_make_cnt_ths(),
+            sw=_make_sw_daily(), hs=_make_hsgt(),
+        )
+        snap = load_sector_snapshot("20260512", client=client)  # type: ignore[arg-type]
+        assert snap.margin_kcb is None
+        assert "margin_kcb" in snap.missing
+        assert snap.dragon_tiger is not None  # 其他维度不受影响
+
+    def test_margin_success_populates_field(self) -> None:
+        """默认 patch 下科创两融字段应有值、不进 missing."""
+        client = _FakeClient(
+            ind=_make_ind_dc(), cnt=_make_cnt_ths(),
+            sw=_make_sw_daily(), hs=_make_hsgt(),
+        )
+        snap = load_sector_snapshot("20260512", client=client)  # type: ignore[arg-type]
+        assert snap.margin_kcb is not None and len(snap.margin_kcb) == 2
+        assert "margin_kcb" not in snap.missing
 
     def test_all_apis_failed(self) -> None:
         """全部失败时 4 个字段都 None，missing 含全部 4 项."""

@@ -21,6 +21,8 @@ from kss.sector.commentary import (
     _MAX_MSG_LEN,
     _dragon_tiger_bias,
     _dragon_tiger_summary,
+    _margin_bias,
+    _margin_summary,
     _sanitize_html,
     build_context,
     clip_to_max_len,
@@ -28,6 +30,7 @@ from kss.sector.commentary import (
     fallback_text,
     generate_commentary,
     render_dragon_tiger_line,
+    render_margin_line,
     render_prompt,
 )
 from kss.sector.data_fetcher import SectorSnapshot
@@ -64,6 +67,7 @@ def _make_snapshot(
     northbound: dict[str, float] | None = None,
     ths_hot: pd.DataFrame | None = None,
     dragon_tiger: pd.DataFrame | None = None,
+    margin_kcb: pd.DataFrame | None = None,
     missing: list[str] | None = None,
 ) -> SectorSnapshot:
     return SectorSnapshot(
@@ -73,8 +77,19 @@ def _make_snapshot(
         northbound=northbound,
         ths_hot=ths_hot,
         dragon_tiger=dragon_tiger,
+        margin_kcb=margin_kcb,
         missing=missing or [],
     )
+
+
+def _make_margin_df() -> pd.DataFrame:
+    """科创两融 mock：2 加杠杆 + 1 降杠杆."""
+    return pd.DataFrame({
+        "code": ["688256", "688008", "688981"],
+        "name": ["寒武纪", "澜起科技", "中芯国际"],
+        "fin_balance": [2.3e10, 1.5e10, 1.0e10],
+        "fin_net_buy": [5.0e8, 3.0e8, -1.0e8],
+    })
 
 
 def _make_dragon_tiger_df() -> pd.DataFrame:
@@ -187,6 +202,24 @@ class TestBuildContext:
         assert ctx["dragon_tiger"] is None
         assert "dragon_tiger" in ctx["missing"]
 
+    def test_margin_present_in_context_qualitative_only(self) -> None:
+        snap = _make_snapshot(margin_kcb=_make_margin_df())
+        overlay = _make_overlay()
+        ctx = build_context(snap, _make_indices(), _make_themes(), overlay)
+        assert ctx["margin"] is not None
+        # 只含定性 bias，无裸数字
+        assert ctx["margin"]["bias"] == "加杠杆"  # 净买入 +7 亿
+        assert "fin_balance_yi" not in ctx["margin"]
+        assert "net_buy_yi" not in ctx["margin"]
+        assert "margin" not in ctx["missing"]
+
+    def test_margin_missing_flagged(self) -> None:
+        snap = _make_snapshot(margin_kcb=None)
+        overlay = _make_overlay()
+        ctx = build_context(snap, _make_indices(), _make_themes(), overlay)
+        assert ctx["margin"] is None
+        assert "margin" in ctx["missing"]
+
 
 class TestDragonTigerSummary:
     """_dragon_tiger_summary —— 席位资金聚合 + 原因 tag 计数."""
@@ -238,6 +271,41 @@ class TestDragonTigerSummary:
 
     def test_render_line_none_when_no_data(self) -> None:
         assert render_dragon_tiger_line(None) is None
+
+    # ---- 科创两融聚合 ----
+    def test_margin_aggregates_balance_and_net_buy(self) -> None:
+        out = _margin_summary(_make_snapshot(margin_kcb=_make_margin_df()))
+        assert out is not None
+        assert out["listed_count"] == 3
+        # 融资余额合计 = 2.3 + 1.5 + 1.0 = 4.8e10 → 480 亿
+        assert out["fin_balance_yi"] == pytest.approx(480, abs=1)
+        # 净买入合计 = 5 + 3 - 1 = 7 亿
+        assert out["net_buy_yi"] == pytest.approx(7.0, abs=0.01)
+        assert out["lever_up_count"] == 2
+        assert out["lever_down_count"] == 1
+
+    def test_margin_summary_none_when_no_data(self) -> None:
+        assert _margin_summary(_make_snapshot(margin_kcb=None)) is None
+
+    def test_margin_bias_加杠杆_when_net_buy_positive(self) -> None:
+        assert _margin_bias({"net_buy_yi": 7.0}) == "加杠杆"
+
+    def test_margin_bias_降杠杆_when_net_buy_negative(self) -> None:
+        assert _margin_bias({"net_buy_yi": -5.0}) == "降杠杆"
+
+    def test_margin_bias_持平_when_small(self) -> None:
+        assert _margin_bias({"net_buy_yi": 0.3}) == "持平"
+
+    def test_margin_render_line_formats_true_numbers(self) -> None:
+        line = render_margin_line(
+            _margin_summary(_make_snapshot(margin_kcb=_make_margin_df())))
+        assert line is not None
+        assert "融资余额 <u>480</u> 亿" in line
+        assert "今日净买入 <u>+7.00</u> 亿" in line
+        assert "<u>2</u> 只加杠杆 / <u>1</u> 只减" in line
+
+    def test_margin_render_line_none_when_no_data(self) -> None:
+        assert render_margin_line(None) is None
 
     def test_indices_missing_flagged(self) -> None:
         snap = _make_snapshot(industry=_make_industry_df(), concept=_make_concept_df())
@@ -558,6 +626,19 @@ class TestFallbackText:
         text = fallback_text("20260512", snap, {})
         assert "龙虎榜" not in text
 
+    def test_includes_margin_when_present(self) -> None:
+        """LLM 故障降级时科创两融真值行不静默丢失."""
+        snap = _make_snapshot(margin_kcb=_make_margin_df())
+        text = fallback_text("20260512", snap, {})
+        assert "💳 科创两融（系统数据）" in text
+        assert "融资余额 <u>480</u> 亿" in text
+        assert "688256" not in text  # 不泄漏个股代码
+
+    def test_omits_margin_when_absent(self) -> None:
+        snap = _make_snapshot(margin_kcb=None)
+        text = fallback_text("20260512", snap, {})
+        assert "两融" not in text
+
 
 # ====================================================================== #
 # _sanitize_html
@@ -675,6 +756,34 @@ class TestGenerateCommentary:
         assert "净买入合计 <u>+8.88</u> 亿元" in out
         # 真值行出现在结尾（LLM 正文之后）
         assert out.rstrip().endswith("亿元")
+
+    def test_margin_authoritative_line_appended(self) -> None:
+        """LLM 成功分支：科创两融真值行由代码追加."""
+        snap = _make_snapshot(margin_kcb=_make_margin_df())
+        overlay = _make_overlay()
+        client = MagicMock()
+        client.complete.return_value = "<b>科技板块资金走向</b>\n半导体活跃（中线视角）"
+        out = generate_commentary(
+            "20260512", snap, _make_indices(), _make_themes(), overlay, client=client,
+        )
+        assert "💳 科创两融（系统数据）" in out
+        assert "融资余额 <u>480</u> 亿" in out
+        assert "今日净买入 <u>+7.00</u> 亿" in out
+
+    def test_margin_numbers_immune_to_llm_hallucination(self) -> None:
+        """核心回归：LLM 编造两融数字，最终输出仍以代码真值行为准."""
+        snap = _make_snapshot(margin_kcb=_make_margin_df())
+        overlay = _make_overlay()
+        client = MagicMock()
+        client.complete.return_value = (
+            "<b>科技板块资金走向</b>\n科创两融融资余额 9999 亿、净买入 200 亿（编造）"
+        )
+        out = generate_commentary(
+            "20260512", snap, _make_indices(), _make_themes(), overlay, client=client,
+        )
+        # 代码真值行为准（480 亿 / +7.00 亿），编造值不影响系统行
+        assert "融资余额 <u>480</u> 亿" in out
+        assert "今日净买入 <u>+7.00</u> 亿" in out
 
     def test_llm_failure_returns_fallback(self) -> None:
         snap = _make_snapshot(industry=_make_industry_df(), concept=_make_concept_df())

@@ -82,6 +82,10 @@ _SYSTEM_PROMPT: str = """\
    按真值单独追加，你<b>编造数字即为严重错误</b>。也禁止输出个股代码 / 简称。
    ``dragon_tiger`` 缺失则完全不提龙虎榜.
 4. <b>科技板块资金走向</b>：聚焦半导体 / AI / 算力 / 新能源 / 生物医药 / 高端制造 / 数字经济等科技主线.
+   如 input 含 ``margin``（含 ``bias`` 加杠杆/降杠杆/持平）：用其 ``bias`` 点评
+   一句科创板杠杆情绪（如「科创板今日整体加杠杆，融资盘情绪偏积极」）。
+   <b>严禁输出任何两融数字</b>（融资余额/净买入/股数）——由系统按真值单独追加，
+   <b>编造数字即为严重错误</b>。``margin`` 缺失则不提两融.
    如 input 含 ``etf_flow_radar``（ETF 份额调仓雷达，数据日期见其 data_date 字段，通常为 T-1）：
    - 必须加 3-4 句配置盘观察，**表述直接**：直接说「谁在被赎回、谁在获配置」，
      禁止「或许 / 可能 / 似乎 / 值得关注 / 一定程度上」这类模糊措辞
@@ -166,11 +170,14 @@ def generate_commentary(
     text = _sanitize_html(text)
     text = clip_to_max_len(text)
 
-    # 龙虎榜真值行由代码确定性追加（LLM 只在正文做定性叙述，不碰数字）.
-    # 追加在 clip 之后，避免被截断丢失这条高价值数据.
-    lhb_line = render_dragon_tiger_line(_dragon_tiger_summary(snapshot))
-    if lhb_line:
-        text = f"{text}\n\n{lhb_line}"
+    # 龙虎榜 + 科创两融真值行由代码确定性追加（LLM 只在正文做定性叙述，不碰数字）.
+    # 追加在 clip 之后，避免被截断丢失这些高价值数据.
+    for line in (
+        render_dragon_tiger_line(_dragon_tiger_summary(snapshot)),
+        render_margin_line(_margin_summary(snapshot)),
+    ):
+        if line:
+            text = f"{text}\n\n{line}"
     return text
 
 
@@ -197,7 +204,7 @@ def build_context(
     Returns:
         含 ``indices`` / ``top_industries`` / ``top_concepts`` / ``northbound``
         / ``hot_reason_tags`` / ``hot_kcb_stocks`` / ``dragon_tiger`` /
-        ``macro_regime`` / ``etf_radar`` / ``missing`` 十个键的 dict.
+        ``margin`` / ``macro_regime`` / ``etf_radar`` / ``missing`` 的 dict.
     """
     ctx: dict[str, Any] = {
         "indices": indices,  # 已是 dict[alias -> metrics]
@@ -209,6 +216,8 @@ def build_context(
         # 给 LLM 的龙虎榜 payload 只含定性 bias + 原因，不含任何裸数字——
         # 数字由 render_dragon_tiger_line 确定性追加，从源头杜绝 LLM 编造.
         "dragon_tiger": _dragon_tiger_prompt_payload(snapshot),
+        # 科创两融同理：只给定性 bias，数字走 render_margin_line.
+        "margin": _margin_prompt_payload(snapshot),
         "macro_regime": load_macro_regime(trade_date) if trade_date else None,
         "etf_radar": etf_radar.to_payload() if etf_radar else None,
         "missing": list(snapshot.missing),
@@ -225,6 +234,8 @@ def build_context(
         ctx["missing"].append("etf_radar")
     if ctx["dragon_tiger"] is None:
         ctx["missing"].append("dragon_tiger")
+    if ctx["margin"] is None:
+        ctx["missing"].append("margin")
     return ctx
 
 
@@ -506,6 +517,79 @@ def _dragon_tiger_prompt_payload(
     }
 
 
+def _margin_summary(snapshot: SectorSnapshot) -> dict[str, Any] | None:
+    """聚合科创板两融 → 杠杆情绪（融资余额 + 净买入 + 加/降杠杆股数）.
+
+    口径同龙虎榜：数字只在聚合 dict 里，进 LLM 的 payload 不带裸数字（见
+    _margin_prompt_payload），真值由 render_margin_line 确定性渲染.
+
+    Returns:
+        ``{"listed_count", "fin_balance_yi", "net_buy_yi",
+        "lever_up_count", "lever_down_count"}``；无数据 → None.
+    """
+    import pandas as pd
+
+    df = snapshot.margin_kcb
+    if df is None or df.empty or "fin_net_buy" not in df.columns:
+        return None
+    bal = pd.to_numeric(df["fin_balance"], errors="coerce")
+    net = pd.to_numeric(df["fin_net_buy"], errors="coerce").dropna()
+    return {
+        "listed_count": int(len(df)),
+        "fin_balance_yi": round(float(bal.sum()) / 1e8, 0),
+        "net_buy_yi": round(float(net.sum()) / 1e8, 2),
+        "lever_up_count": int((net > 0).sum()),
+        "lever_down_count": int((net < 0).sum()),
+    }
+
+
+def _margin_bias(summary: dict[str, Any] | None) -> str | None:
+    """科创板两融净买入合计 → 定性方向（加杠杆 / 降杠杆 / 持平）.
+
+    只做判断、不带数字，供 LLM 叙述参考（数字由 render_margin_line 渲染）.
+    """
+    if not summary:
+        return None
+    net = summary.get("net_buy_yi", 0.0)
+    if net > 1.0:
+        return "加杠杆"
+    if net < -1.0:
+        return "降杠杆"
+    return "持平"
+
+
+def render_margin_line(summary: dict[str, Any] | None) -> str | None:
+    """确定性渲染科创板两融真值行（HTML）—— 数字唯一可信来源.
+
+    与龙虎榜同纪律：融资余额 / 净买入 / 加降杠杆股数一律代码格式化，不交给
+    LLM；fallback 与 LLM 成功分支共用，保证两路径数字一致.
+
+    Returns:
+        HTML 单行（不含个股代码）；无数据 → ``None``.
+    """
+    if not summary:
+        return None
+    return (
+        f"<b>💳 科创两融（系统数据）</b>：融资余额 "
+        f"<u>{summary['fin_balance_yi']:.0f}</u> 亿，今日净买入 "
+        f"<u>{summary['net_buy_yi']:+.2f}</u> 亿（"
+        f"<u>{summary['lever_up_count']}</u> 只加杠杆 / "
+        f"<u>{summary['lever_down_count']}</u> 只减）"
+    )
+
+
+def _margin_prompt_payload(snapshot: SectorSnapshot) -> dict[str, Any] | None:
+    """喂给 LLM 的科创两融 payload —— 只含定性 bias，无裸数字.
+
+    Returns:
+        ``{"bias": "加杠杆/降杠杆/持平"}``；无数据 → None.
+    """
+    summary = _margin_summary(snapshot)
+    if summary is None:
+        return None
+    return {"bias": _margin_bias(summary)}
+
+
 def _hot_kcb_stocks(
     snapshot: SectorSnapshot,
     overlay: KcbOverlay,
@@ -733,11 +817,14 @@ def fallback_text(
     else:
         parts.append("<b>Top 概念</b>：概念数据未到位")
 
-    # 龙虎榜净买卖聚合：席位资金情绪是高价值信号，LLM 故障也不静默丢.
-    # 与 LLM 成功分支共用 render_dragon_tiger_line，保证两路径数字一致.
+    # 龙虎榜 + 科创两融聚合：资金/杠杆情绪是高价值信号，LLM 故障也不静默丢.
+    # 与 LLM 成功分支共用 render_*_line，保证两路径数字一致.
     lhb_line = render_dragon_tiger_line(_dragon_tiger_summary(snapshot))
     if lhb_line is not None:
         parts.append(lhb_line)
+    margin_line = render_margin_line(_margin_summary(snapshot))
+    if margin_line is not None:
+        parts.append(margin_line)
 
     if etf_radar is not None and etf_radar.themes:
         parts.append("")
