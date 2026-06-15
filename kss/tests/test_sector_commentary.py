@@ -19,6 +19,7 @@ import pytest
 from kss.llm.openai_client import LLMUnavailable
 from kss.sector.commentary import (
     _MAX_MSG_LEN,
+    _dragon_tiger_bias,
     _dragon_tiger_summary,
     _sanitize_html,
     build_context,
@@ -26,6 +27,7 @@ from kss.sector.commentary import (
     compute_theme_metrics,
     fallback_text,
     generate_commentary,
+    render_dragon_tiger_line,
     render_prompt,
 )
 from kss.sector.data_fetcher import SectorSnapshot
@@ -172,7 +174,10 @@ class TestBuildContext:
         overlay = _make_overlay()
         ctx = build_context(snap, _make_indices(), _make_themes(), overlay)
         assert ctx["dragon_tiger"] is not None
-        assert ctx["dragon_tiger"]["listed_count"] == 3
+        # LLM payload 只含定性 bias + 原因，绝不含裸数字（防幻觉）
+        assert ctx["dragon_tiger"]["bias"] == "偏多"  # 净买2 vs 净卖1
+        assert "listed_count" not in ctx["dragon_tiger"]
+        assert "net_buy_total_yi" not in ctx["dragon_tiger"]
         assert "dragon_tiger" not in ctx["missing"]
 
     def test_dragon_tiger_missing_flagged(self) -> None:
@@ -206,6 +211,33 @@ class TestDragonTigerSummary:
     def test_none_when_empty_df(self) -> None:
         empty = pd.DataFrame(columns=["code", "name", "net_amount", "reason"])
         assert _dragon_tiger_summary(_make_snapshot(dragon_tiger=empty)) is None
+
+    def test_bias_偏多_when_buyers_dominate(self) -> None:
+        assert _dragon_tiger_bias(
+            {"net_buy_count": 10, "net_sell_count": 2}) == "偏多"
+
+    def test_bias_偏空_when_sellers_dominate(self) -> None:
+        assert _dragon_tiger_bias(
+            {"net_buy_count": 2, "net_sell_count": 10}) == "偏空"
+
+    def test_bias_均衡_when_balanced(self) -> None:
+        assert _dragon_tiger_bias(
+            {"net_buy_count": 32, "net_sell_count": 32}) == "均衡"
+
+    def test_bias_none_when_no_summary(self) -> None:
+        assert _dragon_tiger_bias(None) is None
+
+    def test_render_line_formats_true_numbers(self) -> None:
+        summary = _dragon_tiger_summary(_make_snapshot(
+            dragon_tiger=_make_dragon_tiger_df()))
+        line = render_dragon_tiger_line(summary)
+        assert line is not None
+        assert "今日 <u>3</u> 只上榜" in line
+        assert "净买 <u>2</u> 只 / 净卖 <u>1</u> 只" in line
+        assert "净买入合计 <u>+8.88</u> 亿元" in line
+
+    def test_render_line_none_when_no_data(self) -> None:
+        assert render_dragon_tiger_line(None) is None
 
     def test_indices_missing_flagged(self) -> None:
         snap = _make_snapshot(industry=_make_industry_df(), concept=_make_concept_df())
@@ -512,19 +544,19 @@ class TestFallbackText:
         assert "__" not in text
 
     def test_includes_dragon_tiger_when_present(self) -> None:
-        """LLM 故障降级时龙虎榜净买卖聚合不静默丢失（fail-loud parity）."""
+        """LLM 故障降级时龙虎榜真值行不静默丢失（fail-loud parity）."""
         snap = _make_snapshot(dragon_tiger=_make_dragon_tiger_df())
         text = fallback_text("20260512", snap, {})
-        assert "<b>龙虎榜</b>" in text
-        assert "上榜 3 只" in text
-        assert "净买 2 / 净卖 1" in text
+        assert "🐲 龙虎榜（系统数据）" in text
+        assert "今日 <u>3</u> 只上榜" in text
+        assert "净买 <u>2</u> 只 / 净卖 <u>1</u> 只" in text
         # 降级简表也不泄漏个股代码
         assert "688507" not in text
 
     def test_omits_dragon_tiger_when_absent(self) -> None:
         snap = _make_snapshot(dragon_tiger=None)
         text = fallback_text("20260512", snap, {})
-        assert "<b>龙虎榜</b>" not in text
+        assert "龙虎榜" not in text
 
 
 # ====================================================================== #
@@ -605,6 +637,44 @@ class TestGenerateCommentary:
         )
         assert "加减仓建议" in out
         client.complete.assert_called_once()
+
+    def test_dragon_tiger_authoritative_line_appended(self) -> None:
+        """LLM 成功分支：龙虎榜真值行由代码追加（数字源自 payload，非 LLM）."""
+        snap = _make_snapshot(
+            concept=_make_concept_df(),
+            dragon_tiger=_make_dragon_tiger_df(),
+        )
+        overlay = _make_overlay()
+        client = MagicMock()
+        client.complete.return_value = "<b>概念轮动</b>\n资源品领涨（中线视角）"
+        out = generate_commentary(
+            "20260512", snap, _make_indices(), _make_themes(), overlay, client=client,
+        )
+        assert "🐲 龙虎榜（系统数据）" in out
+        assert "今日 <u>3</u> 只上榜" in out
+        assert "净买入合计 <u>+8.88</u> 亿元" in out
+
+    def test_dragon_tiger_numbers_immune_to_llm_hallucination(self) -> None:
+        """核心回归：LLM 编造龙虎榜数字，最终输出仍以代码真值行收尾.
+
+        复现并锁死「LLM 把 3 只上榜编成 45 只」的数据完整性 bug——
+        真值行由 render_dragon_tiger_line 确定性渲染，LLM 碰不到数字.
+        """
+        snap = _make_snapshot(dragon_tiger=_make_dragon_tiger_df())
+        overlay = _make_overlay()
+        client = MagicMock()
+        # LLM 故意吐出编造的龙虎榜数字
+        client.complete.return_value = (
+            "<b>概念轮动</b>\n龙虎榜今日 45 只上榜，净买入 87 亿元（编造）"
+        )
+        out = generate_commentary(
+            "20260512", snap, _make_indices(), _make_themes(), overlay, client=client,
+        )
+        # 代码追加的真值行必须存在且为真值
+        assert "今日 <u>3</u> 只上榜" in out
+        assert "净买入合计 <u>+8.88</u> 亿元" in out
+        # 真值行出现在结尾（LLM 正文之后）
+        assert out.rstrip().endswith("亿元")
 
     def test_llm_failure_returns_fallback(self) -> None:
         snap = _make_snapshot(industry=_make_industry_df(), concept=_make_concept_df())

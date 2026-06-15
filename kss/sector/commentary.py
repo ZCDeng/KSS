@@ -75,11 +75,12 @@ _SYSTEM_PROMPT: str = """\
 3. <b>概念轮动</b>：今天发动的概念 vs 滞涨/退潮的概念，简单点评.
    如 input 含 ``hot_reason_tags``（同花顺当日强势股题材归因聚合），
    请把出现频次最高的 2-3 个题材关键词织入叙述，作为「今天为什么涨」的因果.
-   如 input 含 ``dragon_tiger``（东财当日龙虎榜聚合）：用 1-2 句点出席位资金
-   情绪，<b>表述直接</b>——直接说「今日 <u>N</u> 只个股上榜，净买入合计 <u>X</u>
-   亿元，净买 <u>a</u> 只 / 净卖 <u>b</u> 只」，并把 ``top_reasons`` 高频上榜
-   原因带一句。<b>禁止</b>输出任何个股代码 / 简称（只到统计 + 原因粒度）；
-   ``dragon_tiger`` 缺失则完全不要提龙虎榜.
+   若 input 含 ``dragon_tiger``（含 ``bias`` 方向 + ``top_reasons`` 高频上榜
+   原因）：可用其 ``bias``（偏多 / 偏空 / 均衡）+ 原因做<b>一句定性</b>龙虎榜情绪
+   点评（如「龙虎榜资金情绪偏多，上榜多因涨幅偏离与高换手」）。
+   <b>严禁输出任何龙虎榜数字</b>（上榜数 / 净买卖只数 / 成交金额）——这些由系统
+   按真值单独追加，你<b>编造数字即为严重错误</b>。也禁止输出个股代码 / 简称。
+   ``dragon_tiger`` 缺失则完全不提龙虎榜.
 4. <b>科技板块资金走向</b>：聚焦半导体 / AI / 算力 / 新能源 / 生物医药 / 高端制造 / 数字经济等科技主线.
    如 input 含 ``etf_flow_radar``（ETF 份额调仓雷达，数据日期见其 data_date 字段，通常为 T-1）：
    - 必须加 3-4 句配置盘观察，**表述直接**：直接说「谁在被赎回、谁在获配置」，
@@ -164,6 +165,12 @@ def generate_commentary(
 
     text = _sanitize_html(text)
     text = clip_to_max_len(text)
+
+    # 龙虎榜真值行由代码确定性追加（LLM 只在正文做定性叙述，不碰数字）.
+    # 追加在 clip 之后，避免被截断丢失这条高价值数据.
+    lhb_line = render_dragon_tiger_line(_dragon_tiger_summary(snapshot))
+    if lhb_line:
+        text = f"{text}\n\n{lhb_line}"
     return text
 
 
@@ -199,7 +206,9 @@ def build_context(
         "northbound": snapshot.northbound,
         "hot_reason_tags": _hot_reason_tags(snapshot, _TOP_N_REASON_TAGS),
         "hot_kcb_stocks": _hot_kcb_stocks(snapshot, overlay, _TOP_N_HOT_KCB_STOCKS),
-        "dragon_tiger": _dragon_tiger_summary(snapshot),
+        # 给 LLM 的龙虎榜 payload 只含定性 bias + 原因，不含任何裸数字——
+        # 数字由 render_dragon_tiger_line 确定性追加，从源头杜绝 LLM 编造.
+        "dragon_tiger": _dragon_tiger_prompt_payload(snapshot),
         "macro_regime": load_macro_regime(trade_date) if trade_date else None,
         "etf_radar": etf_radar.to_payload() if etf_radar else None,
         "missing": list(snapshot.missing),
@@ -438,6 +447,65 @@ def _dragon_tiger_summary(snapshot: SectorSnapshot) -> dict[str, Any] | None:
     }
 
 
+def _dragon_tiger_bias(summary: dict[str, Any] | None) -> str | None:
+    """龙虎榜净买卖只数 → 定性方向（偏多 / 偏空 / 均衡）.
+
+    只做判断、不带数字，供 LLM 叙述参考（数字由 render_dragon_tiger_line
+    确定性渲染，LLM 不碰）.
+    """
+    if not summary:
+        return None
+    buy = summary.get("net_buy_count", 0)
+    sell = summary.get("net_sell_count", 0)
+    if buy >= sell * 1.3:
+        return "偏多"
+    if sell >= buy * 1.3:
+        return "偏空"
+    return "均衡"
+
+
+def render_dragon_tiger_line(summary: dict[str, Any] | None) -> str | None:
+    """确定性渲染龙虎榜真值行（HTML）—— 数字唯一可信来源.
+
+    遵循全局规则「确定性变换让代码答」：上榜数 / 净买卖只数 / 成交金额一律
+    由本函数从聚合结果直接格式化，绝不交给 LLM 生成。fallback 文本与 LLM
+    成功分支共用此渲染，保证两条路径数字一致.
+
+    Args:
+        summary: :func:`_dragon_tiger_summary` 返回的聚合 dict；``None`` → ``None``.
+
+    Returns:
+        HTML 单行（不含个股代码）；无数据 → ``None``.
+    """
+    if not summary:
+        return None
+    return (
+        f"<b>🐲 龙虎榜（系统数据）</b>：今日 <u>{summary['listed_count']}</u> 只上榜，"
+        f"净买 <u>{summary['net_buy_count']}</u> 只 / 净卖 "
+        f"<u>{summary['net_sell_count']}</u> 只，净买入合计 "
+        f"<u>{summary['net_buy_total_yi']:+.2f}</u> 亿元"
+    )
+
+
+def _dragon_tiger_prompt_payload(
+    snapshot: SectorSnapshot,
+) -> dict[str, Any] | None:
+    """喂给 LLM 的龙虎榜 payload —— 只含定性 bias + 原因 tag，无裸数字.
+
+    LLM 只做判断（用 bias 叙述情绪）；真值数字走 render_dragon_tiger_line.
+
+    Returns:
+        ``{"bias": "偏多/偏空/均衡", "top_reasons": [...]}``；无数据 → None.
+    """
+    summary = _dragon_tiger_summary(snapshot)
+    if summary is None:
+        return None
+    return {
+        "bias": _dragon_tiger_bias(summary),
+        "top_reasons": summary["top_reasons"],
+    }
+
+
 def _hot_kcb_stocks(
     snapshot: SectorSnapshot,
     overlay: KcbOverlay,
@@ -665,15 +733,11 @@ def fallback_text(
     else:
         parts.append("<b>Top 概念</b>：概念数据未到位")
 
-    # 龙虎榜净买卖聚合：席位资金情绪是高价值信号，LLM 故障也不静默丢
-    # （口径复用 _dragon_tiger_summary，与 LLM 路径一致；不含个股代码）.
-    lhb = _dragon_tiger_summary(snapshot)
-    if lhb is not None:
-        parts.append(
-            f"<b>龙虎榜</b>：上榜 {lhb['listed_count']} 只，"
-            f"净买 {lhb['net_buy_count']} / 净卖 {lhb['net_sell_count']}，"
-            f"净买入合计 {lhb['net_buy_total_yi']:+.2f} 亿"
-        )
+    # 龙虎榜净买卖聚合：席位资金情绪是高价值信号，LLM 故障也不静默丢.
+    # 与 LLM 成功分支共用 render_dragon_tiger_line，保证两路径数字一致.
+    lhb_line = render_dragon_tiger_line(_dragon_tiger_summary(snapshot))
+    if lhb_line is not None:
+        parts.append(lhb_line)
 
     if etf_radar is not None and etf_radar.themes:
         parts.append("")
