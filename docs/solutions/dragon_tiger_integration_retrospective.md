@@ -104,6 +104,15 @@ git -C <隔离路径> cherry-pick <我的 commit SHA>      # 在隔离区操作
 
 worktree 全程不碰主工作树 HEAD，对方会话零打扰。cherry-pick 前先验 `merge-base` + 触及文件的 blob 是否与目标分支一致，确认能干净应用。
 
+## 五、后续 P1 与「验证 gate」的价值
+
+P0 之后按数据源补强清单推进 P1（[plan](../plans/2026-06-15-002-feat-sector-realtime-pillar-p1-plan.md)），两次「写代码前先拉真实响应」都拦下了无效工作：
+
+- **P1-a 科创两融（已接入，PR #10）**：原设想"全市场两融汇总"，实测发现 a-stock-data 只有个股端点、无市场汇总；改用东财 `(DATE)(KCB=1)` 一次拉全科创板（597 只）本地聚合。
+- **P1-b 北向板块明细（BLOCKED）**：实测 a-stock-data 北向只返回全市场总量、无板块拆分；且其 SKILL.md 自记「eastmoney 全系北向数据自 2024-08 后净买额返回 NaN/0，上游断供」。北向净流数据从源头没了，直接否决。
+
+教训：**对外部数据源，先验真实响应的字段与粒度，再写一行代码**。两次 gate 各省下一轮对着不存在的数据白做。
+
 ## 相关
 
 - [`sector_review_deployment.md`](sector_review_deployment.md) — 板块复盘部署链路（含 Hermes `.env` 注入 LLM key 的机制）
