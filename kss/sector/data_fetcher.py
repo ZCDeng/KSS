@@ -25,6 +25,7 @@ import pandas as pd
 
 from kss.data.tushare_client import TushareClient
 from kss.data.ths_client import fetch_ths_hot
+from kss.data.dragon_tiger_client import fetch_dragon_tiger
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,9 @@ class SectorSnapshot:
         ths_hot: 同花顺当日强势股 + 题材归因（``reason`` 字段），含 ``code`` /
             ``name`` / ``reason`` / ``pct_change``. 用于在板块复盘文中织入
             「今天为什么涨」的题材关键词. 失败时为 ``None``.
+        dragon_tiger: 东财当日全市场龙虎榜明细，含 ``code`` / ``name`` /
+            ``net_amount``(元) / ``reason``. 聚合后给复盘 prompt 一份席位级
+            资金动向. 外部 HTTP 源（非 Tushare），失败时为 ``None``.
         missing: 拉取失败的字段名列表，供报告生成时显示「⚠️ 缺失」提示.
     """
 
@@ -67,6 +71,7 @@ class SectorSnapshot:
     industry_index: pd.DataFrame | None = None
     northbound: dict[str, float] | None = None
     ths_hot: pd.DataFrame | None = None
+    dragon_tiger: pd.DataFrame | None = None
     missing: list[str] = field(default_factory=list)
 
 
@@ -156,6 +161,11 @@ def load_sector_snapshot(
     snap.ths_hot = fetch_ths_hot(trade_date)
     if snap.ths_hot is None:
         snap.missing.append("ths_hot")
+
+    # 东财龙虎榜同为无鉴权 HTTP；紧挨 ths_hot 串行调用，避免对东财并发触发限流.
+    snap.dragon_tiger = fetch_dragon_tiger(trade_date)
+    if snap.dragon_tiger is None:
+        snap.missing.append("dragon_tiger")
 
     if snap.missing:
         logger.warning(

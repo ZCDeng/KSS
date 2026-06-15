@@ -43,6 +43,9 @@ _TOP_N_CONCEPT: int = 15
 _TOP_N_REASON_TAGS: int = 10
 _TOP_N_HOT_KCB_STOCKS: int = 10
 
+# 龙虎榜：上榜原因聚合保留的高频 tag 数.
+_TOP_N_LHB_REASON: int = 6
+
 # 题材 reason 字段的切分符（同花顺常用 +，偶见 /、、、·）.
 _REASON_SPLIT_PATTERN: str = r"[+/、·]"
 
@@ -72,6 +75,11 @@ _SYSTEM_PROMPT: str = """\
 3. <b>概念轮动</b>：今天发动的概念 vs 滞涨/退潮的概念，简单点评.
    如 input 含 ``hot_reason_tags``（同花顺当日强势股题材归因聚合），
    请把出现频次最高的 2-3 个题材关键词织入叙述，作为「今天为什么涨」的因果.
+   如 input 含 ``dragon_tiger``（东财当日龙虎榜聚合）：用 1-2 句点出席位资金
+   情绪，<b>表述直接</b>——直接说「今日 <u>N</u> 只个股上榜，净买入合计 <u>X</u>
+   亿元，净买 <u>a</u> 只 / 净卖 <u>b</u> 只」，并把 ``top_reasons`` 高频上榜
+   原因带一句。<b>禁止</b>输出任何个股代码 / 简称（只到统计 + 原因粒度）；
+   ``dragon_tiger`` 缺失则完全不要提龙虎榜.
 4. <b>科技板块资金走向</b>：聚焦半导体 / AI / 算力 / 新能源 / 生物医药 / 高端制造 / 数字经济等科技主线.
    如 input 含 ``etf_flow_radar``（ETF 份额调仓雷达，数据日期见其 data_date 字段，通常为 T-1）：
    - 必须加 3-4 句配置盘观察，**表述直接**：直接说「谁在被赎回、谁在获配置」，
@@ -181,8 +189,8 @@ def build_context(
 
     Returns:
         含 ``indices`` / ``top_industries`` / ``top_concepts`` / ``northbound``
-        / ``hot_reason_tags`` / ``hot_kcb_stocks`` / ``macro_regime`` /
-        ``etf_radar`` / ``missing`` 九个键的 dict.
+        / ``hot_reason_tags`` / ``hot_kcb_stocks`` / ``dragon_tiger`` /
+        ``macro_regime`` / ``etf_radar`` / ``missing`` 十个键的 dict.
     """
     ctx: dict[str, Any] = {
         "indices": indices,  # 已是 dict[alias -> metrics]
@@ -191,6 +199,7 @@ def build_context(
         "northbound": snapshot.northbound,
         "hot_reason_tags": _hot_reason_tags(snapshot, _TOP_N_REASON_TAGS),
         "hot_kcb_stocks": _hot_kcb_stocks(snapshot, overlay, _TOP_N_HOT_KCB_STOCKS),
+        "dragon_tiger": _dragon_tiger_summary(snapshot),
         "macro_regime": load_macro_regime(trade_date) if trade_date else None,
         "etf_radar": etf_radar.to_payload() if etf_radar else None,
         "missing": list(snapshot.missing),
@@ -205,6 +214,8 @@ def build_context(
         ctx["missing"].append("macro_regime")
     if ctx["etf_radar"] is None:
         ctx["missing"].append("etf_radar")
+    if ctx["dragon_tiger"] is None:
+        ctx["missing"].append("dragon_tiger")
     return ctx
 
 
@@ -388,6 +399,43 @@ def _hot_reason_tags(snapshot: SectorSnapshot, n: int) -> list[dict[str, Any]]:
         return []
     top = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:n]
     return [{"tag": t, "count": c} for t, c in top]
+
+
+def _dragon_tiger_summary(snapshot: SectorSnapshot) -> dict[str, Any] | None:
+    """聚合龙虎榜 → 席位资金情绪 + 上榜原因 tag（不外泄个股代码/名称）.
+
+    与 LLM 输出口径一致：系统 prompt 禁止输出具体股票代码/简称，故这里只给
+    LLM 聚合统计（上榜数、净买/净卖票数、净买入合计亿元）+ 上榜原因高频词；
+    个股名仅留在结构化 formatter（面向人）层. ``reason`` 为外部 HTTP 源，
+    进 payload 前过 sanitize_llm_input（与 _hot_reason_tags 同纪律）.
+
+    Returns:
+        ``{"listed_count", "net_buy_count", "net_sell_count",
+        "net_buy_total_yi", "top_reasons": [{tag, count}]}``；无数据 → None.
+    """
+    import pandas as pd
+
+    df = snapshot.dragon_tiger
+    if df is None or df.empty or "net_amount" not in df.columns:
+        return None
+    net = pd.to_numeric(df["net_amount"], errors="coerce").dropna()
+    reasons: dict[str, int] = {}
+    if "reason" in df.columns:
+        for raw in df["reason"].dropna():
+            tag = sanitize_llm_input(str(raw).strip(), max_len=40)
+            if not tag or tag == "[REDACTED]":
+                continue
+            reasons[tag] = reasons.get(tag, 0) + 1
+    top = sorted(reasons.items(), key=lambda kv: (-kv[1], kv[0]))[
+        :_TOP_N_LHB_REASON
+    ]
+    return {
+        "listed_count": int(len(df)),
+        "net_buy_count": int((net > 0).sum()),
+        "net_sell_count": int((net < 0).sum()),
+        "net_buy_total_yi": round(float(net[net > 0].sum()) / 1e8, 2),
+        "top_reasons": [{"tag": t, "count": c} for t, c in top],
+    }
 
 
 def _hot_kcb_stocks(

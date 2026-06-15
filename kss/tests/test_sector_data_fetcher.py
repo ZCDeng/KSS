@@ -34,16 +34,31 @@ def _make_ths_hot_df() -> pd.DataFrame:
     })
 
 
-@pytest.fixture(autouse=True)
-def _patch_fetch_ths_hot(monkeypatch: pytest.MonkeyPatch) -> None:
-    """全模块默认把 ``fetch_ths_hot`` 替成假实现，避免真实 HTTP.
+def _make_dragon_tiger_df() -> pd.DataFrame:
+    """模拟东财龙虎榜返回（fetch_dragon_tiger 已重命名为蛇形）."""
+    return pd.DataFrame({
+        "code": ["688507", "002119"],
+        "name": ["索辰科技", "康强电子"],
+        "net_amount": [5.18e8, -3.70e8],
+        "reason": ["日涨幅偏离值达7%的证券", "日换手率达20%的证券"],
+    })
 
-    需要测 ths_hot 失败路径的用例可在 body 里再次 ``monkeypatch.setattr``
-    覆盖（monkeypatch 同 scope 内顺序应用，后写覆盖先写）.
+
+@pytest.fixture(autouse=True)
+def _patch_external_http(monkeypatch: pytest.MonkeyPatch) -> None:
+    """全模块默认把两路无鉴权 HTTP（``fetch_ths_hot`` / ``fetch_dragon_tiger``）
+    替成假实现，避免真实网络.
+
+    需要测某路失败的用例可在 body 里再次 ``monkeypatch.setattr`` 覆盖
+    （monkeypatch 同 scope 内顺序应用，后写覆盖先写）.
     """
     monkeypatch.setattr(
         "kss.sector.data_fetcher.fetch_ths_hot",
         lambda trade_date: _make_ths_hot_df(),
+    )
+    monkeypatch.setattr(
+        "kss.sector.data_fetcher.fetch_dragon_tiger",
+        lambda trade_date: _make_dragon_tiger_df(),
     )
 
 
@@ -251,6 +266,36 @@ class TestLoadSectorSnapshot:
         snap = load_sector_snapshot("20260512", client=client)  # type: ignore[arg-type]
         assert snap.northbound is None
         assert "northbound" in snap.missing
+
+    def test_dragon_tiger_failure_isolated(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """龙虎榜（外部 HTTP）失败 → 字段 None + 计入 missing，不影响其他维度."""
+        monkeypatch.setattr(
+            "kss.sector.data_fetcher.fetch_dragon_tiger",
+            lambda trade_date: None,
+        )
+        client = _FakeClient(
+            ind=_make_ind_dc(),
+            cnt=_make_cnt_ths(),
+            sw=_make_sw_daily(),
+            hs=_make_hsgt(),
+        )
+        snap = load_sector_snapshot("20260512", client=client)  # type: ignore[arg-type]
+        assert snap.dragon_tiger is None
+        assert "dragon_tiger" in snap.missing
+        assert snap.industry is not None
+        assert snap.northbound is not None
+
+    def test_dragon_tiger_success_populates_field(self) -> None:
+        """默认 patch 下龙虎榜字段应有值、不进 missing."""
+        client = _FakeClient(
+            ind=_make_ind_dc(), cnt=_make_cnt_ths(),
+            sw=_make_sw_daily(), hs=_make_hsgt(),
+        )
+        snap = load_sector_snapshot("20260512", client=client)  # type: ignore[arg-type]
+        assert snap.dragon_tiger is not None and len(snap.dragon_tiger) == 2
+        assert "dragon_tiger" not in snap.missing
 
     def test_all_apis_failed(self) -> None:
         """全部失败时 4 个字段都 None，missing 含全部 4 项."""

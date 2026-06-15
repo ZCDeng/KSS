@@ -149,6 +149,30 @@ class TestFormatReviewMarkdown:
         assert "🌍" in md
         # 没有缺失提示
         assert "⚠️" not in md
+        # 未传 dragon_tiger → 龙虎榜 section 不渲染
+        assert "🐲" not in md
+
+    def test_dragon_tiger_section_rendered_when_passed(self) -> None:
+        """传入龙虎榜 DataFrame → 🐲 section 含个股名 + 净买入 + 上榜原因."""
+        lhb = pd.DataFrame({
+            "code": ["688507", "002119"],
+            "name": ["索辰科技", "康强电子"],
+            "net_amount": [5.18e8, -3.70e8],
+            "reason": ["日涨幅偏离值达7%的证券", "日换手率达20%的证券"],
+        })
+        md = format_review_markdown(
+            trade_date="2026-06-12",
+            industry_heat=_make_industry_heat(),
+            flow_persistence=_make_flow_persistence(),
+            concept_heat=_make_concept_heat(),
+            northbound=_make_northbound(),
+            overlay=_populated_overlay(),
+            dragon_tiger=lhb,
+        )
+        assert "🐲" in md
+        assert "索辰科技" in md
+        assert "+5.18 亿" in md  # 净买入按元 → 亿换算
+        assert "日涨幅偏离值达7%" in md
 
     def test_industry_heat_missing_section_shows_placeholder(self) -> None:
         """行业热度数据缺失 → 该 section 显示「数据暂缺」，其他 section 正常."""

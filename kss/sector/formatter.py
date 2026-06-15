@@ -186,6 +186,27 @@ def _render_rotation_signal(df: pd.DataFrame | None, overlay: KcbOverlay) -> str
     return f"{title}\n\n{_markdown_table(headers, rows)}"
 
 
+def _render_dragon_tiger(df: pd.DataFrame | None) -> str:
+    """🐲 龙虎榜净买入 Top（东财，面向人，可含个股名）.
+
+    与 LLM commentary 路径不同：结构化报告面向人，可显示个股名 / 上榜原因；
+    LLM 路径只拿聚合统计（见 commentary._dragon_tiger_summary）.
+    """
+    title = "🐲 *龙虎榜*（净买入 Top，东财）"
+    if df is None or df.empty:
+        return f"{title}\n\n{_MISSING_PLACEHOLDER}"
+    headers = ["#", "名称", "净买入", "上榜原因"]
+    rows: list[list[str]] = []
+    for idx, (_, row) in enumerate(df.head(8).iterrows(), start=1):
+        rows.append([
+            str(idx),
+            str(row.get("name", "—")),
+            _format_amount_yi(row.get("net_amount"), unit="yuan"),
+            str(row.get("reason", "—"))[:24],
+        ])
+    return f"{title}\n\n{_markdown_table(headers, rows)}"
+
+
 def _render_missing_footer(missing: list[str] | None) -> str:
     if not missing:
         return ""
@@ -205,6 +226,7 @@ def format_review_markdown(
     northbound: dict[str, float] | None,
     overlay: KcbOverlay,
     rotation_signal: pd.DataFrame | None = None,
+    dragon_tiger: pd.DataFrame | None = None,
     missing: list[str] | None = None,
 ) -> str:
     """组装板块复盘 Markdown 推送报告（5 段固定 + 可选轮动信号）.
@@ -220,6 +242,8 @@ def format_review_markdown(
         northbound: 北向资金单日汇总 dict（含 ``north_money`` 等字段，万元）.
         overlay: :class:`KcbOverlay` 实例，用于 KCB 池子标注.
         rotation_signal: 可选，轮动信号 DataFrame；空 / None 时此 section 不渲染.
+        dragon_tiger: 可选，东财龙虎榜明细 DataFrame（含 ``name`` /
+            ``net_amount`` / ``reason``）；None 时此 section 不渲染.
         missing: 数据源缺失列表，用于报告底部告警.
 
     Returns:
@@ -236,6 +260,9 @@ def format_review_markdown(
         sections.append(rot)
 
     sections.append(_render_northbound(northbound))
+
+    if dragon_tiger is not None:
+        sections.append(_render_dragon_tiger(dragon_tiger))
 
     footer = _render_missing_footer(missing)
     if footer:

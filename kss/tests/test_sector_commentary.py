@@ -19,6 +19,7 @@ import pytest
 from kss.llm.openai_client import LLMUnavailable
 from kss.sector.commentary import (
     _MAX_MSG_LEN,
+    _dragon_tiger_summary,
     _sanitize_html,
     build_context,
     clip_to_max_len,
@@ -60,6 +61,7 @@ def _make_snapshot(
     concept: pd.DataFrame | None = None,
     northbound: dict[str, float] | None = None,
     ths_hot: pd.DataFrame | None = None,
+    dragon_tiger: pd.DataFrame | None = None,
     missing: list[str] | None = None,
 ) -> SectorSnapshot:
     return SectorSnapshot(
@@ -68,8 +70,23 @@ def _make_snapshot(
         concept=concept,
         northbound=northbound,
         ths_hot=ths_hot,
+        dragon_tiger=dragon_tiger,
         missing=missing or [],
     )
+
+
+def _make_dragon_tiger_df() -> pd.DataFrame:
+    """龙虎榜 mock：2 净买 + 1 净卖，含重复上榜原因（验证 tag 聚合）."""
+    return pd.DataFrame({
+        "code": ["688507", "002119", "000630"],
+        "name": ["索辰科技", "康强电子", "铜陵有色"],
+        "net_amount": [5.18e8, 3.70e8, -1.20e8],
+        "reason": [
+            "日涨幅偏离值达7%的证券",
+            "日涨幅偏离值达7%的证券",
+            "日换手率达20%的证券",
+        ],
+    })
 
 
 def _make_ths_hot_df() -> pd.DataFrame:
@@ -149,6 +166,46 @@ class TestBuildContext:
         assert ctx["top_concepts"][0]["kcb_count"] == 3
         assert "market_indices" not in ctx["missing"]
         assert "themes" not in ctx["missing"]
+
+    def test_dragon_tiger_present_in_context(self) -> None:
+        snap = _make_snapshot(dragon_tiger=_make_dragon_tiger_df())
+        overlay = _make_overlay()
+        ctx = build_context(snap, _make_indices(), _make_themes(), overlay)
+        assert ctx["dragon_tiger"] is not None
+        assert ctx["dragon_tiger"]["listed_count"] == 3
+        assert "dragon_tiger" not in ctx["missing"]
+
+    def test_dragon_tiger_missing_flagged(self) -> None:
+        snap = _make_snapshot(dragon_tiger=None)
+        overlay = _make_overlay()
+        ctx = build_context(snap, _make_indices(), _make_themes(), overlay)
+        assert ctx["dragon_tiger"] is None
+        assert "dragon_tiger" in ctx["missing"]
+
+
+class TestDragonTigerSummary:
+    """_dragon_tiger_summary —— 席位资金聚合 + 原因 tag 计数."""
+
+    def test_aggregates_net_flow_and_reason_tags(self) -> None:
+        out = _dragon_tiger_summary(_make_snapshot(
+            dragon_tiger=_make_dragon_tiger_df()))
+        assert out is not None
+        assert out["listed_count"] == 3
+        assert out["net_buy_count"] == 2
+        assert out["net_sell_count"] == 1
+        # 净买入合计 = 5.18 + 3.70 = 8.88 亿
+        assert out["net_buy_total_yi"] == pytest.approx(8.88, abs=0.01)
+        # 重复原因聚合为 count=2 居首；reason 经 sanitize_llm_input 清洗
+        # （% 等符号被剥离），故断言前缀 + 计数，不锁完整串.
+        assert out["top_reasons"][0]["tag"].startswith("日涨幅偏离值达7")
+        assert out["top_reasons"][0]["count"] == 2
+
+    def test_none_when_no_data(self) -> None:
+        assert _dragon_tiger_summary(_make_snapshot(dragon_tiger=None)) is None
+
+    def test_none_when_empty_df(self) -> None:
+        empty = pd.DataFrame(columns=["code", "name", "net_amount", "reason"])
+        assert _dragon_tiger_summary(_make_snapshot(dragon_tiger=empty)) is None
 
     def test_indices_missing_flagged(self) -> None:
         snap = _make_snapshot(industry=_make_industry_df(), concept=_make_concept_df())
