@@ -28,4 +28,6 @@
 
 **待跟进（非阻塞）**
 - [ ] PR #10 两融的 live-LLM dry-run 终确认散文措辞（需主工作树 + Hermes .env，`bash scripts/run_sector_review_daily.sh --date 2026-06-12 --dry-run`）。
-- [ ] P2 题材归因接入（plan `docs/plans/2026-06-15-002-*` §8 留存；注意与 `ths_hot` 概念口径打架风险）。
+- [x] ~~P2 题材归因接入~~ → **SKIP**（验证 gate：a-stock-data 题材端点 = KSS 已接的同花顺 `getharden`，无增量。详见 plan §8）。
+
+**收尾状态**：数据源补强主线全部裁决完毕——能接的（龙虎榜、科创两融）已接，重复的（题材归因）SKIP，无数据的（北向明细）BLOCKED。三次验证 gate 各拦下一类无效工作（端点不对 / 无数据 / 重复造轮子）。

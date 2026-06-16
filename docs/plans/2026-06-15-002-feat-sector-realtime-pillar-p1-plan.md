@@ -1,7 +1,7 @@
 # Plan: 板块复盘解读层实时数据补强 P1 — 两融 + 北向明细
 
 > **日期**: 2026-06-15
-> **状态**: P1-a DONE（PR #10 合并）；P1-b BLOCKED（北向板块明细无数据源，见 §5）
+> **状态**: P1-a DONE（PR #10 合并）；P1-b BLOCKED（北向无数据源，§5）；P2 SKIP（题材归因已由 ths_hot 覆盖，§8）。本 plan 全部裁决完毕。
 > **依赖**: P0 龙虎榜接入（PR #8 + PR #9）、`kss/data/dragon_tiger_client.py` 范式、确定性渲染模式
 > **复盘参照**: [`docs/solutions/dragon_tiger_integration_retrospective.md`](../solutions/dragon_tiger_integration_retrospective.md)
 
@@ -90,8 +90,16 @@ LLM 正文无编造数字。
 - [ ] LLM 正文无编造数字、无个股代码泄漏
 - [ ] 无任何解读层数据写回 backtest 输入
 
-## 8. 后续（P2，不在本 plan 范围）
+## 8. P2 题材归因 — ❌ SKIP（验证 gate 否决，2026-06-16）
 
-题材归因/强势股补强 `hot_reason_tags`——与现有 `ths_hot` 部分重叠，
-接入前先确认同花顺概念口径是否与东财/申万命名空间打架
-（参 `data_fetcher.py` 既有的命名空间不一致坑）。
+验证 gate 跑完，**SKIP**。不写代码——已被现有功能覆盖。
+
+| 检查 | 结果 |
+|------|------|
+| a-stock-data「题材归因」端点 | = 同花顺 `zx.10jqka.com.cn/.../getharden`，**与 KSS `kss/data/ths_client.py` 是同一个 URL** |
+| KSS 现状 | `reason`（题材归因）已聚合成 `hot_reason_tags` 喂 LLM，题材归因**早已实现** |
+| 唯一勉强算新的 | 东财 `slist`（个股→BK码板块归属静态映射）——边际价值，且正中本节原警告的「BK/同花顺/申万三套命名空间打架」坑 |
+| 行业排名 / 概念资金流 | 已有 `moneyflow_ind_dc` / `sw_daily` / `moneyflow_cnt_ths` 覆盖 |
+
+**裁决**：题材归因本体无增量（同一端点），SKIP，不造重复轮子。东财 slist BK码
+若将来要做，需先解决三套板块命名空间的 join 问题（`data_fetcher.py:9` 已记的坑）。
