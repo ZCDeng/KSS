@@ -1,0 +1,807 @@
+{
+  "prediction_date": "2026-05-25",
+  "generated_at": "2026-05-26T09:05:09.612154",
+  "strategy": "log_mv_reverse",
+  "use_execution": true,
+  "top_pct": 0.2,
+  "picks": [
+    {
+      "symbol": "688287.SH",
+      "factor_value": 9.628533441496769,
+      "rank_pct": 0.0017421602787456446,
+      "rank_position": 1,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688701.SH",
+      "factor_value": 11.817620584071197,
+      "rank_pct": 0.003484320557491289,
+      "rank_position": 2,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688217.SH",
+      "factor_value": 11.943954308570035,
+      "rank_pct": 0.005226480836236934,
+      "rank_position": 3,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688296.SH",
+      "factor_value": 12.069526044300959,
+      "rank_pct": 0.006968641114982578,
+      "rank_position": 4,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688565.SH",
+      "factor_value": 12.091387849120023,
+      "rank_pct": 0.008710801393728223,
+      "rank_position": 5,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688067.SH",
+      "factor_value": 12.096151747116016,
+      "rank_pct": 0.010452961672473868,
+      "rank_position": 6,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688793.SH",
+      "factor_value": 12.124612687948932,
+      "rank_pct": 0.012195121951219513,
+      "rank_position": 7,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688659.SH",
+      "factor_value": 12.130492051138848,
+      "rank_pct": 0.013937282229965157,
+      "rank_position": 8,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688004.SH",
+      "factor_value": 12.141464831325226,
+      "rank_pct": 0.0156794425087108,
+      "rank_position": 9,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688078.SH",
+      "factor_value": 12.182942867702115,
+      "rank_pct": 0.017421602787456445,
+      "rank_position": 10,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688021.SH",
+      "factor_value": 12.219613508838558,
+      "rank_pct": 0.01916376306620209,
+      "rank_position": 11,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688329.SH",
+      "factor_value": 12.229473692701582,
+      "rank_pct": 0.020905923344947737,
+      "rank_position": 12,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688681.SH",
+      "factor_value": 12.22947427882379,
+      "rank_pct": 0.02264808362369338,
+      "rank_position": 13,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688695.SH",
+      "factor_value": 12.246286967294733,
+      "rank_pct": 0.024390243902439025,
+      "rank_position": 14,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688528.SH",
+      "factor_value": 12.262835703449491,
+      "rank_pct": 0.02613240418118467,
+      "rank_position": 15,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688026.SH",
+      "factor_value": 12.265435359004496,
+      "rank_pct": 0.027874564459930314,
+      "rank_position": 16,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688466.SH",
+      "factor_value": 12.273801732177368,
+      "rank_pct": 0.029616724738675958,
+      "rank_position": 17,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688193.SH",
+      "factor_value": 12.290691943695819,
+      "rank_pct": 0.0313588850174216,
+      "rank_position": 18,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688058.SH",
+      "factor_value": 12.29517155893203,
+      "rank_pct": 0.033101045296167246,
+      "rank_position": 19,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688638.SH",
+      "factor_value": 12.305560450530319,
+      "rank_pct": 0.03484320557491289,
+      "rank_position": 20,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688393.SH",
+      "factor_value": 12.310178493421477,
+      "rank_pct": 0.036585365853658534,
+      "rank_position": 21,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688671.SH",
+      "factor_value": 12.319470175342339,
+      "rank_pct": 0.03832752613240418,
+      "rank_position": 22,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688038.SH",
+      "factor_value": 12.32260171930488,
+      "rank_pct": 0.04006968641114982,
+      "rank_position": 23,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688573.SH",
+      "factor_value": 12.328330742479983,
+      "rank_pct": 0.041811846689895474,
+      "rank_position": 24,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688426.SH",
+      "factor_value": 12.344586714417582,
+      "rank_pct": 0.04355400696864112,
+      "rank_position": 25,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688288.SH",
+      "factor_value": 12.345711858635273,
+      "rank_pct": 0.04529616724738676,
+      "rank_position": 26,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688670.SH",
+      "factor_value": 12.35708669699219,
+      "rank_pct": 0.047038327526132406,
+      "rank_position": 27,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688089.SH",
+      "factor_value": 12.363584751856395,
+      "rank_pct": 0.04878048780487805,
+      "rank_position": 28,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688092.SH",
+      "factor_value": 12.388973887191051,
+      "rank_pct": 0.050522648083623695,
+      "rank_position": 29,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688118.SH",
+      "factor_value": 12.396188415458166,
+      "rank_pct": 0.05226480836236934,
+      "rank_position": 30,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688056.SH",
+      "factor_value": 12.39789161007856,
+      "rank_pct": 0.05400696864111498,
+      "rank_position": 31,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688616.SH",
+      "factor_value": 12.406944310251196,
+      "rank_pct": 0.05574912891986063,
+      "rank_position": 32,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688420.SH",
+      "factor_value": 12.409539718391104,
+      "rank_pct": 0.05749128919860627,
+      "rank_position": 33,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688013.SH",
+      "factor_value": 12.4228692640115,
+      "rank_pct": 0.059233449477351915,
+      "rank_position": 34,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688613.SH",
+      "factor_value": 12.44837927143503,
+      "rank_pct": 0.06097560975609756,
+      "rank_position": 35,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688189.SH",
+      "factor_value": 12.473155758697605,
+      "rank_pct": 0.0627177700348432,
+      "rank_position": 36,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688132.SH",
+      "factor_value": 12.47950591155427,
+      "rank_pct": 0.06445993031358885,
+      "rank_position": 37,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688395.SH",
+      "factor_value": 12.485812138793339,
+      "rank_pct": 0.06620209059233449,
+      "rank_position": 38,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688060.SH",
+      "factor_value": 12.489378787046531,
+      "rank_pct": 0.06794425087108014,
+      "rank_position": 39,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688156.SH",
+      "factor_value": 12.493850042313445,
+      "rank_pct": 0.06968641114982578,
+      "rank_position": 40,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688369.SH",
+      "factor_value": 12.513670815310755,
+      "rank_pct": 0.07142857142857142,
+      "rank_position": 41,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688203.SH",
+      "factor_value": 12.536375847727394,
+      "rank_pct": 0.07317073170731707,
+      "rank_position": 42,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688597.SH",
+      "factor_value": 12.538719822715803,
+      "rank_pct": 0.07491289198606271,
+      "rank_position": 43,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688251.SH",
+      "factor_value": 12.550339121922239,
+      "rank_pct": 0.07665505226480836,
+      "rank_position": 44,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688468.SH",
+      "factor_value": 12.5510126152066,
+      "rank_pct": 0.078397212543554,
+      "rank_position": 45,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688355.SH",
+      "factor_value": 12.55885451583209,
+      "rank_pct": 0.08013937282229965,
+      "rank_position": 46,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688244.SH",
+      "factor_value": 12.560301818658337,
+      "rank_pct": 0.08188153310104529,
+      "rank_position": 47,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688113.SH",
+      "factor_value": 12.576911855204115,
+      "rank_pct": 0.08362369337979095,
+      "rank_position": 48,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688178.SH",
+      "factor_value": 12.577096911744238,
+      "rank_pct": 0.08536585365853659,
+      "rank_position": 49,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688272.SH",
+      "factor_value": 12.585265644299476,
+      "rank_pct": 0.08710801393728224,
+      "rank_position": 50,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688501.SH",
+      "factor_value": 12.590639192025467,
+      "rank_pct": 0.08885017421602788,
+      "rank_position": 51,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688338.SH",
+      "factor_value": 12.597864739898288,
+      "rank_pct": 0.09059233449477352,
+      "rank_position": 52,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688265.SH",
+      "factor_value": 12.60162876974704,
+      "rank_pct": 0.09233449477351917,
+      "rank_position": 53,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688310.SH",
+      "factor_value": 12.606789157547569,
+      "rank_pct": 0.09407665505226481,
+      "rank_position": 54,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688096.SH",
+      "factor_value": 12.634143966494253,
+      "rank_pct": 0.09581881533101046,
+      "rank_position": 55,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688450.SH",
+      "factor_value": 12.636428720538932,
+      "rank_pct": 0.0975609756097561,
+      "rank_position": 56,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688718.SH",
+      "factor_value": 12.64032781160439,
+      "rank_pct": 0.09930313588850175,
+      "rank_position": 57,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688687.SH",
+      "factor_value": 12.641318262692696,
+      "rank_pct": 0.10104529616724739,
+      "rank_position": 58,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688051.SH",
+      "factor_value": 12.655102760258753,
+      "rank_pct": 0.10278745644599303,
+      "rank_position": 59,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688367.SH",
+      "factor_value": 12.660642349638742,
+      "rank_pct": 0.10452961672473868,
+      "rank_position": 60,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688137.SH",
+      "factor_value": 12.662167333616202,
+      "rank_pct": 0.10627177700348432,
+      "rank_position": 61,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688314.SH",
+      "factor_value": 12.666132532988533,
+      "rank_pct": 0.10801393728222997,
+      "rank_position": 62,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688651.SH",
+      "factor_value": 12.675351509071687,
+      "rank_pct": 0.10975609756097561,
+      "rank_position": 63,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688373.SH",
+      "factor_value": 12.687021133508873,
+      "rank_pct": 0.11149825783972125,
+      "rank_position": 64,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688517.SH",
+      "factor_value": 12.693272006764923,
+      "rank_pct": 0.1132404181184669,
+      "rank_position": 65,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688560.SH",
+      "factor_value": 12.69375502845675,
+      "rank_pct": 0.11498257839721254,
+      "rank_position": 66,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688071.SH",
+      "factor_value": 12.694186015597547,
+      "rank_pct": 0.11672473867595819,
+      "rank_position": 67,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688755.SH",
+      "factor_value": 12.70898201829919,
+      "rank_pct": 0.11846689895470383,
+      "rank_position": 68,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688285.SH",
+      "factor_value": 12.713688101817679,
+      "rank_pct": 0.12020905923344948,
+      "rank_position": 69,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688246.SH",
+      "factor_value": 12.731352501450582,
+      "rank_pct": 0.12195121951219512,
+      "rank_position": 70,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688030.SH",
+      "factor_value": 12.7322319849828,
+      "rank_pct": 0.12369337979094076,
+      "rank_position": 71,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688098.SH",
+      "factor_value": 12.740359384392484,
+      "rank_pct": 0.1254355400696864,
+      "rank_position": 72,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688592.SH",
+      "factor_value": 12.745968171560152,
+      "rank_pct": 0.12717770034843207,
+      "rank_position": 73,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688316.SH",
+      "factor_value": 12.74994295547744,
+      "rank_pct": 0.1289198606271777,
+      "rank_position": 74,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688370.SH",
+      "factor_value": 12.75278512873358,
+      "rank_pct": 0.13066202090592335,
+      "rank_position": 75,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688080.SH",
+      "factor_value": 12.753876650782603,
+      "rank_pct": 0.13240418118466898,
+      "rank_position": 76,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688529.SH",
+      "factor_value": 12.757899155366372,
+      "rank_pct": 0.13414634146341464,
+      "rank_position": 77,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688357.SH",
+      "factor_value": 12.764287862838573,
+      "rank_pct": 0.13588850174216027,
+      "rank_position": 78,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688077.SH",
+      "factor_value": 12.773399401106932,
+      "rank_pct": 0.13763066202090593,
+      "rank_position": 79,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688435.SH",
+      "factor_value": 12.774806735110124,
+      "rank_pct": 0.13937282229965156,
+      "rank_position": 80,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688280.SH",
+      "factor_value": 12.77576259964944,
+      "rank_pct": 0.14111498257839722,
+      "rank_position": 81,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688557.SH",
+      "factor_value": 12.786404221294795,
+      "rank_pct": 0.14285714285714285,
+      "rank_position": 82,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688130.SH",
+      "factor_value": 12.787837432488042,
+      "rank_pct": 0.1445993031358885,
+      "rank_position": 83,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688576.SH",
+      "factor_value": 12.799900684526367,
+      "rank_pct": 0.14634146341463414,
+      "rank_position": 84,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688589.SH",
+      "factor_value": 12.801043587159302,
+      "rank_pct": 0.1480836236933798,
+      "rank_position": 85,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688657.SH",
+      "factor_value": 12.814382953877637,
+      "rank_pct": 0.14982578397212543,
+      "rank_position": 86,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688129.SH",
+      "factor_value": 12.816665840880397,
+      "rank_pct": 0.15156794425087108,
+      "rank_position": 87,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688600.SH",
+      "factor_value": 12.81882901904536,
+      "rank_pct": 0.15331010452961671,
+      "rank_position": 88,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688255.SH",
+      "factor_value": 12.824830223589986,
+      "rank_pct": 0.15505226480836237,
+      "rank_position": 89,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688511.SH",
+      "factor_value": 12.829590976519114,
+      "rank_pct": 0.156794425087108,
+      "rank_position": 90,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688619.SH",
+      "factor_value": 12.8296080323067,
+      "rank_pct": 0.15853658536585366,
+      "rank_position": 91,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688737.SH",
+      "factor_value": 12.830408085340862,
+      "rank_pct": 0.1602787456445993,
+      "rank_position": 92,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688015.SH",
+      "factor_value": 12.840961500510147,
+      "rank_pct": 0.16202090592334495,
+      "rank_position": 93,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688152.SH",
+      "factor_value": 12.851618388667505,
+      "rank_pct": 0.16376306620209058,
+      "rank_position": 94,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688602.SH",
+      "factor_value": 12.8592789536844,
+      "rank_pct": 0.16550522648083624,
+      "rank_position": 95,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688455.SH",
+      "factor_value": 12.869584683867252,
+      "rank_pct": 0.1672473867595819,
+      "rank_position": 96,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688606.SH",
+      "factor_value": 12.879333672745735,
+      "rank_pct": 0.16898954703832753,
+      "rank_position": 97,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688335.SH",
+      "factor_value": 12.882401464235953,
+      "rank_pct": 0.17073170731707318,
+      "rank_position": 98,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688509.SH",
+      "factor_value": 12.886668891596774,
+      "rank_pct": 0.17247386759581881,
+      "rank_position": 99,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688579.SH",
+      "factor_value": 12.894234796450926,
+      "rank_pct": 0.17421602787456447,
+      "rank_position": 100,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688247.SH",
+      "factor_value": 12.895429803017572,
+      "rank_pct": 0.1759581881533101,
+      "rank_position": 101,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688391.SH",
+      "factor_value": 12.897557115803174,
+      "rank_pct": 0.17770034843205576,
+      "rank_position": 102,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688238.SH",
+      "factor_value": 12.901980214210836,
+      "rank_pct": 0.1794425087108014,
+      "rank_position": 103,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688115.SH",
+      "factor_value": 12.903098319999335,
+      "rank_pct": 0.18118466898954705,
+      "rank_position": 104,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688057.SH",
+      "factor_value": 12.906595062052347,
+      "rank_pct": 0.18292682926829268,
+      "rank_position": 105,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688292.SH",
+      "factor_value": 12.912955803619381,
+      "rank_pct": 0.18466898954703834,
+      "rank_position": 106,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688070.SH",
+      "factor_value": 12.9325184190644,
+      "rank_pct": 0.18641114982578397,
+      "rank_position": 107,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688317.SH",
+      "factor_value": 12.9366467096581,
+      "rank_pct": 0.18815331010452963,
+      "rank_position": 108,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688571.SH",
+      "factor_value": 12.936670019191615,
+      "rank_pct": 0.18989547038327526,
+      "rank_position": 109,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688722.SH",
+      "factor_value": 12.94079928214394,
+      "rank_pct": 0.1916376306620209,
+      "rank_position": 110,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688163.SH",
+      "factor_value": 12.943626778961361,
+      "rank_pct": 0.19337979094076654,
+      "rank_position": 111,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688302.SH",
+      "factor_value": 12.947598323393516,
+      "rank_pct": 0.1951219512195122,
+      "rank_position": 112,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688459.SH",
+      "factor_value": 12.948012371209098,
+      "rank_pct": 0.19686411149825783,
+      "rank_position": 113,
+      "planned_weight": 0.008771929824561403
+    },
+    {
+      "symbol": "688229.SH",
+      "factor_value": 12.949653876433214,
+      "rank_pct": 0.1986062717770035,
+      "rank_position": 114,
+      "planned_weight": 0.008771929824561403
+    }
+  ]
+}

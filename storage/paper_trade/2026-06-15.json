@@ -1,0 +1,45 @@
+{
+  "prediction_date": "2026-06-15",
+  "generated_at": "2026-06-16T09:05:10.215911",
+  "strategy": "log_mv_reverse",
+  "use_execution": true,
+  "top_pct": 0.2,
+  "top_n": 5,
+  "picks": [
+    {
+      "symbol": "688287.SH",
+      "factor_value": 9.525886403466838,
+      "rank_pct": 0.0017421602787456446,
+      "rank_position": 1,
+      "planned_weight": 0.2
+    },
+    {
+      "symbol": "688701.SH",
+      "factor_value": 11.61892995803009,
+      "rank_pct": 0.003484320557491289,
+      "rank_position": 2,
+      "planned_weight": 0.2
+    },
+    {
+      "symbol": "688217.SH",
+      "factor_value": 11.761706643281174,
+      "rank_pct": 0.005226480836236934,
+      "rank_position": 3,
+      "planned_weight": 0.2
+    },
+    {
+      "symbol": "688296.SH",
+      "factor_value": 11.862030705256863,
+      "rank_pct": 0.006968641114982578,
+      "rank_position": 4,
+      "planned_weight": 0.2
+    },
+    {
+      "symbol": "688067.SH",
+      "factor_value": 11.911627756699003,
+      "rank_pct": 0.008710801393728223,
+      "rank_position": 5,
+      "planned_weight": 0.2
+    }
+  ]
+}

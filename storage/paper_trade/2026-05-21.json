@@ -1,0 +1,79 @@
+{
+  "prediction_date": "2026-05-21",
+  "generated_at": "2026-05-22T09:05:03.340824",
+  "strategy": "log_mv_reverse",
+  "use_execution": true,
+  "top_pct": 0.2,
+  "picks": [
+    {
+      "symbol": "688114.SH",
+      "factor_value": 14.618831500056721,
+      "rank_pct": 0.0196078431372549,
+      "rank_position": 1,
+      "planned_weight": 0.1
+    },
+    {
+      "symbol": "688278.SH",
+      "factor_value": 14.681989465952396,
+      "rank_pct": 0.0392156862745098,
+      "rank_position": 2,
+      "planned_weight": 0.1
+    },
+    {
+      "symbol": "688349.SH",
+      "factor_value": 14.80805477441915,
+      "rank_pct": 0.058823529411764705,
+      "rank_position": 3,
+      "planned_weight": 0.1
+    },
+    {
+      "symbol": "688297.SH",
+      "factor_value": 14.895169698426654,
+      "rank_pct": 0.0784313725490196,
+      "rank_position": 4,
+      "planned_weight": 0.1
+    },
+    {
+      "symbol": "688608.SH",
+      "factor_value": 14.94547002847814,
+      "rank_pct": 0.09803921568627451,
+      "rank_position": 5,
+      "planned_weight": 0.1
+    },
+    {
+      "symbol": "688065.SH",
+      "factor_value": 14.954133157650695,
+      "rank_pct": 0.11764705882352941,
+      "rank_position": 6,
+      "planned_weight": 0.1
+    },
+    {
+      "symbol": "688617.SH",
+      "factor_value": 14.956588673735231,
+      "rank_pct": 0.13725490196078433,
+      "rank_position": 7,
+      "planned_weight": 0.1
+    },
+    {
+      "symbol": "688538.SH",
+      "factor_value": 15.001167969944266,
+      "rank_pct": 0.1568627450980392,
+      "rank_position": 8,
+      "planned_weight": 0.1
+    },
+    {
+      "symbol": "688169.SH",
+      "factor_value": 15.03125043561941,
+      "rank_pct": 0.17647058823529413,
+      "rank_position": 9,
+      "planned_weight": 0.1
+    },
+    {
+      "symbol": "688728.SH",
+      "factor_value": 15.147627409818503,
+      "rank_pct": 0.19607843137254902,
+      "rank_position": 10,
+      "planned_weight": 0.1
+    }
+  ]
+}
