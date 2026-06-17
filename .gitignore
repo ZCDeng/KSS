@@ -45,3 +45,20 @@ storage/*.db-wal
 
 # 临时回测产物（保留 storage/reports/ 的 *.md，不保留 png 中间结果）
 *.parquet
+
+# Kronos 离线产物：冻结模型 artifact + 预测 sqlite（可由批处理重建，不入库）
+storage/kronos/
+
+# 个股资金流 / 指数行情数据（体积大，由数据脚本重建，不入库）
+mf_*.csv
+idx_*.csv
+
+# agent / 工具私有状态（同 .claude/）
+.pi/
+
+# storage 缓存 / legacy（可重建，不入库）
+storage/bj_cache/
+storage/legacy/
+
+# scan 排名输出（数据产物，可重建）
+scan_*_rank.csv
