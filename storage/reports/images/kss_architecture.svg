@@ -1,219 +1,107 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 820" width="1280" height="820">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 990" width="1280" height="990">
 <defs>
-  <marker id="arr" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#2563eb"/></marker>
-  <marker id="arr-green" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#059669"/></marker>
-  <marker id="arr-orange" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#ea580c"/></marker>
-  <marker id="arr-purple" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#7c3aed"/></marker>
-  <marker id="arr-gray" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#6b7280"/></marker>
-  <filter id="sh" x="-5%" y="-5%" width="115%" height="115%"><feDropShadow dx="1" dy="2" stdDeviation="2" flood-color="#000" flood-opacity="0.08"/></filter>
+<marker id="ar" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#6b7280"/></marker>
+<marker id="arB" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2563eb"/></marker>
+<marker id="arO" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#ea580c"/></marker>
 </defs>
-<style>
-  text { font-family: "PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif; }
-  .t1 { font-size: 26px; font-weight: 700; fill: #1e293b; }
-  .t2 { font-size: 14px; fill: #64748b; }
-  .ly { font-size: 11px; font-weight: 600; fill: #475569; letter-spacing: 0.08em; }
-  .nt { font-size: 13px; font-weight: 600; fill: #1e293b; }
-  .nd { font-size: 10.5px; fill: #64748b; }
-  .al { font-size: 10px; fill: #2563eb; }
-  .ag { font-size: 10px; fill: #059669; }
-  .ao { font-size: 10px; fill: #ea580c; }
-  .ap { font-size: 10px; fill: #7c3aed; }
-  .ay { font-size: 10px; fill: #6b7280; }
-  .dt { font-size: 11.5px; font-weight: 600; }
-  .dd { font-size: 9.5px; fill: #475569; }
-</style>
-<rect width="1280" height="820" fill="#f8fafc"/>
-<text x="640" y="42" class="t1" text-anchor="middle">KSS 系统架构总览</text>
-<text x="640" y="62" class="t2" text-anchor="middle">Keda Stock System -- 科创板量化回测与诊断框架</text>
-<rect x="34" y="78" width="1196" height="154" rx="8" fill="#eff6ff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="6,3"/>
-<text x="48" y="94" class="ly">数据与因子层</text>
-<rect x="42.0" y="106" width="216" height="110" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2" filter="url(#sh)"/>
-<rect x="42.0" y="106" width="216" height="4" rx="2" fill="#2563eb"/>
-<text x="150.0" y="137" class="nt" text-anchor="middle">数据源</text>
-<text x="150.0" y="152" class="nd" text-anchor="middle">Tushare Pro API</text>
-<text x="150.0" y="166" class="nd" text-anchor="middle">AKShare 免费源</text>
-<text x="150.0" y="180" class="nd" text-anchor="middle">双源冗余 + 清洗</text>
-<rect x="278.0" y="106" width="216" height="110" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2" filter="url(#sh)"/>
-<rect x="278.0" y="106" width="216" height="4" rx="2" fill="#2563eb"/>
-<text x="386.0" y="137" class="nt" text-anchor="middle">数据存储</text>
-<text x="386.0" y="152" class="nd" text-anchor="middle">SQLite (kss_quotes.db)</text>
-<text x="386.0" y="166" class="nd" text-anchor="middle">CSV 横截面面板</text>
-<text x="386.0" y="180" class="nd" text-anchor="middle">51 只科创板日线</text>
-<rect x="514.0" y="100" width="216" height="120" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2" filter="url(#sh)"/>
-<rect x="514.0" y="100" width="216" height="4" rx="2" fill="#2563eb"/>
-<text x="622.0" y="131" class="nt" text-anchor="middle">因子工程</text>
-<text x="622.0" y="146" class="nd" text-anchor="middle">KSS 原生 49 因子</text>
-<text x="622.0" y="160" class="nd" text-anchor="middle">Qlib Alpha158 移植</text>
-<text x="622.0" y="174" class="nd" text-anchor="middle">FactorPipeline 标准化</text>
-<text x="622.0" y="188" class="nd" text-anchor="middle">行业 / 市值中性化</text>
-<rect x="750.0" y="106" width="216" height="110" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2" filter="url(#sh)"/>
-<rect x="750.0" y="106" width="216" height="4" rx="2" fill="#f59e0b"/>
-<text x="858.0" y="137" class="nt" text-anchor="middle">因子筛选 (DSR)</text>
-<text x="858.0" y="152" class="nd" text-anchor="middle">Alpha158 -&gt; mined 族</text>
-<text x="858.0" y="166" class="nd" text-anchor="middle">97 |t|&gt;=2 -&gt; 0 通过</text>
-<text x="858.0" y="180" class="nd" text-anchor="middle">仅保留先验信念因子</text>
-<rect x="986.0" y="106" width="216" height="110" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2" filter="url(#sh)"/>
-<rect x="986.0" y="106" width="216" height="4" rx="2" fill="#2563eb"/>
-<text x="1094.0" y="137" class="nt" text-anchor="middle">截面面板</text>
-<text x="1094.0" y="152" class="nd" text-anchor="middle">trade_date x symbol</text>
-<text x="1094.0" y="166" class="nd" text-anchor="middle">feature_cols + label_col</text>
-<text x="1094.0" y="180" class="nd" text-anchor="middle">industry / log_mv 元数据</text>
-<line x1="258.0" y1="161" x2="278.0" y2="161" stroke="#2563eb" stroke-width="1.8" marker-end="url(#arr)"/>
-<rect x="253.0" y="152.0" width="30" height="16" rx="3" fill="#f8fafc" opacity="0.92"/>
-<text x="268.0" y="165.0" class="al" text-anchor="middle">拉取</text>
-<line x1="494.0" y1="161" x2="514.0" y2="161" stroke="#2563eb" stroke-width="1.8" marker-end="url(#arr)"/>
-<rect x="489.0" y="152.0" width="30" height="16" rx="3" fill="#f8fafc" opacity="0.92"/>
-<text x="504.0" y="165.0" class="al" text-anchor="middle">注入</text>
-<line x1="730.0" y1="161" x2="750.0" y2="161" stroke="#2563eb" stroke-width="1.8" marker-end="url(#arr)"/>
-<rect x="725.0" y="152.0" width="30" height="16" rx="3" fill="#f8fafc" opacity="0.92"/>
-<text x="740.0" y="165.0" class="al" text-anchor="middle">筛选</text>
-<line x1="966.0" y1="161" x2="986.0" y2="161" stroke="#2563eb" stroke-width="1.8" marker-end="url(#arr)"/>
-<rect x="961.0" y="152.0" width="30" height="16" rx="3" fill="#f8fafc" opacity="0.92"/>
-<text x="976.0" y="165.0" class="al" text-anchor="middle">输出</text>
-<line x1="1094.0" y1="218" x2="1094.0" y2="252" stroke="#2563eb" stroke-width="1.8" marker-end="url(#arr)"/>
-<rect x="1070.0" y="226.0" width="48" height="16" rx="3" fill="#f8fafc" opacity="0.92"/>
-<text x="1094.0" y="239.0" class="al" text-anchor="middle">喂入引擎</text>
-<rect x="34" y="258" width="1196" height="164" rx="8" fill="#f0fdf4" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="6,3"/>
-<text x="48" y="274" class="ly">回测引擎层</text>
-<rect x="42.0" y="286" width="216" height="120" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2" filter="url(#sh)"/>
-<rect x="42.0" y="286" width="216" height="4" rx="2" fill="#059669"/>
-<text x="150.0" y="317" class="nt" text-anchor="middle">BacktestEngine</text>
-<text x="150.0" y="332" class="nd" text-anchor="middle">walk_forward()</text>
-<text x="150.0" y="346" class="nd" text-anchor="middle">滚动训练窗 120d</text>
-<text x="150.0" y="360" class="nd" text-anchor="middle">retrain_freq 5d ~ 10d</text>
-<text x="150.0" y="374" class="nd" text-anchor="middle">purge_gap 防标签泄漏</text>
-<rect x="278.0" y="286" width="216" height="120" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2" filter="url(#sh)"/>
-<rect x="278.0" y="286" width="216" height="4" rx="2" fill="#059669"/>
-<text x="386.0" y="317" class="nt" text-anchor="middle">模型层</text>
-<text x="386.0" y="332" class="nd" text-anchor="middle">LightGBM Regressor (MSE)</text>
-<text x="386.0" y="346" class="nd" text-anchor="middle">LightGBM Ranker (lambdarank)</text>
-<text x="386.0" y="360" class="nd" text-anchor="middle">sample_weight 概念漂移</text>
-<text x="386.0" y="374" class="nd" text-anchor="middle">feature_selector 滚动选K</text>
-<rect x="514.0" y="286" width="216" height="120" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2" filter="url(#sh)"/>
-<rect x="514.0" y="286" width="216" height="4" rx="2" fill="#059669"/>
-<text x="622.0" y="317" class="nt" text-anchor="middle">组合与选股</text>
-<text x="622.0" y="332" class="nd" text-anchor="middle">WalkForwardCombiner</text>
-<text x="622.0" y="346" class="nd" text-anchor="middle">滚动重选去权重偏差</text>
-<text x="622.0" y="360" class="nd" text-anchor="middle">Top Pct 截面选股</text>
-<text x="622.0" y="374" class="nd" text-anchor="middle">Equal-Weight 建仓</text>
-<rect x="750.0" y="282" width="216" height="126" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2" filter="url(#sh)"/>
-<rect x="750.0" y="282" width="216" height="4" rx="2" fill="#f59e0b"/>
-<text x="858.0" y="313" class="nt" text-anchor="middle">ExecutionModel</text>
-<text x="858.0" y="328" class="nd" text-anchor="middle">科创板 20% 涨跌停</text>
-<text x="858.0" y="342" class="nd" text-anchor="middle">停牌 / ST / 零成交过滤</text>
-<text x="858.0" y="356" class="nd" text-anchor="middle">部分成交 + 开盘滑点</text>
-<text x="858.0" y="370" class="nd" text-anchor="middle">T+1 建仓 / T+2 换仓</text>
-<rect x="986.0" y="286" width="216" height="120" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2" filter="url(#sh)"/>
-<rect x="986.0" y="286" width="216" height="4" rx="2" fill="#059669"/>
-<text x="1094.0" y="317" class="nt" text-anchor="middle">回测输出</text>
-<text x="1094.0" y="332" class="nd" text-anchor="middle">net_return 时间序列</text>
-<text x="1094.0" y="346" class="nd" text-anchor="middle">turnover / cost 明细</text>
-<text x="1094.0" y="360" class="nd" text-anchor="middle">n_tradable_pre/post</text>
-<line x1="258.0" y1="346" x2="278.0" y2="346" stroke="#2563eb" stroke-width="1.8" marker-end="url(#arr)"/>
-<rect x="253.0" y="337.0" width="30" height="16" rx="3" fill="#f8fafc" opacity="0.92"/>
-<text x="268.0" y="350.0" class="al" text-anchor="middle">训练</text>
-<line x1="494.0" y1="346" x2="514.0" y2="346" stroke="#2563eb" stroke-width="1.8" marker-end="url(#arr)"/>
-<rect x="489.0" y="337.0" width="30" height="16" rx="3" fill="#f8fafc" opacity="0.92"/>
-<text x="504.0" y="350.0" class="al" text-anchor="middle">预测</text>
-<line x1="730.0" y1="346" x2="750.0" y2="346" stroke="#2563eb" stroke-width="1.8" marker-end="url(#arr)"/>
-<rect x="725.0" y="337.0" width="30" height="16" rx="3" fill="#f8fafc" opacity="0.92"/>
-<text x="740.0" y="350.0" class="al" text-anchor="middle">选股</text>
-<line x1="966.0" y1="346" x2="986.0" y2="346" stroke="#2563eb" stroke-width="1.8" marker-end="url(#arr)"/>
-<rect x="961.0" y="337.0" width="30" height="16" rx="3" fill="#f8fafc" opacity="0.92"/>
-<text x="976.0" y="350.0" class="al" text-anchor="middle">成交</text>
-<line x1="386.0" y1="408" x2="386.0" y2="444" stroke="#059669" stroke-width="1.8" marker-end="url(#arr-green)"/>
-<rect x="362.0" y="417.0" width="48" height="16" rx="3" fill="#f8fafc" opacity="0.92"/>
-<text x="386.0" y="430.0" class="ag" text-anchor="middle">净值流入</text>
-<rect x="34" y="450" width="1196" height="148" rx="8" fill="#fff7ed" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="6,3"/>
-<text x="48" y="466" class="ly">显著性检验层</text>
-<rect x="42" y="480" width="452" height="100" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2" filter="url(#sh)"/>
-<rect x="42" y="480" width="452" height="4" rx="2" fill="#ea580c"/>
-<text x="268.0" y="511" class="nt" text-anchor="middle">Deflated Sharpe Ratio (DSR)</text>
-<text x="268.0" y="526" class="nd" text-anchor="middle">t-test -&gt; Newey-West -&gt; Bootstrap CI -&gt; DSR = P[Sharpe &lt;= 0 | all trials]</text>
-<text x="268.0" y="540" class="nd" text-anchor="middle">5 strategy_family: prior(1) / single_factor(2) / small_grid(5) / tuned(20) / mined(100)</text>
-<rect x="514.0" y="476" width="216" height="106" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2" filter="url(#sh)"/>
-<rect x="514.0" y="476" width="216" height="4" rx="2" fill="#ea580c"/>
-<text x="622.0" y="507" class="nt" text-anchor="middle">三门硬性门槛</text>
-<text x="622.0" y="522" class="nd" text-anchor="middle">is_deployable()</text>
-<text x="622.0" y="536" class="nd" text-anchor="middle">DSR &gt;= 0.4</text>
-<text x="622.0" y="550" class="nd" text-anchor="middle">p &lt; 0.05</text>
-<text x="622.0" y="564" class="nd" text-anchor="middle">Sharpe &gt;= 0.5</text>
-<rect x="750.0" y="476" width="216" height="106" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2" filter="url(#sh)"/>
-<rect x="750.0" y="476" width="216" height="4" rx="2" fill="#ea580c"/>
-<text x="858.0" y="507" class="nt" text-anchor="middle">StrategyRegistry</text>
-<text x="858.0" y="522" class="nd" text-anchor="middle">register() 自动校验</text>
-<text x="858.0" y="536" class="nd" text-anchor="middle">DeploymentBlockedError</text>
-<text x="858.0" y="550" class="nd" text-anchor="middle">按 family 选 n_trials</text>
-<rect x="986.0" y="480" width="216" height="100" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2" filter="url(#sh)"/>
-<rect x="986.0" y="480" width="216" height="4" rx="2" fill="#ea580c"/>
-<text x="1094.0" y="511" class="nt" text-anchor="middle">通过 / 拒绝</text>
-<text x="1094.0" y="526" class="nd" text-anchor="middle">log_mv prior -&gt; DSR 1.00 OK</text>
-<text x="1094.0" y="540" class="nd" text-anchor="middle">LGB mined -&gt; DSR &lt; 0.04 FAIL</text>
-<text x="1094.0" y="554" class="nd" text-anchor="middle">Alpha158 mined -&gt; 0 通过 FAIL</text>
-<line x1="409.2" y1="530" x2="514.0" y2="530" stroke="#ea580c" stroke-width="1.8" marker-end="url(#arr-orange)"/>
-<rect x="428.6" y="521.0" width="66" height="16" rx="3" fill="#f8fafc" opacity="0.92"/>
-<text x="461.6" y="534.0" class="ao" text-anchor="middle">DSR 矫正</text>
-<line x1="730.0" y1="530" x2="750.0" y2="530" stroke="#ea580c" stroke-width="1.8" marker-end="url(#arr-orange)"/>
-<rect x="725.0" y="521.0" width="30" height="16" rx="3" fill="#f8fafc" opacity="0.92"/>
-<text x="740.0" y="534.0" class="ao" text-anchor="middle">注册</text>
-<line x1="966.0" y1="530" x2="986.0" y2="530" stroke="#ea580c" stroke-width="1.8" marker-end="url(#arr-orange)"/>
-<rect x="961.0" y="521.0" width="30" height="16" rx="3" fill="#f8fafc" opacity="0.92"/>
-<text x="976.0" y="534.0" class="ao" text-anchor="middle">判定</text>
-<line x1="1094.0" y1="582" x2="1094.0" y2="618" stroke="#ea580c" stroke-width="1.8" marker-end="url(#arr-orange)"/>
-<rect x="1070.0" y="591.0" width="48" height="16" rx="3" fill="#f8fafc" opacity="0.92"/>
-<text x="1094.0" y="604.0" class="ao" text-anchor="middle">上线策略</text>
-<rect x="34" y="624" width="1196" height="138" rx="8" fill="#f5f3ff" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="6,3"/>
-<text x="48" y="640" class="ly">预测推送与运维层</text>
-<rect x="42.0" y="652" width="216" height="96" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2" filter="url(#sh)"/>
-<rect x="42.0" y="652" width="216" height="4" rx="2" fill="#7c3aed"/>
-<text x="150.0" y="683" class="nt" text-anchor="middle">CrossSectionalForecast</text>
-<text x="150.0" y="698" class="nd" text-anchor="middle">predict_pool() 截面排序</text>
-<text x="150.0" y="712" class="nd" text-anchor="middle">predict_single() 单票</text>
-<text x="150.0" y="726" class="nd" text-anchor="middle">Ranking-based 选股</text>
-<rect x="278.0" y="652" width="216" height="96" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2" filter="url(#sh)"/>
-<rect x="278.0" y="652" width="216" height="4" rx="2" fill="#7c3aed"/>
-<text x="386.0" y="683" class="nt" text-anchor="middle">纸交易日志</text>
-<text x="386.0" y="698" class="nd" text-anchor="middle">paper_trade_log_mv.py</text>
-<text x="386.0" y="712" class="nd" text-anchor="middle">--channel telegram/all</text>
-<text x="386.0" y="726" class="nd" text-anchor="middle">--summary 累计对比</text>
-<text x="386.0" y="740" class="nd" text-anchor="middle">JSON 日级 append-only</text>
-<rect x="514.0" y="652" width="216" height="96" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2" filter="url(#sh)"/>
-<rect x="514.0" y="652" width="216" height="4" rx="2" fill="#7c3aed"/>
-<text x="622.0" y="683" class="nt" text-anchor="middle">Telegram Bot 推送</text>
-<text x="622.0" y="698" class="nd" text-anchor="middle">云 Bot API (零运维)</text>
-<text x="622.0" y="712" class="nd" text-anchor="middle">日报 9:00 选股名单</text>
-<text x="622.0" y="726" class="nd" text-anchor="middle">周报周五 17:00</text>
-<text x="622.0" y="740" class="nd" text-anchor="middle">Markdown 格式消息</text>
-<rect x="750.0" y="652" width="216" height="96" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2" filter="url(#sh)"/>
-<rect x="750.0" y="652" width="216" height="4" rx="2" fill="#7c3aed"/>
-<text x="858.0" y="683" class="nt" text-anchor="middle">Cron 调度</text>
-<text x="858.0" y="698" class="nd" text-anchor="middle">08:30 数据更新</text>
-<text x="858.0" y="712" class="nd" text-anchor="middle">09:05 选股推送</text>
-<text x="858.0" y="726" class="nd" text-anchor="middle">周五 17:00 周报</text>
-<text x="858.0" y="740" class="nd" text-anchor="middle">grep .env 安全注入</text>
-<rect x="986.0" y="652" width="216" height="96" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2" filter="url(#sh)"/>
-<rect x="986.0" y="652" width="216" height="4" rx="2" fill="#7c3aed"/>
-<text x="1094.0" y="683" class="nt" text-anchor="middle">监控与告警</text>
-<text x="1094.0" y="698" class="nd" text-anchor="middle">summary 累计 real vs theory</text>
-<text x="1094.0" y="712" class="nd" text-anchor="middle">weight_tracking_error</text>
-<text x="1094.0" y="726" class="nd" text-anchor="middle">缺日 reconciliation</text>
-<text x="1094.0" y="740" class="nd" text-anchor="middle">回撤超限 threshold 告警</text>
-<line x1="258.0" y1="700" x2="278.0" y2="700" stroke="#7c3aed" stroke-width="1.8" marker-end="url(#arr-purple)"/>
-<rect x="253.0" y="691.0" width="30" height="16" rx="3" fill="#f8fafc" opacity="0.92"/>
-<text x="268.0" y="704.0" class="ap" text-anchor="middle">预测</text>
-<line x1="494.0" y1="700" x2="514.0" y2="700" stroke="#7c3aed" stroke-width="1.8" marker-end="url(#arr-purple)"/>
-<rect x="489.0" y="691.0" width="30" height="16" rx="3" fill="#f8fafc" opacity="0.92"/>
-<text x="504.0" y="704.0" class="ap" text-anchor="middle">推送</text>
-<line x1="966.0" y1="700" x2="986.0" y2="700" stroke="#6b7280" stroke-width="1.8" marker-end="url(#arr-gray)"/>
-<rect x="961.0" y="691.0" width="30" height="16" rx="3" fill="#f8fafc" opacity="0.92"/>
-<text x="976.0" y="704.0" class="ay" text-anchor="middle">监控</text>
-<rect x="34" y="610" width="1196" height="3" fill="#cbd5e1" rx="1"/>
-<rect x="34" y="780" width="1196" height="32" rx="6" fill="#1e293b"/>
-<text x="242" y="791" class="dt" fill="#93c5fd" text-anchor="middle">8 层 Look-ahead Bias 防御链</text>
-<text x="242" y="805" class="dd" text-anchor="middle">单股 -&gt; 阈值 -&gt; 权重 -&gt; 选因子 -&gt; 暴露 -&gt; 成交 -&gt; 选择 -&gt; meta-bias</text>
-<text x="637" y="791" class="dt" fill="#fbbf24" text-anchor="middle">对抗测试 6 场景</text>
-<text x="637" y="805" class="dd" text-anchor="middle">随机噪声 / look-ahead / 幸存者 / 末段集中 / 标签泄漏 / 特征泄漏</text>
-<text x="1032" y="791" class="dt" fill="#34d399" text-anchor="middle">455 Tests Passed / 3 xfailed / 6 deselected (DL)</text>
-<text x="1032" y="805" class="dd" text-anchor="middle">回归测试覆盖所有核心模块 / 改动即时检测退化</text>
-<text x="46" y="814" class="nd" fill="#94a3b8">箭头: 蓝 = 数据流 | 绿 = 模型流 | 橙 = 判定流 | 紫 = 推送流 | 灰 = 控制流</text>
+<rect x="0" y="0" width="1280" height="990" rx="0" fill="#ffffff" stroke="#ffffff" stroke-width="0"/>
+<text x="36" y="42" font-size="26" fill="#1a1a2e" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">KSS · Keda Stock System — 架构总览</text>
+<text x="38" y="66" font-size="13" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">A 股量化回测 + 诊断框架 · 科创+创业 100 只样本池 · “实事求是”剥离 look-ahead bias · origin/main 2026-06</text>
+<rect x="30" y="90" width="1220" height="150" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.4" stroke-dasharray="6,4"/>
+<text x="46" y="114" font-size="14" fill="#1a1a2e" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">① 数据层 · kss/data</text>
+<rect x="50" y="126" width="575" height="100" rx="8" fill="#ecfdf5" stroke="#059669" stroke-width="1.5"/>
+<text x="64" y="148" font-size="12.5" fill="#065f46" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">PIT 回测骨架（Tushare 时点数据 · 可复现）</text>
+<text x="64" y="170" font-size="11.5" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">tushare_client · cs_data CSV · sqlite_store · cache_manager</text>
+<text x="64" y="188" font-size="11.5" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">data_loader · suspension_data · industry_mapping</text>
+<text x="64" y="212" font-size="11" fill="#065f46" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">→ 8 轮实验的回测输入；PIT 不可回流</text>
+<rect x="655" y="126" width="575" height="100" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-width="1.5"/>
+<text x="669" y="148" font-size="12.5" fill="#9a3412" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">实时解读层（免费无 Key HTTP · 不可回流回测）</text>
+<text x="669" y="170" font-size="11.5" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">ths_client（同花顺热点）· macro_client</text>
+<text x="669" y="188" font-size="11.5" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">dragon_tiger_client（龙虎榜）· margin_client（科创两融）</text>
+<rect x="669" y="200" width="52" height="16" rx="4" fill="#fee2e2" stroke="#dc2626" stroke-width="1"/>
+<text x="695" y="212" font-size="10" fill="#dc2626" font-weight="700" text-anchor="middle" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">本轮新增</text>
+<rect x="30" y="262" width="595" height="322" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="1.4" stroke-dasharray="6,4"/>
+<text x="46" y="286" font-size="14" fill="#2563eb" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">② 回测诊断主干（离线 · 实事求是）</text>
+<rect x="655" y="262" width="595" height="322" rx="10" fill="#ffffff" stroke="#ea580c" stroke-width="1.4" stroke-dasharray="6,4"/>
+<text x="671" y="286" font-size="14" fill="#ea580c" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">③ 板块复盘解读（在线 · LLM 投顾文字）</text>
+<rect x="60" y="298" width="535" height="46" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+<text x="76" y="320" font-size="12.5" fill="#1a1a2e" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">特征工程 · kss/features</text>
+<text x="76" y="338" font-size="11" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">alpha158 · technical · valuation · volume · volatility · selection</text>
+<line x1="327" y1="344" x2="327" y2="352" stroke="#2563eb" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="60" y="352" width="535" height="58" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+<text x="76" y="374" font-size="12.5" fill="#1a1a2e" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">模型 + 策略 · kss/models · kss/strategies</text>
+<text x="76" y="392" font-size="11" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">lightgbm(_ranker) · dl_models · registry</text>
+<text x="76" y="409" font-size="11" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">cross_sectional · multi_factor · ensemble · risk_filters</text>
+<line x1="327" y1="410" x2="327" y2="418" stroke="#2563eb" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="60" y="418" width="535" height="70" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+<text x="76" y="440" font-size="12.5" fill="#dc2626" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">★ 回测引擎 · kss/backtest（核心诊断）</text>
+<text x="76" y="460" font-size="11" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">engine · cross_section · single_stock · walk_forward_combiner</text>
+<text x="76" y="477" font-size="11" fill="#b91c1c" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">【bias 门】significance(DSR) · robustness · diagnostics · cost_model</text>
+<line x1="327" y1="488" x2="327" y2="500" stroke="#2563eb" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="60" y="500" width="535" height="46" rx="8" fill="#ecfdf5" stroke="#059669" stroke-width="1.5"/>
+<text x="76" y="522" font-size="12.5" fill="#065f46" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">仅 log_mv 反向存活 → paper_trade（纸交易日志）</text>
+<text x="76" y="539" font-size="10.5" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">8 层 bias 剥离后唯一过 Significance.is_deployable 的 α</text>
+<rect x="685" y="298" width="535" height="46" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-width="1.5"/>
+<text x="701" y="320" font-size="12.5" fill="#1a1a2e" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">sector/data_fetcher — 单日数据汇总</text>
+<text x="701" y="338" font-size="11" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">行业/概念资金流 · 北向 · 龙虎榜 · 科创两融 · ETF 雷达 · 同花顺热点</text>
+<line x1="952" y1="344" x2="952" y2="352" stroke="#ea580c" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="685" y="352" width="535" height="74" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+<text x="701" y="374" font-size="12.5" fill="#dc2626" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">★ sector/commentary — LLM 投顾文字</text>
+<text x="701" y="394" font-size="10.8" fill="#b91c1c" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">数字归代码：金融数字 render_*_line 确定性渲染，LLM 只做定性判断</text>
+<text x="701" y="412" font-size="11" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">+ formatter · fallback（LLM 故障降级，数据不静默丢）</text>
+<line x1="952" y1="426" x2="952" y2="440" stroke="#ea580c" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="685" y="440" width="535" height="46" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-width="1.5"/>
+<text x="701" y="462" font-size="12.5" fill="#1a1a2e" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">kss/notifications — 多通道推送</text>
+<text x="701" y="480" font-size="11" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">telegram_bot · dingtalk · email · console · manager</text>
+<line x1="952" y1="486" x2="952" y2="500" stroke="#ea580c" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="685" y="500" width="535" height="46" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-width="1.5"/>
+<text x="701" y="528" font-size="12.5" fill="#9a3412" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">→ Telegram 推送（17:30 盘后板块复盘）</text>
+<rect x="30" y="604" width="1220" height="104" rx="10" fill="#ffffff" stroke="#7c3aed" stroke-width="1.4" stroke-dasharray="6,4"/>
+<text x="46" y="628" font-size="14" fill="#7c3aed" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">④ 横向支撑（注入两条主干）</text>
+<rect x="50" y="640" width="290" height="56" rx="8" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.4"/>
+<text x="64" y="662" font-size="12" fill="#1a1a2e" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">macro · Bolton 周期框架</text>
+<text x="64" y="682" font-size="10.3" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">regime · rotation · valuation · derived · snapshot</text>
+<rect x="355" y="640" width="290" height="56" rx="8" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.4"/>
+<text x="369" y="662" font-size="12" fill="#1a1a2e" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">supply_chain · 紫苏叶卡位评分</text>
+<text x="369" y="682" font-size="10.3" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">scoring（四维）· registry · updater</text>
+<rect x="660" y="640" width="290" height="56" rx="8" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.4"/>
+<text x="674" y="662" font-size="12" fill="#1a1a2e" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">prediction · 预测</text>
+<text x="674" y="682" font-size="10.3" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">daily/weekly/cross_sectional_forecast · cycle_analyzer</text>
+<rect x="955" y="640" width="290" height="56" rx="8" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.4"/>
+<text x="969" y="662" font-size="12" fill="#1a1a2e" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">基础设施</text>
+<text x="969" y="682" font-size="10.3" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">llm(openai_client/sanitizer) · cli · models/registry · config</text>
+<rect x="30" y="724" width="1220" height="104" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.4" stroke-dasharray="6,4"/>
+<text x="46" y="748" font-size="14" fill="#1a1a2e" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">⑤ 运维定时链 · scripts/ + crontab（工作日）</text>
+<rect x="44" y="770" width="185" height="34" rx="6" fill="#f3f4f6" stroke="#d1d5db" stroke-width="1.2"/>
+<text x="136.5" y="791" font-size="11" fill="#1a1a2e" font-weight="600" text-anchor="middle" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">08:30 数据增量</text>
+<line x1="229" y1="787.0" x2="241" y2="787.0" stroke="#6b7280" stroke-width="1.6" marker-end="url(#ar)"/>
+<rect x="241" y="770" width="185" height="34" rx="6" fill="#f3f4f6" stroke="#d1d5db" stroke-width="1.2"/>
+<text x="333.5" y="791" font-size="11" fill="#1a1a2e" font-weight="600" text-anchor="middle" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">09:00 晨间背离预警</text>
+<line x1="426" y1="787.0" x2="438" y2="787.0" stroke="#6b7280" stroke-width="1.6" marker-end="url(#ar)"/>
+<rect x="438" y="770" width="185" height="34" rx="6" fill="#ecfdf5" stroke="#059669" stroke-width="1.2"/>
+<text x="530.5" y="791" font-size="11" fill="#1a1a2e" font-weight="600" text-anchor="middle" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">09:05 log_mv 纸交易</text>
+<line x1="623" y1="787.0" x2="635" y2="787.0" stroke="#6b7280" stroke-width="1.6" marker-end="url(#ar)"/>
+<rect x="635" y="770" width="185" height="34" rx="6" fill="#f3f4f6" stroke="#d1d5db" stroke-width="1.2"/>
+<text x="727.5" y="791" font-size="11" fill="#1a1a2e" font-weight="600" text-anchor="middle" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">15:30 combo 扫描</text>
+<line x1="820" y1="787.0" x2="832" y2="787.0" stroke="#6b7280" stroke-width="1.6" marker-end="url(#ar)"/>
+<rect x="832" y="770" width="185" height="34" rx="6" fill="#fff7ed" stroke="#ea580c" stroke-width="1.2"/>
+<text x="924.5" y="791" font-size="11" fill="#1a1a2e" font-weight="600" text-anchor="middle" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">17:30 板块复盘→TG</text>
+<line x1="1017" y1="787.0" x2="1029" y2="787.0" stroke="#6b7280" stroke-width="1.6" marker-end="url(#ar)"/>
+<rect x="1029" y="770" width="185" height="34" rx="6" fill="#f3f4f6" stroke="#d1d5db" stroke-width="1.2"/>
+<text x="1121.5" y="791" font-size="11" fill="#1a1a2e" font-weight="600" text-anchor="middle" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">17:45 北证50 扫描</text>
+<text x="46" y="820" font-size="11" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">周五加：17:00 周度纸交易 · 19:30 预测验证（walk-forward 命中率回测）</text>
+<rect x="30" y="844" width="1220" height="120" rx="10" fill="#fafafa" stroke="#d1d5db" stroke-width="1.4"/>
+<text x="46" y="868" font-size="14" fill="#1a1a2e" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">贯穿三条纪律</text>
+<rect x="46" y="880" width="370" height="68" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.6"/>
+<text x="60" y="904" font-size="12.5" fill="#2563eb" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">回测：bias 诚实</text>
+<text x="60" y="924" font-size="10.3" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">任何高 Sharpe 未过 8 层证伪前一律视为虚高；Sha</text>
+<text x="60" y="940" font-size="10.3" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">rpe 1.18→-0.53 是方法论</text>
+<rect x="455" y="880" width="370" height="68" rx="8" fill="#ffffff" stroke="#dc2626" stroke-width="1.6"/>
+<text x="469" y="904" font-size="12.5" fill="#dc2626" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">解读层：数字归代码</text>
+<text x="469" y="924" font-size="10.3" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">LLM 编金融数字已实证（龙虎榜 101→45）；paylo</text>
+<text x="469" y="940" font-size="10.3" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">ad 只给定性标签，真值代码追加</text>
+<rect x="864" y="880" width="370" height="68" rx="8" fill="#ffffff" stroke="#ea580c" stroke-width="1.6"/>
+<text x="878" y="904" font-size="12.5" fill="#ea580c" font-weight="700" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">数据：PIT 不可回流</text>
+<text x="878" y="924" font-size="10.3" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">实时解读层（东财/同花顺）严禁写回 backtest，否则重</text>
+<text x="878" y="940" font-size="10.3" fill="#6b7280" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Hiragino Sans GB','Heiti SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif">引入幸存者/look-ahead 偏差</text>
 </svg>
