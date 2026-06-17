@@ -33,6 +33,10 @@
 
 ![KSS 系统架构](storage/reports/images/kss_architecture.png)
 
+> 🖱️ **交互版架构图**：[`docs/kss_architecture_interactive.html`](docs/kss_architecture_interactive.html)
+> （浏览器打开，单文件零依赖）——点节点看每个子包详情，点顶栏 chip 点亮四条核心流程
+> （回测诊断 / 板块复盘 / 数字归代码 / 横向支撑注入）并动画化请求路径；含暗色模式。
+
 ## 这是什么
 
 KSS = **K**eda **S**tock **S**ystem。一个 Python 量化回测框架，

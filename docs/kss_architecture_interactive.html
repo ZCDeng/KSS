@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KSS — 架构全景</title>
+<script>
+  (function () {
+    const saved = localStorage.getItem('kss-theme');
+    const dark = saved ? saved === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    document.documentElement.classList.toggle('dark', dark);
+  })();
+</script>
+<style>
+  :root {
+    --bg: #FAF9F5; --surface: #FFFFFF; --surface2: #F0EEE6;
+    --ink: #141413; --body: #3D3D3A; --muted: #87867F;
+    --line: #D1CFC5; --line-soft: #E6E3DA;
+    --clay: #D97757; --clay-soft: rgba(217,119,87,0.10);
+    --olive: #788C5D; --olive-soft: rgba(120,140,93,0.12);
+    --gold: #C9A45C; --blue: #5B7E96; --blue-soft: rgba(91,126,150,0.12);
+    --zone: rgba(20,20,19,0.025); --zone-line: #D1CFC5;
+    --serif: ui-serif, Georgia, "Songti SC", serif;
+    --sans: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  html.dark {
+    --bg: #141413; --surface: #1F1F1D; --surface2: #2A2A28;
+    --ink: #FAF9F5; --body: #D1CFC5; --muted: #8A8980;
+    --line: #3D3D3A; --line-soft: #2A2A28;
+    --clay: #E48A6E; --clay-soft: rgba(228,138,110,0.16);
+    --olive: #9DB07C; --olive-soft: rgba(157,176,124,0.18);
+    --gold: #D4B36F; --blue: #7FA3BC; --blue-soft: rgba(127,163,188,0.16);
+    --zone: rgba(250,249,245,0.03); --zone-line: #3D3D3A;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--body); font-family: var(--sans);
+    -webkit-font-smoothing: antialiased; display: flex; flex-direction: column; overflow: hidden;
+  }
+  .bar {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 12px 20px; border-bottom: 1px solid var(--line-soft); flex: none;
+  }
+  .bar h1 { font-family: var(--serif); font-weight: 600; font-size: 19px; color: var(--ink); letter-spacing: -0.01em; }
+  .bar .sub { font-family: var(--mono); font-size: 10.5px; color: var(--muted); letter-spacing: 0.06em; }
+  .spacer { flex: 1; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em;
+    padding: 5px 11px; border: 1px solid var(--line); border-radius: 999px;
+    background: transparent; color: var(--muted); cursor: pointer; transition: all .15s ease;
+  }
+  .chip:hover { color: var(--ink); border-color: var(--muted); }
+  .chip.on { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+  #themeToggle {
+    font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em;
+    padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px;
+    background: transparent; color: var(--muted); cursor: pointer;
+  }
+  #themeToggle:hover { color: var(--ink); border-color: var(--muted); }
+
+  .stage { flex: 1; position: relative; min-height: 0; }
+  .stage svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+  .zone rect { fill: var(--zone); stroke: var(--zone-line); stroke-width: 1; stroke-dasharray: 5 5; }
+  .zone .ztitle { font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em; fill: var(--muted); }
+  .zone .zsub { font-family: var(--mono); font-size: 10px; fill: var(--muted); opacity: 0.75; }
+
+  .node { cursor: pointer; }
+  .node rect { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; transition: stroke .15s ease; }
+  .node:hover rect { stroke: var(--muted); }
+  .node.sel rect { stroke: var(--clay) !important; stroke-width: 2.4; }
+  .node .t  { font-family: var(--sans); font-size: 14px; font-weight: 600; fill: var(--ink); pointer-events: none; }
+  .node .m  { font-family: var(--mono); font-size: 10.5px; fill: var(--muted); pointer-events: none; }
+  .node .k  { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.06em; fill: var(--clay); pointer-events: none; }
+  .node.gate rect { fill: var(--clay-soft); stroke: var(--clay); }
+  .node.store rect { fill: var(--surface2); }
+  .node.do rect { fill: var(--olive-soft); stroke: var(--olive); }
+  .node.ext rect { fill: var(--blue-soft); stroke-dasharray: 6 3; }
+
+  .edge { stroke: var(--muted); stroke-width: 1.6; fill: none; marker-end: url(#a-mut); transition: opacity .2s ease, stroke .2s ease; }
+  .edge.dash { stroke-dasharray: 5 4; }
+  .elbl { font-family: var(--mono); font-size: 10px; fill: var(--muted); transition: opacity .2s ease; }
+
+  .stage.flowing .edge { opacity: 0.12; }
+  .stage.flowing .elbl { opacity: 0.12; }
+  .stage.flowing .node { opacity: 0.28; }
+  .stage.flowing .zone { opacity: 0.5; }
+  .stage.flowing .edge.lit {
+    opacity: 1; stroke: var(--clay); marker-end: url(#a-clay);
+    stroke-dasharray: 7 5; animation: march 0.9s linear infinite;
+  }
+  .stage.flowing .elbl.lit { opacity: 1; fill: var(--clay); }
+  .stage.flowing .node.lit { opacity: 1; }
+  .stage.flowing .node.lit rect { stroke: var(--clay); }
+  @keyframes march { to { stroke-dashoffset: -12; } }
+  @media (prefers-reduced-motion: reduce) { .stage.flowing .edge.lit { animation: none; } }
+
+  .card {
+    position: absolute; max-width: 380px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 16px; box-shadow: 0 6px 24px rgba(0,0,0,0.10);
+  }
+  #detail { right: 16px; bottom: 16px; width: 340px; }
+  #detail h3 { font-family: var(--serif); font-weight: 600; font-size: 16px; color: var(--ink); margin-bottom: 2px; }
+  #detail .meta { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-bottom: 8px; }
+  #detail p { font-size: 12.5px; line-height: 1.6; }
+  #detail p code, #flowcap code { font-family: var(--mono); font-size: 11px; color: var(--clay); }
+  #flowcap { left: 16px; bottom: 16px; max-width: 470px; display: none; }
+  #flowcap.show { display: block; }
+  #flowcap .fname { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; color: var(--clay); margin-bottom: 6px; }
+  #flowcap ol { margin-left: 18px; }
+  #flowcap li { font-size: 12.5px; line-height: 1.6; }
+  .legend { position: absolute; top: 12px; left: 16px; display: flex; gap: 14px; font-family: var(--mono); font-size: 10px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .legend i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+  @media (max-width: 880px) {
+    body { overflow: auto; }
+    .stage { min-height: 78vh; }
+    #detail { position: static; width: auto; margin: 10px 16px; }
+    #flowcap { position: static; margin: 0 16px 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <div>
+    <h1>KSS · Keda Stock System — 架构全景</h1>
+    <div class="sub">A股量化回测+诊断 · 科创+创业 100 只 · origin/main 2026-06 · 点节点看详情 / 点 chip 看流程</div>
+  </div>
+  <div class="spacer"></div>
+  <div class="chips" id="chips">
+    <button class="chip on" data-flow="all">全部</button>
+    <button class="chip" data-flow="backtest">回测诊断</button>
+    <button class="chip" data-flow="sector">板块复盘</button>
+    <button class="chip" data-flow="numbers">数字归代码</button>
+    <button class="chip" data-flow="feed">横向支撑注入</button>
+  </div>
+  <button id="themeToggle">主题</button>
+</div>
+
+<div class="stage" id="stage">
+<div class="legend">
+  <span><i style="background:var(--surface2)"></i>存储</span>
+  <span><i style="background:var(--blue-soft);border:1px dashed var(--blue)"></i>外部实时源</span>
+  <span><i style="background:var(--clay-soft);border:1px solid var(--clay)"></i>关键门 / LLM</span>
+  <span><i style="background:var(--olive-soft);border:1px solid var(--olive)"></i>产出 / 代码渲染</span>
+</div>
+<svg viewBox="0 0 1520 880" preserveAspectRatio="xMidYMid meet" role="img" aria-label="KSS 架构全景图">
+  <defs>
+    <marker id="a-mut" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill: var(--muted)"/></marker>
+    <marker id="a-clay" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill: var(--clay)"/></marker>
+  </defs>
+
+  <!-- zones -->
+  <g class="zone"><rect x="36" y="96" width="300" height="724" rx="16"/><text class="ztitle" x="56" y="124">① 数据层 · kss/data</text><text class="zsub" x="56" y="142">双轨 · PIT 不可与实时混用</text></g>
+  <g class="zone"><rect x="360" y="96" width="1124" height="294" rx="16"/><text class="ztitle" x="380" y="124">② 回测诊断主干 · 离线 · 实事求是</text></g>
+  <g class="zone"><rect x="360" y="404" width="1124" height="116" rx="16"/><text class="ztitle" x="380" y="428">④ 横向支撑 · 注入两条主干</text></g>
+  <g class="zone"><rect x="360" y="534" width="1124" height="286" rx="16"/><text class="ztitle" x="380" y="562">③ 板块复盘解读 · 在线 · LLM 投顾</text></g>
+
+  <!-- edges -->
+  <path class="edge" id="e-tc" d="M185,230 L185,252"/>
+  <path class="edge" id="e-cf" d="M312,286 C 352,286 360,214 392,214"/>
+  <path class="edge" id="e-fm" d="M612,214 L664,214"/>
+  <path class="edge" id="e-mb" d="M904,214 L956,214"/>
+  <path class="edge" id="e-bp" d="M1216,214 L1268,214"/>
+  <path class="edge" id="e-rd" d="M312,690 C 352,690 360,672 392,672"/>
+  <path class="edge" id="e-dc" d="M622,648 C 650,640 656,652 676,652"/>
+  <path class="edge" id="e-dr" d="M507,724 C 545,772 636,748 676,748"/>
+  <path class="edge" id="e-rc" d="M801,712 L801,696"/>
+  <path class="edge" id="e-cn" d="M926,654 C 956,658 960,664 982,664"/>
+  <path class="edge" id="e-nt" d="M1192,664 L1248,664"/>
+  <path class="edge dash" id="e-macd" d="M520,460 C 560,360 920,300 1010,274"/>
+  <path class="edge dash" id="e-macc" d="M520,524 C 545,580 640,650 676,662"/>
+  <path class="edge dash" id="e-supc" d="M800,524 L801,610"/>
+  <path class="edge dash" id="e-supb" d="M800,460 C 860,372 960,300 1030,274"/>
+
+  <!-- edge labels -->
+  <text class="elbl" id="l-dc" x="636" y="632">定性 bias</text>
+  <text class="elbl" id="l-dr" x="556" y="766">真值数字</text>
+  <text class="elbl" id="l-rc" x="808" y="708">追加真值行</text>
+  <text class="elbl" id="l-bp" x="1228" y="200">唯一过门</text>
+  <text class="elbl" id="l-macd" x="900" y="300">宏观阶段</text>
+  <text class="elbl" id="l-supc" x="808" y="572">紫苏叶</text>
+
+  <!-- data layer nodes -->
+  <g class="node store" data-k="tushare"><rect x="60" y="152" width="252" height="78" rx="10"/><text class="t" x="80" y="182">Tushare 时点数据</text><text class="m" x="80" y="202">daily · daily_basic · moneyflow</text><text class="k" x="80" y="220">PIT · 可复现</text></g>
+  <g class="node store" data-k="csdata"><rect x="60" y="252" width="252" height="68" rx="10"/><text class="t" x="80" y="282">cs_data / sqlite_store</text><text class="m" x="80" y="302">100 只样本池 · 回测输入</text></g>
+  <g class="node ext" data-k="realtime"><rect x="60" y="620" width="252" height="132" rx="10"/><text class="t" x="80" y="650">实时解读源（无 Key HTTP）</text><text class="m" x="80" y="672">ths_hot · 龙虎榜 · 科创两融</text><text class="m" x="80" y="690">东财 / 同花顺 · macro_client</text><text class="k" x="80" y="712">不可回流回测</text><text class="m" x="80" y="734">本轮新增：龙虎榜 + 两融</text></g>
+
+  <!-- backtest pipeline -->
+  <g class="node" data-k="features"><rect x="392" y="168" width="220" height="92" rx="10"/><text class="t" x="412" y="198">特征 · features</text><text class="m" x="412" y="220">alpha158 · technical</text><text class="m" x="412" y="238">valuation · volume · vol</text></g>
+  <g class="node" data-k="models"><rect x="664" y="168" width="240" height="92" rx="10"/><text class="t" x="684" y="198">模型 + 策略</text><text class="m" x="684" y="220">lightgbm(_ranker) · dl</text><text class="m" x="684" y="238">cross_sectional · ensemble</text></g>
+  <g class="node gate" data-k="backtest"><rect x="956" y="160" width="260" height="112" rx="10"/><text class="t" x="976" y="188">★ 回测引擎 · backtest</text><text class="m" x="976" y="208">engine · walk_forward</text><text class="k" x="976" y="226">门：DSR significance</text><text class="m" x="976" y="246">robustness · diagnostics</text></g>
+  <g class="node do" data-k="papertrade"><rect x="1268" y="168" width="196" height="92" rx="10"/><text class="t" x="1288" y="198">log_mv → paper_trade</text><text class="m" x="1288" y="220">8 层 bias 唯一</text><text class="m" x="1288" y="238">存活的 α</text></g>
+
+  <!-- support band -->
+  <g class="node" data-k="macro"><rect x="392" y="430" width="252" height="64" rx="10"/><text class="t" x="412" y="458">macro · Bolton 周期</text><text class="m" x="412" y="478">regime · rotation · valuation</text></g>
+  <g class="node" data-k="supply"><rect x="676" y="430" width="252" height="64" rx="10"/><text class="t" x="696" y="458">supply_chain · 紫苏叶</text><text class="m" x="696" y="478">scoring 四维卡位评分</text></g>
+  <g class="node" data-k="prediction"><rect x="960" y="430" width="240" height="64" rx="10"/><text class="t" x="980" y="458">prediction · 预测</text><text class="m" x="980" y="478">daily / weekly forecast</text></g>
+  <g class="node store" data-k="infra"><rect x="1232" y="430" width="232" height="64" rx="10"/><text class="t" x="1252" y="458">基础设施</text><text class="m" x="1252" y="478">llm/sanitizer · cli · config</text></g>
+
+  <!-- sector pipeline -->
+  <g class="node" data-k="datafetcher"><rect x="392" y="622" width="230" height="100" rx="10"/><text class="t" x="412" y="652">sector/data_fetcher</text><text class="m" x="412" y="674">行业/概念/北向资金流</text><text class="m" x="412" y="692">龙虎榜 · 两融 · ETF 雷达</text><text class="m" x="412" y="710">同花顺热点</text></g>
+  <g class="node gate" data-k="commentary"><rect x="676" y="610" width="250" height="86" rx="10"/><text class="t" x="696" y="640">★ commentary · LLM</text><text class="m" x="696" y="662">投顾文字 + fallback 降级</text><text class="k" x="696" y="682">只拿定性 bias，不碰数字</text></g>
+  <g class="node do" data-k="renderline"><rect x="676" y="712" width="250" height="64" rx="10"/><text class="t" x="696" y="740">render_*_line · 代码渲染真值</text><text class="m" x="696" y="760">数字归代码 · LLM 编不动</text></g>
+  <g class="node" data-k="notify"><rect x="982" y="622" width="210" height="84" rx="10"/><text class="t" x="1002" y="652">notifications</text><text class="m" x="1002" y="674">telegram_bot · 多通道</text><text class="m" x="1002" y="692">manager · 降级兜底</text></g>
+  <g class="node do" data-k="telegram"><rect x="1248" y="622" width="216" height="84" rx="10"/><text class="t" x="1268" y="652">→ Telegram 推送</text><text class="m" x="1268" y="674">17:30 盘后板块复盘</text><text class="m" x="1268" y="692">含龙虎榜 + 两融真值行</text></g>
+</svg>
+
+<div class="card" id="flowcap">
+  <div class="fname" id="f-name"></div>
+  <ol id="f-steps"></ol>
+</div>
+<div class="card" id="detail">
+  <h3 id="d-title">点任意节点</h3>
+  <div class="meta" id="d-meta">KSS 架构全景 · 12 个子包 + 运维 cron</div>
+  <p id="d-body">左侧数据层分两轨：<b>PIT 回测骨架</b>（Tushare 时点数据，可复现）与<b>实时解读层</b>（免费无 Key HTTP，本轮新增龙虎榜/科创两融）。两轨严格隔离——实时数据严禁回流回测。点 chip 看四条核心流程如何点亮。</p>
+</div>
+</div>
+
+<script>
+const DETAIL = {
+  tushare:    { t:"Tushare 时点数据", m:"PIT · 回测骨架", b:"daily / daily_basic / moneyflow 等时点接口。<b>可按日复现</b>是 KSS 反 look-ahead bias 的根基；8 轮实验全压在这套数据上。" },
+  csdata:     { t:"cs_data / sqlite_store", m:"回测输入快照", b:"科创+创业 100 只样本池的本地 CSV / SQLite。features → models → backtest 的统一输入。" },
+  realtime:   { t:"实时解读源", m:"外部 · 无 Key HTTP", b:"ths_client（同花顺热点）· dragon_tiger_client（东财龙虎榜）· margin_client（科创两融）· macro_client。<b>本轮新增龙虎榜 + 两融</b>。免费无 Key，但<code>严禁回流回测</code>——非 PIT，会重引入幸存者/look-ahead 偏差。" },
+  features:   { t:"特征 · kss/features", m:"因子工程", b:"alpha158（port 自 Qlib）· technical · valuation · volume · volatility · selection。<b>因子越多越要防 multiple-testing</b>——DSR 矫正后 Alpha158 的 158 因子 0 个通过。" },
+  models:     { t:"模型 + 策略", m:"models · strategies", b:"lightgbm(_ranker) · dl_models；cross_sectional · multi_factor · ensemble · risk_filters。科创板小池上 LGB 多因子根本问题：弱 IC + 样本薄 + 未行业中性化。" },
+  backtest:   { t:"★ 回测引擎 · backtest", m:"核心诊断 · 多重 bias 门", b:"engine · cross_section · single_stock · walk_forward_combiner，外加<b>三道门</b>：significance(DSR) · robustness · diagnostics。Sharpe 1.18→-0.53 的衰减全在这里发生——<b>任何高 Sharpe 未过 8 层证伪前一律视为虚高</b>。" },
+  papertrade: { t:"log_mv → paper_trade", m:"唯一存活的 α", b:"8 层 bias 剥离后，唯一过 <code>Significance.is_deployable</code> 的策略是 log_mv 反向（小市值溢价，理论 Sharpe 1.93 / 实盘 1.74）。仅纸交易日志，不下单。" },
+  macro:      { t:"macro · Bolton 周期框架", m:"横向支撑", b:"regime（周期阶段分类）· rotation（部门轮换）· valuation（估值时间贴水）· derived（分母端）。给 combo_scan 按宏观阶段 + 估值 n 自动调 entry 候选；也注入复盘叙述。<b>不是新策略，是环境层</b>。" },
+  supply:     { t:"supply_chain · 紫苏叶", m:"四维卡位评分", b:"沿产业链下钻找不可替代的卡脖子供应商：链层深度 × 竞争护城河 × 需求锁定 × 分析师覆盖缺口。100 只全量标注，筛 24 只紫苏叶候选，注入 combo_scan 排序 + 复盘。" },
+  prediction: { t:"prediction · 预测", m:"预测层", b:"cross_sectional_forecast · daily_forecast · weekly_forecast · cycle_analyzer。周五 walk-forward 命中率回测验证。" },
+  infra:      { t:"基础设施", m:"llm · cli · config", b:"llm（openai_client / sanitizer）· cli（analyze/backtest/predict/report/scan/train/update/notify）· config。sanitizer 给所有外部文本进 LLM 前做注入清洗。" },
+  datafetcher:{ t:"sector/data_fetcher", m:"单日数据汇总", b:"汇总行业/概念资金流 · 北向 · 龙虎榜 · 科创两融 · ETF 雷达 · 同花顺热点为单日 SectorSnapshot。任一外部源失败 → 该字段 None + 计入 missing，不静默丢。" },
+  commentary: { t:"★ commentary · LLM 投顾", m:"在线 · 数字归代码", b:"LLM 生成盘后复盘投顾文字 + formatter / fallback 降级。<b>关键纪律</b>：喂 LLM 的 payload 只含定性 bias（偏多/偏空/加杠杆…），<code>不含任何裸数字</code>——因为 LLM 复述金融数字会幻觉（龙虎榜实测 101→45）。" },
+  renderline: { t:"render_*_line · 代码渲染真值", m:"产出 · 确定性", b:"龙虎榜/两融的真值行由代码 <code>render_dragon_tiger_line</code> / <code>render_margin_line</code> 确定性渲染，追加进复盘正文。LLM 成功分支 + fallback 共用同一渲染——<b>两路径数字必然一致，LLM 碰不到</b>。" },
+  notify:     { t:"notifications", m:"多通道推送", b:"telegram_bot · dingtalk · email · console · manager。LLM 故障也走 fallback 文本，高价值信号（雷达预警/龙虎榜/两融）不静默丢。" },
+  telegram:   { t:"→ Telegram 推送", m:"产出 · 17:30 盘后", b:"每个交易日 17:30 板块复盘推 Telegram，含宏观阶段 + 龙虎榜 + 科创两融 + 紫苏叶覆盖 + 加减仓建议。真值数字行随文附带。" },
+};
+
+const FLOWS = {
+  backtest: {
+    name: "回测诊断主干 — 实事求是剥离 bias",
+    edges: ["e-tc","e-cf","e-fm","e-mb","e-bp"],
+    nodes: ["tushare","csdata","features","models","backtest","papertrade"],
+    steps: ["PIT 时点数据 → 100 只样本池快照","特征工程 → 模型 + 策略","回测引擎过<b>三道门</b>：walk-forward · DSR significance · robustness","8 层 bias 剥离后仅 <code>log_mv</code> 反向存活 → 纸交易"]
+  },
+  sector: {
+    name: "板块复盘解读 — 在线 LLM 投顾",
+    edges: ["e-rd","e-dc","e-cn","e-nt"],
+    nodes: ["realtime","datafetcher","commentary","notify","telegram"],
+    steps: ["实时源（东财/同花顺）汇总为单日 SectorSnapshot","data_fetcher → LLM 投顾文字（只拿定性 bias）","notifications 多通道 + 降级兜底","17:30 → Telegram 盘后复盘"]
+  },
+  numbers: {
+    name: "数字归代码 — LLM 编不动金融数字",
+    edges: ["e-rd","e-dr","e-rc","e-dc"],
+    nodes: ["realtime","datafetcher","renderline","commentary"],
+    steps: ["实时数据聚合（龙虎榜/两融）","<b>数字</b>走 <code>render_*_line</code> 代码确定性渲染真值","LLM <b>只</b>拿定性 bias，payload 剥光裸数字","真值行追加进复盘——LLM 即便编数字也覆盖不了（实测 101→45 幻觉已锁死）"]
+  },
+  feed: {
+    name: "横向支撑注入 — 宏观 + 紫苏叶",
+    edges: ["e-macd","e-supb","e-macc","e-supc"],
+    nodes: ["macro","supply","backtest","commentary"],
+    steps: ["Bolton 周期阶段 + 估值 n → 调 combo_scan entry 候选","紫苏叶四维卡位 → 个股排序加权","两者同时注入回测排序与复盘叙述（非新策略，是环境/结构层）"]
+  }
+};
+
+const stage = document.getElementById('stage');
+const nodes = document.querySelectorAll('.node');
+const edges = document.querySelectorAll('.edge');
+const elbls = document.querySelectorAll('.elbl');
+const chips = document.querySelectorAll('.chip');
+const fcap  = document.getElementById('flowcap');
+const EMAP = { "e-dc":"l-dc","e-dr":"l-dr","e-rc":"l-rc","e-bp":"l-bp","e-macd":"l-macd","e-supc":"l-supc" };
+
+function setFlow(key) {
+  chips.forEach(c => c.classList.toggle('on', c.dataset.flow === key));
+  edges.forEach(e => e.classList.remove('lit'));
+  elbls.forEach(l => l.classList.remove('lit'));
+  nodes.forEach(n => n.classList.remove('lit'));
+  if (key === 'all') { stage.classList.remove('flowing'); fcap.classList.remove('show'); return; }
+  const f = FLOWS[key];
+  stage.classList.add('flowing');
+  f.edges.forEach(id => {
+    document.getElementById(id)?.classList.add('lit');
+    const lid = EMAP[id]; if (lid) document.getElementById(lid)?.classList.add('lit');
+  });
+  f.nodes.forEach(k => document.querySelector('.node[data-k="'+k+'"]')?.classList.add('lit'));
+  document.getElementById('f-name').textContent = f.name;
+  document.getElementById('f-steps').innerHTML = f.steps.map(s => '<li>'+s+'</li>').join('');
+  fcap.classList.add('show');
+}
+chips.forEach(c => c.addEventListener('click', () => setFlow(c.dataset.flow)));
+
+nodes.forEach(n => n.addEventListener('click', () => {
+  nodes.forEach(x => x.classList.remove('sel'));
+  n.classList.add('sel');
+  const d = DETAIL[n.dataset.k]; if (!d) return;
+  document.getElementById('d-title').textContent = d.t;
+  document.getElementById('d-meta').textContent = d.m;
+  document.getElementById('d-body').innerHTML = d.b;
+}));
+
+document.getElementById('themeToggle').addEventListener('click', () => {
+  const dark = !document.documentElement.classList.contains('dark');
+  document.documentElement.classList.toggle('dark', dark);
+  localStorage.setItem('kss-theme', dark ? 'dark' : 'light');
+});
+</script>
+</body>
+</html>
