@@ -8,7 +8,8 @@ set -euo pipefail
 
 PROJECT_DIR="/Users/zcdeng/projects/KSS"
 PYTHON_BIN="/opt/homebrew/bin/python3.11"
-LOG_FILE="$PROJECT_DIR/cron.log"
+LOG_FILE="$PROJECT_DIR/storage/logs/cron/scanner.log"
+mkdir -p "$(dirname "$LOG_FILE")"
 
 # 环境变量：Tushare token
 # ~/.tushare_token 缺失也不报错，TushareClient 内部会再尝试其它路径与环境变量

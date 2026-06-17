@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ideation: Kronos × KSS 集成</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,600&display=swap">
+<style>
+  :root{
+    --bg:#fbfaf7; --ink:#1f2024; --muted:#5d6068; --line:#e4e1d8;
+    --accent:#2f6f5e; --accent-soft:#e7f1ed; --accent-text:#1d5345;
+    --warn-soft:#f6efe2; --warn-text:#7a5a23; --info-soft:#e9eef4; --info-text:#2f4a66;
+    --card:#ffffff; --code:#f1efe9;
+    --font:"Newsreader",Charter,Georgia,"Songti SC","Noto Serif CJK SC",serif;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  }
+  @media(prefers-color-scheme:dark){
+    :root{--bg:#16171a;--ink:#e8e6e0;--muted:#a0a2aa;--line:#2c2e33;
+      --accent:#6fc0a8;--accent-soft:#1d2c28;--accent-text:#9fd9c8;
+      --warn-soft:#2a2418;--warn-text:#d6b87e;--info-soft:#1a222c;--info-text:#9bb6d2;
+      --card:#1d1e22;--code:#24262b;}
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);font-family:var(--font);
+    line-height:1.65;margin:0;font-size:16px;}
+  .page{max-width:900px;margin-inline:auto;padding:48px 22px 80px;}
+  h1{font-size:1.95rem;font-weight:600;line-height:1.2;margin:0 0 6px;}
+  h2{font-size:1.32rem;font-weight:600;margin:46px 0 14px;padding-bottom:6px;border-bottom:1px solid var(--line);}
+  h3{font-size:1.12rem;font-weight:600;margin:0 0 4px;}
+  p{max-width:72ch;margin:.55em 0;}
+  a{color:var(--accent-text);}
+  code{font-family:var(--mono);font-size:.85em;background:var(--code);padding:1px 5px;border-radius:4px;}
+  .eyebrow{text-transform:uppercase;letter-spacing:.09em;font-size:.72rem;color:var(--accent-text);font-weight:600;}
+  .meta{color:var(--muted);font-size:.9rem;margin:2px 0 0;}
+  .meta code{background:none;padding:0;}
+  .stats{display:flex;flex-wrap:wrap;gap:10px;margin:26px 0 8px;}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 16px;flex:1;min-width:120px;}
+  .stat .n{font-size:1.5rem;font-weight:600;display:block;}
+  .stat .l{font-size:.78rem;color:var(--muted);}
+  .axes{list-style:none;padding:0;margin:0;}
+  .axes li{padding:7px 0;border-bottom:1px solid var(--line);}
+  .axes b{color:var(--accent-text);}
+  .jump{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 18px;margin:14px 0 24px;}
+  .jump ol{margin:6px 0 0;padding-left:20px;}
+  .jump li{margin:3px 0;}
+  article.idea{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px 24px;margin:18px 0;}
+  .idhead{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;}
+  .idchip{font-family:var(--mono);font-size:.8rem;font-weight:600;background:var(--accent-soft);color:var(--accent-text);padding:2px 9px;border-radius:6px;}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 14px;}
+  .chip{font-size:.74rem;padding:3px 10px;border-radius:999px;border:1px solid var(--line);}
+  .chip.axis{background:var(--info-soft);color:var(--info-text);border-color:transparent;}
+  .chip.conf{background:var(--accent-soft);color:var(--accent-text);border-color:transparent;}
+  .chip.cx{background:var(--warn-soft);color:var(--warn-text);border-color:transparent;}
+  dl.fields{margin:12px 0 0;}
+  dl.fields dt{text-transform:uppercase;letter-spacing:.07em;font-size:.7rem;color:var(--muted);font-weight:600;margin-top:12px;}
+  dl.fields dd{margin:3px 0 0;}
+  dl.fields dd.basis{font-size:.95rem;}
+  .tag{font-family:var(--mono);font-size:.78em;font-weight:600;}
+  .tag.direct{color:var(--accent-text);} .tag.reasoned{color:var(--info-text);} .tag.external{color:var(--warn-text);}
+  figure{margin:16px 0 4px;}
+  figure svg{max-width:100%;height:auto;display:block;}
+  figcaption{font-size:.8rem;color:var(--muted);margin-top:6px;}
+  table{border-collapse:collapse;width:100%;font-size:.92rem;margin:12px 0;}
+  th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--line);vertical-align:top;}
+  th{font-size:.74rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);}
+  td.n{font-family:var(--mono);color:var(--muted);width:2.2em;}
+  .note{background:var(--info-soft);color:var(--info-text);border-radius:10px;padding:12px 16px;margin:16px 0;font-size:.93rem;}
+  footer.composition-signal{margin-top:50px;padding-top:14px;border-top:1px solid var(--line);font-size:.78rem;color:var(--muted);}
+</style>
+</head>
+<body>
+<div class="page">
+
+<span class="eyebrow">Ideation · Compound Engineering</span>
+<h1>Kronos × KSS：把 K 线基础模型接进 A 股量化流水线</h1>
+<p class="meta">date <code>2026-06-15</code> · topic <code>kronos-kss-integration</code> · focus <code>看一下这个项目如何与 KSS 的能力集成：github.com/shiyu-coder/Kronos</code> · mode <code>repo-grounded</code></p>
+
+<div class="stats">
+  <div class="stat"><span class="n">32</span><span class="l">raw candidates（4 frames）</span></div>
+  <div class="stat"><span class="n">7</span><span class="l">survivors</span></div>
+  <div class="stat"><span class="n">5/5</span><span class="l">axes covered</span></div>
+  <div class="stat"><span class="n">MIT</span><span class="l">Kronos 许可，可商用</span></div>
+</div>
+
+<p>结论先行：Kronos 技术接入成本低（契约清晰、依赖干净、≤102M 开放权重、CPU 可跑），但它的价值<strong>不在替 log_mv 做方向预测</strong>——KSS 历史上已经枪毙过 LGB-MSE、Transformer-DL、Alpha158 三个深度/因子方案，团队对 T+1 涨跌停下的深度方向预测有据可查的怀疑。最强的 7 条集成路径里，6 条把 Kronos 用在它的概率输出和生成能力真正擅长、且<strong>无法被刷分</strong>的地方：压力测试、波动率定盘、异常监控、可交易性过滤、泄漏侦测。log_mv（Sharpe 1.74）这个唯一可部署策略全程不动。</p>
+
+<h2>Grounding Context（Codebase Context）</h2>
+<p><strong>KSS</strong> 是 A 股量化研究框架（科创50 + 创业板50，约 50 只实盘标的）。栈：PyTorch / LightGBM / sklearn。数据：日线 OHLCV CSV（约 2.3 年）+ 49+ 因子。回测带 8 层事后偏差防御 + Deflated Sharpe + <code>is_deployable</code> 部署闸门。<strong>唯一可部署策略是 <code>log_mv</code> 横截面排序（Sharpe 1.74）</strong>。交付：Telegram 推送 + 6 个 cron + MCP（<code>kss_query_daily</code>）+ 每周 <code>validate_predictions.py</code> 校验。</p>
+<p><strong>Kronos</strong>（shiyu-coder/Kronos，AAAI 2026）是 decoder-only K 线基础模型。输入 OHLCV(A) DataFrame + 时间戳；输出预测的 OHLCVA，<strong>概率性</strong>（Monte Carlo 采样路径 → 点估计 + 不确定带），还能<strong>生成合成 K 线</strong>和<strong>预测波动率</strong>。开放权重 mini/small/base（≤102M，小显存或 CPU 可跑），large 闭源。BSQ tokenizer + 自回归。<strong>关键限制：A 股仅通过微调验证、未确认进入预训练；论文未披露 train/test 切分、无泄漏防护声明；作者明示输出是原始信号、非交易决策。</strong></p>
+<p><strong>制约性历史教训（来自 <code>docs/solutions/</code>）：</strong>特征级 look-ahead <strong>目前无防护</strong>（<code>purge_gap</code> 只挡标签泄漏）；上一个次日预测器打分等同随机（Brier 0.828、方向 43%、区间偏窄）；Telegram MD-V1 遇未转义股票名会静默丢推送。任何 Kronos 信号都得过同一套偏差防御，且高 Sharpe 在这套链路里历来会衰减到接近 0——这是常态不是 bug。</p>
+
+<h2>Topic Axes</h2>
+<ul class="axes">
+  <li><b>Signal generation</b> — Kronos 预测在哪里变成特征/叠加项</li>
+  <li><b>Validation &amp; bias defense</b> — 把 Kronos 塞进 8 层防御链、泄漏防护、部署闸门</li>
+  <li><b>Inference &amp; infra</b> — 怎么跑模型、依赖隔离、MCP 暴露</li>
+  <li><b>A-share adaptation</b> — 微调、regime 条件化、分布适配</li>
+  <li><b>Delivery &amp; monitoring</b> — Telegram / cron / paper-trade 闸门 / 校验</li>
+</ul>
+
+<h2>Ranked Ideas</h2>
+<div class="jump">
+  <span class="eyebrow">跳转</span>
+  <ol>
+    <li><a href="#i1">合成 K 线对抗压力测试套件</a> · validation · TOP</li>
+    <li><a href="#i2">影子部署：让 Kronos 当 log_mv 必须打败的零模型</a> · infra</li>
+    <li><a href="#i3">波动率预测定盘仓位与成本模型</a> · a-share</li>
+    <li><a href="#i4">预测残差异常监控，进 Telegram</a> · delivery</li>
+    <li><a href="#i5">涨跌停可交易性过滤</a> · a-share</li>
+    <li><a href="#i6">纯价格泄漏探针：用 Kronos 给 49 个因子定上限</a> · validation</li>
+    <li><a href="#i7">蒸馏成 1-2 个标量特征喂 LightGBM</a> · signal</li>
+  </ol>
+</div>
+
+<div class="note"><strong>贯穿性机制 — 校验门控。</strong>第 2/3/4 条都应挂在已有的每周 <code>validate_predictions.py</code> 上：若上周 Kronos 的 80% 区间没覆盖到 80% 的实现值，自动加宽不确定带、降低其影响权重、并在推送端转静默。这是把团队"偏差防御优先"纪律落到 Kronos 上的 kill-switch，不单列为一条 idea。</p></div>
+
+<article class="idea" id="i1">
+  <div class="idhead"><span class="idchip">I1</span><h3>合成 K 线对抗压力测试套件（隔离，不进训练）</h3></div>
+  <div class="chips"><span class="chip axis">Validation &amp; bias defense</span><span class="chip conf">Conf 80%</span><span class="chip cx">Cx Medium</span></div>
+  <p>用 Kronos 的生成能力，条件化真实历史造出一批"像 A 股但没真实发生过"的对抗 regime——涨跌停连锁、流动性枯竭、板块急跌——把 <code>log_mv</code> 和任何候选策略放进去跑，看 Sharpe 是否撑得住。合成数据严格隔离：只做对抗压力测试，<strong>永不进训练、永不当实盘信号</strong>。</p>
+  <figure>
+    <svg viewBox="0 0 640 180" role="img" aria-label="真实历史一条路径 vs Kronos 生成的多条对抗路径，共同喂给同一套回测闸门">
+      <text x="8" y="22" font-size="12" fill="#5d6068">真实历史（1 条，2.3 年）</text>
+      <polyline points="10,70 60,60 110,80 160,55 210,90 260,75" fill="none" stroke="#2f6f5e" stroke-width="2.5"/>
+      <text x="8" y="120" font-size="12" fill="#5d6068">Kronos 合成对抗路径（N 条）</text>
+      <polyline points="10,150 60,130 110,160 160,120 210,165 260,140" fill="none" stroke="#b08540" stroke-width="1" opacity="0.55"/>
+      <polyline points="10,150 60,145 110,135 160,168 210,150 260,170" fill="none" stroke="#b08540" stroke-width="1" opacity="0.55"/>
+      <polyline points="10,150 60,158 110,150 160,140 210,135 260,158" fill="none" stroke="#b08540" stroke-width="1" opacity="0.55"/>
+      <line x1="300" y1="95" x2="360" y2="95" stroke="#5d6068" stroke-width="1.5" marker-end="url(#a1)"/>
+      <defs><marker id="a1" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#5d6068"/></marker></defs>
+      <rect x="370" y="60" width="170" height="70" rx="8" fill="#e7f1ed" stroke="#2f6f5e"/>
+      <text x="455" y="88" font-size="12" fill="#1d5345" text-anchor="middle" paint-order="stroke" stroke="#e7f1ed" stroke-width="3">walk-forward +</text>
+      <text x="455" y="106" font-size="12" fill="#1d5345" text-anchor="middle" paint-order="stroke" stroke="#e7f1ed" stroke-width="3">Deflated Sharpe 闸门</text>
+      <text x="560" y="99" font-size="12" fill="#5d6068">→ 是否仍 deployable？</text>
+    </svg>
+    <figcaption>合成路径只攻击策略、从不喂养策略——绕开 Kronos 未声明的泄漏防护，同时直补 KSS 最大软肋：2.3 年样本太短。</figcaption>
+  </figure>
+  <dl class="fields">
+    <dt>Basis</dt><dd class="basis"><span class="tag external">external:</span> López de Prado 合成数据 / 组合化清洗 CV 的过拟合检测实践。<span class="tag direct">direct:</span> KSS 仅 ~50 标的 × 2.3 年，有效 IC 样本极小；已有 walk-forward + Deflated Sharpe + <code>is_deployable</code> 闸门。Kronos 生成能力是论文明示功能。</dd>
+    <dt>Rationale</dt><dd>在极小样本上验证出来的闸门，它本身可能过拟合。喂入有"已知零结构"的合成路径，能测出闸门真实的假阳性率——这是顺着团队纪律走，不是绕过它。</dd>
+    <dt>Downsides</dt><dd>合成 K 线必须继承足够的微结构（T+1 跳空、涨跌停截断）才算公平压力；否则混入伪影会让审计失效。需要先验证 Kronos 生成的 A 股数据有没有这些特征。</dd>
+  </dl>
+</article>
+
+<article class="idea" id="i2">
+  <div class="idhead"><span class="idchip">I2</span><h3>影子部署：让 Kronos 当 log_mv 必须打败的零模型</h3></div>
+  <div class="chips"><span class="chip axis">Inference &amp; infra</span><span class="chip conf">Conf 78%</span><span class="chip cx">Cx Medium</span></div>
+  <p>把 Kronos 立成一个只读影子通道：每日给每只票记一条预测进现有存储，<strong>与可部署的 log_mv 排序零连接</strong>，并强制走与 log_mv 同一套 <code>is_deployable</code> 闸门——不因为它是"基础模型"就放水。一个季度后你就有了一段未被 2.3 年样本污染的、前向（out-of-sample）的真实时间线战绩。它既是其他每条 idea 的信任前提，也是最低风险的接入方式。</p>
+  <figure>
+    <svg viewBox="0 0 640 200" role="img" aria-label="Kronos 影子通道与 log_mv 实盘通道并行，共用同一部署闸门，达标才允许影响决策">
+      <rect x="10" y="20" width="150" height="46" rx="8" fill="#e7f1ed" stroke="#2f6f5e"/>
+      <text x="85" y="48" font-size="12" fill="#1d5345" text-anchor="middle">log_mv（实盘 1.74）</text>
+      <rect x="10" y="120" width="150" height="46" rx="8" fill="#e9eef4" stroke="#2f4a66"/>
+      <text x="85" y="148" font-size="12" fill="#2f4a66" text-anchor="middle">Kronos 影子（只读）</text>
+      <line x1="160" y1="43" x2="250" y2="80" stroke="#5d6068" stroke-width="1.5" marker-end="url(#a2)"/>
+      <line x1="160" y1="143" x2="250" y2="106" stroke="#5d6068" stroke-width="1.5" marker-end="url(#a2)"/>
+      <defs><marker id="a2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#5d6068"/></marker></defs>
+      <rect x="250" y="70" width="160" height="46" rx="8" fill="#fff" stroke="#1f2024"/>
+      <text x="330" y="91" font-size="12" fill="#1f2024" text-anchor="middle">同一 is_deployable</text>
+      <text x="330" y="108" font-size="12" fill="#1f2024" text-anchor="middle">+ Deflated Sharpe 闸门</text>
+      <line x1="410" y1="93" x2="470" y2="93" stroke="#5d6068" stroke-width="1.5" marker-end="url(#a2)"/>
+      <rect x="470" y="46" width="160" height="40" rx="8" fill="#e7f1ed" stroke="#2f6f5e"/>
+      <text x="550" y="71" font-size="11.5" fill="#1d5345" text-anchor="middle">达标→可参与决策</text>
+      <rect x="470" y="100" width="160" height="40" rx="8" fill="#f6efe2" stroke="#7a5a23"/>
+      <text x="550" y="125" font-size="11.5" fill="#7a5a23" text-anchor="middle">未达标→仍只读</text>
+    </svg>
+    <figcaption>"和 log_mv 过同一道闸门，基础模型不打折扣"——给怀疑派的是证据，不是热情。</figcaption>
+  </figure>
+  <dl class="fields">
+    <dt>Basis</dt><dd class="basis"><span class="tag direct">direct:</span> 团队对 T+1 涨跌停下深度/RL 有记录在案的怀疑；log_mv 是唯一可部署策略，约束禁止动它。<span class="tag reasoned">reasoned:</span> 回测战绩被 2.3 年样本污染，前向影子日志是唯一无污染证据，且只花算力。<span class="tag external">external:</span> LLM/ML 的 shadow deployment + 冻结 eval harness 范式。</dd>
+    <dt>Rationale</dt><dd>这是把"采纳模型"反转成"用模型加固我们的怀疑"。其余每条 idea 在没有前向战绩前都难说服怀疑派；这条是让它们可被讨论的前置。</dd>
+    <dt>Downsides</dt><dd>怀疑派可能要求一整个 regime 周期而非一个季度才认账；2.3 年里 regime episode 本就稀少。需要先定义"多长前向窗口才算数"。</dd>
+  </dl>
+</article>
+
+<article class="idea" id="i3">
+  <div class="idhead"><span class="idchip">I3</span><h3>波动率预测定盘仓位与成本模型（不碰方向）</h3></div>
+  <div class="chips"><span class="chip axis">A-share adaptation</span><span class="chip conf">Conf 75%</span><span class="chip cx">Cx Medium</span></div>
+  <p>用 Kronos 的<strong>波动率预测</strong>（而非价格路径）做纯风险叠加：预测高波动 → 收缩或跳过该名；低波动 → 正常权重。同一波动带也喂进现有 <code>cost_model</code> 的滑点假设（预测波动高时预期价差更宽）。<code>log_mv</code> 仍然负责选谁、排序，Kronos 只调"信多少"。</p>
+  <dl class="fields">
+    <dt>Basis</dt><dd class="basis"><span class="tag external">external:</span> 波动率比方向远更可预测；vol-targeting 与 vol-aware 成本是成熟做法。<span class="tag direct">direct:</span> Kronos 明示波动率预测为一等输出；成本模型与仓位层是每个现有/未来策略都要穿过的环节。</dd>
+    <dt>Rationale</dt><dd>波动率叠加无法像方向 alpha 那样被模型刷分，且它改的是 sizing/成本——一处改进同时提升回测真实度和实盘风险控制，是不违反"别动 log_mv"的最不侵入用法。</dd>
+    <dt>Downsides</dt><dd>A 股微调后 Kronos 大概率初期 vol 校准不准；必须先过校验门控（见贯穿机制），并把不确定带下限锚在无条件日波动分位上，不能让 n&lt;20 的条件样本定带宽——这正是上个预测器栽的坑。</dd>
+  </dl>
+</article>
+
+<article class="idea" id="i4">
+  <div class="idhead"><span class="idchip">I4</span><h3>预测残差异常监控，进 Telegram（只报警，不交易）</h3></div>
+  <div class="chips"><span class="chip axis">Delivery &amp; monitoring</span><span class="chip conf">Conf 72%</span><span class="chip cx">Cx Low</span></div>
+  <p>每日把 Kronos 跑过 ~50 只实盘票，只标记<strong>实现 K 线落进其预测分布尾部</strong>（如低于 1 百分位）的名字，作为"这只票今天不像它自己 / 结构变了"的注记进现有 Telegram 推送。这是关于<strong>环境</strong>的监控信号，不是关于该票的交易信号。涨跌停把 bar 钉死在板上时，那个钉死本身就是被标记的异常——天然 T+1/涨跌停安全。</p>
+  <dl class="fields">
+    <dt>Basis</dt><dd class="basis"><span class="tag external">external:</span> forecast-then-flag 残差异常检测；医学 second-reader（只圈不判）。<span class="tag direct">direct:</span> KSS 交付即 Telegram + cron；概率路径天然给出 surprise 度量。</dd>
+    <dt>Rationale</dt><dd>只读、不可能炸账户、复用现有基础设施，给人在环一个 regime 断裂的早警。对怀疑派零下行：最坏情况是一条可忽略的注记。是建立命中率信任、再谈授权的起点。</dd>
+    <dt>Downsides</dt><dd>推送任何 Kronos 文本都要复用 <code>_md_v1_escape()</code>，否则 <code>*ST</code> / <code>5G_概念</code> 之类名字会让 MD-V1 解析失败、静默丢推送（已知历史故障）。报警阈值与"误报疲劳"需要调。</dd>
+  </dl>
+</article>
+
+<article class="idea" id="i5">
+  <div class="idhead"><span class="idchip">I5</span><h3>涨跌停可交易性过滤（预测可执行性，不是收益）</h3></div>
+  <div class="chips"><span class="chip axis">A-share adaptation</span><span class="chip conf">Conf 70%</span><span class="chip cx">Cx Medium</span></div>
+  <p>深度模型在 KSS 失败的根因之一，是 T+1 + 涨跌停让方向押注既不可刷分也不可兑现（封板的票你根本买不到）。把它变成特征：用 Kronos 的概率 high/low 路径估 P(明日触及涨停/跌停封板)，把<strong>不可执行</strong>的名字从 log_mv 的 tradable set 里剔除。它预测的是可执行性，不是收益。</p>
+  <dl class="fields">
+    <dt>Basis</dt><dd class="basis"><span class="tag reasoned">reasoned:</span> 把杀死前几代深度模型的那个结构性摩擦（涨跌停封板）直接转成 Kronos 概率 OHLC 的 high/low 路径能回答的问题。<span class="tag direct">direct:</span> 复用 <code>SuspensionData</code> / <code>is_tradable</code> 的同一过滤位插入。</dd>
+    <dt>Rationale</dt><dd>正面打在深度模型失败的精确原因上。提升 log_mv 的实现收益 vs 纸面收益，且不引入任何团队不信任的方向押注。</dd>
+    <dt>Downsides</dt><dd>封板概率预测本身要校验——预测"会封板"但没封，等于错杀可交易标的。需小样本下做命中率统计，可能 ~50 票太薄。</dd>
+  </dl>
+</article>
+
+<article class="idea" id="i6">
+  <div class="idhead"><span class="idchip">I6</span><h3>纯价格泄漏探针：用 Kronos 给 49 个因子定上限</h3></div>
+  <div class="chips"><span class="chip axis">Validation &amp; bias defense</span><span class="chip conf">Conf 62%</span><span class="chip cx">Cx Medium</span></div>
+  <p>特征级 look-ahead 当前<strong>无防护</strong>。Kronos 只吃 OHLCVA + 时间戳、结构上看不到 KSS 的工程因子——所以它给出"纯量价能解释的次日可预测性"的一个无泄漏上限。逐个因子检查：某因子与次日实现收益的同期相关，是否高得超过 Kronos 量价唯一预测能解释的范围？显著越界的因子就是泄漏嫌疑。把一个开放的、未处理的风险变成一张带阈值的排序嫌疑名单。</p>
+  <figure>
+    <svg viewBox="0 0 640 200" role="img" aria-label="Kronos 纯量价 IC 上限作为一条横线，各因子 IC 为柱，越线者为泄漏嫌疑">
+      <line x1="60" y1="30" x2="60" y2="170" stroke="#5d6068" stroke-width="1"/>
+      <line x1="60" y1="170" x2="610" y2="170" stroke="#5d6068" stroke-width="1"/>
+      <line x1="60" y1="95" x2="610" y2="95" stroke="#2f6f5e" stroke-width="2" stroke-dasharray="6 4"/>
+      <text x="610" y="91" font-size="11" fill="#1d5345" text-anchor="end" paint-order="stroke" stroke="#fbfaf7" stroke-width="3">Kronos 量价 IC 上限</text>
+      <rect x="100" y="120" width="46" height="50" fill="#8aa6bd"/><text x="123" y="186" font-size="10" fill="#5d6068" text-anchor="middle">f12</text>
+      <rect x="180" y="108" width="46" height="62" fill="#8aa6bd"/><text x="203" y="186" font-size="10" fill="#5d6068" text-anchor="middle">f27</text>
+      <rect x="260" y="60" width="46" height="110" fill="#b06b4f"/><text x="283" y="186" font-size="10" fill="#7a5a23" text-anchor="middle">f31 ⚠</text>
+      <rect x="340" y="128" width="46" height="42" fill="#8aa6bd"/><text x="363" y="186" font-size="10" fill="#5d6068" text-anchor="middle">f08</text>
+      <rect x="420" y="48" width="46" height="122" fill="#b06b4f"/><text x="443" y="186" font-size="10" fill="#7a5a23" text-anchor="middle">f44 ⚠</text>
+      <rect x="500" y="115" width="46" height="55" fill="#8aa6bd"/><text x="523" y="186" font-size="10" fill="#5d6068" text-anchor="middle">f19</text>
+    </svg>
+    <figcaption>越过纯量价上限的因子（橙）= 要么是真 alpha，要么是泄漏；在 look-ahead 无防护的前提下，"泄漏"是要先排除的先验。</figcaption>
+  </figure>
+  <dl class="fields">
+    <dt>Basis</dt><dd class="basis"><span class="tag direct">direct:</span> 特征级 look-ahead 明确标注为无防护；因子数 49+；CSV 表头确认了因子所依赖的原始 OHLCVA+估值列。<span class="tag reasoned">reasoned:</span> 一个结构上看不到工程因子的模型，给出无信息泄漏的量价可预测性上限。</dd>
+    <dt>Rationale</dt><dd>把盲查 49 个因子变成带原则阈值的嫌疑排序，直补一个已知但未处理的风险口子。</dd>
+    <dt>Downsides</dt><dd>"因子 IC 超过 Kronos 量价 IC"未必是泄漏——一个正当地更优的因子也能越线。需要量化误指控率，否则会误杀真 alpha。</dd>
+  </dl>
+</article>
+
+<article class="idea" id="i7">
+  <div class="idhead"><span class="idchip">I7</span><h3>蒸馏成 1-2 个标量特征喂 LightGBM（不进 cron 依赖）</h3></div>
+  <div class="chips"><span class="chip axis">Signal generation</span><span class="chip conf">Conf 58%</span><span class="chip cx">Cx Medium</span></div>
+  <p>离线跑 Kronos，每只票产出一两个标量特征（如预测隐含波动分位、路径偏度），冻结成现有因子表的列，让成熟的 LightGBM 栈消费。102M 模型<strong>永不坐进每日 cron 路径</strong>——它贡献的是特征，不是基础设施。特征若拿不到 importance，立刻丢弃。</p>
+  <dl class="fields">
+    <dt>Basis</dt><dd class="basis"><span class="tag external">external:</span> 知识蒸馏 / teacher-student——基础模型贡献特征而非成为运行依赖。<span class="tag reasoned">reasoned:</span> cron 里无 GPU、无新故障面，全程复用已有的特征重要性 + 偏差防御工具来甄别列。</dd>
+    <dt>Rationale</dt><dd>把 Kronos 降级成"LightGBM 可以忽略的两列"，而不是一个会宕机的服务——这是最尊重现有运维脆弱性的接入。</dd>
+    <dt>Downsides</dt><dd>风险最高的一条：往 LightGBM 喂深度衍生特征，正是 KSS 已枪毙的 Transformer-DL / Alpha158 路径。~50 票 × 2.3 年让这种列的 IC 极难证真。置信度低、需走 I2 影子闸门验证后再说。</dd>
+  </dl>
+</article>
+
+<h2>Rejection Summary</h2>
+<table>
+  <thead><tr><th>#</th><th>Idea</th><th>Reason Rejected</th></tr></thead>
+  <tbody>
+    <tr><td class="n">1</td><td>用 Kronos 直接替换次日价格预测器</td><td>重复且踩雷——团队恰恰不信任方向点预测；价值已被 I2（影子基准）+ I4（残差监控）覆盖</td></tr>
+    <tr><td class="n">2</td><td>Kronos 预测收益做 log_mv 横截面残差正交叠加</td><td>~50 票样本下正交残差 IC 几乎不可估；其"加一个被甄别过的 Kronos 特征"意图已由 I7 以更安全方式承接</td></tr>
+    <tr><td class="n">3</td><td>用 Kronos 当 log_mv 的残差解释器（"为什么它有效"）</td><td>研究好奇心而非产品改进，更适合作为 brainstorm 变体单独展开</td></tr>
+    <tr><td class="n">4</td><td>A 股微调后丢弃，仅用于测量泄漏</td><td>微调成本相对当前阶段价值偏高；其泄漏侦测意图已由 I6（零成本量价探针）覆盖</td></tr>
+    <tr><td class="n">5</td><td>独立的 Kronos 夜间推理服务</td><td>纯使能型基础设施，已折进 I2 的影子批处理，不单列</td></tr>
+    <tr><td class="n">6</td><td>校验门控 / 集成权重按校准自动衰减</td><td>不是独立 idea，而是 I2/I3/I4 共用的贯穿性机制——已作为顶部 note 保留</td></tr>
+    <tr><td class="n">7</td><td>不确定带宽度做 regime 早警 / 共享 gating</td><td>与 I4 残差监控同源（都是不确定性宽度信号），合并</td></tr>
+    <tr><td class="n">8</td><td>用 Kronos embeddings 替换 O(N²) regime/估值分类</td><td>"embeddings 能复现 regime 标签"属推测；是工程提速而非集成价值，证据不足</td></tr>
+    <tr><td class="n">9</td><td>两阶段候选生成：Kronos 先筛、log_mv 再排</td><td>与 I5（可交易性过滤）/ I7 重叠，是其更薄的版本</td></tr>
+  </tbody>
+</table>
+
+<footer class="composition-signal">Composed 2026-06-15 by ce-ideate · source: user prompt「看一下这个项目如何与 KSS 的能力集成：github.com/shiyu-coder/Kronos」· 32 raw → 7 survivors，全 5 轴覆盖</footer>
+
+</div>
+</body>
+</html>

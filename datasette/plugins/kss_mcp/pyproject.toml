@@ -1,0 +1,26 @@
+[project]
+name = "kss-mcp"
+version = "0.0.1"
+description = "FastMCP server exposing KSS local SQLite cache to Claude Code (fastmcp pilot)."
+requires-python = ">=3.10"
+dependencies = [
+    "fastmcp==3.3.1",
+]
+
+[project.scripts]
+kss-mcp = "kss_mcp.server:main"
+
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["kss_mcp*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
