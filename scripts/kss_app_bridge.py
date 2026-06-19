@@ -27,6 +27,7 @@ PAPER_DIR = PROJECT_ROOT / "storage" / "paper_trade"
 REVIEW_DIR = PROJECT_ROOT / "storage" / "daily_review"
 REPORT_DIR = PROJECT_ROOT / "storage" / "reports"
 BJ_SCAN_DIR = REPORT_DIR / "bj50_scan"
+BJ_CACHE_DIR = PROJECT_ROOT / "storage" / "bj_cache"
 APP_RUN_DIR = PROJECT_ROOT / "storage" / "app_runs"
 TASK_LOG_PATH = APP_RUN_DIR / "kss_desktop_tasks.jsonl"
 NAMES_PATH = PROJECT_ROOT / "storage" / "stock_names.csv"
@@ -1358,48 +1359,80 @@ def _bj_scan_summary() -> dict[str, Any] | None:
     return {"scanDate": date, "total": len(rows), "passed": len(passed), "top": top}
 
 
+def _bj_daily_path(symbol: str) -> Path:
+    return BJ_CACHE_DIR / f"{symbol}_daily.csv"
+
+
+def _bj_history(symbol: str) -> list[dict[str, Any]]:
+    """北证日线历史（来自 scan_bj50 的 Tushare 缓存 storage/bj_cache）。"""
+    path = _bj_daily_path(symbol)
+    if not path.exists():
+        return []
+    history: list[dict[str, Any]] = []
+    for row in _read_csv_rows(path)[-160:]:
+        close = _safe_float(row.get("close"))
+        if close is None:
+            continue
+        history.append({
+            "date": row.get("trade_date", ""),
+            "open": _safe_float(row.get("open")),
+            "high": _safe_float(row.get("high")),
+            "low": _safe_float(row.get("low")),
+            "close": close,
+            "pctChange": _safe_float(row.get("pct_chg")),
+            "volume": _safe_float(row.get("vol")),
+            "amount": _safe_float(row.get("amount")),
+        })
+    return history
+
+
+def _bj_summary(scan_row: dict[str, str], archive_date: str) -> dict[str, Any]:
+    symbol = scan_row.get("ts_code", "")
+    daily = _read_csv_rows(_bj_daily_path(symbol)) if _bj_daily_path(symbol).exists() else []
+    closes = [v for v in (_safe_float(r.get("close")) for r in daily) if v is not None]
+    last20 = closes[-20:]
+    latest = daily[-1] if daily else {}
+    mv_yi = _safe_float(scan_row.get("total_mv_yi"))
+    return {
+        "symbol": symbol,
+        "name": scan_row.get("name", ""),
+        "industry": scan_row.get("industry", ""),
+        "concept": scan_row.get("perilla_tag", "") or "北证50",
+        "latestDate": latest.get("trade_date") or archive_date,
+        "close": _safe_float(latest.get("close")) if daily else _safe_float(scan_row.get("close")),
+        "pctChange": _safe_float(latest.get("pct_chg")) if daily else None,
+        "turnoverRate": _safe_float(scan_row.get("turnover_mean")),
+        "amount": _safe_float(latest.get("amount")) if daily else None,
+        "pe": _safe_float(scan_row.get("pe_ttm")),
+        "pb": _safe_float(scan_row.get("pb")),
+        "totalMv": (mv_yi * 1e8) if mv_yi is not None else None,
+        "ma5": _mean(closes[-5:]) if closes else None,
+        "ma20": _mean(last20) if last20 else None,
+        "high20": max(last20) if last20 else None,
+        "low20": min(last20) if last20 else None,
+    }
+
+
 def _bj_stock_summaries() -> list[dict[str, Any]]:
     date, rows = _latest_bj_scan()
-    out: list[dict[str, Any]] = []
     archive_date = f"{date[:4]}-{date[4:6]}-{date[6:8]}" if date and len(date) == 8 else (date or "")
-    for row in rows:
-        symbol = row.get("ts_code", "")
-        if not symbol:
-            continue
-        mv_yi = _safe_float(row.get("total_mv_yi"))
-        out.append({
-            "symbol": symbol,
-            "name": row.get("name", ""),
-            "industry": row.get("industry", ""),
-            "concept": row.get("perilla_tag", "") or "北证50",
-            "latestDate": archive_date,
-            "close": _safe_float(row.get("close")),
-            "pctChange": None,
-            "turnoverRate": _safe_float(row.get("turnover_mean")),
-            "amount": None,
-            "pe": _safe_float(row.get("pe_ttm")),
-            "pb": _safe_float(row.get("pb")),
-            "totalMv": (mv_yi * 1e8) if mv_yi is not None else None,
-            "ma5": None,
-            "ma20": None,
-            "high20": None,
-            "low20": None,
-        })
-    return out
+    return [_bj_summary(row, archive_date) for row in rows if row.get("ts_code")]
 
 
 def _bj_detail(symbol: str) -> dict[str, Any] | None:
-    _, rows = _latest_bj_scan()
+    date, rows = _latest_bj_scan()
+    archive_date = f"{date[:4]}-{date[4:6]}-{date[6:8]}" if date and len(date) == 8 else (date or "")
     for row in rows:
         if row.get("ts_code") == symbol:
-            summary = next((s for s in _bj_stock_summaries() if s["symbol"] == symbol), None)
+            history = _bj_history(symbol)
+            note = "" if history else "（无日线缓存）"
             return {
                 "symbol": symbol,
                 "name": row.get("name", ""),
                 "industry": row.get("industry", ""),
-                "concept": row.get("perilla_tag", "") or "北证50扫描（无日线历史）",
-                "latest": summary,
-                "history": [],
+                "concept": (row.get("perilla_tag", "") or "北证50扫描") + note,
+                "latest": _bj_summary(row, archive_date),
+                "history": history,
             }
     return None
 

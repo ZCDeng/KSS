@@ -15,6 +15,8 @@
    - bridge `_bj_stock_summaries` 把 `storage/reports/bj50_scan/scan_*.csv`（50 只 920xxx.BJ）注入股票池，stockCount 102→152；BJ 无日线 CSV，`stock_detail` 走 `_bj_detail` 兜底（摘要 + 空 history，图表显示“暂无数据”）。
    - 总览新增「北证 50 扫描」区块：扫描日 / 标的数 / 通过筛选 + total_score 前 8（名称/行业/评分/20日收益/perilla_tag）。
 
+5. **北证日线（追加）**：`_bj_detail`/`_bj_summary` 改读 `scan_bj50` 已落地的 Tushare 日线缓存 `storage/bj_cache/<code>_daily.csv`（零联网），BJ 个股补齐 K 线 + MA5/MA20 + 量能 + 分析指标；池内 BJ 行也带上涨跌幅/均线。缓存覆盖至 2026-06-05（科创到 06-18），刷新需重跑 scan_bj50。
+
 **验证**
 - `python3 -m py_compile`、`swift build`、`build_and_run --verify` 通过；bridge 实测 BJ 50 入池、recTracking 4 天（2026-05-11: 1d-2.04/5d-1.44/20d-3.79；2025-03-01: 1d+0.88/5d+5.83/20d-3.33）、BJ 详情不崩。
 - 实机：侧栏任务在末；推荐列对齐 + 往期跟踪表配色正确；总览北证50区块；股票数 152。
