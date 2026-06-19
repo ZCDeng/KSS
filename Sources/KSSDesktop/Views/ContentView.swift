@@ -106,7 +106,7 @@ struct ContentView: View {
             case .reviews:
                 ReviewsView(
                     reviews: snapshot.reviews,
-                    sectorPulse: snapshot.sectorPulse,
+                    sectorReviews: snapshot.sectorReviews ?? [],
                     selectedPath: store.selectedReportPath,
                     detail: store.reportDetail,
                     isLoadingDetail: store.isLoadingReport,

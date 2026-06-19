@@ -14,7 +14,7 @@ struct AppSnapshot: Codable {
     var recommendationTracking: [RecTrackingDay]?
     var bjScan: BJScan?
     var perillaPicks: [PerillaPick]?
-    var sectorPulse: SectorPulse?
+    var sectorReviews: [SectorPulse]?
     var pythonEnvironment: PythonEnvironment?
     var recentTaskRuns: [TaskRunResult]
 }
@@ -41,8 +41,9 @@ struct PerillaPick: Codable, Identifiable, Hashable {
     var mvIsFloat: Bool?    // true=流通市值, false=回退总市值
 }
 
-/// 今日板块脉冲：etf_radar 切片，资金申赎 + 强势确认分级。
-struct SectorPulse: Codable, Hashable {
+/// 板块脉冲（每日一份）：etf_radar 切片，资金申赎 + 强势确认分级。
+struct SectorPulse: Codable, Hashable, Identifiable {
+    var id: String { tradeDate }
     var tradeDate: String
     var dataDate: String
     var stale: Bool

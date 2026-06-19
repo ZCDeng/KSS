@@ -5,63 +5,83 @@ struct DashboardView: View {
     var onSelectSymbol: (String) -> Void
     var onOpenSection: (WorkspaceSection) -> Void
 
+    // Material 3 响应式栅格：统一外边距 / 沟槽，内容封顶居中，断点决定主区列数。
+    private let margin: CGFloat = 24
+    private let gutter: CGFloat = 20
+    private let sectionSpacing: CGFloat = 22
+    private let maxContent: CGFloat = 1040
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                // 数据日期 / 股票数 / 最新推荐 等全局指标统一只在边栏状态区呈现，
-                // 此处不再重复（避免标题副标题 + KPI 条 + 边栏三处同值）。
-                PageTitle("总览", subtitle: "本地量化研究工作台 · log_mv 选股 / 紫苏叶供应链 / 北证扫描")
+        GeometryReader { geo in
+            let contentW = min(geo.size.width - margin * 2, maxContent)
+            ScrollView {
+                VStack(alignment: .leading, spacing: sectionSpacing) {
+                    PageTitle("总览", subtitle: "本地量化研究工作台 · log_mv 选股 / 紫苏叶供应链 / 北证扫描")
 
-                // 0) 今日板块信息图：资金申赎 + 强势确认，一目了然
-                if let pulse = snapshot.sectorPulse, !pulse.themes.isEmpty {
-                    SectorPulseStrip(pulse: pulse)
-                }
-
-                // 1) 主区两栏：今日推荐 | 纸交易跟踪 + 资产计数
-                //    左栏按内容宽度封顶（避免表格被拉得过宽留大片空白），
-                //    多出的横向空间收进两栏之间的留白槽，右栏继续贴右。
-                HStack(alignment: .top, spacing: 14) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        SectionHeader("今日推荐", caption: "log_mv 反向选出的低市值 Top 5 · 买入 T+1 开盘")
-                        TodayPicksList(items: Array(snapshot.recommendations.prefix(5)), onSelect: onSelectSymbol)
+                    if let pulse = snapshot.sectorReviews?.first, !pulse.themes.isEmpty {
+                        SectorPulseStrip(pulse: pulse)
                     }
-                    .frame(maxWidth: 760, alignment: .topLeading)
 
-                    Spacer(minLength: 14)
+                    mainRow(contentW: contentW)
 
-                    VStack(alignment: .leading, spacing: 10) {
-                        SectionHeader("纸交易跟踪", caption: "log_mv 策略纸面累计表现")
-                        TrackingSummaryCard(tracking: snapshot.tracking)
-                        HStack(spacing: 10) {
-                            CountCard(icon: "doc.text.magnifyingglass", count: snapshot.reviews.count, unit: "篇", label: "复盘") {
-                                onOpenSection(.reviews)
-                            }
-                            CountCard(icon: "chart.xyaxis.line", count: snapshot.backtests.count, unit: "份", label: "回测") {
-                                onOpenSection(.backtests)
-                            }
-                        }
+                    if let picks = snapshot.perillaPicks, !picks.isEmpty {
+                        SectionHeader("紫苏叶选股", caption: "🌿 供应链护城河评分 Top · 按 perilla_score 排序 · 点击看个股")
+                        PerillaPicksTable(items: picks, onSelect: onSelectSymbol)
                     }
-                    .frame(width: 340, alignment: .topLeading)
-                }
 
-                // 2) 紫苏叶选股：供应链护城河评分
-                if let picks = snapshot.perillaPicks, !picks.isEmpty {
-                    SectionHeader("紫苏叶选股", caption: "🌿 供应链护城河评分 Top · 按 perilla_score 排序 · 点击看个股")
-                    PerillaPicksTable(items: picks, onSelect: onSelectSymbol)
-                        .frame(maxWidth: 940, alignment: .leading)
+                    if let scan = snapshot.bjScan {
+                        SectionHeader("北证 50 扫描", caption: "扫描表评分 Top 标的 · 点击看个股")
+                        BJScanSection(scan: scan, onSelect: onSelectSymbol)
+                    }
                 }
+                .frame(width: contentW, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)   // 内容块居中，余量进外边距
+                .padding(.vertical, margin)
+            }
+            .scrollContentBackground(.hidden)
+            .background(KSSTheme.canvas)
+        }
+    }
 
-                // 3) 北证 50 扫描
-                if let scan = snapshot.bjScan {
-                    SectionHeader("北证 50 扫描", caption: "扫描表评分 Top 标的 · 点击看个股")
-                    BJScanSection(scan: scan, onSelect: onSelectSymbol)
+    /// 主区：今日推荐 | 纸交易跟踪。宽屏并排（推荐自适应 + 跟踪定宽），窄屏纵向堆叠。
+    @ViewBuilder
+    private func mainRow(contentW: CGFloat) -> some View {
+        let trackingW = min(max(contentW * 0.32, 300), 360)
+        let twoCol = contentW >= 720
+
+        if twoCol {
+            HStack(alignment: .top, spacing: gutter) {
+                picksColumn.frame(maxWidth: .infinity, alignment: .topLeading)
+                trackingColumn.frame(width: trackingW, alignment: .topLeading)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: sectionSpacing) {
+                picksColumn
+                trackingColumn
+            }
+        }
+    }
+
+    private var picksColumn: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader("今日推荐", caption: "log_mv 反向选出的低市值 Top 5 · 买入 T+1 开盘")
+            TodayPicksList(items: Array(snapshot.recommendations.prefix(5)), onSelect: onSelectSymbol)
+        }
+    }
+
+    private var trackingColumn: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader("纸交易跟踪", caption: "log_mv 策略纸面累计表现")
+            TrackingSummaryCard(tracking: snapshot.tracking)
+            HStack(spacing: 10) {
+                CountCard(icon: "doc.text.magnifyingglass", count: snapshot.reviews.count, unit: "篇", label: "复盘") {
+                    onOpenSection(.reviews)
+                }
+                CountCard(icon: "chart.xyaxis.line", count: snapshot.backtests.count, unit: "份", label: "回测") {
+                    onOpenSection(.backtests)
                 }
             }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .scrollContentBackground(.hidden)
-        .background(KSSTheme.canvas)
     }
 }
 
@@ -75,7 +95,6 @@ struct TodayPicksList: View {
     private let wRank: CGFloat = 38
     private let wName: CGFloat = 128
     private let wSymbol: CGFloat = 116
-    private let wIndustry: CGFloat = 104
     private let wStatus: CGFloat = 92
     private let wWeight: CGFloat = 80
     private let colSpacing: CGFloat = 14
@@ -103,8 +122,7 @@ struct TodayPicksList: View {
             Text("排名").frame(width: wRank, alignment: .leading)
             Text("名称").frame(width: wName, alignment: .leading)
             Text("代码").frame(width: wSymbol, alignment: .leading)
-            Text("行业").frame(width: wIndustry, alignment: .leading)
-            Spacer(minLength: 12)
+            Text("行业").frame(maxWidth: .infinity, alignment: .leading)
             Text("状态").frame(width: wStatus, alignment: .leading)
             Text("权重").frame(width: wWeight, alignment: .trailing)
         }
@@ -135,8 +153,7 @@ struct TodayPicksList: View {
                 .font(.system(size: 12.5))
                 .foregroundStyle(KSSTheme.textBody)
                 .lineLimit(1)
-                .frame(width: wIndustry, alignment: .leading)
-            Spacer(minLength: 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
             StatusBadge.tracking(item.status)
                 .frame(width: wStatus, alignment: .leading)
             Text(KSSFormat.percent(item.weight))
@@ -324,7 +341,7 @@ struct SectorPulseStrip: View {
             }
             .padding(.top, 6)
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 188), spacing: 10)], spacing: 10) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 152), spacing: 12)], spacing: 12) {
                 ForEach(pulse.themes) { theme in
                     SectorChip(theme: theme)
                 }

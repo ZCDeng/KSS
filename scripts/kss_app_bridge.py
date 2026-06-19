@@ -1530,20 +1530,8 @@ def _cs_metrics(symbol: str) -> dict[str, Any]:
     }
 
 
-def _sector_pulse() -> dict[str, Any] | None:
-    """今日板块脉冲：取最新 etf_radar 切片（资金申赎 + 强势确认分级）。
-
-    数据源 storage/etf_radar/YYYYMMDD.json，同时服务总览板块信息图与复盘板块复盘。
-    """
-    if not ETF_RADAR_DIR.exists():
-        return None
-    files = sorted(ETF_RADAR_DIR.glob("*.json"))
-    if not files:
-        return None
-    try:
-        d = json.loads(files[-1].read_text(encoding="utf-8"))
-    except Exception:
-        return None
+def _pulse_from_dict(d: dict[str, Any]) -> dict[str, Any] | None:
+    """把一份 etf_radar 切片转成板块脉冲结构（资金申赎 + 强势确认分级）。"""
     themes_raw = d.get("themes") or {}
     themes: list[dict[str, Any]] = []
     for name, v in themes_raw.items():
@@ -1560,6 +1548,8 @@ def _sector_pulse() -> dict[str, Any] | None:
             "rank5d": v.get("rank_5d"),
             "nFunds": v.get("n_funds"),
         })
+    if not themes:
+        return None
     # 强势确认优先，其次按近 5 日涨幅降序
     themes.sort(key=lambda x: (x["grade"] != "强势确认", -(x["past5Ret"] if x["past5Ret"] is not None else -999)))
     regime = d.get("momentum_regime_r3") or {}
@@ -1573,6 +1563,27 @@ def _sector_pulse() -> dict[str, Any] | None:
         "regimeMom20Th": regime.get("mom20_th"),
         "themes": themes,
     }
+
+
+def _sector_reviews(limit: int = 40) -> list[dict[str, Any]]:
+    """每日板块复盘序列：逐份 etf_radar 切片，新到旧。
+
+    数据源 storage/etf_radar/YYYYMMDD.json。板块复盘与个股复盘一样是每日一篇，
+    故返回列表供复盘页按日期浏览；总览板块信息图取首项（最新一天）。
+    """
+    if not ETF_RADAR_DIR.exists():
+        return []
+    files = sorted(ETF_RADAR_DIR.glob("*.json"), reverse=True)[:limit]
+    out: list[dict[str, Any]] = []
+    for fp in files:
+        try:
+            d = json.loads(fp.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        pulse = _pulse_from_dict(d)
+        if pulse:
+            out.append(pulse)
+    return out
 
 
 def _perilla_picks(top_n: int = 12, min_score: float = 0.4) -> list[dict[str, Any]]:
@@ -1654,7 +1665,7 @@ def snapshot() -> dict[str, Any]:
         "recommendationTracking": _recommendation_tracking(names),
         "bjScan": _bj_scan_summary(),
         "perillaPicks": _perilla_picks(),
-        "sectorPulse": _sector_pulse(),
+        "sectorReviews": _sector_reviews(),
         "pythonEnvironment": _python_env_status(),
         "recentTaskRuns": _task_history(),
     }

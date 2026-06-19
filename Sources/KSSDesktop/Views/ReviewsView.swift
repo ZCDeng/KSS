@@ -7,16 +7,23 @@ enum DateRange: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum ReviewMode: String, CaseIterable, Identifiable {
+    case sector = "板块复盘"
+    case stock = "个股复盘"
+    var id: String { rawValue }
+}
+
 struct ReviewsView: View {
     var reviews: [DailyReview]
-    var sectorPulse: SectorPulse?
+    var sectorReviews: [SectorPulse]
     var selectedPath: String?
     var detail: ReportDetail?
     var isLoadingDetail: Bool
     var onSelectReview: (String) -> Void
 
+    @State private var mode: ReviewMode = .sector
     @State private var selectedReview: DailyReview?
-    @State private var showSectorReview = true
+    @State private var selectedSectorDate: String?
     @State private var ascending = false
     @State private var range: DateRange = .all
 
@@ -29,139 +36,150 @@ struct ReviewsView: View {
         return items.sorted { ascending ? $0.date < $1.date : $0.date > $1.date }
     }
 
+    private var selectedSector: SectorPulse? {
+        if let date = selectedSectorDate, let hit = sectorReviews.first(where: { $0.tradeDate == date }) {
+            return hit
+        }
+        return sectorReviews.first
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
-                // 置顶：今日板块复盘入口
-                if sectorPulse != nil {
-                    Button {
-                        showSectorReview = true
-                        selectedReview = nil
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "square.grid.2x2.fill")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(showSectorReview ? Color.white : KSSTheme.accent)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text("今日板块复盘")
-                                    .font(.system(size: 13.5, weight: .bold))
-                                    .foregroundStyle(showSectorReview ? Color.white : KSSTheme.textPrimary)
-                                Text("资金申赎 · 强势确认")
-                                    .font(.system(size: 10.5))
-                                    .foregroundStyle(showSectorReview ? Color.white.opacity(0.85) : KSSTheme.textSecondary)
-                            }
-                            Spacer()
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 9)
-                        .background(showSectorReview ? KSSTheme.accent : Color.clear)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    Divider().overlay(KSSTheme.hairline)
+                Picker("", selection: $mode) {
+                    ForEach(ReviewMode.allCases) { Text($0.rawValue).tag($0) }
                 }
-
-                HStack {
-                    Menu {
-                        ForEach(DateRange.allCases) { option in
-                            Button {
-                                range = option
-                            } label: {
-                                Label(option.rawValue, systemImage: range == option ? "checkmark" : "calendar")
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "calendar").font(.system(size: 11, weight: .semibold))
-                            Text(range.rawValue).font(.system(size: 12.5, weight: .semibold))
-                        }
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    Spacer()
-                    Button {
-                        ascending.toggle()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: ascending ? "arrow.up" : "arrow.down").font(.system(size: 11, weight: .bold))
-                            Text(ascending ? "最早" : "最新").font(.system(size: 12.5, weight: .semibold))
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
-                .foregroundStyle(KSSTheme.textSecondary)
+                .pickerStyle(.segmented)
+                .labelsHidden()
                 .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.top, 10)
+                .padding(.bottom, 6)
 
-                List(visibleReviews, selection: $selectedReview) { review in
-                    ReviewRow(review: review)
-                        .tag(review)
+                if mode == .stock {
+                    stockList
+                } else {
+                    sectorList
                 }
-                .scrollContentBackground(.hidden)
-                .background(KSSTheme.canvas)
             }
             .frame(width: 300)
 
             Divider().overlay(KSSTheme.hairline)
 
-            Group {
-                if showSectorReview, let sectorPulse {
-                    SectorReviewPanel(pulse: sectorPulse)
-                } else if let selectedReview {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(alignment: .firstTextBaseline) {
-                            PageTitle(selectedReview.title)
-                            Spacer()
-                            StatusBadge(icon: "calendar", text: selectedReview.date, tint: KSSTheme.accent)
-                        }
-                        if !selectedReview.focusSymbols.isEmpty {
-                            Text("关注 " + selectedReview.focusSymbols.joined(separator: "  "))
-                                .font(.system(size: 12.5, weight: .medium, design: .monospaced))
-                                .foregroundStyle(KSSTheme.textSecondary)
-                                .lineLimit(2)
-                        }
-                        if isLoadingDetail && selectedPath == selectedReview.path {
-                            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-                        } else if detail?.path == selectedReview.path, let detail {
-                            MarkdownWebView(text: detail.text)
-                                .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
-                                .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
-                        } else {
-                            MarkdownWebView(text: selectedReview.excerpt)
-                                .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
-                                .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
-                        }
-                    }
-                    .padding(16)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                } else {
-                    Text("选择一篇复盘查看全文")
-                        .font(.system(size: 14))
-                        .foregroundStyle(KSSTheme.textSecondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-            }
-            .background(KSSTheme.canvas)
+            detailPane
+                .background(KSSTheme.canvas)
         }
         .background(KSSTheme.canvas)
         .onAppear {
-            // 无板块数据时回退到首篇个股复盘
-            if sectorPulse == nil {
-                showSectorReview = false
-                if selectedReview == nil {
-                    selectedReview = visibleReviews.first
-                }
-                if let selectedReview, detail?.path != selectedReview.path {
-                    onSelectReview(selectedReview.path)
-                }
-            }
-        }
-        .onChange(of: selectedReview) { review in
-            if let review {
-                showSectorReview = false
+            if sectorReviews.isEmpty { mode = .stock }
+            if selectedSectorDate == nil { selectedSectorDate = sectorReviews.first?.tradeDate }
+            if selectedReview == nil { selectedReview = visibleReviews.first }
+            if mode == .stock, let review = selectedReview, detail?.path != review.path {
                 onSelectReview(review.path)
             }
         }
+        .onChange(of: selectedReview) { _, review in
+            if let review { onSelectReview(review.path) }
+        }
+    }
+
+    // MARK: 左栏
+
+    private var stockList: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Menu {
+                    ForEach(DateRange.allCases) { option in
+                        Button { range = option } label: {
+                            Label(option.rawValue, systemImage: range == option ? "checkmark" : "calendar")
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "calendar").font(.system(size: 11, weight: .semibold))
+                        Text(range.rawValue).font(.system(size: 12.5, weight: .semibold))
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                Spacer()
+                Button { ascending.toggle() } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: ascending ? "arrow.up" : "arrow.down").font(.system(size: 11, weight: .bold))
+                        Text(ascending ? "最早" : "最新").font(.system(size: 12.5, weight: .semibold))
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+            .foregroundStyle(KSSTheme.textSecondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+
+            List(visibleReviews, selection: $selectedReview) { review in
+                ReviewRow(review: review).tag(review)
+            }
+            .scrollContentBackground(.hidden)
+            .background(KSSTheme.canvas)
+        }
+    }
+
+    private var sectorList: some View {
+        List(sectorReviews, selection: $selectedSectorDate) { pulse in
+            SectorReviewRow(pulse: pulse).tag(pulse.tradeDate)
+        }
+        .scrollContentBackground(.hidden)
+        .background(KSSTheme.canvas)
+    }
+
+    // MARK: 详情
+
+    @ViewBuilder private var detailPane: some View {
+        if mode == .sector {
+            if let pulse = selectedSector {
+                SectorReviewPanel(pulse: pulse)
+            } else {
+                placeholder("暂无板块复盘数据")
+            }
+        } else if let review = selectedReview {
+            stockDetail(review)
+        } else {
+            placeholder("选择一篇复盘查看全文")
+        }
+    }
+
+    private func stockDetail(_ review: DailyReview) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                PageTitle(review.title)
+                Spacer()
+                StatusBadge(icon: "calendar", text: review.date, tint: KSSTheme.accent)
+            }
+            if !review.focusSymbols.isEmpty {
+                Text("关注 " + review.focusSymbols.joined(separator: "  "))
+                    .font(.system(size: 12.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(KSSTheme.textSecondary)
+                    .lineLimit(2)
+            }
+            if isLoadingDetail && selectedPath == review.path {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if detail?.path == review.path, let detail {
+                MarkdownWebView(text: detail.text)
+                    .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
+                    .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
+            } else {
+                MarkdownWebView(text: review.excerpt)
+                    .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
+                    .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+
+    private func placeholder(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 14))
+            .foregroundStyle(KSSTheme.textSecondary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private static func cutoff(latest: String, days: Int) -> String {
@@ -175,6 +193,44 @@ struct ReviewsView: View {
     }
 }
 
+/// 板块复盘列表行：日期 + 强势确认数 + 头部板块。
+struct SectorReviewRow: View {
+    var pulse: SectorPulse
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "square.grid.2x2.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(KSSTheme.accent)
+                Text(dateLabel)
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(KSSTheme.textSecondary)
+            }
+            Text("板块复盘")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(KSSTheme.textPrimary)
+            Text(summary)
+                .font(.system(size: 12.5))
+                .foregroundStyle(KSSTheme.textSecondary)
+                .lineLimit(2)
+        }
+        .padding(.vertical, 3)
+    }
+
+    private var dateLabel: String {
+        let raw = pulse.tradeDate
+        guard raw.count == 8 else { return raw }
+        return "\(raw.prefix(4))-\(raw.dropFirst(4).prefix(2))-\(raw.suffix(2))"
+    }
+
+    private var summary: String {
+        let strong = pulse.themes.filter { $0.grade.contains("强势") }.count
+        let names = pulse.themes.prefix(3).map(\.name).joined(separator: " · ")
+        return "强势确认 \(strong) 个 · \(names)"
+    }
+}
+
 /// 今日板块复盘：资金申赎 + 强势确认分级，含明细表与一年回测语义说明。
 struct SectorReviewPanel: View {
     var pulse: SectorPulse
@@ -183,7 +239,7 @@ struct SectorReviewPanel: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .firstTextBaseline) {
-                    PageTitle("今日板块复盘")
+                    PageTitle("板块复盘")
                     Spacer()
                     StatusBadge(icon: "calendar", text: dateLabel, tint: KSSTheme.accent)
                 }
