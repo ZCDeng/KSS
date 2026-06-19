@@ -2073,6 +2073,7 @@ LABEL_TITLES = {
     "scanner": "科创共振扫描",
     "sector_review_daily": "板块复盘",
     "update_data_daily": "股票池日线更新",
+    "hotspot_rotation_daily": "板块热点轮动归档",
 }
 
 _WEEKDAY_CN = {0: "日", 1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "日"}
