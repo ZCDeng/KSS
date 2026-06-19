@@ -14,18 +14,10 @@ struct SidebarView: View {
 
             if collapsed {
                 collapsedNav
-                Spacer(minLength: 0)
             } else {
-                List(selection: $selection) {
-                    ForEach(WorkspaceSection.allCases) { section in
-                        Label(section.displayName, systemImage: section.symbol)
-                            .font(.system(size: 15, weight: .semibold))
-                            .tag(section)
-                    }
-                }
-                .listStyle(.sidebar)
-                .scrollContentBackground(.hidden)   // 去掉侧栏列表的半透明材质（亮色下会透出桌面成蓝灰渐变）
+                expandedNav
             }
+            Spacer(minLength: 0)
 
             SidebarFooter(collapsed: collapsed)
                 .padding(.horizontal, collapsed ? 8 : 12)
@@ -35,17 +27,49 @@ struct SidebarView: View {
         .background(KSSTheme.canvas)   // 实色暖纸底，覆盖窗口 vibrancy
     }
 
-    /// 折叠态：仅图标导航，保留选中高亮。
+    /// 展开态：图标 + 文字，选中态铺 clay、图标统一 clay。
+    private var expandedNav: some View {
+        VStack(spacing: 3) {
+            ForEach(WorkspaceSection.allCases) { section in
+                let isOn = selection == section
+                Button { selection = section } label: {
+                    HStack(spacing: 11) {
+                        Image(systemName: section.symbol)
+                            .font(.system(size: 15, weight: .semibold))
+                            .frame(width: 22)
+                            .foregroundStyle(isOn ? Color.white : KSSTheme.accent)
+                        Text(section.displayName)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(isOn ? Color.white : KSSTheme.textBody)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 9)
+                    .background(
+                        isOn ? KSSTheme.accent : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 9)
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 4)
+    }
+
+    /// 折叠态：仅图标导航，选中铺 clay、图标统一 clay。
     private var collapsedNav: some View {
         VStack(spacing: 4) {
             ForEach(WorkspaceSection.allCases) { section in
+                let isOn = selection == section
                 Button { selection = section } label: {
                     Image(systemName: section.symbol)
                         .font(.system(size: 17, weight: .semibold))
                         .frame(width: 46, height: 38)
-                        .foregroundStyle(selection == section ? Color.white : KSSTheme.textBody)
+                        .foregroundStyle(isOn ? Color.white : KSSTheme.accent)
                         .background(
-                            selection == section ? KSSTheme.accent : Color.clear,
+                            isOn ? KSSTheme.accent : Color.clear,
                             in: RoundedRectangle(cornerRadius: 9)
                         )
                 }
