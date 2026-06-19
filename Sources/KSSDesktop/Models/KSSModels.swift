@@ -217,6 +217,7 @@ struct ResolvedStock: Codable, Identifiable, Hashable {
     var name: String
     var ok: Bool
     var inPool: Bool
+    var kind: String?   // stock / fund
 }
 
 struct StockDetail: Codable {

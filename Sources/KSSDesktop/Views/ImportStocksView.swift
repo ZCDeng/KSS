@@ -149,6 +149,13 @@ struct ImportStocksView: View {
                 Text(item.code)
                     .font(.system(size: 11.5, design: .monospaced))
                     .foregroundStyle(KSSTheme.textSecondary)
+                if item.kind == "fund" {
+                    Text("ETF")
+                        .font(.system(size: 9.5, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5).padding(.vertical, 1.5)
+                        .background(KSSTheme.ma20, in: Capsule())
+                }
             } else {
                 Text("未匹配")
                     .font(.system(size: 12))

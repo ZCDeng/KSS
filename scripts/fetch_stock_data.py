@@ -36,14 +36,24 @@ def _load_env() -> None:
                 os.environ.setdefault(k.strip(), v.strip())
 
 
-def fetch_one(ts_code: str, client, start: str, end: str) -> tuple[bool, str]:
+def fetch_one(ts_code: str, client, start: str, end: str, kind: str = "stock") -> tuple[bool, str]:
     code6 = ts_code.split(".")[0]
     csv_path = ROOT / f"cs_data_{code6}.csv"
 
-    daily = client.fetch_daily(ts_code, start, end)
+    from kss.data.tushare_client import _fetch_with_retry
+    if kind == "fund":
+        # ETF/场内基金走 fund_daily（无 daily_basic 的 pe/pb/换手）
+        pro = client.get_pro()
+        daily = _fetch_with_retry(
+            lambda: pro.fund_daily(ts_code=ts_code, start_date=start, end_date=end),
+            f"fund_daily {ts_code}",
+        )
+        daily_basic = None
+    else:
+        daily = client.fetch_daily(ts_code, start, end)
+        daily_basic = client.fetch_daily_basic(ts_code, start, end)
     if daily is None or daily.empty:
         return False, f"{ts_code} 无日线数据"
-    daily_basic = client.fetch_daily_basic(ts_code, start, end)
 
     daily["trade_date"] = pd.to_datetime(daily["trade_date"], format="%Y%m%d")
     if daily_basic is not None and not daily_basic.empty:
@@ -85,11 +95,22 @@ def main() -> None:
     end = datetime.now().strftime("%Y%m%d")
     start = (datetime.now() - timedelta(days=args.years * 365 + 30)).strftime("%Y%m%d")
 
+    # 从名称索引取 kind（stock / fund）以决定用 daily 还是 fund_daily
+    import json
+    idx_path = ROOT / "storage" / "macro" / "stock_name_index.json"
+    meta = {}
+    if idx_path.exists():
+        try:
+            meta = json.loads(idx_path.read_text(encoding="utf-8")).get("meta", {})
+        except Exception:
+            meta = {}
+
     codes = [c.strip().upper() for c in args.codes.split(",") if c.strip()]
     ok, fail = [], []
     for ts_code in codes:
+        kind = meta.get(ts_code, {}).get("kind", "stock")
         try:
-            good, msg = fetch_one(ts_code, client, start, end)
+            good, msg = fetch_one(ts_code, client, start, end, kind=kind)
             (ok if good else fail).append(msg)
             print(("✅ " if good else "⚠️ ") + msg)
         except Exception as e:  # noqa: BLE001

@@ -1543,51 +1543,66 @@ def _load_name_index() -> dict[str, Any]:
 
 
 def resolve_stocks(text: str) -> list[dict[str, Any]]:
-    """把自由文本（名称/代码，多种分隔）解析为 ts_code。供股票池导入用。
+    """把自由文本/OCR 结果（名称/代码，多种分隔）解析为 ts_code。供股票池导入用。
 
-    每个 token 返回 {query, code, name, ok}：代码精确查 byCode，名称先精确后模糊（包含）。
+    策略（券商自选截图 = 名称 + 6 位代码，常含价格/涨跌噪声）：
+      1) 正则抽全部独立 6 位代码（最可靠，覆盖 A股 + ETF）。
+      2) 名称 token：精确 byName，否则子串模糊（截断的 ETF 名是规范名子串 → 命中并按代码去重）。
+      3) 跳过含数字/纯符号 token（价格、涨跌幅等噪声）。
+    每条返回 {query, code, name, kind, ok, inPool}。
     """
     index = _load_name_index()
     by_name: dict[str, str] = index.get("byName", {})
     by_code: dict[str, str] = index.get("byCode", {})
     pairs: list[list[str]] = index.get("pairs", [])
-    # 已在池里的代码（避免重复导入提示）
+    meta: dict[str, dict[str, str]] = index.get("meta", {})
     existing = {p.stem.replace("cs_data_", "") for p in PROJECT_ROOT.glob("cs_data_*.csv")}
 
-    tokens = re.split(r"[\s,，、;；/\|]+", (text or "").strip())
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for tok in tokens:
-        tok = tok.strip()
-        if not tok:
-            continue
-        code = ""
-        name = ""
-        digits = re.sub(r"\.\w+$", "", tok)  # 去掉 .SH/.SZ 等后缀
-        if re.fullmatch(r"\d{6}", digits):
-            code = by_code.get(digits, "")
-            if code:
-                name = next((n for n, c in by_name.items() if c == code), "")
-        else:
-            if tok in by_name:
-                code = by_name[tok]
-                name = tok
-            else:
-                for n, c in pairs:          # 模糊：互相包含
-                    if tok in n or n in tok:
-                        code, name = c, n
-                        break
+
+    def push(query: str, code: str) -> None:
         if code and code in seen:
-            continue
+            return
         if code:
             seen.add(code)
+        info = meta.get(code, {}) if code else {}
         out.append({
-            "query": tok,
+            "query": query,
             "code": code,
-            "name": name,
+            "name": info.get("name", ""),
+            "kind": info.get("kind", "stock") if code else "",
             "ok": bool(code),
             "inPool": code.split(".")[0] in existing if code else False,
         })
+
+    text = text or ""
+    # 1) 6 位代码（独立成词，避免误抓价格里的数字）
+    has_codes = False
+    for code6 in re.findall(r"(?<![\d.])\d{6}(?![\d.])", text):
+        ts = by_code.get(code6)
+        if ts:
+            has_codes = True
+            push(code6, ts)
+
+    # 2) 名称 token：精确匹配始终生效（兼容名称+代码混输）；
+    #    模糊匹配与「未匹配」反馈只在「无代码」的纯名称输入下启用 ——
+    #    券商截图每行都有代码，截断名做模糊会误配，故有代码时只认精确名。
+    for tok in re.split(r"[\s,，、;；/\|]+", text.strip()):
+        tok = tok.strip()
+        if not tok or re.search(r"\d", tok) or not re.search(r"[一-龥A-Za-z]", tok):
+            continue  # 跳过价格/涨跌幅/纯符号
+        if tok in by_name:
+            push(tok, by_name[tok])
+            continue
+        if has_codes:
+            continue
+        hit = ""
+        for n, c in pairs:
+            if len(tok) >= 2 and (tok in n or n in tok):
+                hit = c
+                break
+        push(tok, hit)   # 含未匹配（ok=false）反馈
     return out
 
 
