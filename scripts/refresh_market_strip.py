@@ -24,6 +24,13 @@ ETFS = [
     ("159361.SZ", "A500ETF"),
 ]
 
+# (ts_code, 名称, 是否全球指数)。上证走 index_daily，纳指/恒生走 index_global。
+INDICES = [
+    ("000001.SH", "上证指数", False),
+    ("IXIC", "纳斯达克", True),
+    ("HSI", "恒生指数", True),
+]
+
 
 def _load_env() -> None:
     env = ROOT / ".env"
@@ -63,6 +70,30 @@ def main() -> None:
             "pct": round(float(r["pct_chg"]), 2),
         })
 
+    indices: list[dict] = []
+    for code, name, is_global in INDICES:
+        if is_global:
+            df = _fetch_with_retry(
+                lambda: pro.index_global(ts_code=code, start_date="20260101", end_date="20261231"),
+                f"index_global {code}",
+            )
+        else:
+            df = _fetch_with_retry(
+                lambda: pro.index_daily(ts_code=code, start_date="20260101", end_date="20261231"),
+                f"index_daily {code}",
+            )
+        if df is None or df.empty:
+            continue
+        df = df.sort_values("trade_date")
+        r = df.iloc[-1]
+        indices.append({
+            "code": code,
+            "name": name,
+            "close": round(float(r["close"]), 2),
+            "pct": round(float(r["pct_chg"]), 2),
+            "date": str(r["trade_date"]),
+        })
+
     north_money = None
     north_date = ""
     if HSGT.exists():
@@ -78,6 +109,7 @@ def main() -> None:
         "northDate": north_date,
         "northMoney": north_money,      # 万元（前端 /10000 → 亿）
         "etfs": etfs,
+        "indices": indices,
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")

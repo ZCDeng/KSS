@@ -1726,6 +1726,69 @@ def snapshot() -> dict[str, Any]:
     }
 
 
+def _stock_review(symbol: str) -> dict[str, Any] | None:
+    """从最新一份包含该股的每日复盘里抽取结论（标题/快照/预期区间/建议）。"""
+    digits = symbol.split(".")[0]
+    if not REVIEW_DIR.exists():
+        return None
+    header_re = re.compile(r"\*?\s*[^*()]+\((\d{6})\)")
+    for fp in sorted(REVIEW_DIR.glob("*.md"), reverse=True):
+        lines = fp.read_text(encoding="utf-8", errors="ignore").splitlines()
+        start = None
+        for i, ln in enumerate(lines):
+            if "📊" in ln:
+                m = header_re.search(ln)
+                if m and m.group(1) == digits:
+                    start = i
+                    break
+        if start is None:
+            continue
+
+        body: list[str] = []
+        for ln in lines[start + 1:]:
+            if ln.strip() == "---":
+                break
+            body.append(ln)
+
+        headline = ""
+        snapshot = ""
+        expectation: list[str] = []
+        suggestions: list[str] = []
+        mode = ""
+        for ln in body:
+            s = ln.strip()
+            if not s:
+                continue
+            if not headline and (s[0] in "🚀🌊📈📉🔥⚡" or "主升" in s or "龙头" in s):
+                headline = s.lstrip("🚀🌊📈📉🔥⚡ ").strip()
+                continue
+            if s.startswith("收 ") and not snapshot:
+                snapshot = s
+            if s.startswith("*预期区间*"):
+                mode = "exp"
+                continue
+            if s.startswith("*建议*"):
+                mode = "sug"
+                continue
+            if s.startswith("*") or s[0] in "📊📈📉🚀":
+                mode = ""
+            if mode == "exp":
+                expectation.append(s.replace("*", ""))
+            elif mode == "sug" and s.startswith("•"):
+                suggestions.append(s.lstrip("• ").replace("*", "").strip())
+
+        if not (headline or snapshot or suggestions):
+            return None
+        return {
+            "date": fp.stem,
+            "headline": headline,
+            "snapshot": snapshot,
+            "expectation": " ".join(expectation),
+            "suggestions": suggestions,
+        }
+    return None
+
+
 def stock_detail(symbol: str) -> dict[str, Any]:
     symbol = symbol.strip().upper()
     if "." not in symbol:
@@ -1739,7 +1802,7 @@ def stock_detail(symbol: str) -> dict[str, Any]:
         raise SystemExit(f"stock data not found: {symbol}")
     rows = _read_csv_rows(path)
     history = []
-    for row in rows[-160:]:
+    for row in rows[-400:]:   # 多给历史以支撑周/月/年线重采样
         close = _safe_float(row.get("close"))
         if close is None:
             continue
@@ -1762,6 +1825,7 @@ def stock_detail(symbol: str) -> dict[str, Any]:
         "concept": meta.get("concept", ""),
         "latest": latest,
         "history": history,
+        "reviewConclusion": _stock_review(symbol),
     }
 
 

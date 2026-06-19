@@ -181,6 +181,10 @@ struct StockDetailView: View {
                     }
                 }
 
+                if let review = detail.reviewConclusion {
+                    StockReviewCard(review: review)
+                }
+
                 SectionHeader("分析指标")
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 10)], spacing: 10) {
                     StatTile(title: "20日收益", value: KSSFormat.percent(analysis.return20), tint: KSSTheme.signColor(analysis.return20))
@@ -232,6 +236,67 @@ struct StockDetailView: View {
 
 /// Large interactive K-line view. Mouse-wheel zoom and drag-pan work here
 /// without the surrounding ScrollView intercepting the wheel.
+/// 个股复盘结论卡：来自每日复盘的 标题 / 预期区间 / 建议。
+struct StockReviewCard: View {
+    var review: StockReview
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(KSSTheme.accent)
+                Text("复盘结论")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(KSSTheme.textPrimary)
+                if !review.headline.isEmpty {
+                    Text(review.headline)
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(KSSTheme.accent, in: Capsule())
+                        .lineLimit(1)
+                }
+                Spacer()
+                StatusBadge(icon: "calendar", text: review.date, tint: KSSTheme.accent)
+            }
+
+            if !review.snapshot.isEmpty || !review.expectation.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    if !review.snapshot.isEmpty {
+                        Text(review.snapshot)
+                            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(KSSTheme.textBody)
+                    }
+                    if !review.expectation.isEmpty {
+                        Text("预期区间 · " + review.expectation)
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(KSSTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+
+            if !review.suggestions.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(review.suggestions.enumerated()), id: \.offset) { _, s in
+                        HStack(alignment: .top, spacing: 7) {
+                            Circle().fill(KSSTheme.accent).frame(width: 5, height: 5).padding(.top, 6)
+                            Text(s)
+                                .font(.system(size: 13))
+                                .foregroundStyle(KSSTheme.textBody)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .kssCard(padding: 16)
+    }
+}
+
 struct ChartFullscreenView: View {
     var detail: StockDetail
     var onClose: () -> Void

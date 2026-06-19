@@ -28,6 +28,11 @@ struct DashboardView: View {
                         MarketStripRow(strip: strip)
                     }
 
+                    // 第二行：指数（上证 / 纳斯达克 / 恒生）
+                    if let indices = snapshot.marketStrip?.indices, !indices.isEmpty {
+                        MarketIndexRow(indices: indices)
+                    }
+
                     if let pulse = snapshot.sectorReviews?.first, !pulse.themes.isEmpty {
                         SectorPulseStrip(pulse: pulse)
                     }
@@ -523,6 +528,49 @@ struct MarketStripRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .kssCard(padding: 14)
+    }
+}
+
+/// 总览第二行：上证 / 纳斯达克 / 恒生 指数当日。
+struct MarketIndexRow: View {
+    var indices: [IndexQuote]
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ForEach(indices) { idx in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Text(idx.name)
+                            .font(.system(size: 13.5, weight: .bold))
+                            .foregroundStyle(KSSTheme.textPrimary)
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(dateLabel(idx.date))
+                            .font(.system(size: 10.5, design: .monospaced))
+                            .foregroundStyle(KSSTheme.textSecondary)
+                            .lineLimit(1)
+                    }
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(String(format: "%.2f", idx.close))
+                            .font(.system(size: 22, weight: .heavy).monospacedDigit())
+                            .foregroundStyle(KSSTheme.signColor(idx.pct))
+                            .lineLimit(1)
+                        Text(String(format: "%+.2f%%", idx.pct))
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(KSSTheme.signColor(idx.pct))
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .kssCard(padding: 14)
+            }
+        }
+    }
+
+    private func dateLabel(_ raw: String?) -> String {
+        guard let raw, raw.count == 8 else { return raw ?? "" }
+        return "\(raw.prefix(4))-\(raw.dropFirst(4).prefix(2))-\(raw.suffix(2))"
     }
 }
 

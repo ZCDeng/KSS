@@ -48,6 +48,7 @@ struct MarketStrip: Codable, Hashable {
     var northMoney: Double?    // 万元
     var northDate: String?
     var etfs: [ETFQuote]
+    var indices: [IndexQuote]?
 }
 
 struct ETFQuote: Codable, Hashable, Identifiable {
@@ -56,6 +57,15 @@ struct ETFQuote: Codable, Hashable, Identifiable {
     var name: String
     var close: Double
     var pct: Double
+}
+
+struct IndexQuote: Codable, Hashable, Identifiable {
+    var id: String { code }
+    var code: String
+    var name: String
+    var close: Double
+    var pct: Double
+    var date: String?
 }
 
 /// 板块脉冲（每日一份）：etf_radar 切片，资金申赎 + 强势确认分级。
@@ -206,6 +216,16 @@ struct StockDetail: Codable {
     var concept: String
     var latest: StockSummary?
     var history: [PricePoint]
+    var reviewConclusion: StockReview?
+}
+
+/// 个股复盘结论（从 daily_review 抽取）：标题 / 快照 / 预期区间 / 建议。
+struct StockReview: Codable, Hashable {
+    var date: String
+    var headline: String
+    var snapshot: String
+    var expectation: String
+    var suggestions: [String]
 }
 
 struct PricePoint: Codable, Identifiable {
