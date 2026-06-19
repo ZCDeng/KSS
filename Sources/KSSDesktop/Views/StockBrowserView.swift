@@ -253,7 +253,10 @@ struct ChartFullscreenView: View {
             ChartLegend()
             ChartWebView(points: detail.history)
         }
-        .frame(minWidth: 1000, minHeight: 680)
+        .frame(
+            minWidth: 1200, idealWidth: 1680, maxWidth: .infinity,
+            minHeight: 820, idealHeight: 1000, maxHeight: .infinity
+        )
         .background(KSSTheme.chartSurface)
     }
 }

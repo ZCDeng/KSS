@@ -25,12 +25,12 @@ enum KSSTheme {
     static let gold = adaptive(light: 0xC9A45C, dark: 0xD4B36F)
     static let blue = adaptive(light: 0x5B7E96, dark: 0x7FA3BC)
 
-    // A股 红涨绿跌 → 暖红(clay) / 橄榄绿(olive)，与设计系统统一
-    static let up = adaptive(light: 0xD97757, dark: 0xE48A6E)
-    static let down = adaptive(light: 0x788C5D, dark: 0x9DB07C)
-    // 图表均线
-    static let ma5 = adaptive(light: 0xC9A45C, dark: 0xD4B36F)            // gold
-    static let ma20 = adaptive(light: 0x5B7E96, dark: 0x7FA3BC)          // blue
+    // A股 红涨绿跌：用醒目的标准红/绿（识别度高），不蹭 clay
+    static let up = adaptive(light: 0xF23645, dark: 0xF6465D)             // 红
+    static let down = adaptive(light: 0x089981, dark: 0x2EBD85)           // 绿
+    // 图表均线：橙 / 蓝
+    static let ma5 = adaptive(light: 0xF5A623, dark: 0xFF9F1C)
+    static let ma20 = adaptive(light: 0x2962FF, dark: 0x4C82FB)
 
     // Geometry
     static let cardRadius: CGFloat = 12

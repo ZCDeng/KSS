@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <style>
   :root { color-scheme: dark; }
-  :root { --bg:#FFFFFF; --text:#141413; --muted:#87867F; --ma5:#C9A45C; --ma20:#5B7E96; }
-  html.dark { --bg:#1F1F1D; --text:#FAF9F5; --muted:#8A8980; --ma5:#D4B36F; --ma20:#7FA3BC; }
+  :root { --bg:#FFFFFF; --text:#141413; --muted:#87867F; --ma5:#F5A623; --ma20:#2962FF; }
+  html.dark { --bg:#1F1F1D; --text:#FAF9F5; --muted:#8A8980; --ma5:#FF9F1C; --ma20:#4C82FB; }
   html, body {
     margin: 0; padding: 0; height: 100%; width: 100%;
     background: var(--bg);
@@ -37,10 +37,10 @@
   <script src="lightweight-charts.standalone.production.js"></script>
   <script>
   (function () {
-    // 设计系统调色板：A股红涨绿跌 → clay(暖红) / olive(橄榄绿)，均线 gold/blue。
+    // 醒目标准红绿（红涨绿跌，识别度高），均线橙/蓝；底色随主题。
     const PALETTES = {
-      dark:  { up:"#E48A6E", down:"#9DB07C", ma5:"#D4B36F", ma20:"#7FA3BC", grid:"#3D3D3A", text:"#8A8980", bg:"#1F1F1D", cross:"#E48A6E", upFill:"rgba(228,138,110,0.5)", downFill:"rgba(157,176,124,0.5)" },
-      light: { up:"#D97757", down:"#788C5D", ma5:"#C9A45C", ma20:"#5B7E96", grid:"#D1CFC5", text:"#87867F", bg:"#FFFFFF", cross:"#D97757", upFill:"rgba(217,119,87,0.45)", downFill:"rgba(120,140,93,0.45)" },
+      dark:  { up:"#F6465D", down:"#2EBD85", ma5:"#FF9F1C", ma20:"#4C82FB", grid:"#3D3D3A", text:"#8A8980", bg:"#1F1F1D", cross:"#9AA0A6", upFill:"rgba(246,70,93,0.5)", downFill:"rgba(46,189,133,0.5)" },
+      light: { up:"#F23645", down:"#089981", ma5:"#F5A623", ma20:"#2962FF", grid:"#D1CFC5", text:"#87867F", bg:"#FFFFFF", cross:"#787B86", upFill:"rgba(242,54,69,0.4)", downFill:"rgba(8,153,129,0.4)" },
     };
     let COLORS = PALETTES.dark;
     let currentTheme = "dark";

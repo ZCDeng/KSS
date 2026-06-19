@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-06-19 — macOS App 第十六阶段：图表恢复醒目红绿 + 放大适配 + 边栏精简（4 项反馈）
+
+**已交付**
+1. **图表恢复醒目默认色**：蜡烛 clay/olive → 标准红绿（亮 #F23645/#089981、暗 #F6465D/#2EBD85），均线橙/蓝（#F5A623·#FF9F1C / #2962FF·#4C82FB），识别度高，保留红涨绿跌；`KSSTheme.up/down/ma5/ma20` 与 chart.html 双调色板同步。clay 仍作为 UI 强调色（chrome）。
+2. **放大窗口适配**：`ChartFullscreenView` frame 由 1000×680 提到 minWidth 1200 / ideal 1680×1000 / max ∞，sheet 填满主窗口，不再过小。
+3. **边栏底部精简**：状态信息去掉卡片线框和背景，改纯「图标 + 文字」行；GitHub 链接同样去框，纯图标+文字。
+4. **顶部品牌**：透明 logo（去白底→alpha）+ serif 文字「KSS Desktop」，去掉卡片边框。
+
+**验证**
+- `swift build`、`build_and_run --verify` 通过。
+- 实机：K 线红绿醒目 + 橙蓝均线；放大 sheet 填满窗口；边栏透明 logo+「KSS Desktop」、底部状态纯图标文字无线框；亮暗主题切换正常。
+
 ## 2026-06-19 — macOS App 第十五阶段：前端改用架构图设计系统（暖纸/clay，亮+暗两套）
 
 **起因**：反过来——不再用 Discord token，改用项目交互架构图（html-diagram skill 产出）的设计系统，做亮色+暗色两套。
