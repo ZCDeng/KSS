@@ -47,6 +47,14 @@ struct BridgeClient {
         try run(["run", task.rawValue] + task.arguments, as: TaskRunResult.self)
     }
 
+    func resolveStocks(_ text: String) throws -> [ResolvedStock] {
+        try run(["resolve", text], as: [ResolvedStock].self)
+    }
+
+    func importStocks(_ codes: [String]) throws -> TaskRunResult {
+        try run(["import", codes.joined(separator: ",")], as: TaskRunResult.self)
+    }
+
     private func run<T: Decodable>(_ args: [String], as type: T.Type) throws -> T {
         let bridge = projectRoot.appending(path: "scripts/kss_app_bridge.py")
         let process = Process()

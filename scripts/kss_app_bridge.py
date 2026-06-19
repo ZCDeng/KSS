@@ -98,6 +98,16 @@ def _load_names() -> dict[str, dict[str, str]]:
             "industry": existing.get("industry") or meta.get("industry", ""),
             "concept": existing.get("concept") or meta.get("concept", ""),
         }
+    # 全市场名称索引兜底（导入的票补名称/行业）
+    idx_meta = _load_name_index().get("meta", {})
+    for symbol, m in idx_meta.items():
+        existing = out.get(symbol)
+        if existing is None:
+            out[symbol] = {"name": m.get("name", ""), "industry": m.get("industry", ""), "concept": ""}
+        elif not existing.get("name"):
+            existing["name"] = m.get("name", "")
+            if not existing.get("industry"):
+                existing["industry"] = m.get("industry", "")
     return out
 
 
@@ -1253,6 +1263,21 @@ def _run_refresh_bj_daily() -> dict[str, Any]:
     )
 
 
+def _run_update_cs_data() -> dict[str, Any]:
+    started = _now_iso()
+    python = _full_python()
+    if python is None:
+        return _missing_full_env_result("update-cs-data", "同步股票池日线", started)
+    return _run_process_task(
+        "update-cs-data",
+        "同步股票池日线",
+        [str(python), "scripts/update_cs_data.py"],
+        started,
+        artifacts=["cs_data_*.csv"],
+        timeout=600,
+    )
+
+
 def _run_refresh_market_strip() -> dict[str, Any]:
     started = _now_iso()
     python = _full_python()
@@ -1321,6 +1346,8 @@ def run_task(task_id: str, argv: list[str]) -> dict[str, Any]:
         return _run_refresh_daily_basic()
     if task_id == "refresh-market-strip":
         return _run_refresh_market_strip()
+    if task_id == "update-cs-data":
+        return _run_update_cs_data()
     return _task_result(
         task_id,
         task_id,
@@ -1501,6 +1528,82 @@ def _market_strip() -> dict[str, Any] | None:
         return json.loads(_MARKET_STRIP_JSON.read_text(encoding="utf-8"))
     except Exception:
         return None
+
+
+_NAME_INDEX_JSON = PROJECT_ROOT / "storage" / "macro" / "stock_name_index.json"
+
+
+def _load_name_index() -> dict[str, Any]:
+    if not _NAME_INDEX_JSON.exists():
+        return {}
+    try:
+        return json.loads(_NAME_INDEX_JSON.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def resolve_stocks(text: str) -> list[dict[str, Any]]:
+    """把自由文本（名称/代码，多种分隔）解析为 ts_code。供股票池导入用。
+
+    每个 token 返回 {query, code, name, ok}：代码精确查 byCode，名称先精确后模糊（包含）。
+    """
+    index = _load_name_index()
+    by_name: dict[str, str] = index.get("byName", {})
+    by_code: dict[str, str] = index.get("byCode", {})
+    pairs: list[list[str]] = index.get("pairs", [])
+    # 已在池里的代码（避免重复导入提示）
+    existing = {p.stem.replace("cs_data_", "") for p in PROJECT_ROOT.glob("cs_data_*.csv")}
+
+    tokens = re.split(r"[\s,，、;；/\|]+", (text or "").strip())
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for tok in tokens:
+        tok = tok.strip()
+        if not tok:
+            continue
+        code = ""
+        name = ""
+        digits = re.sub(r"\.\w+$", "", tok)  # 去掉 .SH/.SZ 等后缀
+        if re.fullmatch(r"\d{6}", digits):
+            code = by_code.get(digits, "")
+            if code:
+                name = next((n for n, c in by_name.items() if c == code), "")
+        else:
+            if tok in by_name:
+                code = by_name[tok]
+                name = tok
+            else:
+                for n, c in pairs:          # 模糊：互相包含
+                    if tok in n or n in tok:
+                        code, name = c, n
+                        break
+        if code and code in seen:
+            continue
+        if code:
+            seen.add(code)
+        out.append({
+            "query": tok,
+            "code": code,
+            "name": name,
+            "ok": bool(code),
+            "inPool": code.split(".")[0] in existing if code else False,
+        })
+    return out
+
+
+def _run_import_stocks(codes: list[str]) -> dict[str, Any]:
+    started = _now_iso()
+    python = _full_python()
+    if python is None:
+        return _missing_full_env_result("import-stocks", "导入股票同步", started)
+    return _run_process_task(
+        "import-stocks",
+        "导入股票同步",
+        [str(python), "scripts/fetch_stock_data.py", "--codes", ",".join(codes)],
+        started,
+        artifacts=[f"cs_data_{c.split('.')[0]}.csv" for c in codes],
+        timeout=300,
+    )
 
 
 def _load_dailybasic_cache() -> dict[str, Any]:
@@ -1854,6 +1957,15 @@ def main(argv: list[str]) -> int:
         return 0
     if command == "paper-summary":
         _json_dump(_paper_summary())
+        return 0
+    if command == "resolve":
+        _json_dump(resolve_stocks(argv[2] if len(argv) > 2 else ""))
+        return 0
+    if command == "import":
+        codes = [c.strip() for c in (argv[2] if len(argv) > 2 else "").split(",") if c.strip()]
+        result = _run_import_stocks(codes)
+        _append_task_history(result)
+        _json_dump(result)
         return 0
     if command == "python-env":
         _json_dump(_python_env_status())

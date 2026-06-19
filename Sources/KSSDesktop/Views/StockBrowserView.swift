@@ -22,6 +22,7 @@ struct StockBrowserView: View {
     @State private var sort: StockSort = .symbol
     @State private var ascending = true
     @State private var showChartFullscreen = false
+    @State private var showImport = false
 
     private var filteredStocks: [StockSummary] {
         var items = stocks
@@ -63,13 +64,19 @@ struct StockBrowserView: View {
                 .padding(.horizontal, 12)
                 .padding(.top, 12)
 
-                HStack {
+                HStack(spacing: 8) {
                     SortControl(
                         options: StockSort.allCases.map { ($0, $0.rawValue) },
                         selection: $sort,
                         ascending: $ascending
                     )
                     Spacer()
+                    Button { showImport = true } label: {
+                        Label("导入", systemImage: "plus.circle")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(KSSTheme.accent)
                     Text("\(filteredStocks.count)")
                         .font(.system(size: 12, weight: .semibold, design: .monospaced))
                         .foregroundStyle(KSSTheme.textSecondary)
@@ -133,6 +140,9 @@ struct StockBrowserView: View {
             .background(KSSTheme.canvas)
         }
         .background(KSSTheme.canvas)
+        .sheet(isPresented: $showImport) {
+            ImportStocksView { showImport = false }
+        }
         // 放大：铺满整个浏览区（列表+详情，随窗口尺寸动态最大化），而非尺寸受限的 sheet。
         .overlay {
             if showChartFullscreen, let detail {

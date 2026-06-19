@@ -94,6 +94,32 @@ final class KSSStore: ObservableObject {
         isRunningTask = false
     }
 
+    /// 解析自由文本（名称/代码/OCR 结果）为 ts_code。
+    func resolveStocks(_ text: String) async -> [ResolvedStock] {
+        guard let bridge else { return [] }
+        return (try? await Task.detached { try bridge.resolveStocks(text) }.value) ?? []
+    }
+
+    /// 导入并同步：拉取这些代码的日线，完成后刷新快照（新股进入股票池）。
+    @discardableResult
+    func importStocks(_ codes: [String]) async -> TaskRunResult? {
+        guard let bridge, !codes.isEmpty else { return nil }
+        isRunningTask = true
+        errorMessage = nil
+        defer { isRunningTask = false }
+        do {
+            let result = try await Task.detached { try bridge.importStocks(codes) }.value
+            taskResults.insert(result, at: 0)
+            if result.status != "failed" {
+                await loadSnapshot()
+            }
+            return result
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
     private func mergeTaskResults(current: [TaskRunResult], persisted: [TaskRunResult]) -> [TaskRunResult] {
         var seen = Set<String>()
         var merged: [TaskRunResult] = []

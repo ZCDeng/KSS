@@ -209,6 +209,16 @@ struct TrackingSummary: Codable, Hashable {
     var message: String?
 }
 
+/// 股票池导入解析结果：名称/代码 → ts_code。
+struct ResolvedStock: Codable, Identifiable, Hashable {
+    var id: String { query + code }
+    var query: String
+    var code: String
+    var name: String
+    var ok: Bool
+    var inPool: Bool
+}
+
 struct StockDetail: Codable {
     var symbol: String
     var name: String
@@ -282,6 +292,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
     case refreshBjDaily = "refresh-bj-daily"
     case refreshDailyBasic = "refresh-daily-basic"
     case refreshMarketStrip = "refresh-market-strip"
+    case updateCsData = "update-cs-data"
 
     var id: String { rawValue }
 
@@ -300,6 +311,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
         case .refreshBjDaily: return "刷新北证日线"
         case .refreshDailyBasic: return "刷新流通市值/估值"
         case .refreshMarketStrip: return "刷新市场速览"
+        case .updateCsData: return "同步股票池日线"
         }
     }
 
@@ -318,6 +330,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
         case .refreshBjDaily: return "arrow.triangle.2.circlepath"
         case .refreshDailyBasic: return "yensign.circle"
         case .refreshMarketStrip: return "chart.bar.doc.horizontal"
+        case .updateCsData: return "arrow.triangle.2.circlepath.circle"
         }
     }
 
@@ -325,7 +338,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
         switch self {
         case .previewPicks, .generatePicks, .paperSummary, .logmvBacktest, .radarArchiveAnalysis:
             return "轻量"
-        case .formalDailyPicks, .formalPaperSummary, .formalDailyReview, .formalSectorReview, .formalEtfRadarBacktest, .refreshBjDaily, .refreshDailyBasic, .refreshMarketStrip:
+        case .formalDailyPicks, .formalPaperSummary, .formalDailyReview, .formalSectorReview, .formalEtfRadarBacktest, .refreshBjDaily, .refreshDailyBasic, .refreshMarketStrip, .updateCsData:
             return "正式"
         }
     }
