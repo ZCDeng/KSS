@@ -8,17 +8,11 @@ struct DashboardView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                PageTitle("总览", subtitle: "数据日期 \(snapshot.latestDataDate ?? "-") · 更新 \(snapshot.recommendationDate ?? "-")")
+                // 数据日期 / 股票数 / 最新推荐 等全局指标统一只在边栏状态区呈现，
+                // 此处不再重复（避免标题副标题 + KPI 条 + 边栏三处同值）。
+                PageTitle("总览", subtitle: "本地量化研究工作台 · log_mv 选股 / 紫苏叶供应链 / 北证扫描")
 
-                // 1) KPI 概览条
-                HStack(alignment: .top, spacing: 10) {
-                    StatTile(title: "数据日期", value: snapshot.latestDataDate ?? "-")
-                    StatTile(title: "股票池", value: "\(snapshot.stockCount)")
-                    StatTile(title: "最新推荐", value: snapshot.recommendationDate ?? "-")
-                    StatTile(title: "跟踪 Sharpe", value: KSSFormat.number(snapshot.tracking.sharpe), tint: KSSTheme.signColor(snapshot.tracking.sharpe))
-                }
-
-                // 2) 主区两栏：今日推荐 | 纸交易跟踪 + 资产计数
+                // 1) 主区两栏：今日推荐 | 纸交易跟踪 + 资产计数
                 //    左栏按内容宽度封顶（避免表格被拉得过宽留大片空白），
                 //    多出的横向空间收进两栏之间的留白槽，右栏继续贴右。
                 HStack(alignment: .top, spacing: 14) {
@@ -43,6 +37,12 @@ struct DashboardView: View {
                         }
                     }
                     .frame(width: 340, alignment: .topLeading)
+                }
+
+                // 2) 紫苏叶选股：供应链护城河评分
+                if let picks = snapshot.perillaPicks, !picks.isEmpty {
+                    SectionHeader("紫苏叶选股", caption: "🌿 供应链护城河评分 Top · 按 perilla_score 排序 · 点击看个股")
+                    PerillaPicksTable(items: picks, onSelect: onSelectSymbol)
                 }
 
                 // 3) 北证 50 扫描
@@ -142,6 +142,110 @@ struct TodayPicksList: View {
         .contentShape(Rectangle())
         .padding(.horizontal, rowPadH)
         .padding(.vertical, 11)
+    }
+}
+
+/// 紫苏叶选股表：供应链护城河评分 Top 标的（全宽，产业链列自适应填满）。
+struct PerillaPicksTable: View {
+    var items: [PerillaPick]
+    var onSelect: (String) -> Void
+
+    private let wName: CGFloat = 132
+    private let wSymbol: CGFloat = 116
+    private let wLayer: CGFloat = 116
+    private let wMoat: CGFloat = 172
+    private let wScore: CGFloat = 64
+    private let colSpacing: CGFloat = 14
+    private let rowPadH: CGFloat = 14
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider().overlay(KSSTheme.hairline)
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                Button { onSelect(item.symbol) } label: { row(item) }
+                    .buttonStyle(.plain)
+                if index < items.count - 1 {
+                    Divider().overlay(KSSTheme.hairline)
+                }
+            }
+        }
+        .background(KSSTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
+    }
+
+    private var header: some View {
+        HStack(spacing: colSpacing) {
+            Text("名称").frame(width: wName, alignment: .leading)
+            Text("代码").frame(width: wSymbol, alignment: .leading)
+            Text("产业链").frame(maxWidth: .infinity, alignment: .leading)
+            Text("层级").frame(width: wLayer, alignment: .leading)
+            Text("护城河").frame(width: wMoat, alignment: .leading)
+            Text("评分").frame(width: wScore, alignment: .trailing)
+        }
+        .font(.system(size: 10.5, weight: .medium))
+        .tracking(0.5)
+        .foregroundStyle(KSSTheme.textSecondary)
+        .padding(.horizontal, rowPadH)
+        .padding(.vertical, 9)
+    }
+
+    private func row(_ item: PerillaPick) -> some View {
+        HStack(spacing: colSpacing) {
+            Text(item.name)
+                .font(.system(size: 14.5, weight: .bold))
+                .foregroundStyle(KSSTheme.textPrimary)
+                .lineLimit(1)
+                .frame(width: wName, alignment: .leading)
+            Text(item.symbol)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(KSSTheme.textSecondary)
+                .lineLimit(1)
+                .frame(width: wSymbol, alignment: .leading)
+            Text(item.chains.isEmpty ? "—" : item.chains)
+                .font(.system(size: 12.5))
+                .foregroundStyle(KSSTheme.textBody)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(layerLabel(item))
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(KSSTheme.textBody)
+                .lineLimit(1)
+                .frame(width: wLayer, alignment: .leading)
+            HStack(spacing: 5) {
+                Text(item.moat)
+                    .font(.system(size: 12))
+                    .foregroundStyle(KSSTheme.textBody)
+                    .lineLimit(1)
+                if item.locked {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(KSSTheme.accent)
+                }
+            }
+            .frame(width: wMoat, alignment: .leading)
+            Text(String(format: "%.2f", item.score))
+                .font(.system(size: 13.5, weight: .heavy, design: .monospaced))
+                .foregroundStyle(KSSTheme.accent)
+                .lineLimit(1)
+                .frame(width: wScore, alignment: .trailing)
+        }
+        .contentShape(Rectangle())
+        .padding(.horizontal, rowPadH)
+        .padding(.vertical, 11)
+    }
+
+    private func layerLabel(_ item: PerillaPick) -> String {
+        let roleCN: String
+        switch item.role {
+        case "material": roleCN = "材料"
+        case "equipment": roleCN = "设备"
+        case "component": roleCN = "零部件"
+        case "assembly": roleCN = "整机"
+        default: roleCN = item.role
+        }
+        return "L\(item.layer) · \(roleCN)"
     }
 }
 

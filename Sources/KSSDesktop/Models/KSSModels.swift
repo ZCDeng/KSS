@@ -13,8 +13,22 @@ struct AppSnapshot: Codable {
     var tracking: TrackingSummary
     var recommendationTracking: [RecTrackingDay]?
     var bjScan: BJScan?
+    var perillaPicks: [PerillaPick]?
     var pythonEnvironment: PythonEnvironment?
     var recentTaskRuns: [TaskRunResult]
+}
+
+/// 紫苏叶（供应链护城河评分）选股，数据源 supply_chain.yaml + ChainRegistry。
+struct PerillaPick: Codable, Identifiable, Hashable {
+    var id: String { symbol }
+    var symbol: String
+    var name: String
+    var chains: String
+    var layer: Int
+    var role: String
+    var moat: String
+    var locked: Bool
+    var score: Double
 }
 
 struct RecTrackingDay: Codable, Identifiable, Hashable {

@@ -1454,6 +1454,47 @@ def _bj_detail(symbol: str) -> dict[str, Any] | None:
     return None
 
 
+def _perilla_picks(top_n: int = 12, min_score: float = 0.4) -> list[dict[str, Any]]:
+    """紫苏叶（供应链护城河）选股：按 perilla_score 排序的注册表标的。
+
+    数据源 = kss/config/supply_chain.yaml（curated）+ ChainRegistry 评分。
+    每条返回结构化列字段，供前端表格直接渲染（不依赖展示字符串解析）。
+    """
+    try:
+        import sys
+        if str(PROJECT_ROOT) not in sys.path:
+            sys.path.insert(0, str(PROJECT_ROOT))
+        from kss.supply_chain.registry import ChainRegistry
+    except Exception:
+        return []
+    try:
+        reg = ChainRegistry.from_yaml()
+        candidates = reg.candidates(min_score=min_score)  # 已按分数降序
+    except Exception:
+        return []
+
+    picks: list[dict[str, Any]] = []
+    for code, score in candidates[:top_n]:
+        info = reg.get(code)
+        if info is None:
+            continue
+        if info.n_competitors_domestic <= 1:
+            moat = f"全球{info.n_competitors_global}家国内独家"
+        else:
+            moat = f"全球{info.n_competitors_global}家"
+        picks.append({
+            "symbol": code,
+            "name": info.name or code,
+            "chains": " / ".join(info.demand_chains),
+            "layer": int(info.chain_layer),
+            "role": info.chain_role or "",
+            "moat": moat,
+            "locked": bool(info.demand_locked),
+            "score": round(float(score), 3),
+        })
+    return picks
+
+
 def snapshot() -> dict[str, Any]:
     names = _load_names()
     stocks = _load_stock_summaries(names)
@@ -1473,6 +1514,7 @@ def snapshot() -> dict[str, Any]:
         "tracking": _paper_summary(),
         "recommendationTracking": _recommendation_tracking(names),
         "bjScan": _bj_scan_summary(),
+        "perillaPicks": _perilla_picks(),
         "pythonEnvironment": _python_env_status(),
         "recentTaskRuns": _task_history(),
     }
