@@ -7,6 +7,11 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            AppHeader()
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+                .padding(.bottom, 6)
+
             List(selection: $selection) {
                 ForEach(WorkspaceSection.allCases) { section in
                     Label(section.displayName, systemImage: section.symbol)
@@ -18,10 +23,82 @@ struct SidebarView: View {
 
             if let snapshot {
                 StatusCard(snapshot: snapshot, watchlistCount: watchlist.count)
-                    .padding(10)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 6)
             }
+
+            SidebarFooter()
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
         }
         .navigationTitle("KSS")
+    }
+}
+
+/// 边栏顶部：app 图标 + 名称 + 系统说明。
+struct AppHeader: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            logo
+                .frame(width: 34, height: 34)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("KSS 工作台")
+                    .font(.system(size: 16, weight: .heavy))
+                    .foregroundStyle(KSSTheme.textPrimary)
+                Text("科创 · 创业 · 北证 量化选股")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(KSSTheme.textSecondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(KSSTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(KSSTheme.hairline))
+    }
+
+    @ViewBuilder private var logo: some View {
+        if let url = Bundle.module.url(forResource: "logo", withExtension: "png"),
+           let image = NSImage(contentsOf: url) {
+            Image(nsImage: image).resizable().scaledToFit()
+        } else {
+            Image(systemName: "k.square.fill").resizable().scaledToFit().foregroundStyle(KSSTheme.up)
+        }
+    }
+}
+
+/// 边栏底部：GitHub 链接 + 架构说明。
+struct SidebarFooter: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let url = URL(string: "https://github.com/ZCDeng/KSS") {
+                Link(destination: url) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.left.forwardslash.chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("GitHub · ZCDeng/KSS")
+                            .font(.system(size: 12, weight: .semibold))
+                        Spacer()
+                        Image(systemName: "arrow.up.forward")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundStyle(KSSTheme.textPrimary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(KSSTheme.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(KSSTheme.hairline))
+                }
+                .buttonStyle(.plain)
+            }
+            Text("「架构」页可查看交互版系统架构图")
+                .font(.system(size: 10))
+                .foregroundStyle(KSSTheme.textSecondary)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

@@ -52,10 +52,14 @@ struct ContentView: View {
         if let snapshot = store.snapshot {
             switch store.selectedSection {
             case .dashboard:
-                DashboardView(snapshot: snapshot) { symbol in
-                    Task { await store.loadStock(symbol: symbol) }
-                    store.selectedSection = .stocks
-                }
+                DashboardView(
+                    snapshot: snapshot,
+                    onSelectSymbol: { symbol in
+                        Task { await store.loadStock(symbol: symbol) }
+                        store.selectedSection = .stocks
+                    },
+                    onOpenSection: { section in store.selectedSection = section }
+                )
             case .recommendations:
                 RecommendationsView(snapshot: snapshot) { symbol in
                     Task { await store.loadStock(symbol: symbol) }
@@ -107,6 +111,8 @@ struct ContentView: View {
                     onSelect: { symbol in Task { await store.loadStock(symbol: symbol) } },
                     onToggleWatchlist: toggleWatchlist
                 )
+            case .architecture:
+                ArchitectureView()
             }
         } else {
             VStack(spacing: 12) {

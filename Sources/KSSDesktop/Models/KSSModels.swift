@@ -254,6 +254,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     case backtests = "Backtests"
     case stocks = "Stocks"
     case runbook = "Runbook"
+    case architecture = "Architecture"
 
     var id: String { rawValue }
 
@@ -266,6 +267,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .reviews: return "复盘"
         case .backtests: return "回测"
         case .stocks: return "股票池"
+        case .architecture: return "架构"
         }
     }
 
@@ -278,6 +280,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .reviews: return "doc.text.magnifyingglass"
         case .backtests: return "chart.xyaxis.line"
         case .stocks: return "list.bullet.rectangle"
+        case .architecture: return "circle.hexagongrid"
         }
     }
 }

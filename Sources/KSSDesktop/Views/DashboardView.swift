@@ -3,6 +3,7 @@ import SwiftUI
 struct DashboardView: View {
     var snapshot: AppSnapshot
     var onSelectSymbol: (String) -> Void
+    var onOpenSection: (WorkspaceSection) -> Void
 
     var body: some View {
         ScrollView {
@@ -17,50 +18,33 @@ struct DashboardView: View {
                     StatTile(title: "跟踪 Sharpe", value: KSSFormat.number(snapshot.tracking.sharpe), tint: KSSTheme.signColor(snapshot.tracking.sharpe))
                 }
 
-                // 2) 主区两栏：今日推荐 | 纸交易跟踪
+                // 2) 主区两栏：今日推荐 | 纸交易跟踪 + 资产计数
                 HStack(alignment: .top, spacing: 14) {
                     VStack(alignment: .leading, spacing: 10) {
-                        SectionHeader("今日推荐")
+                        SectionHeader("今日推荐", caption: "log_mv 反向选出的低市值 Top 5 · 买入 T+1 开盘")
                         TodayPicksList(items: Array(snapshot.recommendations.prefix(5)), onSelect: onSelectSymbol)
                     }
                     .frame(maxWidth: .infinity, alignment: .topLeading)
 
                     VStack(alignment: .leading, spacing: 10) {
-                        SectionHeader("纸交易跟踪")
+                        SectionHeader("纸交易跟踪", caption: "log_mv 策略纸面累计表现")
                         TrackingSummaryCard(tracking: snapshot.tracking)
+                        HStack(spacing: 10) {
+                            CountCard(icon: "doc.text.magnifyingglass", count: snapshot.reviews.count, unit: "篇", label: "复盘") {
+                                onOpenSection(.reviews)
+                            }
+                            CountCard(icon: "chart.xyaxis.line", count: snapshot.backtests.count, unit: "份", label: "回测") {
+                                onOpenSection(.backtests)
+                            }
+                        }
                     }
-                    .frame(width: 320, alignment: .topLeading)
+                    .frame(width: 340, alignment: .topLeading)
                 }
 
                 // 3) 北证 50 扫描
                 if let scan = snapshot.bjScan {
-                    SectionHeader("北证 50 扫描")
+                    SectionHeader("北证 50 扫描", caption: "扫描表评分 Top 标的 · 点击看个股")
                     BJScanSection(scan: scan, onSelect: onSelectSymbol)
-                }
-
-                // 4) 次区两栏：最近复盘 | 回测证据
-                HStack(alignment: .top, spacing: 14) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        SectionHeader("最近复盘")
-                        VStack(spacing: 8) {
-                            ForEach(snapshot.reviews.prefix(4)) { review in
-                                ReviewRow(review: review)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .kssCard(padding: 12)
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        SectionHeader("回测证据")
-                        VStack(spacing: 8) {
-                            ForEach(snapshot.backtests.prefix(3)) { report in
-                                BacktestCard(report: report)
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
             }
             .padding(18)
@@ -116,6 +100,45 @@ struct TodayPicksList: View {
     }
 }
 
+/// 计数卡：复盘 / 回测这类「只看数量、点击跳转」的内容，不占大版面。
+struct CountCard: View {
+    var icon: String
+    var count: Int
+    var unit: String
+    var label: String
+    var onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Image(systemName: icon)
+                        .font(.system(size: 14))
+                        .foregroundStyle(KSSTheme.accent)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(KSSTheme.textSecondary)
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                    Text("\(count)")
+                        .font(.system(size: 24, weight: .heavy).monospacedDigit())
+                        .foregroundStyle(KSSTheme.textPrimary)
+                    Text(unit)
+                        .font(.system(size: 12))
+                        .foregroundStyle(KSSTheme.textSecondary)
+                }
+                Text(label)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(KSSTheme.textSecondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .kssCard(padding: 12)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 /// 纸交易跟踪汇总卡：年化 / Sharpe / 回撤 / 胜率 / 样本。
 struct TrackingSummaryCard: View {
     var tracking: TrackingSummary
@@ -163,20 +186,29 @@ struct TrackingSummaryCard: View {
 
 struct SectionHeader: View {
     var title: String
+    var caption: String?
 
-    init(_ title: String) {
+    init(_ title: String, caption: String? = nil) {
         self.title = title
+        self.caption = caption
     }
 
     var body: some View {
-        // Bold section title with a blurple accent bar for clear hierarchy.
-        HStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(KSSTheme.accent)
-                .frame(width: 4, height: 18)
-            Text(title)
-                .font(.system(size: 18, weight: .bold))
-                .foregroundStyle(KSSTheme.textPrimary)
+        // Bold section title with a blurple accent bar + optional caption.
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(KSSTheme.accent)
+                    .frame(width: 4, height: 18)
+                Text(title)
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(KSSTheme.textPrimary)
+            }
+            if let caption {
+                Text(caption)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(KSSTheme.textSecondary)
+            }
         }
         .padding(.top, 6)
     }

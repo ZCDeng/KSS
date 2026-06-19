@@ -18,7 +18,9 @@ let package = Package(
                 .copy("Resources/lightweight-charts.standalone.production.js"),
                 .copy("Resources/chart.html"),
                 .copy("Resources/marked.min.js"),
-                .copy("Resources/markdown.html")
+                .copy("Resources/markdown.html"),
+                .copy("Resources/architecture.html"),
+                .copy("Resources/logo.png")
             ]
         )
     ]

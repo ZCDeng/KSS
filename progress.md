@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-06-19 — macOS App 第十四阶段：架构图移植 + 边栏头尾 + 总览计数卡（4 项反馈）
+
+**已交付**
+1. **复盘/回测改计数卡**：总览不再铺开「最近复盘/回测证据」整列，改成右栏紧凑 `CountCard`（17 篇复盘 / 8 份回测，带 chevron，点击跳转到对应页），省版面。
+2. **今日推荐/纸交易平衡 + 说明**：`SectionHeader` 加 caption；今日推荐「log_mv 反向选出的低市值 Top 5·买入 T+1 开盘」，纸交易「log_mv 策略纸面累计表现」；右栏 = 纸交易卡 + 两张计数卡，与左栏列表等高，两栏平衡。
+3. **边栏头尾**：顶部 `AppHeader`（红色 K logo + “KSS 工作台” + “科创·创业·北证 量化选股”）；底部 `SidebarFooter`（GitHub·ZCDeng/KSS 链接 + 「架构」页说明）。logo.png 打进 bundle，`Bundle.module` 读取。
+4. **架构图移植**：`docs/kss_architecture_interactive.html`（自包含 23KB）+ logo.png 打进 Resources；新增 `ArchitectureView`（`LocalHTMLView` WKWebView 加载）+ `WorkspaceSection.architecture` 导航「架构」。交互版架构图（节点高亮/数据流过滤）在 app 内可用，页内带 GitHub 链接。
+
+**验证**
+- `swift build`、`build_and_run --verify` 通过；architecture.html + logo.png 进 `.app` bundle。
+- 实机：边栏 logo+名称+说明、底部 GitHub 链接；总览两栏平衡 + 计数卡(17/8)；「架构」页交互图渲染（数据层/回测引擎/commentary·LLM/Telegram 推送 + 流程过滤按钮）。
+
 ## 2026-06-19 — macOS App 第十三阶段：往期跟踪可展开 + 修自选死空列 + 总览重排（3 项反馈）
 
 **已交付**
