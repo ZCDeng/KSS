@@ -1253,6 +1253,21 @@ def _run_refresh_bj_daily() -> dict[str, Any]:
     )
 
 
+def _run_refresh_market_strip() -> dict[str, Any]:
+    started = _now_iso()
+    python = _full_python()
+    if python is None:
+        return _missing_full_env_result("refresh-market-strip", "刷新市场速览", started)
+    return _run_process_task(
+        "refresh-market-strip",
+        "刷新市场速览",
+        [str(python), "scripts/refresh_market_strip.py"],
+        started,
+        artifacts=["storage/macro/market_strip.json"],
+        timeout=180,
+    )
+
+
 def _run_refresh_daily_basic() -> dict[str, Any]:
     started = _now_iso()
     python = _full_python()
@@ -1304,6 +1319,8 @@ def run_task(task_id: str, argv: list[str]) -> dict[str, Any]:
         return _run_refresh_bj_daily()
     if task_id == "refresh-daily-basic":
         return _run_refresh_daily_basic()
+    if task_id == "refresh-market-strip":
+        return _run_refresh_market_strip()
     return _task_result(
         task_id,
         task_id,
@@ -1472,7 +1489,18 @@ def _bj_detail(symbol: str) -> dict[str, Any] | None:
 
 
 _DAILYBASIC_JSON = PROJECT_ROOT / "storage" / "macro" / "dailybasic_latest.json"
+_MARKET_STRIP_JSON = PROJECT_ROOT / "storage" / "macro" / "market_strip.json"
 ETF_RADAR_DIR = PROJECT_ROOT / "storage" / "etf_radar"
+
+
+def _market_strip() -> dict[str, Any] | None:
+    """总览第一行市场速览：A500ETF 当日行情 + 北向资金（refresh_market_strip.py 产出）。"""
+    if not _MARKET_STRIP_JSON.exists():
+        return None
+    try:
+        return json.loads(_MARKET_STRIP_JSON.read_text(encoding="utf-8"))
+    except Exception:
+        return None
 
 
 def _load_dailybasic_cache() -> dict[str, Any]:
@@ -1692,6 +1720,7 @@ def snapshot() -> dict[str, Any]:
         "bjScan": _bj_scan_summary(),
         "perillaPicks": _perilla_picks(),
         "sectorReviews": _sector_reviews(),
+        "marketStrip": _market_strip(),
         "pythonEnvironment": _python_env_status(),
         "recentTaskRuns": _task_history(),
     }

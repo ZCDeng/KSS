@@ -5,8 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <style>
   :root { color-scheme: dark; }
-  :root { --bg:#FFFFFF; --text:#141413; --muted:#87867F; --ma5:#F5A623; --ma20:#2962FF; }
-  html.dark { --bg:#1F1F1D; --text:#FAF9F5; --muted:#8A8980; --ma5:#FF9F1C; --ma20:#4C82FB; }
+  :root { --bg:#FFFFFF; --text:#141413; --muted:#87867F; --ma5:#F5A623; --ma20:#2962FF;
+          --chip:#F0EEE6; --chipText:#3D3D3A; --chipOn:#D97757; --hair:#D1CFC5; }
+  html.dark { --bg:#1F1F1D; --text:#FAF9F5; --muted:#8A8980; --ma5:#FF9F1C; --ma20:#4C82FB;
+          --chip:#2A2A28; --chipText:#D1CFC5; --chipOn:#E48A6E; --hair:#3D3D3A; }
   html, body {
     margin: 0; padding: 0; height: 100%; width: 100%;
     background: var(--bg);
@@ -19,10 +21,20 @@
     font-size: 11px; line-height: 1.5; color: var(--text);
     pointer-events: none; letter-spacing: 0.2px;
   }
-  #legend .row { display: flex; gap: 12px; }
+  #legend .row { display: flex; gap: 12px; flex-wrap: wrap; }
   #legend .k { color: var(--muted); }
   .ma5 { color: var(--ma5); }
   .ma20 { color: var(--ma20); }
+  #tf {
+    position: absolute; top: 8px; right: 10px; z-index: 6;
+    display: flex; gap: 4px;
+  }
+  #tf button {
+    font: inherit; font-size: 11px; font-weight: 600;
+    border: none; border-radius: 7px; padding: 4px 10px; cursor: pointer;
+    background: var(--chip); color: var(--chipText);
+  }
+  #tf button.on { background: var(--chipOn); color: #fff; }
   #empty {
     position: absolute; inset: 0; display: none;
     align-items: center; justify-content: center;
@@ -33,30 +45,104 @@
 <body>
   <div id="chart"></div>
   <div id="legend"></div>
+  <div id="tf">
+    <button data-tf="D" class="on">日</button>
+    <button data-tf="W">周</button>
+    <button data-tf="M">月</button>
+    <button data-tf="Y">年</button>
+  </div>
   <div id="empty">暂无行情数据</div>
   <script src="lightweight-charts.standalone.production.js"></script>
   <script>
   (function () {
-    // 醒目标准红绿（红涨绿跌，识别度高），均线橙/蓝；底色随主题。
+    // 醒目标准红绿（红涨绿跌），均线橙/蓝；MACD/OBV 副图各占一带。
     const PALETTES = {
-      dark:  { up:"#F6465D", down:"#2EBD85", ma5:"#FF9F1C", ma20:"#4C82FB", grid:"#3D3D3A", text:"#8A8980", bg:"#1F1F1D", cross:"#9AA0A6", upFill:"rgba(246,70,93,0.5)", downFill:"rgba(46,189,133,0.5)" },
-      light: { up:"#F23645", down:"#089981", ma5:"#F5A623", ma20:"#2962FF", grid:"#D1CFC5", text:"#87867F", bg:"#FFFFFF", cross:"#787B86", upFill:"rgba(242,54,69,0.4)", downFill:"rgba(8,153,129,0.4)" },
+      dark:  { up:"#F6465D", down:"#2EBD85", ma5:"#FF9F1C", ma20:"#4C82FB", grid:"#3D3D3A", text:"#8A8980", bg:"#1F1F1D", cross:"#9AA0A6", upFill:"rgba(246,70,93,0.5)", downFill:"rgba(46,189,133,0.5)", dif:"#FF9F1C", dea:"#4C82FB", obv:"#B388FF" },
+      light: { up:"#F23645", down:"#089981", ma5:"#F5A623", ma20:"#2962FF", grid:"#D1CFC5", text:"#87867F", bg:"#FFFFFF", cross:"#787B86", upFill:"rgba(242,54,69,0.4)", downFill:"rgba(8,153,129,0.4)", dif:"#F5A623", dea:"#2962FF", obv:"#7C4DFF" },
     };
     let COLORS = PALETTES.dark;
     let currentTheme = "dark";
+    let currentTF = "D";
 
     let chart, candleSeries, volumeSeries, ma5Series, ma20Series;
+    let macdHist, difSeries, deaSeries, obvSeries;
     let pending = null;
-    let lastPayload = null;
+    let rawBars = [];
 
+    // ---- 指标 ----
     function sma(values, period) {
-      const out = [];
-      let sum = 0;
+      const out = []; let sum = 0;
       for (let i = 0; i < values.length; i++) {
         sum += values[i].close;
         if (i >= period) sum -= values[i - period].close;
         if (i >= period - 1) out.push({ time: values[i].time, value: +(sum / period).toFixed(3) });
       }
+      return out;
+    }
+    function ema(src, period) { // src: [{time, value}]
+      const k = 2 / (period + 1); let prev = null; const out = [];
+      for (let i = 0; i < src.length; i++) {
+        const v = src[i].value;
+        prev = (prev === null) ? v : v * k + prev * (1 - k);
+        out.push({ time: src[i].time, value: prev });
+      }
+      return out;
+    }
+    function macd(candles) {
+      const close = candles.map(c => ({ time: c.time, value: c.close }));
+      const e12 = ema(close, 12), e26 = ema(close, 26);
+      const dif = e12.map((p, i) => ({ time: p.time, value: +(p.value - e26[i].value).toFixed(4) }));
+      const dea = ema(dif, 9).map(p => ({ time: p.time, value: +p.value.toFixed(4) }));
+      const hist = dif.map((p, i) => {
+        const h = +((p.value - dea[i].value) * 2).toFixed(4);
+        return { time: p.time, value: h, color: h >= 0 ? COLORS.up : COLORS.down };
+      });
+      return { dif, dea, hist };
+    }
+    function obv(candles, vols) {
+      let acc = 0; const out = [];
+      for (let i = 0; i < candles.length; i++) {
+        if (i > 0) {
+          const c = candles[i].close, pc = candles[i - 1].close, v = vols[i].value || 0;
+          acc += c > pc ? v : c < pc ? -v : 0;
+        }
+        out.push({ time: candles[i].time, value: +acc.toFixed(0) });
+      }
+      return out;
+    }
+
+    // ---- 周/月/年 重采样（从日线聚合） ----
+    function tfKey(dateStr, tf) {
+      const [y, m, d] = dateStr.split("-").map(Number);
+      if (tf === "M") return y * 100 + m;
+      if (tf === "Y") return y;
+      // 周：ISO 周序
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      const onejan = new Date(Date.UTC(y, 0, 1));
+      const week = Math.ceil((((dt - onejan) / 86400000) + onejan.getUTCDay() + 1) / 7);
+      return y * 100 + week;
+    }
+    function resample(daily, tf) {
+      if (tf === "D") return daily;
+      const groups = new Map();
+      for (const b of daily) {
+        const k = tfKey(b.date, tf);
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(b);
+      }
+      const out = [];
+      for (const arr of groups.values()) {
+        const first = arr[0], last = arr[arr.length - 1];
+        out.push({
+          date: last.date,
+          open: first.open != null ? first.open : first.close,
+          high: Math.max.apply(null, arr.map(x => x.high != null ? x.high : x.close)),
+          low: Math.min.apply(null, arr.map(x => x.low != null ? x.low : x.close)),
+          close: last.close,
+          volume: arr.reduce((s, x) => s + (x.volume || 0), 0),
+        });
+      }
+      out.sort((a, b) => a.date < b.date ? -1 : 1);
       return out;
     }
 
@@ -66,93 +152,108 @@
       chart = LightweightCharts.createChart(el, {
         layout: {
           background: { type: "solid", color: COLORS.bg },
-          textColor: COLORS.text,
-          fontSize: 11,
+          textColor: COLORS.text, fontSize: 11,
           fontFamily: '-apple-system, "SF Pro Text", sans-serif',
         },
         grid: {
           vertLines: { color: COLORS.grid, style: 1 },
           horzLines: { color: COLORS.grid, style: 1 },
         },
-        rightPriceScale: { borderColor: COLORS.grid, scaleMargins: { top: 0.08, bottom: 0.28 } },
+        rightPriceScale: { borderColor: COLORS.grid, scaleMargins: { top: 0.04, bottom: 0.62 } },
         timeScale: { borderColor: COLORS.grid, rightOffset: 4, fixLeftEdge: true },
         crosshair: {
           mode: LightweightCharts.CrosshairMode.Normal,
           vertLine: { color: COLORS.cross, width: 1, style: 3, labelBackgroundColor: COLORS.cross },
           horzLine: { color: COLORS.cross, width: 1, style: 3, labelBackgroundColor: COLORS.cross },
         },
-        handleScroll: true,
-        handleScale: true,
+        handleScroll: true, handleScale: true,
       });
 
+      // 主图：K 线（顶部 ~38%）
       candleSeries = chart.addCandlestickSeries({
         upColor: COLORS.up, downColor: COLORS.down,
         borderUpColor: COLORS.up, borderDownColor: COLORS.down,
         wickUpColor: COLORS.up, wickDownColor: COLORS.down,
         priceLineVisible: false,
       });
-
       ma5Series = chart.addLineSeries({ color: COLORS.ma5, lineWidth: 1, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false });
       ma20Series = chart.addLineSeries({ color: COLORS.ma20, lineWidth: 1, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false });
 
-      volumeSeries = chart.addHistogramSeries({
-        priceFormat: { type: "volume" },
-        priceScaleId: "vol",
-        priceLineVisible: false, lastValueVisible: false,
-      });
-      chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.78, bottom: 0 } });
+      // 成交量带
+      volumeSeries = chart.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "vol", priceLineVisible: false, lastValueVisible: false });
+      chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.40, bottom: 0.42 } });
+
+      // MACD 带（DIF/DEA 线 + 柱）
+      macdHist = chart.addHistogramSeries({ priceScaleId: "macd", priceLineVisible: false, lastValueVisible: false });
+      difSeries = chart.addLineSeries({ priceScaleId: "macd", color: COLORS.dif, lineWidth: 1, title: "MACD", priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false });
+      deaSeries = chart.addLineSeries({ priceScaleId: "macd", color: COLORS.dea, lineWidth: 1, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false });
+      chart.priceScale("macd").applyOptions({ scaleMargins: { top: 0.60, bottom: 0.21 } });
+
+      // OBV 带
+      obvSeries = chart.addLineSeries({ priceScaleId: "obv", color: COLORS.obv, lineWidth: 1, title: "OBV", priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false });
+      chart.priceScale("obv").applyOptions({ scaleMargins: { top: 0.81, bottom: 0.03 } });
 
       window.addEventListener("resize", () => {
         chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
       });
 
-      const legend = document.getElementById("legend");
       chart.subscribeCrosshairMove((param) => {
         if (!param || !param.time || !param.seriesData) { renderLegendLast(); return; }
         const c = param.seriesData.get(candleSeries);
         const m5 = param.seriesData.get(ma5Series);
         const m20 = param.seriesData.get(ma20Series);
-        if (c) renderLegend(param.time, c, m5 && m5.value, m20 && m20.value);
+        const dif = param.seriesData.get(difSeries);
+        const dea = param.seriesData.get(deaSeries);
+        const ob = param.seriesData.get(obvSeries);
+        if (c) renderLegend(param.time, c, m5 && m5.value, m20 && m20.value, dif && dif.value, dea && dea.value, ob && ob.value);
       });
       return true;
     }
 
-    let lastBar = null, lastMa5 = null, lastMa20 = null;
+    let lastCtx = null;
     function fmtTime(t) {
       if (typeof t === "string") return t;
       if (t && t.year) return `${t.year}-${String(t.month).padStart(2,"0")}-${String(t.day).padStart(2,"0")}`;
       return "";
     }
     function pct(o, c) { return o ? ((c - o) / o * 100).toFixed(2) + "%" : "-"; }
-    function renderLegend(t, c, m5, m20) {
+    function num(v) { return v == null ? "-" : (Math.abs(v) >= 10000 ? (v / 10000).toFixed(1) + "万" : (+v).toFixed(2)); }
+    function renderLegend(t, c, m5, m20, dif, dea, ob) {
       const col = c.close >= c.open ? COLORS.up : COLORS.down;
+      const tfName = { D: "日", W: "周", M: "月", Y: "年" }[currentTF];
       document.getElementById("legend").innerHTML =
-        `<div class="row"><span class="k">${fmtTime(t)}</span></div>` +
+        `<div class="row"><span class="k">${fmtTime(t)} · ${tfName}线</span></div>` +
         `<div class="row"><span class="k">开</span><span>${c.open}</span>` +
         `<span class="k">高</span><span>${c.high}</span>` +
         `<span class="k">低</span><span>${c.low}</span>` +
         `<span class="k">收</span><span style="color:${col}">${c.close}</span>` +
         `<span style="color:${col}">${pct(c.open, c.close)}</span></div>` +
         `<div class="row"><span class="ma5">MA5 ${m5 != null ? m5 : "-"}</span>` +
-        `<span class="ma20">MA20 ${m20 != null ? m20 : "-"}</span></div>`;
+        `<span class="ma20">MA20 ${m20 != null ? m20 : "-"}</span></div>` +
+        `<div class="row"><span class="k">DIF</span><span style="color:${COLORS.dif}">${num(dif)}</span>` +
+        `<span class="k">DEA</span><span style="color:${COLORS.dea}">${num(dea)}</span>` +
+        `<span class="k">OBV</span><span style="color:${COLORS.obv}">${num(ob)}</span></div>`;
     }
     function renderLegendLast() {
-      if (lastBar) renderLegend(lastBar.time, lastBar, lastMa5, lastMa20);
+      if (lastCtx) renderLegend(lastCtx.time, lastCtx.c, lastCtx.m5, lastCtx.m20, lastCtx.dif, lastCtx.dea, lastCtx.ob);
     }
 
     function setData(payload) {
       if (!chart && !buildChart()) { pending = payload; return; }
+      rawBars = (payload || []).filter(p => p && p.close != null);
+      renderTF();
+    }
+
+    function renderTF() {
+      if (!chart) return;
       const el = document.getElementById("chart");
       chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
-
-      const bars = (payload || []).filter(p => p && p.close != null);
+      const bars = resample(rawBars, currentTF);
       document.getElementById("empty").style.display = bars.length ? "none" : "flex";
       if (!bars.length) {
-        candleSeries.setData([]); volumeSeries.setData([]);
-        ma5Series.setData([]); ma20Series.setData([]);
+        [candleSeries, volumeSeries, ma5Series, ma20Series, macdHist, difSeries, deaSeries, obvSeries].forEach(s => s.setData([]));
         return;
       }
-
       const candles = bars.map(p => ({
         time: p.date,
         open: p.open != null ? p.open : p.close,
@@ -165,15 +266,27 @@
         value: p.volume != null ? p.volume : 0,
         color: (p.close >= (p.open != null ? p.open : p.close)) ? COLORS.upFill : COLORS.downFill,
       }));
+      const mm = macd(candles);
+      const ob = obv(candles, vols);
+
       candleSeries.setData(candles);
       volumeSeries.setData(vols);
       ma5Series.setData(sma(candles, 5));
       ma20Series.setData(sma(candles, 20));
+      macdHist.setData(mm.hist);
+      difSeries.setData(mm.dif);
+      deaSeries.setData(mm.dea);
+      obvSeries.setData(ob);
 
-      lastBar = candles[candles.length - 1];
-      const m5 = sma(candles, 5), m20 = sma(candles, 20);
-      lastMa5 = m5.length ? m5[m5.length - 1].value : null;
-      lastMa20 = m20.length ? m20[m20.length - 1].value : null;
+      const m5a = sma(candles, 5), m20a = sma(candles, 20);
+      lastCtx = {
+        time: candles[candles.length - 1].time, c: candles[candles.length - 1],
+        m5: m5a.length ? m5a[m5a.length - 1].value : null,
+        m20: m20a.length ? m20a[m20a.length - 1].value : null,
+        dif: mm.dif.length ? mm.dif[mm.dif.length - 1].value : null,
+        dea: mm.dea.length ? mm.dea[mm.dea.length - 1].value : null,
+        ob: ob.length ? ob[ob.length - 1].value : null,
+      };
       renderLegendLast();
       chart.timeScale().fitContent();
     }
@@ -184,19 +297,30 @@
       if (want === currentTheme) return;
       currentTheme = want;
       COLORS = PALETTES[want];
-      if (chart) { chart.remove(); chart = null; }  // rebuild with new palette
+      if (chart) { chart.remove(); chart = null; }  // 用新配色重建
+    }
+
+    function wireTF() {
+      document.querySelectorAll("#tf button").forEach(btn => {
+        btn.addEventListener("click", () => {
+          currentTF = btn.getAttribute("data-tf");
+          document.querySelectorAll("#tf button").forEach(b => b.classList.toggle("on", b === btn));
+          renderTF();
+        });
+      });
     }
 
     window.kssSetData = function (json, isDark) {
       try {
         if (typeof isDark === "boolean") applyTheme(isDark);
-        lastPayload = typeof json === "string" ? JSON.parse(json) : json;
-        setData(lastPayload);
+        const payload = typeof json === "string" ? JSON.parse(json) : json;
+        setData(payload);
       } catch (e) { document.getElementById("legend").textContent = "chart error: " + e; }
     };
 
     document.addEventListener("DOMContentLoaded", function () {
       buildChart();
+      wireTF();
       if (pending) { setData(pending); pending = null; }
     });
   })();

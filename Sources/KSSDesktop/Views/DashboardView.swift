@@ -16,7 +16,17 @@ struct DashboardView: View {
             let contentW = min(geo.size.width - margin * 2, maxContent)
             ScrollView {
                 VStack(alignment: .leading, spacing: sectionSpacing) {
-                    PageTitle("总览", subtitle: "本地量化研究工作台 · log_mv 选股 / 紫苏叶供应链 / 北证扫描")
+                    HStack(alignment: .top) {
+                        PageTitle("总览", subtitle: "本地量化研究工作台 · log_mv 选股 / 紫苏叶供应链 / 北证扫描")
+                        Spacer(minLength: 16)
+                        EditorialDateView()
+                    }
+
+                    // 第一行：市场速览（A500ETF ×2 + 北向资金）
+                    if let strip = snapshot.marketStrip,
+                       (!strip.etfs.isEmpty || strip.northMoney != nil) {
+                        MarketStripRow(strip: strip)
+                    }
 
                     if let pulse = snapshot.sectorReviews?.first, !pulse.themes.isEmpty {
                         SectorPulseStrip(pulse: pulse)
@@ -419,6 +429,100 @@ struct SectorChip: View {
         }
         .lineLimit(1)
         .fixedSize()
+    }
+}
+
+/// 编辑风日期戳：大号衬线 MM.DD + 小号 年/星期 右侧堆叠（复刻杂志日期设计）。
+struct EditorialDateView: View {
+    var date = Date()
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 7) {
+            Text(monthDay)
+                .font(.system(size: 34, weight: .bold, design: .serif))
+                .foregroundStyle(KSSTheme.textPrimary)
+                .monospacedDigit()
+            VStack(alignment: .leading, spacing: 1) {
+                Text(year)
+                    .foregroundStyle(KSSTheme.textSecondary)
+                Text(weekday)
+                    .foregroundStyle(KSSTheme.accent)
+            }
+            .font(.system(size: 12, weight: .semibold, design: .serif))
+            .padding(.top, 3)
+        }
+        .fixedSize()
+    }
+
+    private var comps: DateComponents {
+        Calendar.current.dateComponents([.year, .month, .day], from: date)
+    }
+    private var monthDay: String { String(format: "%02d.%02d", comps.month ?? 0, comps.day ?? 0) }
+    private var year: String { String(comps.year ?? 0) }
+    private var weekday: String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US")
+        f.dateFormat = "EEE"
+        return f.string(from: date).uppercased()
+    }
+}
+
+/// 总览第一行市场速览：A500ETF(563360/159361) 当日 + 北向资金净流入。
+struct MarketStripRow: View {
+    var strip: MarketStrip
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ForEach(strip.etfs) { etf in
+                card(title: etf.name,
+                     sub: etf.code,
+                     value: String(format: "%.3f", etf.close),
+                     delta: etf.pct,
+                     deltaText: String(format: "%+.2f%%", etf.pct))
+            }
+            if let nm = strip.northMoney {
+                let yi = nm / 10000.0
+                card(title: "北向资金",
+                     sub: northSub,
+                     value: String(format: "%+.1f", yi) + " 亿",
+                     delta: yi,
+                     deltaText: yi >= 0 ? "净流入" : "净流出")
+            }
+        }
+    }
+
+    private var northSub: String {
+        guard let d = strip.northDate, d.count == 8 else { return "沪深港通" }
+        return "\(d.prefix(4))-\(d.dropFirst(4).prefix(2))-\(d.suffix(2))"
+    }
+
+    private func card(title: String, sub: String, value: String, delta: Double, deltaText: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.system(size: 13.5, weight: .bold))
+                    .foregroundStyle(KSSTheme.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Text(sub)
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(KSSTheme.textSecondary)
+                    .lineLimit(1)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(value)
+                    .font(.system(size: 22, weight: .heavy).monospacedDigit())
+                    .foregroundStyle(KSSTheme.signColor(delta))
+                    .lineLimit(1)
+                Text(deltaText)
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(KSSTheme.signColor(delta))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .kssCard(padding: 14)
     }
 }
 

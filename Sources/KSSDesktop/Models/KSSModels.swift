@@ -15,6 +15,7 @@ struct AppSnapshot: Codable {
     var bjScan: BJScan?
     var perillaPicks: [PerillaPick]?
     var sectorReviews: [SectorPulse]?
+    var marketStrip: MarketStrip?
     var pythonEnvironment: PythonEnvironment?
     var recentTaskRuns: [TaskRunResult]
 }
@@ -39,6 +40,22 @@ struct PerillaPick: Codable, Identifiable, Hashable {
     var pb: Double?
     var circMvYi: Double?   // 流通市值（亿元）；缺失时回退总市值
     var mvIsFloat: Bool?    // true=流通市值, false=回退总市值
+}
+
+/// 总览第一行市场速览：A500ETF 当日行情 + 北向资金净流入。
+struct MarketStrip: Codable, Hashable {
+    var date: String?
+    var northMoney: Double?    // 万元
+    var northDate: String?
+    var etfs: [ETFQuote]
+}
+
+struct ETFQuote: Codable, Hashable, Identifiable {
+    var id: String { code }
+    var code: String
+    var name: String
+    var close: Double
+    var pct: Double
 }
 
 /// 板块脉冲（每日一份）：etf_radar 切片，资金申赎 + 强势确认分级。
@@ -244,6 +261,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
     case formalEtfRadarBacktest = "formal-etf-radar-backtest"
     case refreshBjDaily = "refresh-bj-daily"
     case refreshDailyBasic = "refresh-daily-basic"
+    case refreshMarketStrip = "refresh-market-strip"
 
     var id: String { rawValue }
 
@@ -261,6 +279,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
         case .formalEtfRadarBacktest: return "正式 ETF 回测"
         case .refreshBjDaily: return "刷新北证日线"
         case .refreshDailyBasic: return "刷新流通市值/估值"
+        case .refreshMarketStrip: return "刷新市场速览"
         }
     }
 
@@ -278,6 +297,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
         case .formalEtfRadarBacktest: return "waveform.path.ecg"
         case .refreshBjDaily: return "arrow.triangle.2.circlepath"
         case .refreshDailyBasic: return "yensign.circle"
+        case .refreshMarketStrip: return "chart.bar.doc.horizontal"
         }
     }
 
@@ -285,7 +305,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
         switch self {
         case .previewPicks, .generatePicks, .paperSummary, .logmvBacktest, .radarArchiveAnalysis:
             return "轻量"
-        case .formalDailyPicks, .formalPaperSummary, .formalDailyReview, .formalSectorReview, .formalEtfRadarBacktest, .refreshBjDaily, .refreshDailyBasic:
+        case .formalDailyPicks, .formalPaperSummary, .formalDailyReview, .formalSectorReview, .formalEtfRadarBacktest, .refreshBjDaily, .refreshDailyBasic, .refreshMarketStrip:
             return "正式"
         }
     }

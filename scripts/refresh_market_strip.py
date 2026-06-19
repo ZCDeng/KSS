@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""刷新总览第一行市场速览：A500ETF(563360/159361) 当日行情 + 北向资金净流入。
+
+- ETF 行情走 Tushare ``fund_daily``（OHLC + pct_chg）。
+- 北向资金读本地 ``storage/macro/hsgt_daily.parquet`` 最新一行 ``north_money``（万元）。
+
+产出 ``storage/macro/market_strip.json``，由 kss_app_bridge 离线读取（仅标准库）。
+用法： python scripts/refresh_market_strip.py
+"""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parents[1]
+OUT = ROOT / "storage" / "macro" / "market_strip.json"
+HSGT = ROOT / "storage" / "macro" / "hsgt_daily.parquet"
+
+ETFS = [
+    ("563360.SH", "A500ETF"),
+    ("159361.SZ", "A500ETF"),
+]
+
+
+def _load_env() -> None:
+    env = ROOT / ".env"
+    if not env.exists():
+        return
+    for line in env.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, _, v = line.partition("=")
+            os.environ.setdefault(k.strip(), v.strip())
+
+
+def main() -> None:
+    _load_env()
+    import sys
+    sys.path.insert(0, str(ROOT))
+    from kss.data.tushare_client import TushareClient, _fetch_with_retry
+
+    pro = TushareClient().get_pro()
+
+    etfs: list[dict] = []
+    etf_date = ""
+    for code, name in ETFS:
+        df = _fetch_with_retry(
+            lambda: pro.fund_daily(ts_code=code, start_date="20260101", end_date="20261231"),
+            f"fund_daily {code}",
+        )
+        if df is None or df.empty:
+            continue
+        df = df.sort_values("trade_date")
+        r = df.iloc[-1]
+        etf_date = max(etf_date, str(r["trade_date"]))
+        etfs.append({
+            "code": code,
+            "name": name,
+            "close": round(float(r["close"]), 3),
+            "pct": round(float(r["pct_chg"]), 2),
+        })
+
+    north_money = None
+    north_date = ""
+    if HSGT.exists():
+        hs = pd.read_parquet(HSGT).sort_values("trade_date")
+        if not hs.empty:
+            last = hs.iloc[-1]
+            north_money = round(float(last["north_money"]), 2)   # 万元
+            north_date = str(last["trade_date"])
+
+    payload = {
+        "date": etf_date or north_date,
+        "etfDate": etf_date,
+        "northDate": north_date,
+        "northMoney": north_money,      # 万元（前端 /10000 → 亿）
+        "etfs": etfs,
+    }
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    OUT.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    print(f"✅ 写入 {OUT.name}: {payload}")
+
+
+if __name__ == "__main__":
+    main()
