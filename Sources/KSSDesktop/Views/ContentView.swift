@@ -15,7 +15,10 @@ struct ContentView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
+        // 自定义两栏布局：NavigationSplitView 不肯把侧栏缩到 ~180pt 以下，
+        // 无法做图标栏，故改用 HStack 自管宽度，detail 仍包在 NavigationStack
+        // 里以保留窗口工具栏（主题/刷新）。
+        HStack(spacing: 0) {
             SidebarView(
                 selection: $store.selectedSection,
                 collapsed: sidebarCollapsed,
@@ -23,30 +26,35 @@ struct ContentView: View {
                     withAnimation(.easeInOut(duration: 0.2)) { sidebarCollapsed.toggle() }
                 }
             )
-            .navigationSplitViewColumnWidth(sidebarCollapsed ? 66 : 224)
-            .toolbar(removing: .sidebarToggle)
-        } detail: {
-            detail
-                .background(KSSTheme.canvas)
-                .toolbar {
-                    ToolbarItemGroup {
-                        if store.isLoading {
-                            ProgressView()
-                                .controlSize(.small)
-                        }
-                        Button {
-                            appearanceMode = (appearanceMode == "dark") ? "light" : "dark"
-                        } label: {
-                            Label("主题", systemImage: appearanceMode == "dark" ? "sun.max" : "moon")
-                        }
-                        .help(appearanceMode == "dark" ? "切换到亮色" : "切换到暗色")
-                        Button {
-                            Task { await store.loadSnapshot() }
-                        } label: {
-                            Label("刷新", systemImage: "arrow.clockwise")
+            .frame(width: sidebarCollapsed ? 64 : 224)
+            .frame(maxHeight: .infinity)
+            .background(KSSTheme.canvas)
+
+            Divider().overlay(KSSTheme.hairline)
+
+            NavigationStack {
+                detail
+                    .background(KSSTheme.canvas)
+                    .toolbar {
+                        ToolbarItemGroup {
+                            if store.isLoading {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                            Button {
+                                appearanceMode = (appearanceMode == "dark") ? "light" : "dark"
+                            } label: {
+                                Label("主题", systemImage: appearanceMode == "dark" ? "sun.max" : "moon")
+                            }
+                            .help(appearanceMode == "dark" ? "切换到亮色" : "切换到暗色")
+                            Button {
+                                Task { await store.loadSnapshot() }
+                            } label: {
+                                Label("刷新", systemImage: "arrow.clockwise")
+                            }
                         }
                     }
-                }
+            }
         }
         .frame(minWidth: 1080, minHeight: 720)
         .alert("KSS", isPresented: Binding(

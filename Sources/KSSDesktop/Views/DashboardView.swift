@@ -48,6 +48,7 @@ struct DashboardView: View {
                 if let picks = snapshot.perillaPicks, !picks.isEmpty {
                     SectionHeader("紫苏叶选股", caption: "🌿 供应链护城河评分 Top · 按 perilla_score 排序 · 点击看个股")
                     PerillaPicksTable(items: picks, onSelect: onSelectSymbol)
+                        .frame(maxWidth: 940, alignment: .leading)
                 }
 
                 // 3) 北证 50 扫描

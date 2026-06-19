@@ -30,7 +30,6 @@ struct SidebarView: View {
                 .padding(.horizontal, collapsed ? 8 : 12)
                 .padding(.bottom, 10)
         }
-        .navigationTitle("KSS")
     }
 
     /// 折叠态：仅图标导航，保留选中高亮。
