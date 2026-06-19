@@ -129,56 +129,109 @@ struct RecommendationsView: View {
         }
     }
 
-    // MARK: - 往期跟踪 (by 日/周/月)
+    // MARK: - 往期跟踪 (by 日/周/月, 可展开看当日选股)
 
     private var historyTab: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Text("预测日").frame(width: 110, alignment: .leading)
-                Text("选股").frame(width: 44, alignment: .trailing)
-                Text("日 (1d)").frame(maxWidth: .infinity, alignment: .trailing)
-                Text("周 (5d)").frame(maxWidth: .infinity, alignment: .trailing)
-                Text("月 (20d)").frame(maxWidth: .infinity, alignment: .trailing)
-            }
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(KSSTheme.textSecondary)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-
-            let days = snapshot.recommendationTracking ?? []
+        let days = snapshot.recommendationTracking ?? []
+        return Group {
             if days.isEmpty {
                 Text("暂无往期推荐记录")
                     .font(.system(size: 13))
                     .foregroundStyle(KSSTheme.textSecondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(days) { day in
-                    HStack(spacing: 12) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "calendar").font(.system(size: 10, weight: .semibold)).foregroundStyle(KSSTheme.accent)
-                            Text(day.date).font(.system(size: 13, weight: .bold, design: .monospaced)).foregroundStyle(KSSTheme.textPrimary)
+                ScrollView {
+                    VStack(spacing: 8) {
+                        HStack(spacing: 12) {
+                            Text("预测日").frame(width: 120, alignment: .leading)
+                            Text("选股").frame(width: 50, alignment: .trailing)
+                            Text("日 (1d)").frame(maxWidth: .infinity, alignment: .trailing)
+                            Text("周 (5d)").frame(maxWidth: .infinity, alignment: .trailing)
+                            Text("月 (20d)").frame(maxWidth: .infinity, alignment: .trailing)
+                            Spacer().frame(width: 20)
                         }
-                        .frame(width: 110, alignment: .leading)
-                        Text("\(day.nPicks)")
-                            .font(.system(size: 13, design: .monospaced))
-                            .foregroundStyle(KSSTheme.textSecondary)
-                            .frame(width: 44, alignment: .trailing)
-                        horizonCell(day.ret1d)
-                        horizonCell(day.ret5d)
-                        horizonCell(day.ret20d)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(KSSTheme.textSecondary)
+                        .padding(.horizontal, 14)
+
+                        ForEach(days) { day in
+                            TrackingDayCard(day: day, onSelectSymbol: onSelectSymbol)
+                        }
                     }
-                    .padding(.vertical, 4)
-                    .listRowBackground(KSSTheme.surface)
+                    .padding(16)
                 }
                 .scrollContentBackground(.hidden)
                 .background(KSSTheme.canvas)
             }
         }
     }
+}
 
-    private func horizonCell(_ value: Double?) -> some View {
+/// 一个预测日的跟踪卡：摘要行 + 点击展开当日逐只选股的 1d/5d/20d 收益。
+struct TrackingDayCard: View {
+    var day: RecTrackingDay
+    var onSelectSymbol: (String) -> Void
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button { withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() } } label: {
+                HStack(spacing: 12) {
+                    HStack(spacing: 6) {
+                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 10, weight: .bold)).foregroundStyle(KSSTheme.textSecondary)
+                        Image(systemName: "calendar").font(.system(size: 11, weight: .semibold)).foregroundStyle(KSSTheme.accent)
+                        Text(day.date).font(.system(size: 14, weight: .bold, design: .monospaced)).foregroundStyle(KSSTheme.textPrimary)
+                    }
+                    .frame(width: 120, alignment: .leading)
+                    Text("\(day.nPicks)")
+                        .font(.system(size: 13, design: .monospaced)).foregroundStyle(KSSTheme.textSecondary)
+                        .frame(width: 50, alignment: .trailing)
+                    horizonCell(day.ret1d, bold: true)
+                    horizonCell(day.ret5d, bold: true)
+                    horizonCell(day.ret20d, bold: true)
+                    Spacer().frame(width: 20)
+                }
+                .contentShape(Rectangle())
+                .padding(.vertical, 4)
+            }
+            .buttonStyle(.plain)
+
+            if expanded {
+                Divider().overlay(KSSTheme.hairline).padding(.vertical, 6)
+                VStack(spacing: 6) {
+                    ForEach(day.picks) { pick in
+                        Button { onSelectSymbol(pick.symbol) } label: {
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(pick.name.isEmpty ? pick.symbol : pick.name)
+                                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(KSSTheme.textPrimary)
+                                    Text(pick.symbol)
+                                        .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(KSSTheme.textSecondary)
+                                }
+                                .frame(width: 158, alignment: .leading)
+                                horizonCell(pick.ret1d, bold: false)
+                                horizonCell(pick.ret5d, bold: false)
+                                horizonCell(pick.ret20d, bold: false)
+                                Spacer().frame(width: 20)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(KSSTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(KSSTheme.hairline))
+    }
+
+    private func horizonCell(_ value: Double?, bold: Bool) -> some View {
         Text(value == nil ? "待结算" : KSSFormat.percent(value))
-            .font(.system(size: 13.5, weight: .semibold, design: .monospaced))
+            .font(.system(size: bold ? 13.5 : 12.5, weight: bold ? .bold : .medium, design: .monospaced))
             .foregroundStyle(value == nil ? KSSTheme.textSecondary : KSSTheme.signColor(value))
             .frame(maxWidth: .infinity, alignment: .trailing)
     }

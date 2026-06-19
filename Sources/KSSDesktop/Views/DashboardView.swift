@@ -6,42 +6,61 @@ struct DashboardView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                PageTitle("总览", subtitle: "数据日期 \(snapshot.latestDataDate ?? "-")")
+            VStack(alignment: .leading, spacing: 18) {
+                PageTitle("总览", subtitle: "数据日期 \(snapshot.latestDataDate ?? "-") · 更新 \(snapshot.recommendationDate ?? "-")")
+
+                // 1) KPI 概览条
                 HStack(alignment: .top, spacing: 10) {
                     StatTile(title: "数据日期", value: snapshot.latestDataDate ?? "-")
-                    StatTile(title: "自有股票池", value: "\(snapshot.stockCount)")
+                    StatTile(title: "股票池", value: "\(snapshot.stockCount)")
                     StatTile(title: "最新推荐", value: snapshot.recommendationDate ?? "-")
                     StatTile(title: "跟踪 Sharpe", value: KSSFormat.number(snapshot.tracking.sharpe), tint: KSSTheme.signColor(snapshot.tracking.sharpe))
                 }
 
-                SectionHeader("推荐")
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 10)], spacing: 10) {
-                    ForEach(snapshot.recommendations.prefix(6)) { item in
-                        RecommendationCard(item: item)
-                            .onTapGesture { onSelectSymbol(item.symbol) }
+                // 2) 主区两栏：今日推荐 | 纸交易跟踪
+                HStack(alignment: .top, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionHeader("今日推荐")
+                        TodayPicksList(items: Array(snapshot.recommendations.prefix(5)), onSelect: onSelectSymbol)
                     }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionHeader("纸交易跟踪")
+                        TrackingSummaryCard(tracking: snapshot.tracking)
+                    }
+                    .frame(width: 320, alignment: .topLeading)
                 }
 
+                // 3) 北证 50 扫描
                 if let scan = snapshot.bjScan {
                     SectionHeader("北证 50 扫描")
                     BJScanSection(scan: scan, onSelect: onSelectSymbol)
                 }
 
-                SectionHeader("最近复盘")
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 10)], spacing: 10) {
-                    ForEach(snapshot.reviews.prefix(4)) { review in
-                        ReviewRow(review: review)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .kssCard(padding: 12)
+                // 4) 次区两栏：最近复盘 | 回测证据
+                HStack(alignment: .top, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionHeader("最近复盘")
+                        VStack(spacing: 8) {
+                            ForEach(snapshot.reviews.prefix(4)) { review in
+                                ReviewRow(review: review)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .kssCard(padding: 12)
+                            }
+                        }
                     }
-                }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
 
-                SectionHeader("回测证据")
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 10)], spacing: 10) {
-                    ForEach(snapshot.backtests.prefix(4)) { report in
-                        BacktestCard(report: report)
+                    VStack(alignment: .leading, spacing: 10) {
+                        SectionHeader("回测证据")
+                        VStack(spacing: 8) {
+                            ForEach(snapshot.backtests.prefix(3)) { report in
+                                BacktestCard(report: report)
+                            }
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
             }
             .padding(18)
@@ -49,7 +68,96 @@ struct DashboardView: View {
         }
         .scrollContentBackground(.hidden)
         .background(KSSTheme.canvas)
-        .navigationTitle("总览")
+    }
+}
+
+/// 今日推荐：紧凑编号列表（替代之前占地的大卡片）。
+struct TodayPicksList: View {
+    var items: [Recommendation]
+    var onSelect: (String) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                Button { onSelect(item.symbol) } label: {
+                    HStack(spacing: 12) {
+                        Text("#\(item.rank)")
+                            .font(.system(size: 15, weight: .heavy, design: .monospaced))
+                            .foregroundStyle(KSSTheme.accent)
+                            .frame(width: 36, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.name.isEmpty ? item.symbol : item.name)
+                                .font(.system(size: 14.5, weight: .bold))
+                                .foregroundStyle(KSSTheme.textPrimary)
+                            Text("\(item.symbol) · \(item.industry)")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(KSSTheme.textSecondary)
+                        }
+                        Spacer()
+                        StatusBadge.tracking(item.status)
+                        Text(KSSFormat.percent(item.weight))
+                            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(KSSTheme.textSecondary)
+                            .frame(width: 56, alignment: .trailing)
+                    }
+                    .contentShape(Rectangle())
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                }
+                .buttonStyle(.plain)
+                if index < items.count - 1 {
+                    Divider().overlay(KSSTheme.hairline)
+                }
+            }
+        }
+        .background(KSSTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
+    }
+}
+
+/// 纸交易跟踪汇总卡：年化 / Sharpe / 回撤 / 胜率 / 样本。
+struct TrackingSummaryCard: View {
+    var tracking: TrackingSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                metric("年化", KSSFormat.percent(tracking.annualized), KSSTheme.signColor(tracking.annualized))
+                metric("Sharpe", KSSFormat.number(tracking.sharpe), KSSTheme.signColor(tracking.sharpe))
+                metric("最大回撤", KSSFormat.percent(tracking.maxDrawdown), KSSTheme.signColor(tracking.maxDrawdown))
+                metric("胜率", KSSFormat.percent(tracking.winRate), KSSTheme.textPrimary)
+            }
+            Divider().overlay(KSSTheme.hairline)
+            HStack {
+                Text("样本天数")
+                    .font(.system(size: 12)).foregroundStyle(KSSTheme.textSecondary)
+                Spacer()
+                Text("\(tracking.nDaysWithReturns) / \(tracking.nDaysLogged)")
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(KSSTheme.textPrimary)
+            }
+            if let message = tracking.message {
+                Text(message)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(KSSTheme.textSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .kssCard(padding: 16)
+    }
+
+    private func metric(_ label: String, _ value: String, _ tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased())
+                .font(.system(size: 10, weight: .medium)).tracking(0.5)
+                .foregroundStyle(KSSTheme.textSecondary)
+            Text(value)
+                .font(.system(size: 19, weight: .bold).monospacedDigit())
+                .foregroundStyle(tint)
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

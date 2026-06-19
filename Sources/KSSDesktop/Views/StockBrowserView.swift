@@ -44,8 +44,23 @@ struct StockBrowserView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
+        HStack(spacing: 0) {
             VStack(spacing: 0) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 12))
+                        .foregroundStyle(KSSTheme.textSecondary)
+                    TextField("搜索代码 / 名称 / 行业", text: $searchText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(KSSTheme.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+
                 HStack {
                     SortControl(
                         options: StockSort.allCases.map { ($0, $0.rawValue) },
@@ -90,23 +105,28 @@ struct StockBrowserView: View {
                 .scrollContentBackground(.hidden)
                 .background(KSSTheme.canvas)
             }
-            .searchable(text: $searchText, placement: .sidebar, prompt: "搜索代码 / 名称 / 行业")
-        } detail: {
-            if let detail {
-                StockDetailView(
-                    detail: detail,
-                    isWatched: watchlist.contains(detail.symbol),
-                    onToggleWatchlist: { onToggleWatchlist(detail.symbol) }
-                )
-            } else {
-                Text("选择一只股票查看详情")
-                    .font(.system(size: 14))
-                    .foregroundStyle(KSSTheme.textSecondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(KSSTheme.canvas)
+            .frame(width: 300)
+
+            Divider().overlay(KSSTheme.hairline)
+
+            Group {
+                if let detail {
+                    StockDetailView(
+                        detail: detail,
+                        isWatched: watchlist.contains(detail.symbol),
+                        onToggleWatchlist: { onToggleWatchlist(detail.symbol) }
+                    )
+                } else {
+                    Text("选择一只股票查看详情")
+                        .font(.system(size: 14))
+                        .foregroundStyle(KSSTheme.textSecondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(KSSTheme.canvas)
         }
-        .navigationTitle(title)
+        .background(KSSTheme.canvas)
     }
 }
 
