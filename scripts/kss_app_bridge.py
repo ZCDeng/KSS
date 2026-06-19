@@ -32,6 +32,7 @@ APP_RUN_DIR = PROJECT_ROOT / "storage" / "app_runs"
 TASK_LOG_PATH = APP_RUN_DIR / "kss_desktop_tasks.jsonl"
 NAMES_PATH = PROJECT_ROOT / "storage" / "stock_names.csv"
 SUPPLY_CHAIN_PATH = PROJECT_ROOT / "kss" / "config" / "supply_chain.yaml"
+SECTOR_ROTATION_DIR = PROJECT_ROOT / "storage" / "sector_rotation"
 TOP_N = 5
 TOP_PCT = 0.2
 FRESHNESS_DAYS = 7
@@ -1307,6 +1308,20 @@ def _run_refresh_daily_basic() -> dict[str, Any]:
         timeout=300,
     )
 
+def _run_refresh_sector_rotation() -> dict[str, Any]:
+    started = _now_iso()
+    python = _full_python()
+    if python is None:
+        return _missing_full_env_result("refresh-sector-rotation", "刷新板块热点轮动", started)
+    return _run_process_task(
+        "refresh-sector-rotation",
+        "刷新板块热点轮动",
+        [str(python), "scripts/refresh_hotspot_rotation.py", "--date", "latest", "--lookback-days", "5", "--enable-kaipan", "--enable-leaders"],
+        started,
+        artifacts=["storage/sector_rotation"],
+        timeout=300,
+    )
+
 
 def run_task(task_id: str, argv: list[str]) -> dict[str, Any]:
     args = _parse_args(argv)
@@ -1346,6 +1361,8 @@ def run_task(task_id: str, argv: list[str]) -> dict[str, Any]:
         return _run_refresh_daily_basic()
     if task_id == "refresh-market-strip":
         return _run_refresh_market_strip()
+    if task_id == "refresh-sector-rotation":
+        return _run_refresh_sector_rotation()
     if task_id == "update-cs-data":
         return _run_update_cs_data()
     return _task_result(
@@ -1764,6 +1781,84 @@ def _sector_reviews(limit: int = 40) -> list[dict[str, Any]]:
         out.append(pulse)
     return out
 
+def _sector_rotation_snapshot(path: Path) -> dict[str, Any] | None:
+    """读取一份板块热点轮动归档；失败返回 None."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _sector_rotation_history(limit: int = 30) -> list[dict[str, Any]]:
+    """板块热点轮动归档列表：最新 N 个交易日，新到旧。
+
+    仅返回用于日期列表的轻量字段（tradeDate、leaderCoverage、
+    crossSourceSignals 计数），避免把全部 leader 矩阵塞进快照。
+    """
+    if not SECTOR_ROTATION_DIR.exists():
+        return []
+    files = sorted(SECTOR_ROTATION_DIR.glob("*.json"), reverse=True)
+    out: list[dict[str, Any]] = []
+    for fp in files:
+        if len(out) >= limit:
+            break
+        snap = _sector_rotation_snapshot(fp)
+        if snap is None:
+            continue
+        signals = snap.get("crossSourceSignals") or {}
+        out.append({
+            "tradeDate": snap.get("tradeDate", fp.stem),
+            "lookbackDays": snap.get("lookbackDays"),
+            "historyCoverage": snap.get("historyCoverage"),
+            "leaderCoverage": snap.get("leaderCoverage"),
+            "mainlineCount": len(signals.get("mainline") or []),
+            "demonBoardCount": len(signals.get("demonBoard") or []),
+            "oldHotspotFadingCount": len(signals.get("oldHotspotFading") or []),
+            "satelliteCount": len(signals.get("satellite") or []),
+        })
+    return out
+
+
+def _latest_sector_rotation(limit_boards: int = 6, limit_leaders: int = 5) -> dict[str, Any] | None:
+    """最新一份板块热点轮动的摘要卡片数据。
+
+    Args:
+        limit_boards: 每个分类保留的板块数量。
+        limit_leaders: 返回的龙头总数。
+    """
+    if not SECTOR_ROTATION_DIR.exists():
+        return None
+    files = sorted(SECTOR_ROTATION_DIR.glob("*.json"), reverse=True)
+    if not files:
+        return None
+    snap = _sector_rotation_snapshot(files[0])
+    if snap is None:
+        return None
+    signals = snap.get("crossSourceSignals") or {}
+    all_boards = (snap.get("industries") or []) + (snap.get("concepts") or []) + (snap.get("kaipanBoards") or [])
+    leaders: list[dict[str, Any]] = []
+    for board in snap.get("leaderBoards") or []:
+        for leader in board.get("leaderStocks") or []:
+            leaders.append({
+                "boardName": board.get("name"),
+                "symbol": leader.get("code"),
+                "name": leader.get("name"),
+                "appearances": leader.get("count"),
+                "positions": leader.get("positions"),
+            })
+    leaders.sort(key=lambda x: (x.get("appearances") or 0), reverse=True)
+    return {
+        "tradeDate": snap.get("tradeDate"),
+        "lookbackDays": snap.get("lookbackDays"),
+        "leaderCoverage": snap.get("leaderCoverage"),
+        "historyCoverage": snap.get("historyCoverage"),
+        "mainline": (signals.get("mainline") or [])[:limit_boards],
+        "demonBoard": (signals.get("demonBoard") or [])[:limit_boards],
+        "oldHotspotFading": (signals.get("oldHotspotFading") or [])[:limit_boards],
+        "topLeaders": leaders[:limit_leaders],
+        "boardCount": len(all_boards),
+    }
+
 
 def _perilla_picks(top_n: int = 12, min_score: float = 0.4) -> list[dict[str, Any]]:
     """紫苏叶（供应链护城河）选股：按 perilla_score 排序的注册表标的。
@@ -1845,6 +1940,8 @@ def snapshot() -> dict[str, Any]:
         "bjScan": _bj_scan_summary(),
         "perillaPicks": _perilla_picks(),
         "sectorReviews": _sector_reviews(),
+        "sectorRotationHistory": _sector_rotation_history(),
+        "latestSectorRotation": _latest_sector_rotation(),
         "marketStrip": _market_strip(),
         "pythonEnvironment": _python_env_status(),
         "recentTaskRuns": _task_history(),
@@ -1991,6 +2088,17 @@ def main(argv: list[str]) -> int:
         return 0
     if command == "python-env":
         _json_dump(_python_env_status())
+        return 0
+    if command == "sector-rotation":
+        if len(argv) < 3:
+            _json_dump(_latest_sector_rotation() or {})
+        else:
+            path = SECTOR_ROTATION_DIR / f"{argv[2]}.json"
+            _json_dump(_sector_rotation_snapshot(path) or {})
+        return 0
+    if command == "sector-rotation-history":
+        limit = int(argv[2]) if len(argv) > 2 and argv[2].isdigit() else 30
+        _json_dump(_sector_rotation_history(limit=limit))
         return 0
     if command == "run":
         if len(argv) < 3:

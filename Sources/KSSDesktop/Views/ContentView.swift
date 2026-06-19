@@ -107,10 +107,14 @@ struct ContentView: View {
                 ReviewsView(
                     reviews: snapshot.reviews,
                     sectorReviews: snapshot.sectorReviews ?? [],
+                    sectorRotationHistory: snapshot.sectorRotationHistory ?? [],
+                    sectorRotationDetail: store.sectorRotationDetail,
+                    isLoadingSectorRotation: store.isLoadingSectorRotation,
                     selectedPath: store.selectedReportPath,
                     detail: store.reportDetail,
                     isLoadingDetail: store.isLoadingReport,
-                    onSelectReview: { path in Task { await store.loadReport(path: path) } }
+                    onSelectReview: { path in Task { await store.loadReport(path: path) } },
+                    onSelectSectorRotationDate: { date in Task { await store.loadSectorRotation(date: date) } }
                 )
             case .backtests:
                 BacktestsView(

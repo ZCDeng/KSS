@@ -37,6 +37,12 @@ struct DashboardView: View {
                         SectorPulseStrip(pulse: pulse)
                     }
 
+                    if let rotation = snapshot.latestSectorRotation {
+                        HotspotRotationCard(rotation: rotation) {
+                            onOpenSection(.reviews)
+                        }
+                    }
+
                     mainRow(contentW: contentW)
 
                     if let picks = snapshot.perillaPicks, !picks.isEmpty {
@@ -440,6 +446,65 @@ struct SectorChip: View {
         }
         .lineLimit(1)
         .fixedSize()
+    }
+}
+
+/// 板块热点轮动摘要卡片：真主线 / 妖板 计数 + Top 妖王.
+struct HotspotRotationCard: View {
+    var rotation: HotspotRotationSummary
+    var onTap: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 2).fill(KSSTheme.accent).frame(width: 4, height: 18)
+                Text("板块热点轮动")
+                    .font(KSSFont.serif(18, .semibold))
+                    .foregroundStyle(KSSTheme.textPrimary)
+                Spacer()
+                if let date = rotation.tradeDate, date.count == 8 {
+                    Text("\(date.prefix(4))-\(date.dropFirst(4).prefix(2))-\(date.suffix(2))")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(KSSTheme.textSecondary)
+                }
+            }
+
+            HStack(spacing: 12) {
+                classificationTile("真主线", rotation.mainline.count, KSSTheme.up)
+                classificationTile("妖板", rotation.demonBoard.count, KSSTheme.accent)
+                classificationTile("退潮", rotation.oldHotspotFading.count, KSSTheme.textSecondary)
+            }
+
+            if !rotation.topLeaders.isEmpty {
+                HStack(spacing: 8) {
+                    Text("妖王")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(KSSTheme.textSecondary)
+                    Text(rotation.topLeaders.prefix(3).map { "\($0.name)(\($0.appearances))" }.joined(separator: " · "))
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(KSSTheme.textBody)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(14)
+        .kssCard()
+        .onTapGesture(perform: onTap)
+    }
+
+    private func classificationTile(_ title: String, _ count: Int, _ tint: Color) -> some View {
+        VStack(spacing: 4) {
+            Text(title)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(tint)
+            Text("\(count)")
+                .font(.system(size: 18, weight: .heavy).monospacedDigit())
+                .foregroundStyle(KSSTheme.textPrimary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
     }
 }
 

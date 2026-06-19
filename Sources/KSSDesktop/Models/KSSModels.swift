@@ -15,9 +15,92 @@ struct AppSnapshot: Codable {
     var bjScan: BJScan?
     var perillaPicks: [PerillaPick]?
     var sectorReviews: [SectorPulse]?
+    var sectorRotationHistory: [HotspotRotationHistoryItem]?
+    var latestSectorRotation: HotspotRotationSummary?
     var marketStrip: MarketStrip?
     var pythonEnvironment: PythonEnvironment?
     var recentTaskRuns: [TaskRunResult]
+}
+/// 板块热点轮动：单日龙头 persistence.
+struct HotspotLeaderStock: Codable, Hashable, Identifiable {
+    var id: String { symbol }
+    var symbol: String
+    var name: String
+    var appearances: Int
+    var positions: [String]?
+}
+
+/// 板块热点轮动：单个板块（行业/概念/KAIPAN/leader 板）.
+struct HotspotBoard: Codable, Hashable, Identifiable {
+    var id: String { "\(source)-\(name)" }
+    var name: String
+    var source: String
+    var boardCode: String?
+    var pctChange: Double?
+    var heatScore: Double?
+    var todayRank: Int
+    var previousRank: Int?
+    var rankJump: Int?
+    var top3Appearances: Int
+    var streakDays: Int
+    var strengthDelta: Double?
+    var kaipanStrengthScore: Int?
+    var kaipanRank: Int?
+    var flowPersistenceScore: Double?
+    var classification: String
+    var classificationConfidence: String
+    var evidenceSources: [String]
+    var leaderStocks: [HotspotLeaderStock]?
+    var missing: [String]
+}
+
+/// 板块热点轮动：单日完整快照.
+struct HotspotRotationSnapshot: Codable, Hashable, Identifiable {
+    var id: String { tradeDate }
+    var tradeDate: String
+    var lookbackDays: Int
+    var tradingDaysUsed: [String]
+    var historyCoverage: Double
+    var leaderCoverage: Double
+    var missing: [String]
+    var industries: [HotspotBoard]
+    var concepts: [HotspotBoard]
+    var kaipanBoards: [HotspotBoard]
+    var leaderBoards: [HotspotBoard]
+    var crossSourceSignals: HotspotCrossSourceSignals
+}
+
+struct HotspotCrossSourceSignals: Codable, Hashable {
+    var mainline: [String]
+    var demonBoard: [String]
+    var oldHotspotFading: [String]
+    var satellite: [String]
+}
+
+/// 板块热点轮动：用于总览摘要卡片的轻量结构.
+struct HotspotRotationSummary: Codable, Hashable {
+    var tradeDate: String?
+    var lookbackDays: Int?
+    var leaderCoverage: Double?
+    var historyCoverage: Double?
+    var mainline: [String]
+    var demonBoard: [String]
+    var oldHotspotFading: [String]
+    var topLeaders: [HotspotLeaderStock]
+    var boardCount: Int
+}
+
+/// 板块热点轮动：日期列表项.
+struct HotspotRotationHistoryItem: Codable, Hashable, Identifiable {
+    var id: String { tradeDate }
+    var tradeDate: String
+    var lookbackDays: Int?
+    var historyCoverage: Double?
+    var leaderCoverage: Double?
+    var mainlineCount: Int
+    var demonBoardCount: Int
+    var oldHotspotFadingCount: Int
+    var satelliteCount: Int
 }
 
 /// 紫苏叶（供应链护城河评分）选股，数据源 supply_chain.yaml + ChainRegistry。
@@ -294,6 +377,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
     case refreshBjDaily = "refresh-bj-daily"
     case refreshDailyBasic = "refresh-daily-basic"
     case refreshMarketStrip = "refresh-market-strip"
+    case refreshSectorRotation = "refresh-sector-rotation"
     case updateCsData = "update-cs-data"
 
     var id: String { rawValue }
@@ -313,6 +397,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
         case .refreshBjDaily: return "刷新北证日线"
         case .refreshDailyBasic: return "刷新流通市值/估值"
         case .refreshMarketStrip: return "刷新市场速览"
+        case .refreshSectorRotation: return "刷新板块热点轮动"
         case .updateCsData: return "同步股票池日线"
         }
     }
@@ -332,6 +417,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
         case .refreshBjDaily: return "arrow.triangle.2.circlepath"
         case .refreshDailyBasic: return "yensign.circle"
         case .refreshMarketStrip: return "chart.bar.doc.horizontal"
+        case .refreshSectorRotation: return "flame"
         case .updateCsData: return "arrow.triangle.2.circlepath.circle"
         }
     }
@@ -340,7 +426,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
         switch self {
         case .previewPicks, .generatePicks, .paperSummary, .logmvBacktest, .radarArchiveAnalysis:
             return "轻量"
-        case .formalDailyPicks, .formalPaperSummary, .formalDailyReview, .formalSectorReview, .formalEtfRadarBacktest, .refreshBjDaily, .refreshDailyBasic, .refreshMarketStrip, .updateCsData:
+        case .formalDailyPicks, .formalPaperSummary, .formalDailyReview, .formalSectorReview, .formalEtfRadarBacktest, .refreshBjDaily, .refreshDailyBasic, .refreshMarketStrip, .refreshSectorRotation, .updateCsData:
             return "正式"
         }
     }
