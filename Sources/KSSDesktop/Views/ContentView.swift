@@ -5,6 +5,7 @@ struct ContentView: View {
     @AppStorage("watchlistSymbols") private var watchlistSymbols = "688017.SH,688322.SH"
     @AppStorage("appearanceMode") private var appearanceMode = "dark"
     @AppStorage("sidebarCollapsed") private var sidebarCollapsed = false
+    @AppStorage("sidebarOrder") private var sidebarOrder = ""
     @State private var searchText = ""
 
     private var watchlist: [String] {
@@ -12,6 +13,24 @@ struct ContentView: View {
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+    }
+
+    /// 用户自定义导航顺序（总览置顶），由 sidebarOrder 解析。
+    private var orderedSections: [WorkspaceSection] {
+        WorkspaceSection.ordered(from: sidebarOrder)
+    }
+
+    /// 把 dragged 移到 target 之前并持久化（总览不可被移动/越过）。
+    private func reorderSections(_ dragged: WorkspaceSection, before target: WorkspaceSection) {
+        guard dragged != target,
+              !WorkspaceSection.pinned.contains(dragged),
+              !WorkspaceSection.pinned.contains(target) else { return }
+        var items = orderedSections
+        guard let from = items.firstIndex(of: dragged) else { return }
+        items.remove(at: from)
+        guard let to = items.firstIndex(of: target) else { return }
+        items.insert(dragged, at: to)
+        sidebarOrder = WorkspaceSection.encode(items)
     }
 
     var body: some View {
@@ -22,8 +41,14 @@ struct ContentView: View {
             SidebarView(
                 selection: $store.selectedSection,
                 collapsed: sidebarCollapsed,
+                sections: orderedSections,
                 onToggleCollapse: {
                     withAnimation(.easeInOut(duration: 0.2)) { sidebarCollapsed.toggle() }
+                },
+                onReorder: { dragged, target in
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        reorderSections(dragged, before: target)
+                    }
                 }
             )
             .frame(width: sidebarCollapsed ? 64 : 224)

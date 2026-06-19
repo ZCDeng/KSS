@@ -392,4 +392,47 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .architecture: return "circle.hexagongrid"
         }
     }
+
+    // MARK: 边栏排序（总览永久置顶，其余可拖拽重排）
+
+    /// 永久置顶、不参与排序的 section。
+    static let pinned: [WorkspaceSection] = [.dashboard]
+
+    /// 可被用户拖拽重排的 section（enum 原序，去掉置顶项）。
+    static var reorderable: [WorkspaceSection] {
+        allCases.filter { !pinned.contains($0) }
+    }
+
+    /// 把已存顺序（rawValue 逗号串）解析成完整有序 section 列表。
+    /// 规则：置顶项永远在前；其余按存储顺序排；存储里缺失的 reorderable 项
+    /// 按 enum 原序追加末尾（向前兼容未来新增 section）；非法/置顶/重复 rawValue 忽略。
+    static func ordered(from saved: String) -> [WorkspaceSection] {
+        let savedRaw = saved
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        var result: [WorkspaceSection] = []
+        var seen = Set<WorkspaceSection>()
+        for raw in savedRaw {
+            guard let section = WorkspaceSection(rawValue: raw),
+                  !pinned.contains(section),
+                  !seen.contains(section) else { continue }
+            result.append(section)
+            seen.insert(section)
+        }
+        // 追加存储里没有的 reorderable 项（含未来新增）
+        for section in reorderable where !seen.contains(section) {
+            result.append(section)
+        }
+        return pinned + result
+    }
+
+    /// 把有序 section 列表编码成存储串（只存非置顶项）。
+    static func encode(_ sections: [WorkspaceSection]) -> String {
+        sections
+            .filter { !pinned.contains($0) }
+            .map { $0.rawValue }
+            .joined(separator: ",")
+    }
 }

@@ -1,9 +1,16 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SidebarView: View {
     @Binding var selection: WorkspaceSection
     var collapsed: Bool
+    /// 用户自定义顺序（总览置顶）。由 ContentView 持有 @AppStorage 并解析后传入。
+    var sections: [WorkspaceSection]
     var onToggleCollapse: () -> Void
+    /// 把 dragged 拖到 target 之前，由 ContentView 持久化。
+    var onReorder: (_ dragged: WorkspaceSection, _ target: WorkspaceSection) -> Void
+
+    @State private var dragging: WorkspaceSection?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -28,40 +35,62 @@ struct SidebarView: View {
     }
 
     /// 展开态：图标 + 文字，选中态铺 clay、图标统一 clay。
+    /// 总览（pinned）固定置顶不可拖；其余可拖拽重排。
     private var expandedNav: some View {
         VStack(spacing: 3) {
-            ForEach(WorkspaceSection.allCases) { section in
-                let isOn = selection == section
-                Button { selection = section } label: {
-                    HStack(spacing: 11) {
-                        Image(systemName: section.symbol)
-                            .font(.system(size: 15, weight: .semibold))
-                            .frame(width: 22)
-                            .foregroundStyle(isOn ? Color.white : KSSTheme.accent)
-                        Text(section.displayName)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(isOn ? Color.white : KSSTheme.textBody)
-                        Spacer(minLength: 0)
+            ForEach(sections) { section in
+                let isPinned = WorkspaceSection.pinned.contains(section)
+                navRow(section)
+                    .opacity(dragging == section ? 0.4 : 1)
+                    .if(!isPinned) { row in
+                        row
+                            .onDrag {
+                                dragging = section
+                                return NSItemProvider(object: section.rawValue as NSString)
+                            }
+                            .onDrop(
+                                of: [UTType.text],
+                                delegate: SectionDropDelegate(
+                                    target: section,
+                                    dragging: $dragging,
+                                    onReorder: onReorder
+                                )
+                            )
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 9)
-                    .background(
-                        isOn ? KSSTheme.accent : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 9)
-                    )
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 8)
         .padding(.top, 4)
     }
 
-    /// 折叠态：仅图标导航，选中铺 clay、图标统一 clay。
+    private func navRow(_ section: WorkspaceSection) -> some View {
+        let isOn = selection == section
+        return Button { selection = section } label: {
+            HStack(spacing: 11) {
+                Image(systemName: section.symbol)
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(width: 22)
+                    .foregroundStyle(isOn ? Color.white : KSSTheme.accent)
+                Text(section.displayName)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(isOn ? Color.white : KSSTheme.textBody)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .background(
+                isOn ? KSSTheme.accent : Color.clear,
+                in: RoundedRectangle(cornerRadius: 9)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 折叠态：仅图标导航，跟随同一顺序（无拖拽）。
     private var collapsedNav: some View {
         VStack(spacing: 4) {
-            ForEach(WorkspaceSection.allCases) { section in
+            ForEach(sections) { section in
                 let isOn = selection == section
                 Button { selection = section } label: {
                     Image(systemName: section.symbol)
@@ -78,6 +107,35 @@ struct SidebarView: View {
             }
         }
         .padding(.top, 4)
+    }
+}
+
+/// 拖拽重排落点：drop 到某行 = 把被拖项移到该行之前。
+private struct SectionDropDelegate: DropDelegate {
+    let target: WorkspaceSection
+    @Binding var dragging: WorkspaceSection?
+    let onReorder: (_ dragged: WorkspaceSection, _ target: WorkspaceSection) -> Void
+
+    func dropEntered(info: DropInfo) {
+        guard let dragged = dragging, dragged != target else { return }
+        onReorder(dragged, target)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        dragging = nil
+        return true
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+}
+
+/// 条件修饰：仅对可拖项挂 onDrag/onDrop。
+extension View {
+    @ViewBuilder
+    func `if`<Transformed: View>(_ condition: Bool, transform: (Self) -> Transformed) -> some View {
+        if condition { transform(self) } else { self }
     }
 }
 
