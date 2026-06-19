@@ -24,12 +24,15 @@ struct SidebarView: View {
                     }
                 }
                 .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)   // 去掉侧栏列表的半透明材质（亮色下会透出桌面成蓝灰渐变）
             }
 
             SidebarFooter(collapsed: collapsed)
                 .padding(.horizontal, collapsed ? 8 : 12)
                 .padding(.bottom, 10)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(KSSTheme.canvas)   // 实色暖纸底，覆盖窗口 vibrancy
     }
 
     /// 折叠态：仅图标导航，保留选中高亮。
