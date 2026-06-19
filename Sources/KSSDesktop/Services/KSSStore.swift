@@ -6,8 +6,11 @@ final class KSSStore: ObservableObject {
     @Published var selectedSection: WorkspaceSection = .dashboard
     @Published var selectedSymbol: String?
     @Published var selectedReportPath: String?
-    @Published var stockDetail: StockDetail?
     @Published var reportDetail: ReportDetail?
+    @Published var stockDetail: StockDetail?
+    @Published var sectorRotationDetail: HotspotRotationSnapshot?
+    @Published var isLoadingSectorRotation = false
+
     @Published var isLoading = false
     @Published var isLoadingReport = false
     @Published var isRunningTask = false
@@ -94,6 +97,24 @@ final class KSSStore: ObservableObject {
             errorMessage = error.localizedDescription
         }
         isRunningTask = false
+    }
+
+    func loadSectorRotation(date: String? = nil) async {
+        guard let bridge else {
+            errorMessage = "Cannot locate KSS project root"
+            return
+        }
+        isLoadingSectorRotation = true
+        errorMessage = nil
+        do {
+            let detail = try await Task.detached {
+                try bridge.sectorRotation(date: date)
+            }.value
+            self.sectorRotationDetail = detail
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isLoadingSectorRotation = false
     }
 
     /// 解析自由文本（名称/代码/OCR 结果）为 ts_code。

@@ -54,6 +54,15 @@ struct BridgeClient {
     func importStocks(_ codes: [String]) throws -> TaskRunResult {
         try run(["import", codes.joined(separator: ",")], as: TaskRunResult.self)
     }
+    func sectorRotation(date: String? = nil) throws -> HotspotRotationSnapshot {
+        var args = ["sector-rotation"]
+        if let date { args.append(date) }
+        return try run(args, as: HotspotRotationSnapshot.self)
+    }
+
+    func sectorRotationHistory(limit: Int = 30) throws -> [HotspotRotationHistoryItem] {
+        try run(["sector-rotation-history", String(limit)], as: [HotspotRotationHistoryItem].self)
+    }
 
     // MARK: 定时任务（launchd）
 

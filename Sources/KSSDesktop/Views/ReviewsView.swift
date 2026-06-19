@@ -9,21 +9,26 @@ enum DateRange: String, CaseIterable, Identifiable {
 
 enum ReviewMode: String, CaseIterable, Identifiable {
     case sector = "板块复盘"
+    case hotspotRotation = "热点轮动"
     case stock = "个股复盘"
     var id: String { rawValue }
 }
-
 struct ReviewsView: View {
     var reviews: [DailyReview]
     var sectorReviews: [SectorPulse]
+    var sectorRotationHistory: [HotspotRotationHistoryItem]
+    var sectorRotationDetail: HotspotRotationSnapshot?
+    var isLoadingSectorRotation: Bool
     var selectedPath: String?
     var detail: ReportDetail?
     var isLoadingDetail: Bool
     var onSelectReview: (String) -> Void
+    var onSelectSectorRotationDate: (String) -> Void
 
     @State private var mode: ReviewMode = .sector
     @State private var selectedReview: DailyReview?
     @State private var selectedSectorDate: String?
+    @State private var selectedHotspotRotationDate: String?
     @State private var ascending = false
     @State private var range: DateRange = .all
 
@@ -55,10 +60,10 @@ struct ReviewsView: View {
                 .padding(.top, 10)
                 .padding(.bottom, 6)
 
-                if mode == .stock {
-                    stockList
-                } else {
-                    sectorList
+                switch mode {
+                case .stock: stockList
+                case .sector: sectorList
+                case .hotspotRotation: hotspotRotationList
                 }
             }
             .frame(width: 300)
@@ -70,15 +75,26 @@ struct ReviewsView: View {
         }
         .background(KSSTheme.canvas)
         .onAppear {
-            if sectorReviews.isEmpty { mode = .stock }
+            if sectorReviews.isEmpty && !sectorRotationHistory.isEmpty {
+                mode = .hotspotRotation
+            } else if sectorReviews.isEmpty {
+                mode = .stock
+            }
             if selectedSectorDate == nil { selectedSectorDate = sectorReviews.first?.tradeDate }
+            if selectedHotspotRotationDate == nil { selectedHotspotRotationDate = sectorRotationHistory.first?.tradeDate }
             if selectedReview == nil { selectedReview = visibleReviews.first }
+            if mode == .hotspotRotation, let date = selectedHotspotRotationDate {
+                onSelectSectorRotationDate(date)
+            }
             if mode == .stock, let review = selectedReview, detail?.path != review.path {
                 onSelectReview(review.path)
             }
         }
         .onChange(of: selectedReview) { _, review in
             if let review { onSelectReview(review.path) }
+        }
+        .onChange(of: selectedHotspotRotationDate) { _, date in
+            if let date { onSelectSectorRotationDate(date) }
         }
     }
 
@@ -144,19 +160,45 @@ struct ReviewsView: View {
         .background(KSSTheme.canvas)
     }
 
+    private var hotspotRotationList: some View {
+        List(sectorRotationHistory) { item in
+            let isOn = (selectedHotspotRotationDate ?? sectorRotationHistory.first?.tradeDate) == item.tradeDate
+            Button { selectedHotspotRotationDate = item.tradeDate } label: {
+                HotspotRotationHistoryRow(item: item)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .listRowBackground(isOn ? KSSTheme.accent.opacity(0.16) : Color.clear)
+        }
+        .scrollContentBackground(.hidden)
+        .background(KSSTheme.canvas)
+    }
+
     // MARK: 详情
 
     @ViewBuilder private var detailPane: some View {
-        if mode == .sector {
+        switch mode {
+        case .sector:
             if let pulse = selectedSector {
                 SectorReviewPanel(pulse: pulse)
             } else {
                 placeholder("暂无板块复盘数据")
             }
-        } else if let review = selectedReview {
-            stockDetail(review)
-        } else {
-            placeholder("选择一篇复盘查看全文")
+        case .hotspotRotation:
+            if isLoadingSectorRotation {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let snap = sectorRotationDetail {
+                HotspotRotationPanel(snap: snap)
+            } else {
+                placeholder("选择日期查看热点轮动")
+            }
+        case .stock:
+            if let review = selectedReview {
+                stockDetail(review)
+            } else {
+                placeholder("选择一篇复盘查看全文")
+            }
         }
     }
 
@@ -470,5 +512,310 @@ struct ReviewRow: View {
                 .lineLimit(2)
         }
         .padding(.vertical, 3)
+    }
+}
+
+/// 热点轮动日期列表行.
+struct HotspotRotationHistoryRow: View {
+    var item: HotspotRotationHistoryItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "flame.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(KSSTheme.accent)
+                Text(dateLabel)
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(KSSTheme.textSecondary)
+            }
+            Text("热点轮动")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(KSSTheme.textPrimary)
+            Text(summary)
+                .font(.system(size: 12.5))
+                .foregroundStyle(KSSTheme.textSecondary)
+                .lineLimit(2)
+        }
+        .padding(.vertical, 3)
+    }
+
+    private var dateLabel: String {
+        let raw = item.tradeDate
+        guard raw.count == 8 else { return raw }
+        return "\(raw.prefix(4))-\(raw.dropFirst(4).prefix(2))-\(raw.suffix(2))"
+    }
+
+    private var summary: String {
+        "主线 \(item.mainlineCount) · 妖板 \(item.demonBoardCount) · 退潮 \(item.oldHotspotFadingCount)"
+    }
+}
+
+/// 热点轮动详情面板：四象限统计 + 板块表 + 妖王榜.
+struct HotspotRotationPanel: View {
+    var snap: HotspotRotationSnapshot
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .firstTextBaseline) {
+                    PageTitle("热点轮动")
+                    Spacer()
+                    StatusBadge(icon: "calendar", text: dateLabel, tint: KSSTheme.accent)
+                }
+
+                HStack(spacing: 12) {
+                    classificationTile("真主线", snap.crossSourceSignals.mainline.count, KSSTheme.up)
+                    classificationTile("妖板", snap.crossSourceSignals.demonBoard.count, KSSTheme.accent)
+                    classificationTile("退潮", snap.crossSourceSignals.oldHotspotFading.count, KSSTheme.textSecondary)
+                    classificationTile("卫星", snap.crossSourceSignals.satellite.count, KSSTheme.textBody)
+                }
+
+                HStack(spacing: 10) {
+                    coverageBadge("leaderCoverage", snap.leaderCoverage)
+                    coverageBadge("historyCoverage", snap.historyCoverage)
+                }
+
+                if !snap.leaderBoards.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            RoundedRectangle(cornerRadius: 2).fill(KSSTheme.accent).frame(width: 4, height: 16)
+                            Text("妖王榜")
+                                .font(KSSFont.serif(16, .semibold))
+                                .foregroundStyle(KSSTheme.textPrimary)
+                        }
+                        HotspotLeaderTable(boards: snap.leaderBoards)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        RoundedRectangle(cornerRadius: 2).fill(KSSTheme.accent).frame(width: 4, height: 16)
+                        Text("行业")
+                            .font(KSSFont.serif(16, .semibold))
+                            .foregroundStyle(KSSTheme.textPrimary)
+                    }
+                    HotspotBoardTable(boards: snap.industries)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        RoundedRectangle(cornerRadius: 2).fill(KSSTheme.accent).frame(width: 4, height: 16)
+                        Text("概念")
+                            .font(KSSFont.serif(16, .semibold))
+                            .foregroundStyle(KSSTheme.textPrimary)
+                    }
+                    HotspotBoardTable(boards: snap.concepts)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(KSSTheme.canvas)
+    }
+
+    private var dateLabel: String {
+        let raw = snap.tradeDate
+        guard raw.count == 8 else { return raw }
+        return "\(raw.prefix(4))-\(raw.dropFirst(4).prefix(2))-\(raw.suffix(2))"
+    }
+
+    private func classificationTile(_ title: String, _ count: Int, _ tint: Color) -> some View {
+        VStack(spacing: 4) {
+            Text(title)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(tint)
+            Text("\(count)")
+                .font(.system(size: 20, weight: .heavy).monospacedDigit())
+                .foregroundStyle(KSSTheme.textPrimary)
+        }
+        .frame(maxWidth: .infinity)
+        .kssCard(padding: 10)
+    }
+
+    private func coverageBadge(_ name: String, _ value: Double) -> some View {
+        Text("\(name) \(String(format: "%.0f%%", value * 100))")
+            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+            .foregroundStyle(KSSTheme.textSecondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(KSSTheme.surface, in: Capsule())
+            .overlay(Capsule().stroke(KSSTheme.hairline))
+    }
+}
+
+/// 热点轮动板块明细表.
+struct HotspotBoardTable: View {
+    var boards: [HotspotBoard]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider().overlay(KSSTheme.hairline)
+            ForEach(Array(boards.enumerated()), id: \.element.id) { index, b in
+                row(b)
+                if index < boards.count - 1 {
+                    Divider().overlay(KSSTheme.hairline)
+                }
+            }
+        }
+        .background(KSSTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Text("板块").frame(width: 96, alignment: .leading)
+            Text("今日").frame(width: 64, alignment: .trailing)
+            Text("排名").frame(width: 48, alignment: .trailing)
+            Text("分类").frame(width: 84, alignment: .trailing)
+            Spacer(minLength: 8)
+            Text("龙头").frame(width: 120, alignment: .leading)
+        }
+        .font(.system(size: 10.5, weight: .medium))
+        .foregroundStyle(KSSTheme.textSecondary)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+    }
+
+    private func row(_ b: HotspotBoard) -> some View {
+        HStack(spacing: 10) {
+            Text(b.name)
+                .font(.system(size: 13.5, weight: .bold))
+                .foregroundStyle(KSSTheme.textPrimary)
+                .frame(width: 96, alignment: .leading)
+            num(b.pctChange.map { KSSFormat.percent($0 / 100) }, tint: KSSTheme.signColor(b.pctChange ?? 0))
+                .frame(width: 64, alignment: .trailing)
+            num("#\(b.todayRank)", tint: KSSTheme.textSecondary)
+                .frame(width: 48, alignment: .trailing)
+            Text(classificationLabel(b.classification))
+                .font(.system(size: 10.5, weight: .bold))
+                .foregroundStyle(classificationColor(b.classification))
+                .frame(width: 84, alignment: .trailing)
+            Spacer(minLength: 8)
+            Text(topLeadersText(b.leaderStocks))
+                .font(.system(size: 11))
+                .foregroundStyle(KSSTheme.textBody)
+                .frame(width: 120, alignment: .leading)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+    }
+
+    private func num(_ text: String?, tint: Color) -> some View {
+        Text(text ?? "—")
+            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+            .foregroundStyle(tint)
+            .lineLimit(1)
+    }
+
+    private func classificationLabel(_ cls: String) -> String {
+        switch cls {
+        case "mainline": return "真主线"
+        case "demonBoard": return "妖板"
+        case "oldHotspotFading": return "退潮"
+        default: return "卫星"
+        }
+    }
+
+    private func classificationColor(_ cls: String) -> Color {
+        switch cls {
+        case "mainline": return KSSTheme.up
+        case "demonBoard": return KSSTheme.accent
+        case "oldHotspotFading": return KSSTheme.textSecondary
+        default: return KSSTheme.textBody
+        }
+    }
+
+    private func topLeadersText(_ leaders: [HotspotLeaderStock]?) -> String {
+        guard let leaders = leaders, !leaders.isEmpty else { return "—" }
+        return leaders.prefix(2).map { "\($0.name)(\($0.appearances))" }.joined(separator: " · ")
+    }
+}
+
+/// 妖王榜：按龙头跨天频次排序.
+struct HotspotLeaderTable: View {
+    var boards: [HotspotBoard]
+
+    private struct LeaderRow: Identifiable, Hashable {
+        var id: String { "\(boardName)-\(symbol)" }
+        var boardName: String
+        var symbol: String
+        var name: String
+        var appearances: Int
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider().overlay(KSSTheme.hairline)
+            let rows = allLeaders()
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, leader in
+                row(leader)
+                if index < rows.count - 1 {
+                    Divider().overlay(KSSTheme.hairline)
+                }
+            }
+        }
+        .background(KSSTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Text("板块").frame(width: 96, alignment: .leading)
+            Text("代码").frame(width: 72, alignment: .leading)
+            Text("名称").frame(width: 96, alignment: .leading)
+            Text("频次").frame(width: 56, alignment: .trailing)
+            Spacer(minLength: 8)
+        }
+        .font(.system(size: 10.5, weight: .medium))
+        .foregroundStyle(KSSTheme.textSecondary)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+    }
+
+    private func row(_ leader: LeaderRow) -> some View {
+        HStack(spacing: 10) {
+            Text(leader.boardName)
+                .font(.system(size: 13.5, weight: .bold))
+                .foregroundStyle(KSSTheme.textPrimary)
+                .frame(width: 96, alignment: .leading)
+            Text(leader.symbol)
+                .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(KSSTheme.textSecondary)
+                .frame(width: 72, alignment: .leading)
+                .lineLimit(1)
+            Text(leader.name)
+                .font(.system(size: 12.5))
+                .foregroundStyle(KSSTheme.textBody)
+                .frame(width: 96, alignment: .leading)
+                .lineLimit(1)
+            Text("\(leader.appearances)")
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundStyle(KSSTheme.accent)
+                .frame(width: 56, alignment: .trailing)
+            Spacer(minLength: 8)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+    }
+
+    private func allLeaders() -> [LeaderRow] {
+        var rows: [LeaderRow] = []
+        for board in boards {
+            for leader in board.leaderStocks ?? [] {
+                rows.append(LeaderRow(
+                    boardName: board.name,
+                    symbol: leader.symbol,
+                    name: leader.name,
+                    appearances: leader.appearances
+                ))
+            }
+        }
+        return rows.sorted { $0.appearances > $1.appearances }
     }
 }
