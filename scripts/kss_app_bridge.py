@@ -1238,6 +1238,21 @@ def _run_formal_etf_backtest(args: dict[str, str | bool]) -> dict[str, Any]:
     )
 
 
+def _run_refresh_bj_daily() -> dict[str, Any]:
+    started = _now_iso()
+    python = _full_python()
+    if python is None:
+        return _missing_full_env_result("refresh-bj-daily", "刷新北证日线", started)
+    return _run_process_task(
+        "refresh-bj-daily",
+        "刷新北证日线",
+        [str(python), "scripts/refresh_bj_daily.py"],
+        started,
+        artifacts=["storage/bj_cache"],
+        timeout=600,
+    )
+
+
 def run_task(task_id: str, argv: list[str]) -> dict[str, Any]:
     args = _parse_args(argv)
     if task_id == "daily-picks":
@@ -1270,6 +1285,8 @@ def run_task(task_id: str, argv: list[str]) -> dict[str, Any]:
         return _run_formal_sector_review(args)
     if task_id == "formal-etf-radar-backtest":
         return _run_formal_etf_backtest(args)
+    if task_id == "refresh-bj-daily":
+        return _run_refresh_bj_daily()
     return _task_result(
         task_id,
         task_id,

@@ -191,6 +191,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
     case formalDailyReview = "formal-daily-review"
     case formalSectorReview = "formal-sector-review"
     case formalEtfRadarBacktest = "formal-etf-radar-backtest"
+    case refreshBjDaily = "refresh-bj-daily"
 
     var id: String { rawValue }
 
@@ -206,6 +207,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
         case .formalDailyReview: return "正式每日复盘"
         case .formalSectorReview: return "正式板块复盘"
         case .formalEtfRadarBacktest: return "正式 ETF 回测"
+        case .refreshBjDaily: return "刷新北证日线"
         }
     }
 
@@ -221,6 +223,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
         case .formalDailyReview: return "text.page.badge.magnifyingglass"
         case .formalSectorReview: return "chart.bar.xaxis"
         case .formalEtfRadarBacktest: return "waveform.path.ecg"
+        case .refreshBjDaily: return "arrow.triangle.2.circlepath"
         }
     }
 
@@ -228,7 +231,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
         switch self {
         case .previewPicks, .generatePicks, .paperSummary, .logmvBacktest, .radarArchiveAnalysis:
             return "轻量"
-        case .formalDailyPicks, .formalPaperSummary, .formalDailyReview, .formalSectorReview, .formalEtfRadarBacktest:
+        case .formalDailyPicks, .formalPaperSummary, .formalDailyReview, .formalSectorReview, .formalEtfRadarBacktest, .refreshBjDaily:
             return "正式"
         }
     }
