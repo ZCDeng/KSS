@@ -2,7 +2,7 @@
 
 > **日期**: 2026-06-19
 > **分支**: `feature/sector-rotation-data-capability`
-> **状态**: 设计待确认
+> **状态**: ✅ 已完成 —— Phase 0-4 全部落地 main（2026-06-20 合并 `feature/sector-hotspot-rotation-p3`）；swift build + pytest 21/21 通过。唯一待积累项：`storage/sector_rotation/` 现仅归档 1 天，历史聚合指标需每日 launchd 任务跑起来逐天累积。
 > **上游目标**: 完整移植 QuantDash 板块轮动 + plate-rotation-skill 双源/妖王榜能力，优先复用 KSS 现有数据源；现有源无法等价覆盖的字段必须通过 adapter 接入，禁止偷换为近似语义。
 
 ---
@@ -269,28 +269,28 @@ LeaderStock:
 
 ### Phase 1
 
-- [ ] `pytest kss/tests/test_hotspot_rotation.py -v` 通过。
-- [ ] dry-run 输出 `storage/sector_rotation/YYYYMMDD.json`。
-- [ ] JSON 字段与计划 6.1/6.2 一致。
-- [ ] 不修改任何 Swift / bridge / KSSTask 文件。
+- [x] `pytest kss/tests/test_hotspot_rotation.py -v` 通过（21/21）。
+- [x] dry-run 输出 `storage/sector_rotation/YYYYMMDD.json`（已有 `20260618.json`）。
+- [x] JSON 字段与计划 6.1/6.2 一致（bridge `sector-rotation` 实跑字段对齐）。
+- [x] 不修改任何 Swift / bridge / KSSTask 文件（Phase 1 提交 `61b59b3` 仅动数据层）。
 
 ### Phase 2
 
-- [ ] KAIPAN adapter 返回样例与上游字段对照。
-- [ ] 分类规则覆盖真主线/妖板/老热点/卫星四种情况。
-- [ ] 节假日 streak / Top3 计数正确。
+- [x] KAIPAN adapter 返回样例与上游字段对照（`hotspot_rotation.py` / `sector_rotation_probe.py`）。
+- [x] 分类规则覆盖真主线/妖板/老热点/卫星四种情况（`_classify_board` → `mainline`/`demonBoard`/`oldHotspotFading`/`satellite`）。
+- [x] 节假日 streak / Top3 计数正确（交易日历窗口，单测覆盖）。
 
 ### Phase 3
 
-- [ ] `getLongByPlate` 或 board membership 输出 `leaderStocks`。
-- [ ] `leader_coverage` 可观测。
-- [ ] 妖王榜排序与上游语义一致。
+- [x] `getLongByPlate` 或 board membership 输出 `leaderStocks`。
+- [x] `leader_coverage` 可观测（输出字段 `leaderCoverage` + `LEADER_COVERAGE_THRESHOLD` 门控）。
+- [x] 妖王榜排序与上游语义一致（leader 跨天 `count` 持久化排序）。
 
 ### Phase 4
 
-- [ ] Dashboard 显示最新摘要。
-- [ ] ReviewsView 支持日期切换与详情。
-- [ ] KSSTask 刷新入口可用。
+- [x] Dashboard 显示最新摘要（`HotspotRotationCard`）。
+- [x] ReviewsView 支持日期切换与详情（「热点轮动」模式：日期列表 + 四象限 + 板块表 + 妖王榜）。
+- [x] KSSTask 刷新入口可用（`KSSTask.refreshSectorRotation` + bridge `refresh-sector-rotation`）。
 
 ---
 
