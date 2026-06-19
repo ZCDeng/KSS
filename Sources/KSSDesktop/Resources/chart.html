@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<style>
+  :root { color-scheme: dark; }
+  :root { --bg:#FFFFFF; --text:#141413; --muted:#87867F; --ma5:#F5A623; --ma20:#2962FF; }
+  html.dark { --bg:#1F1F1D; --text:#FAF9F5; --muted:#8A8980; --ma5:#FF9F1C; --ma20:#4C82FB; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; width: 100%;
+    background: var(--bg);
+    overflow: hidden;
+    font-family: -apple-system, "SF Pro Text", "PingFang SC", sans-serif;
+  }
+  #chart { position: absolute; inset: 0; }
+  #legend {
+    position: absolute; top: 10px; left: 12px; z-index: 5;
+    font-size: 11px; line-height: 1.5; color: var(--text);
+    pointer-events: none; letter-spacing: 0.2px;
+  }
+  #legend .row { display: flex; gap: 12px; }
+  #legend .k { color: var(--muted); }
+  .ma5 { color: var(--ma5); }
+  .ma20 { color: var(--ma20); }
+  #empty {
+    position: absolute; inset: 0; display: none;
+    align-items: center; justify-content: center;
+    color: var(--muted); font-size: 13px;
+  }
+</style>
+</head>
+<body>
+  <div id="chart"></div>
+  <div id="legend"></div>
+  <div id="empty">暂无行情数据</div>
+  <script src="lightweight-charts.standalone.production.js"></script>
+  <script>
+  (function () {
+    // 醒目标准红绿（红涨绿跌，识别度高），均线橙/蓝；底色随主题。
+    const PALETTES = {
+      dark:  { up:"#F6465D", down:"#2EBD85", ma5:"#FF9F1C", ma20:"#4C82FB", grid:"#3D3D3A", text:"#8A8980", bg:"#1F1F1D", cross:"#9AA0A6", upFill:"rgba(246,70,93,0.5)", downFill:"rgba(46,189,133,0.5)" },
+      light: { up:"#F23645", down:"#089981", ma5:"#F5A623", ma20:"#2962FF", grid:"#D1CFC5", text:"#87867F", bg:"#FFFFFF", cross:"#787B86", upFill:"rgba(242,54,69,0.4)", downFill:"rgba(8,153,129,0.4)" },
+    };
+    let COLORS = PALETTES.dark;
+    let currentTheme = "dark";
+
+    let chart, candleSeries, volumeSeries, ma5Series, ma20Series;
+    let pending = null;
+    let lastPayload = null;
+
+    function sma(values, period) {
+      const out = [];
+      let sum = 0;
+      for (let i = 0; i < values.length; i++) {
+        sum += values[i].close;
+        if (i >= period) sum -= values[i - period].close;
+        if (i >= period - 1) out.push({ time: values[i].time, value: +(sum / period).toFixed(3) });
+      }
+      return out;
+    }
+
+    function buildChart() {
+      if (typeof LightweightCharts === "undefined") return false;
+      const el = document.getElementById("chart");
+      chart = LightweightCharts.createChart(el, {
+        layout: {
+          background: { type: "solid", color: COLORS.bg },
+          textColor: COLORS.text,
+          fontSize: 11,
+          fontFamily: '-apple-system, "SF Pro Text", sans-serif',
+        },
+        grid: {
+          vertLines: { color: COLORS.grid, style: 1 },
+          horzLines: { color: COLORS.grid, style: 1 },
+        },
+        rightPriceScale: { borderColor: COLORS.grid, scaleMargins: { top: 0.08, bottom: 0.28 } },
+        timeScale: { borderColor: COLORS.grid, rightOffset: 4, fixLeftEdge: true },
+        crosshair: {
+          mode: LightweightCharts.CrosshairMode.Normal,
+          vertLine: { color: COLORS.cross, width: 1, style: 3, labelBackgroundColor: COLORS.cross },
+          horzLine: { color: COLORS.cross, width: 1, style: 3, labelBackgroundColor: COLORS.cross },
+        },
+        handleScroll: true,
+        handleScale: true,
+      });
+
+      candleSeries = chart.addCandlestickSeries({
+        upColor: COLORS.up, downColor: COLORS.down,
+        borderUpColor: COLORS.up, borderDownColor: COLORS.down,
+        wickUpColor: COLORS.up, wickDownColor: COLORS.down,
+        priceLineVisible: false,
+      });
+
+      ma5Series = chart.addLineSeries({ color: COLORS.ma5, lineWidth: 1, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false });
+      ma20Series = chart.addLineSeries({ color: COLORS.ma20, lineWidth: 1, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false });
+
+      volumeSeries = chart.addHistogramSeries({
+        priceFormat: { type: "volume" },
+        priceScaleId: "vol",
+        priceLineVisible: false, lastValueVisible: false,
+      });
+      chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.78, bottom: 0 } });
+
+      window.addEventListener("resize", () => {
+        chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
+      });
+
+      const legend = document.getElementById("legend");
+      chart.subscribeCrosshairMove((param) => {
+        if (!param || !param.time || !param.seriesData) { renderLegendLast(); return; }
+        const c = param.seriesData.get(candleSeries);
+        const m5 = param.seriesData.get(ma5Series);
+        const m20 = param.seriesData.get(ma20Series);
+        if (c) renderLegend(param.time, c, m5 && m5.value, m20 && m20.value);
+      });
+      return true;
+    }
+
+    let lastBar = null, lastMa5 = null, lastMa20 = null;
+    function fmtTime(t) {
+      if (typeof t === "string") return t;
+      if (t && t.year) return `${t.year}-${String(t.month).padStart(2,"0")}-${String(t.day).padStart(2,"0")}`;
+      return "";
+    }
+    function pct(o, c) { return o ? ((c - o) / o * 100).toFixed(2) + "%" : "-"; }
+    function renderLegend(t, c, m5, m20) {
+      const col = c.close >= c.open ? COLORS.up : COLORS.down;
+      document.getElementById("legend").innerHTML =
+        `<div class="row"><span class="k">${fmtTime(t)}</span></div>` +
+        `<div class="row"><span class="k">开</span><span>${c.open}</span>` +
+        `<span class="k">高</span><span>${c.high}</span>` +
+        `<span class="k">低</span><span>${c.low}</span>` +
+        `<span class="k">收</span><span style="color:${col}">${c.close}</span>` +
+        `<span style="color:${col}">${pct(c.open, c.close)}</span></div>` +
+        `<div class="row"><span class="ma5">MA5 ${m5 != null ? m5 : "-"}</span>` +
+        `<span class="ma20">MA20 ${m20 != null ? m20 : "-"}</span></div>`;
+    }
+    function renderLegendLast() {
+      if (lastBar) renderLegend(lastBar.time, lastBar, lastMa5, lastMa20);
+    }
+
+    function setData(payload) {
+      if (!chart && !buildChart()) { pending = payload; return; }
+      const el = document.getElementById("chart");
+      chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
+
+      const bars = (payload || []).filter(p => p && p.close != null);
+      document.getElementById("empty").style.display = bars.length ? "none" : "flex";
+      if (!bars.length) {
+        candleSeries.setData([]); volumeSeries.setData([]);
+        ma5Series.setData([]); ma20Series.setData([]);
+        return;
+      }
+
+      const candles = bars.map(p => ({
+        time: p.date,
+        open: p.open != null ? p.open : p.close,
+        high: p.high != null ? p.high : p.close,
+        low: p.low != null ? p.low : p.close,
+        close: p.close,
+      }));
+      const vols = bars.map(p => ({
+        time: p.date,
+        value: p.volume != null ? p.volume : 0,
+        color: (p.close >= (p.open != null ? p.open : p.close)) ? COLORS.upFill : COLORS.downFill,
+      }));
+      candleSeries.setData(candles);
+      volumeSeries.setData(vols);
+      ma5Series.setData(sma(candles, 5));
+      ma20Series.setData(sma(candles, 20));
+
+      lastBar = candles[candles.length - 1];
+      const m5 = sma(candles, 5), m20 = sma(candles, 20);
+      lastMa5 = m5.length ? m5[m5.length - 1].value : null;
+      lastMa20 = m20.length ? m20[m20.length - 1].value : null;
+      renderLegendLast();
+      chart.timeScale().fitContent();
+    }
+
+    function applyTheme(isDark) {
+      const want = isDark ? "dark" : "light";
+      document.documentElement.classList.toggle("dark", isDark);
+      if (want === currentTheme) return;
+      currentTheme = want;
+      COLORS = PALETTES[want];
+      if (chart) { chart.remove(); chart = null; }  // rebuild with new palette
+    }
+
+    window.kssSetData = function (json, isDark) {
+      try {
+        if (typeof isDark === "boolean") applyTheme(isDark);
+        lastPayload = typeof json === "string" ? JSON.parse(json) : json;
+        setData(lastPayload);
+      } catch (e) { document.getElementById("legend").textContent = "chart error: " + e; }
+    };
+
+    document.addEventListener("DOMContentLoaded", function () {
+      buildChart();
+      if (pending) { setData(pending); pending = null; }
+    });
+  })();
+  </script>
+</body>
+</html>
