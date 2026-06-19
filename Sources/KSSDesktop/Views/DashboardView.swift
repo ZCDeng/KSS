@@ -19,12 +19,16 @@ struct DashboardView: View {
                 }
 
                 // 2) 主区两栏：今日推荐 | 纸交易跟踪 + 资产计数
+                //    左栏按内容宽度封顶（避免表格被拉得过宽留大片空白），
+                //    多出的横向空间收进两栏之间的留白槽，右栏继续贴右。
                 HStack(alignment: .top, spacing: 14) {
                     VStack(alignment: .leading, spacing: 10) {
                         SectionHeader("今日推荐", caption: "log_mv 反向选出的低市值 Top 5 · 买入 T+1 开盘")
                         TodayPicksList(items: Array(snapshot.recommendations.prefix(5)), onSelect: onSelectSymbol)
                     }
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .frame(maxWidth: 760, alignment: .topLeading)
+
+                    Spacer(minLength: 14)
 
                     VStack(alignment: .leading, spacing: 10) {
                         SectionHeader("纸交易跟踪", caption: "log_mv 策略纸面累计表现")
@@ -55,40 +59,29 @@ struct DashboardView: View {
     }
 }
 
-/// 今日推荐：紧凑编号列表（替代之前占地的大卡片）。
+/// 今日推荐：固定列宽的对齐表格（排名 / 名称 / 代码 / 行业 / 状态 / 权重）。
+/// 列宽全部固定，表头与每一行共用，保证网格逐列对齐；代码与行业拆成独立列填满版面，
+/// 消除名称与右侧之间的大片留白。
 struct TodayPicksList: View {
     var items: [Recommendation]
     var onSelect: (String) -> Void
 
+    private let wRank: CGFloat = 38
+    private let wName: CGFloat = 128
+    private let wSymbol: CGFloat = 116
+    private let wIndustry: CGFloat = 104
+    private let wStatus: CGFloat = 92
+    private let wWeight: CGFloat = 80
+    private let colSpacing: CGFloat = 14
+    private let rowPadH: CGFloat = 14
+
     var body: some View {
         VStack(spacing: 0) {
+            header
+            Divider().overlay(KSSTheme.hairline)
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                Button { onSelect(item.symbol) } label: {
-                    HStack(spacing: 12) {
-                        Text("#\(item.rank)")
-                            .font(.system(size: 15, weight: .heavy, design: .monospaced))
-                            .foregroundStyle(KSSTheme.accent)
-                            .frame(width: 36, alignment: .leading)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(item.name.isEmpty ? item.symbol : item.name)
-                                .font(.system(size: 14.5, weight: .bold))
-                                .foregroundStyle(KSSTheme.textPrimary)
-                            Text("\(item.symbol) · \(item.industry)")
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(KSSTheme.textSecondary)
-                        }
-                        Spacer()
-                        StatusBadge.tracking(item.status)
-                        Text(KSSFormat.percent(item.weight))
-                            .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(KSSTheme.textSecondary)
-                            .frame(width: 56, alignment: .trailing)
-                    }
-                    .contentShape(Rectangle())
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
-                }
-                .buttonStyle(.plain)
+                Button { onSelect(item.symbol) } label: { row(item) }
+                    .buttonStyle(.plain)
                 if index < items.count - 1 {
                     Divider().overlay(KSSTheme.hairline)
                 }
@@ -97,6 +90,58 @@ struct TodayPicksList: View {
         .background(KSSTheme.surface)
         .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
         .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
+    }
+
+    private var header: some View {
+        HStack(spacing: colSpacing) {
+            Text("排名").frame(width: wRank, alignment: .leading)
+            Text("名称").frame(width: wName, alignment: .leading)
+            Text("代码").frame(width: wSymbol, alignment: .leading)
+            Text("行业").frame(width: wIndustry, alignment: .leading)
+            Spacer(minLength: 12)
+            Text("状态").frame(width: wStatus, alignment: .leading)
+            Text("权重").frame(width: wWeight, alignment: .trailing)
+        }
+        .font(.system(size: 10.5, weight: .medium))
+        .tracking(0.5)
+        .foregroundStyle(KSSTheme.textSecondary)
+        .padding(.horizontal, rowPadH)
+        .padding(.vertical, 9)
+    }
+
+    private func row(_ item: Recommendation) -> some View {
+        HStack(spacing: colSpacing) {
+            Text("#\(item.rank)")
+                .font(.system(size: 15, weight: .heavy, design: .monospaced))
+                .foregroundStyle(KSSTheme.accent)
+                .frame(width: wRank, alignment: .leading)
+            Text(item.name.isEmpty ? item.symbol : item.name)
+                .font(.system(size: 14.5, weight: .bold))
+                .foregroundStyle(KSSTheme.textPrimary)
+                .lineLimit(1)
+                .frame(width: wName, alignment: .leading)
+            Text(item.symbol)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(KSSTheme.textSecondary)
+                .lineLimit(1)
+                .frame(width: wSymbol, alignment: .leading)
+            Text(item.industry.isEmpty ? "—" : item.industry)
+                .font(.system(size: 12.5))
+                .foregroundStyle(KSSTheme.textBody)
+                .lineLimit(1)
+                .frame(width: wIndustry, alignment: .leading)
+            Spacer(minLength: 12)
+            StatusBadge.tracking(item.status)
+                .frame(width: wStatus, alignment: .leading)
+            Text(KSSFormat.percent(item.weight))
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .foregroundStyle(KSSTheme.textSecondary)
+                .lineLimit(1)
+                .frame(width: wWeight, alignment: .trailing)
+        }
+        .contentShape(Rectangle())
+        .padding(.horizontal, rowPadH)
+        .padding(.vertical, 11)
     }
 }
 
