@@ -1,0 +1,251 @@
+{
+  "tradeDate": "20260618",
+  "lookbackDays": 1,
+  "tradingDaysUsed": [
+    "20260618"
+  ],
+  "historyCoverage": 1.0,
+  "missing": [],
+  "industries": [
+    {
+      "name": "钨",
+      "source": "industry",
+      "boardCode": "BK1625.DC",
+      "pctChange": 8.17,
+      "heatScore": 0.78939430449069,
+      "todayRank": 1,
+      "previousRank": null,
+      "rankJump": null,
+      "top3Appearances": 0,
+      "streakDays": 0,
+      "strengthDelta": null,
+      "kaipanStrengthScore": null,
+      "kaipanRank": null,
+      "flowPersistenceScore": null,
+      "classification": "satellite",
+      "classificationConfidence": "low",
+      "evidenceSources": [
+        "industry"
+      ],
+      "leaderStocks": null,
+      "missing": []
+    },
+    {
+      "name": "稀土",
+      "source": "industry",
+      "boardCode": "BK1626.DC",
+      "pctChange": 6.73,
+      "heatScore": 0.7884009139466436,
+      "todayRank": 2,
+      "previousRank": null,
+      "rankJump": null,
+      "top3Appearances": 0,
+      "streakDays": 0,
+      "strengthDelta": null,
+      "kaipanStrengthScore": null,
+      "kaipanRank": null,
+      "flowPersistenceScore": null,
+      "classification": "satellite",
+      "classificationConfidence": "low",
+      "evidenceSources": [
+        "industry"
+      ],
+      "leaderStocks": null,
+      "missing": []
+    },
+    {
+      "name": "磨具磨料",
+      "source": "industry",
+      "boardCode": "BK1397.DC",
+      "pctChange": 5.48,
+      "heatScore": 0.7549870128747677,
+      "todayRank": 5,
+      "previousRank": null,
+      "rankJump": null,
+      "top3Appearances": 0,
+      "streakDays": 0,
+      "strengthDelta": null,
+      "kaipanStrengthScore": null,
+      "kaipanRank": null,
+      "flowPersistenceScore": null,
+      "classification": "satellite",
+      "classificationConfidence": "low",
+      "evidenceSources": [
+        "industry"
+      ],
+      "leaderStocks": null,
+      "missing": []
+    },
+    {
+      "name": "非金属材料Ⅲ",
+      "source": "industry",
+      "boardCode": "BK1411.DC",
+      "pctChange": 5.96,
+      "heatScore": 0.6906681741967217,
+      "todayRank": 3,
+      "previousRank": null,
+      "rankJump": null,
+      "top3Appearances": 0,
+      "streakDays": 0,
+      "strengthDelta": null,
+      "kaipanStrengthScore": null,
+      "kaipanRank": null,
+      "flowPersistenceScore": null,
+      "classification": "satellite",
+      "classificationConfidence": "low",
+      "evidenceSources": [
+        "industry"
+      ],
+      "leaderStocks": null,
+      "missing": []
+    },
+    {
+      "name": "非金属材料Ⅱ",
+      "source": "industry",
+      "boardCode": "BK1020.DC",
+      "pctChange": 5.96,
+      "heatScore": 0.6906681741967217,
+      "todayRank": 3,
+      "previousRank": null,
+      "rankJump": null,
+      "top3Appearances": 0,
+      "streakDays": 0,
+      "strengthDelta": null,
+      "kaipanStrengthScore": null,
+      "kaipanRank": null,
+      "flowPersistenceScore": null,
+      "classification": "satellite",
+      "classificationConfidence": "low",
+      "evidenceSources": [
+        "industry"
+      ],
+      "leaderStocks": null,
+      "missing": []
+    }
+  ],
+  "concepts": [
+    {
+      "name": "牙科医疗",
+      "source": "concept",
+      "boardCode": null,
+      "pctChange": 3.17,
+      "heatScore": 0.9286173633440514,
+      "todayRank": 1,
+      "previousRank": null,
+      "rankJump": null,
+      "top3Appearances": 0,
+      "streakDays": 0,
+      "strengthDelta": null,
+      "kaipanStrengthScore": null,
+      "kaipanRank": null,
+      "flowPersistenceScore": null,
+      "classification": "satellite",
+      "classificationConfidence": "low",
+      "evidenceSources": [
+        "concept"
+      ],
+      "leaderStocks": null,
+      "missing": []
+    },
+    {
+      "name": "科创次新股",
+      "source": "concept",
+      "boardCode": null,
+      "pctChange": 2.82,
+      "heatScore": 0.890851925419488,
+      "todayRank": 2,
+      "previousRank": null,
+      "rankJump": null,
+      "top3Appearances": 0,
+      "streakDays": 0,
+      "strengthDelta": null,
+      "kaipanStrengthScore": null,
+      "kaipanRank": null,
+      "flowPersistenceScore": null,
+      "classification": "satellite",
+      "classificationConfidence": "low",
+      "evidenceSources": [
+        "concept"
+      ],
+      "leaderStocks": null,
+      "missing": []
+    },
+    {
+      "name": "培育钻石",
+      "source": "concept",
+      "boardCode": null,
+      "pctChange": 2.81,
+      "heatScore": 0.884683340100743,
+      "todayRank": 3,
+      "previousRank": null,
+      "rankJump": null,
+      "top3Appearances": 0,
+      "streakDays": 0,
+      "strengthDelta": null,
+      "kaipanStrengthScore": null,
+      "kaipanRank": null,
+      "flowPersistenceScore": null,
+      "classification": "satellite",
+      "classificationConfidence": "low",
+      "evidenceSources": [
+        "concept"
+      ],
+      "leaderStocks": null,
+      "missing": []
+    },
+    {
+      "name": "稀土永磁",
+      "source": "concept",
+      "boardCode": null,
+      "pctChange": 2.49,
+      "heatScore": 0.8622082240488131,
+      "todayRank": 4,
+      "previousRank": null,
+      "rankJump": null,
+      "top3Appearances": 0,
+      "streakDays": 0,
+      "strengthDelta": null,
+      "kaipanStrengthScore": null,
+      "kaipanRank": null,
+      "flowPersistenceScore": null,
+      "classification": "satellite",
+      "classificationConfidence": "low",
+      "evidenceSources": [
+        "concept"
+      ],
+      "leaderStocks": null,
+      "missing": []
+    },
+    {
+      "name": "国家大基金持股",
+      "source": "concept",
+      "boardCode": null,
+      "pctChange": 2.36,
+      "heatScore": 0.8431098624935527,
+      "todayRank": 5,
+      "previousRank": null,
+      "rankJump": null,
+      "top3Appearances": 0,
+      "streakDays": 0,
+      "strengthDelta": null,
+      "kaipanStrengthScore": null,
+      "kaipanRank": null,
+      "flowPersistenceScore": null,
+      "classification": "satellite",
+      "classificationConfidence": "low",
+      "evidenceSources": [
+        "concept"
+      ],
+      "leaderStocks": null,
+      "missing": []
+    }
+  ],
+  "kaipanBoards": [],
+  "leaderBoards": [],
+  "crossSourceSignals": {
+    "mainline": [],
+    "demonBoard": [],
+    "oldHotspotFading": [],
+    "satellite": []
+  }
+}
