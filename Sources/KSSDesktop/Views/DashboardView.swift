@@ -7,6 +7,7 @@ struct DashboardView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
+                PageTitle("总览", subtitle: "数据日期 \(snapshot.latestDataDate ?? "-")")
                 HStack(alignment: .top, spacing: 10) {
                     StatTile(title: "数据日期", value: snapshot.latestDataDate ?? "-")
                     StatTile(title: "自有股票池", value: "\(snapshot.stockCount)")
@@ -23,14 +24,16 @@ struct DashboardView: View {
                 }
 
                 SectionHeader("最近复盘")
-                VStack(spacing: 8) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 10)], spacing: 10) {
                     ForEach(snapshot.reviews.prefix(4)) { review in
                         ReviewRow(review: review)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .kssCard(padding: 12)
                     }
                 }
 
                 SectionHeader("回测证据")
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 10)], spacing: 10) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 10)], spacing: 10) {
                     ForEach(snapshot.backtests.prefix(4)) { report in
                         BacktestCard(report: report)
                     }

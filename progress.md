@@ -4,6 +4,23 @@
 
 ---
 
+## 2026-06-19 — macOS App 第十一阶段：UI 细节打磨（7 项截图反馈）
+
+**起因**：用户对照截图提了 7 个具体问题。逐项修。
+
+**已交付**
+1. **状态块重设计**：侧栏“状态”从 List 里松散的 LabeledContent（间距过大）移出，改成独立紧凑卡片 `StatusCard`——图标+标签+值、分隔线、6pt 行距。
+2. **醒目标题**：新增 `PageTitle`（28–30pt heavy + 副标题），总览/每日推荐/任务/回测/复盘/个股详情都加大号内容标题，不再只靠系统小号 navigationTitle。
+3. **修留白过大**：回测/复盘原来是嵌套 `NavigationSplitView`，macOS 会渲染出中间一大块死空列（截图红框）。改成显式 `HStack(列表 300pt | Divider | 详情 fill)`，空隙消除。
+4. **卡片网格对齐**：回测证据卡片定高 188pt + Spacer 顶对齐，四张等高；最近复盘从全宽行改 `LazyVGrid` 2–4 列卡片。
+5. **右侧空间利用**：同 3 的 HStack 重排 + 复盘卡片网格，右侧不再大片浪费。
+6. **图表可放大**：K 线卡片加“放大”按钮 → `ChartFullscreenView` 全屏 sheet（1000×680），滚轮缩放/拖动平移在 sheet 内不被外层 ScrollView 抢滚轮；inline 图也加高到 400。
+7. **App 图标**：用提供的红色 K logo 经 `sips`+`iconutil` 生成 `script/AppIcon.icns`，build_and_run 拷进 `Contents/Resources` + Info.plist `CFBundleIconFile`，AppDelegate 兜底 `NSApp.applicationIconImage`。
+
+**验证**
+- `swift build`、`./script/build_and_run.sh --verify` 通过；AppIcon.icns 进 bundle、Info.plist 含 CFBundleIconFile。
+- 实机：总览大标题+紧凑状态卡+等高卡片+复盘网格；回测 list 紧贴 detail 无死空列；股票池“放大”打开全屏可交互 K 线（crosshair 正常）。
+
 ## 2026-06-19 — macOS App 第十阶段：UI/UX 重构（中文优先 / 列表排序筛选 / Markdown 渲染）
 
 **起因**：界面还是英文为主、列表不能排序、复盘只能看 raw markdown 文本、留白偏大、状态用纯色点不带文字。按用户 7 条要求整体重构。

@@ -115,6 +115,8 @@ struct StockDetailView: View {
     var isWatched: Bool
     var onToggleWatchlist: () -> Void
 
+    @State private var showChartFullscreen = false
+
     private var analysis: StockAnalysis {
         StockAnalysis(points: detail.history, latest: detail.latest)
     }
@@ -158,13 +160,24 @@ struct StockDetailView: View {
                     StatTile(title: "MA20偏离", value: KSSFormat.percent(analysis.ma20Distance), tint: KSSTheme.signColor(analysis.ma20Distance))
                 }
 
-                SectionHeader("行情 · 日K")
+                HStack {
+                    SectionHeader("行情 · 日K")
+                    Spacer()
+                    Button {
+                        showChartFullscreen = true
+                    } label: {
+                        Label("放大", systemImage: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 12.5, weight: .semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(KSSTheme.accent)
+                }
                 VStack(alignment: .leading, spacing: 0) {
                     ChartLegend()
                     ChartWebView(points: detail.history)
-                        .frame(minHeight: 320)
+                        .frame(minHeight: 360)
                 }
-                .frame(height: 360)
+                .frame(height: 400)
                 .background(KSSTheme.chartSurface)
                 .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
                 .overlay(
@@ -183,6 +196,45 @@ struct StockDetailView: View {
         }
         .scrollContentBackground(.hidden)
         .background(KSSTheme.canvas)
+        .sheet(isPresented: $showChartFullscreen) {
+            ChartFullscreenView(detail: detail) { showChartFullscreen = false }
+        }
+    }
+}
+
+/// Large interactive K-line view. Mouse-wheel zoom and drag-pan work here
+/// without the surrounding ScrollView intercepting the wheel.
+struct ChartFullscreenView: View {
+    var detail: StockDetail
+    var onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(detail.name.isEmpty ? detail.symbol : detail.name)
+                        .font(.system(size: 20, weight: .heavy))
+                        .foregroundStyle(KSSTheme.textPrimary)
+                    Text("\(detail.symbol) · 滚轮缩放 · 拖动平移")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(KSSTheme.textSecondary)
+                }
+                Spacer()
+                Button {
+                    onClose()
+                } label: {
+                    Label("关闭", systemImage: "xmark")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .buttonStyle(.bordered)
+                .keyboardShortcut(.cancelAction)
+            }
+            .padding(14)
+            ChartLegend()
+            ChartWebView(points: detail.history)
+        }
+        .frame(minWidth: 1000, minHeight: 680)
+        .background(KSSTheme.chartSurface)
     }
 }
 

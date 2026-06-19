@@ -28,7 +28,7 @@ struct ReviewsView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
+        HStack(spacing: 0) {
             VStack(spacing: 0) {
                 HStack {
                     Menu {
@@ -69,47 +69,48 @@ struct ReviewsView: View {
                 .scrollContentBackground(.hidden)
                 .background(KSSTheme.canvas)
             }
-            .navigationSplitViewColumnWidth(min: 260, ideal: 320)
-        } detail: {
-            if let selectedReview {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(selectedReview.title)
-                            .font(.system(size: 22, weight: .bold))
-                            .foregroundStyle(KSSTheme.textPrimary)
-                        Spacer()
-                        StatusBadge(icon: "calendar", text: selectedReview.date, tint: KSSTheme.accent)
+            .frame(width: 300)
+
+            Divider().overlay(KSSTheme.hairline)
+
+            Group {
+                if let selectedReview {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .firstTextBaseline) {
+                            PageTitle(selectedReview.title)
+                            Spacer()
+                            StatusBadge(icon: "calendar", text: selectedReview.date, tint: KSSTheme.accent)
+                        }
+                        if !selectedReview.focusSymbols.isEmpty {
+                            Text("关注 " + selectedReview.focusSymbols.joined(separator: "  "))
+                                .font(.system(size: 12.5, weight: .medium, design: .monospaced))
+                                .foregroundStyle(KSSTheme.textSecondary)
+                                .lineLimit(2)
+                        }
+                        if isLoadingDetail && selectedPath == selectedReview.path {
+                            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else if detail?.path == selectedReview.path, let detail {
+                            MarkdownWebView(text: detail.text)
+                                .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
+                                .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
+                        } else {
+                            MarkdownWebView(text: selectedReview.excerpt)
+                                .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
+                                .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
+                        }
                     }
-                    if !selectedReview.focusSymbols.isEmpty {
-                        Text("关注 " + selectedReview.focusSymbols.joined(separator: "  "))
-                            .font(.system(size: 12.5, weight: .medium, design: .monospaced))
-                            .foregroundStyle(KSSTheme.textSecondary)
-                            .lineLimit(2)
-                    }
-                    if isLoadingDetail && selectedPath == selectedReview.path {
-                        ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if detail?.path == selectedReview.path, let detail {
-                        MarkdownWebView(text: detail.text)
-                            .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
-                            .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
-                    } else {
-                        MarkdownWebView(text: selectedReview.excerpt)
-                            .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
-                            .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
-                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                } else {
+                    Text("选择一篇复盘查看全文")
+                        .font(.system(size: 14))
+                        .foregroundStyle(KSSTheme.textSecondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .padding(16)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                .background(KSSTheme.canvas)
-            } else {
-                Text("选择一篇复盘查看全文")
-                    .font(.system(size: 14))
-                    .foregroundStyle(KSSTheme.textSecondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(KSSTheme.canvas)
             }
+            .background(KSSTheme.canvas)
         }
-        .navigationTitle("复盘")
+        .background(KSSTheme.canvas)
         .onAppear {
             if selectedReview == nil {
                 selectedReview = visibleReviews.first

@@ -23,8 +23,15 @@ BUILD_BINARY="$BUILD_BIN_PATH/$APP_NAME"
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_MACOS"
+APP_RESOURCES="$APP_CONTENTS/Resources"
+mkdir -p "$APP_RESOURCES"
 cp "$BUILD_BINARY" "$APP_BINARY"
 chmod +x "$APP_BINARY"
+
+# App icon (red K logo) → dock / Finder.
+if [ -f "$ROOT_DIR/script/AppIcon.icns" ]; then
+  cp "$ROOT_DIR/script/AppIcon.icns" "$APP_RESOURCES/AppIcon.icns"
+fi
 
 # Copy the SwiftPM resource bundle (chart.html + lightweight-charts) next to the
 # binary so Bundle.module resolves the embedded TradingView chart at runtime.
@@ -44,6 +51,8 @@ cat >"$INFO_PLIST" <<PLIST
   <string>$BUNDLE_ID</string>
   <key>CFBundleName</key>
   <string>$APP_NAME</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>LSMinimumSystemVersion</key>

@@ -17,6 +17,7 @@ struct RunbookView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
+                PageTitle("任务", subtitle: "本地数据 / 正式脚本运行台")
                 PythonEnvironmentBanner(environment: pythonEnvironment)
 
                 SectionHeader("轻量任务")

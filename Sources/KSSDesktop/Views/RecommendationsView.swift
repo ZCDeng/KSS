@@ -26,6 +26,11 @@ struct RecommendationsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            PageTitle("每日推荐", subtitle: snapshot.recommendationDate)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, 2)
             HStack {
                 SortControl(
                     options: RecSort.allCases.map { ($0, $0.rawValue) },

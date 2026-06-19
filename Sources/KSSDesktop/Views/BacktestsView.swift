@@ -30,7 +30,7 @@ struct BacktestsView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
+        HStack(spacing: 0) {
             VStack(spacing: 0) {
                 HStack {
                     SortControl(
@@ -50,9 +50,12 @@ struct BacktestsView: View {
                 .scrollContentBackground(.hidden)
                 .background(KSSTheme.canvas)
             }
-            .navigationSplitViewColumnWidth(min: 280, ideal: 340)
-        } detail: {
+            .frame(width: 300)
+
+            Divider().overlay(KSSTheme.hairline)
+
             VStack(alignment: .leading, spacing: 12) {
+                PageTitle("回测", subtitle: selectedReport?.title)
                 HStack(spacing: 10) {
                     StatTile(title: "日志天数", value: "\(tracking.nDaysLogged)")
                     StatTile(title: "可评估天数", value: "\(tracking.nDaysWithReturns)")
@@ -81,9 +84,6 @@ struct BacktestsView: View {
                         Text("选择一份回测/分析报告")
                             .font(.system(size: 16, weight: .bold))
                             .foregroundStyle(KSSTheme.textPrimary)
-                        Text("在左侧挑选报告，查看完整 Markdown 证据。")
-                            .font(.system(size: 13))
-                            .foregroundStyle(KSSTheme.textSecondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -92,7 +92,7 @@ struct BacktestsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .background(KSSTheme.canvas)
         }
-        .navigationTitle("回测")
+        .background(KSSTheme.canvas)
         .onAppear {
             if selectedReport == nil {
                 selectedReport = sortedReports.first
@@ -163,9 +163,10 @@ struct BacktestCard: View {
             Text(report.excerpt)
                 .font(.system(size: 12))
                 .foregroundStyle(KSSTheme.textSecondary)
-                .lineLimit(4)
+                .lineLimit(3)
+            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 188, maxHeight: 188, alignment: .topLeading)
         .kssCard(padding: 14)
     }
 }

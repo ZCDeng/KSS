@@ -48,6 +48,32 @@ extension StatusBadge {
     }
 }
 
+/// Large, prominent page title for detail panes — bold, oversized, with an
+/// optional subtitle. Gives every screen a clear, eye-catching heading.
+struct PageTitle: View {
+    var title: String
+    var subtitle: String?
+
+    init(_ title: String, subtitle: String? = nil) {
+        self.title = title
+        self.subtitle = subtitle
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: 28, weight: .heavy))
+                .foregroundStyle(KSSTheme.textPrimary)
+            if let subtitle, !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(KSSTheme.textSecondary)
+                    .lineLimit(1)
+            }
+        }
+    }
+}
+
 /// Compact sort control used at the head of every list. Shows the current key
 /// and toggles ascending/descending; the caller owns the binding.
 struct SortControl<Key: Hashable>: View {
