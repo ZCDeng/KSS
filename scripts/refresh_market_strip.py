@@ -31,6 +31,15 @@ INDICES = [
     ("HSI", "恒生指数", True),
 ]
 
+# 总览底部「指数一览」：13 个常用 A 股指数，均走 index_daily。
+INDEX_BOARD = [
+    ("000001.SH", "上证指数"), ("399001.SZ", "深证成指"), ("399006.SZ", "创业板指"),
+    ("000688.SH", "科创50"), ("000698.SH", "科创100"), ("000680.SH", "科创综指"),
+    ("000300.SH", "沪深300"), ("000016.SH", "上证50"), ("000905.SH", "中证500"),
+    ("000852.SH", "中证1000"), ("000510.SH", "中证A500"), ("932000.CSI", "中证2000"),
+    ("899050.BJ", "北证50"),
+]
+
 
 def _load_env() -> None:
     env = ROOT / ".env"
@@ -94,6 +103,24 @@ def main() -> None:
             "date": str(r["trade_date"]),
         })
 
+    index_board: list[dict] = []
+    for ts_code, name in INDEX_BOARD:
+        df = _fetch_with_retry(
+            lambda: pro.index_daily(ts_code=ts_code, start_date="20260101", end_date="20261231"),
+            f"index_daily {ts_code}",
+        )
+        if df is None or df.empty:
+            continue
+        df = df.sort_values("trade_date")
+        r = df.iloc[-1]
+        index_board.append({
+            "code": ts_code,
+            "name": name,
+            "close": round(float(r["close"]), 2),
+            "pct": round(float(r["pct_chg"]), 2),
+            "date": str(r["trade_date"]),
+        })
+
     north_money = None
     north_date = ""
     if HSGT.exists():
@@ -110,6 +137,7 @@ def main() -> None:
         "northMoney": north_money,      # 万元（前端 /10000 → 亿）
         "etfs": etfs,
         "indices": indices,
+        "indexBoard": index_board,
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")

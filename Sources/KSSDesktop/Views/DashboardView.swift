@@ -48,6 +48,12 @@ struct DashboardView: View {
                         SectionHeader("北证 50 扫描", caption: "扫描表评分 Top 标的 · 点击看个股")
                         BJScanSection(scan: scan, onSelect: onSelectSymbol)
                     }
+
+                    // 底部：指数一览（13 个常用指数当日表现）
+                    if let board = snapshot.marketStrip?.indexBoard, !board.isEmpty {
+                        SectionHeader("指数一览", caption: "常用宽基 / 主题指数当日表现")
+                        IndexBoardGrid(indices: board)
+                    }
                 }
                 .frame(width: contentW, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .center)   // 内容块居中，余量进外边距
@@ -528,6 +534,37 @@ struct MarketStripRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .kssCard(padding: 14)
+    }
+}
+
+/// 指数一览：13 个常用指数自适应网格（名称 / 收盘 / 涨跌%，红涨绿跌）。
+struct IndexBoardGrid: View {
+    var indices: [IndexQuote]
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 158), spacing: 10)], spacing: 10) {
+            ForEach(indices) { idx in
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(idx.name)
+                        .font(.system(size: 12.5, weight: .bold))
+                        .foregroundStyle(KSSTheme.textPrimary)
+                        .lineLimit(1)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(String(format: "%.2f", idx.close))
+                            .font(.system(size: 16, weight: .heavy).monospacedDigit())
+                            .foregroundStyle(KSSTheme.signColor(idx.pct))
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        Text(String(format: "%+.2f%%", idx.pct))
+                            .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(KSSTheme.signColor(idx.pct))
+                            .lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .kssCard(padding: 11)
+            }
+        }
     }
 }
 

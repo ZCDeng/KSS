@@ -49,6 +49,7 @@ struct MarketStrip: Codable, Hashable {
     var northDate: String?
     var etfs: [ETFQuote]
     var indices: [IndexQuote]?
+    var indexBoard: [IndexQuote]?   // 总览底部 13 个常用指数
 }
 
 struct ETFQuote: Codable, Hashable, Identifiable {
