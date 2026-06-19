@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 enum StockSort: String, CaseIterable, Identifiable {
     case symbol = "代码"
@@ -20,6 +21,7 @@ struct StockBrowserView: View {
 
     @State private var sort: StockSort = .symbol
     @State private var ascending = true
+    @State private var showChartFullscreen = false
 
     private var filteredStocks: [StockSummary] {
         var items = stocks
@@ -114,7 +116,8 @@ struct StockBrowserView: View {
                     StockDetailView(
                         detail: detail,
                         isWatched: watchlist.contains(detail.symbol),
-                        onToggleWatchlist: { onToggleWatchlist(detail.symbol) }
+                        onToggleWatchlist: { onToggleWatchlist(detail.symbol) },
+                        onZoom: { showChartFullscreen = true }
                     )
                 } else {
                     Text("选择一只股票查看详情")
@@ -127,6 +130,15 @@ struct StockBrowserView: View {
             .background(KSSTheme.canvas)
         }
         .background(KSSTheme.canvas)
+        // 放大：铺满整个浏览区（列表+详情，随窗口尺寸动态最大化），而非尺寸受限的 sheet。
+        .overlay {
+            if showChartFullscreen, let detail {
+                ChartFullscreenView(detail: detail) { showChartFullscreen = false }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(KSSTheme.canvas)
+                    .transition(.opacity)
+            }
+        }
     }
 }
 
@@ -134,8 +146,7 @@ struct StockDetailView: View {
     var detail: StockDetail
     var isWatched: Bool
     var onToggleWatchlist: () -> Void
-
-    @State private var showChartFullscreen = false
+    var onZoom: () -> Void
 
     private var analysis: StockAnalysis {
         StockAnalysis(points: detail.history, latest: detail.latest)
@@ -184,7 +195,7 @@ struct StockDetailView: View {
                     SectionHeader("行情 · 日K")
                     Spacer()
                     Button {
-                        showChartFullscreen = true
+                        onZoom()
                     } label: {
                         Label("放大", systemImage: "arrow.up.left.and.arrow.down.right")
                             .font(.system(size: 12.5, weight: .semibold))
@@ -216,9 +227,6 @@ struct StockDetailView: View {
         }
         .scrollContentBackground(.hidden)
         .background(KSSTheme.canvas)
-        .sheet(isPresented: $showChartFullscreen) {
-            ChartFullscreenView(detail: detail) { showChartFullscreen = false }
-        }
     }
 }
 
@@ -253,10 +261,8 @@ struct ChartFullscreenView: View {
             ChartLegend()
             ChartWebView(points: detail.history)
         }
-        .frame(
-            minWidth: 1200, idealWidth: 1680, maxWidth: .infinity,
-            minHeight: 820, idealHeight: 1000, maxHeight: .infinity
-        )
+        // 作为浏览区上的覆盖层铺满：随 app 窗口尺寸动态最大化。
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(KSSTheme.chartSurface)
     }
 }

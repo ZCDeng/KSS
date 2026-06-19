@@ -32,26 +32,33 @@ struct RecommendationsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            PageTitle("推荐", subtitle: snapshot.recommendationDate)
+        // M3：内容封顶 1080 居中，统一外边距（与总览一致）。
+        GeometryReader { geo in
+            let w = min(geo.size.width - 48, 1080)
+            VStack(alignment: .leading, spacing: 0) {
+                PageTitle("推荐", subtitle: snapshot.recommendationDate)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 18)
+
+                Picker("", selection: $tab) {
+                    ForEach(RecTab.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
                 .padding(.horizontal, 16)
-                .padding(.top, 14)
+                .padding(.top, 10)
+                .padding(.bottom, 4)
 
-            Picker("", selection: $tab) {
-                ForEach(RecTab.allCases) { Text($0.rawValue).tag($0) }
+                if tab == .current {
+                    currentTab
+                } else {
+                    historyTab
+                }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .padding(.horizontal, 16)
-            .padding(.top, 10)
-            .padding(.bottom, 4)
-
-            if tab == .current {
-                currentTab
-            } else {
-                historyTab
-            }
+            .frame(width: w)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .background(KSSTheme.canvas)
         }
         .background(KSSTheme.canvas)
     }

@@ -17,7 +17,8 @@ struct ArchitectureView: View {
                     .tint(KSSTheme.accent)
                 }
             }
-            .padding(16)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 18)
 
             LocalHTMLView(resource: "architecture")
                 .background(KSSTheme.canvas)

@@ -15,36 +15,41 @@ struct RunbookView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                PageTitle("任务", subtitle: "本地数据 / 正式脚本运行台")
-                PythonEnvironmentBanner(environment: pythonEnvironment)
+        // M3：内容封顶 1080 居中，统一外边距（与总览一致）。
+        GeometryReader { geo in
+            let w = min(geo.size.width - 48, 1080)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    PageTitle("任务", subtitle: "本地数据 / 正式脚本运行台")
+                    PythonEnvironmentBanner(environment: pythonEnvironment)
 
-                SectionHeader("轻量任务")
-                TaskGrid(tasks: quickTasks, isRunning: isRunning, onRun: onRun)
+                    SectionHeader("轻量任务")
+                    TaskGrid(tasks: quickTasks, isRunning: isRunning, onRun: onRun)
 
-                SectionHeader("正式任务")
-                TaskGrid(tasks: fullTasks, isRunning: isRunning, onRun: onRun)
+                    SectionHeader("正式任务")
+                    TaskGrid(tasks: fullTasks, isRunning: isRunning, onRun: onRun)
 
-                SectionHeader("任务记录")
-                if results.isEmpty {
-                    Text("暂无任务运行记录")
-                        .font(.system(size: 13.5))
-                        .foregroundStyle(KSSTheme.textSecondary)
-                } else {
-                    VStack(spacing: 10) {
-                        ForEach(results) { result in
-                            TaskResultCard(result: result)
+                    SectionHeader("任务记录")
+                    if results.isEmpty {
+                        Text("暂无任务运行记录")
+                            .font(.system(size: 13.5))
+                            .foregroundStyle(KSSTheme.textSecondary)
+                    } else {
+                        VStack(spacing: 10) {
+                            ForEach(results) { result in
+                                TaskResultCard(result: result)
+                            }
                         }
                     }
                 }
+                .frame(width: w, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 24)
             }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .scrollContentBackground(.hidden)
+            .background(KSSTheme.canvas)
         }
-        .scrollContentBackground(.hidden)
         .background(KSSTheme.canvas)
-        .navigationTitle("任务")
     }
 }
 
