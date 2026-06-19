@@ -9,12 +9,14 @@ enum DateRange: String, CaseIterable, Identifiable {
 
 struct ReviewsView: View {
     var reviews: [DailyReview]
+    var sectorPulse: SectorPulse?
     var selectedPath: String?
     var detail: ReportDetail?
     var isLoadingDetail: Bool
     var onSelectReview: (String) -> Void
 
     @State private var selectedReview: DailyReview?
+    @State private var showSectorReview = true
     @State private var ascending = false
     @State private var range: DateRange = .all
 
@@ -30,6 +32,35 @@ struct ReviewsView: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
+                // 置顶：今日板块复盘入口
+                if sectorPulse != nil {
+                    Button {
+                        showSectorReview = true
+                        selectedReview = nil
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "square.grid.2x2.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(showSectorReview ? Color.white : KSSTheme.accent)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("今日板块复盘")
+                                    .font(.system(size: 13.5, weight: .bold))
+                                    .foregroundStyle(showSectorReview ? Color.white : KSSTheme.textPrimary)
+                                Text("资金申赎 · 强势确认")
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(showSectorReview ? Color.white.opacity(0.85) : KSSTheme.textSecondary)
+                            }
+                            Spacer()
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .background(showSectorReview ? KSSTheme.accent : Color.clear)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    Divider().overlay(KSSTheme.hairline)
+                }
+
                 HStack {
                     Menu {
                         ForEach(DateRange.allCases) { option in
@@ -74,7 +105,9 @@ struct ReviewsView: View {
             Divider().overlay(KSSTheme.hairline)
 
             Group {
-                if let selectedReview {
+                if showSectorReview, let sectorPulse {
+                    SectorReviewPanel(pulse: sectorPulse)
+                } else if let selectedReview {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(alignment: .firstTextBaseline) {
                             PageTitle(selectedReview.title)
@@ -112,15 +145,20 @@ struct ReviewsView: View {
         }
         .background(KSSTheme.canvas)
         .onAppear {
-            if selectedReview == nil {
-                selectedReview = visibleReviews.first
-            }
-            if let selectedReview, detail?.path != selectedReview.path {
-                onSelectReview(selectedReview.path)
+            // 无板块数据时回退到首篇个股复盘
+            if sectorPulse == nil {
+                showSectorReview = false
+                if selectedReview == nil {
+                    selectedReview = visibleReviews.first
+                }
+                if let selectedReview, detail?.path != selectedReview.path {
+                    onSelectReview(selectedReview.path)
+                }
             }
         }
         .onChange(of: selectedReview) { review in
             if let review {
+                showSectorReview = false
                 onSelectReview(review.path)
             }
         }
@@ -134,6 +172,141 @@ struct ReviewsView: View {
             return ""
         }
         return formatter.string(from: cut)
+    }
+}
+
+/// 今日板块复盘：资金申赎 + 强势确认分级，含明细表与一年回测语义说明。
+struct SectorReviewPanel: View {
+    var pulse: SectorPulse
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .firstTextBaseline) {
+                    PageTitle("今日板块复盘")
+                    Spacer()
+                    StatusBadge(icon: "calendar", text: dateLabel, tint: KSSTheme.accent)
+                }
+                if let regime = regimeLine {
+                    Text(regime)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(KSSTheme.textBody)
+                }
+
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 188), spacing: 10)], spacing: 10) {
+                    ForEach(pulse.themes) { SectorChip(theme: $0) }
+                }
+
+                SectorReviewTable(themes: pulse.themes)
+
+                if !pulse.note.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("一年回测语义")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(KSSTheme.textSecondary)
+                        Text(pulse.note)
+                            .font(.system(size: 12))
+                            .foregroundStyle(KSSTheme.textBody)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .kssCard(padding: 14)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(KSSTheme.canvas)
+    }
+
+    private var dateLabel: String {
+        let raw = pulse.tradeDate
+        guard raw.count == 8 else { return raw }
+        return "\(raw.prefix(4))-\(raw.dropFirst(4).prefix(2))-\(raw.suffix(2))"
+    }
+
+    private var regimeLine: String? {
+        guard let mom = pulse.regimeMom20 else { return nil }
+        let on = pulse.regimeInRegime == true
+        let th = pulse.regimeMom20Th.map { String(format: "%.1f", $0) } ?? "-"
+        return "动量体制：mom20 \(String(format: "%.1f", mom))（阈值 \(th)）· \(on ? "趋势确认 ✅" : "未达阈值 / 震荡")"
+    }
+}
+
+/// 板块明细表：板块 / 近5日 / 资金1日 / 资金5日 / 基金数 / 5日排名 / 分级。
+struct SectorReviewTable: View {
+    var themes: [SectorTheme]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider().overlay(KSSTheme.hairline)
+            ForEach(Array(themes.enumerated()), id: \.element.id) { index, t in
+                row(t)
+                if index < themes.count - 1 {
+                    Divider().overlay(KSSTheme.hairline)
+                }
+            }
+        }
+        .background(KSSTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Text("板块").frame(width: 96, alignment: .leading)
+            Text("近5日").frame(width: 72, alignment: .trailing)
+            Text("资金1日").frame(width: 72, alignment: .trailing)
+            Text("资金5日").frame(width: 72, alignment: .trailing)
+            Text("基金").frame(width: 48, alignment: .trailing)
+            Text("5日排名").frame(width: 64, alignment: .trailing)
+            Spacer(minLength: 8)
+            Text("分级").frame(width: 84, alignment: .trailing)
+        }
+        .font(.system(size: 10.5, weight: .medium))
+        .foregroundStyle(KSSTheme.textSecondary)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+    }
+
+    private func row(_ t: SectorTheme) -> some View {
+        HStack(spacing: 10) {
+            Text(t.name)
+                .font(.system(size: 13.5, weight: .bold))
+                .foregroundStyle(KSSTheme.textPrimary)
+                .frame(width: 96, alignment: .leading)
+            num(t.past5Ret.map { KSSFormat.percent($0 / 100) }, tint: KSSTheme.signColor(t.past5Ret ?? 0))
+                .frame(width: 72, alignment: .trailing)
+            num(t.flow1d.map { String(format: "%+.1f", $0) }, tint: KSSTheme.textBody)
+                .frame(width: 72, alignment: .trailing)
+            num(t.flow5d.map { String(format: "%+.1f", $0) }, tint: KSSTheme.textBody)
+                .frame(width: 72, alignment: .trailing)
+            num(t.nFunds.map(String.init), tint: KSSTheme.textSecondary)
+                .frame(width: 48, alignment: .trailing)
+            num(t.rank5d.map { "#\($0)" }, tint: KSSTheme.textSecondary)
+                .frame(width: 64, alignment: .trailing)
+            Spacer(minLength: 8)
+            Text(t.divergence ? "见顶预警" : t.grade)
+                .font(.system(size: 10.5, weight: .bold))
+                .foregroundStyle(gradeColor(t))
+                .frame(width: 84, alignment: .trailing)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+    }
+
+    private func num(_ text: String?, tint: Color) -> some View {
+        Text(text ?? "—")
+            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+            .foregroundStyle(tint)
+            .lineLimit(1)
+    }
+
+    private func gradeColor(_ t: SectorTheme) -> Color {
+        if t.divergence || t.grade.contains("预警") || t.grade.contains("见顶") { return KSSTheme.up }
+        if t.grade.contains("强势") { return KSSTheme.accent }
+        return KSSTheme.textBody
     }
 }
 

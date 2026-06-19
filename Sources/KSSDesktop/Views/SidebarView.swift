@@ -2,62 +2,101 @@ import SwiftUI
 
 struct SidebarView: View {
     @Binding var selection: WorkspaceSection
-    var snapshot: AppSnapshot?
-    var watchlist: [String]
+    var collapsed: Bool
+    var onToggleCollapse: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
-            AppHeader()
-                .padding(.horizontal, 12)
+            AppHeader(collapsed: collapsed, onToggleCollapse: onToggleCollapse)
+                .padding(.horizontal, collapsed ? 8 : 12)
                 .padding(.top, 12)
-                .padding(.bottom, 6)
+                .padding(.bottom, 8)
 
-            List(selection: $selection) {
-                ForEach(WorkspaceSection.allCases) { section in
-                    Label(section.displayName, systemImage: section.symbol)
-                        .font(.system(size: 15, weight: .semibold))
-                        .tag(section)
+            if collapsed {
+                collapsedNav
+                Spacer(minLength: 0)
+            } else {
+                List(selection: $selection) {
+                    ForEach(WorkspaceSection.allCases) { section in
+                        Label(section.displayName, systemImage: section.symbol)
+                            .font(.system(size: 15, weight: .semibold))
+                            .tag(section)
+                    }
                 }
-            }
-            .listStyle(.sidebar)
-
-            if let snapshot {
-                StatusCard(snapshot: snapshot, watchlistCount: watchlist.count)
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 6)
+                .listStyle(.sidebar)
             }
 
-            SidebarFooter()
-                .padding(.horizontal, 12)
+            SidebarFooter(collapsed: collapsed)
+                .padding(.horizontal, collapsed ? 8 : 12)
                 .padding(.bottom, 10)
         }
         .navigationTitle("KSS")
     }
+
+    /// 折叠态：仅图标导航，保留选中高亮。
+    private var collapsedNav: some View {
+        VStack(spacing: 4) {
+            ForEach(WorkspaceSection.allCases) { section in
+                Button { selection = section } label: {
+                    Image(systemName: section.symbol)
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(width: 46, height: 38)
+                        .foregroundStyle(selection == section ? Color.white : KSSTheme.textBody)
+                        .background(
+                            selection == section ? KSSTheme.accent : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 9)
+                        )
+                }
+                .buttonStyle(.plain)
+                .help(section.displayName)
+            }
+        }
+        .padding(.top, 4)
+    }
 }
 
-/// 边栏顶部：KSSDeck 锁定式标志 —— wordmark（随主题黑↔白翻转）+ 恒定红 K。
-/// 资源直接取自品牌参考图：wordmark.png 为可着色模板，kmark.png 为玻璃高光红 K。
+/// 边栏顶部：KSSDeck 锁定式标志 + 折叠/展开按钮。折叠态只留 K 标。
 struct AppHeader: View {
+    var collapsed: Bool
+    var onToggleCollapse: () -> Void
+
     var body: some View {
-        HStack(alignment: .center, spacing: 6) {
-            wordmark
-                .frame(height: 20)
-            kmark
-                .frame(height: 26)
-            Spacer(minLength: 0)
+        if collapsed {
+            VStack(spacing: 10) {
+                toggleButton
+                kmark.frame(width: 30, height: 30)
+            }
+            .frame(maxWidth: .infinity)
+        } else {
+            HStack(alignment: .center, spacing: 6) {
+                kmark.frame(height: 26)
+                wordmark.frame(height: 20)
+                Spacer(minLength: 0)
+                toggleButton
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 6)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
+    }
+
+    private var toggleButton: some View {
+        Button(action: onToggleCollapse) {
+            Image(systemName: "sidebar.leading")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(KSSTheme.textSecondary)
+                .frame(width: 26, height: 26)
+        }
+        .buttonStyle(.plain)
+        .help(collapsed ? "展开边栏" : "折叠边栏")
     }
 
     @ViewBuilder private var wordmark: some View {
         if let img = bundledImage("wordmark") {
             Image(nsImage: img)
                 .resizable()
-                .renderingMode(.template)          // 取模板，按主题着色
+                .renderingMode(.template)
                 .scaledToFit()
-                .foregroundStyle(KSSTheme.textPrimary)   // 亮→近黑 / 暗→近白
+                .foregroundStyle(KSSTheme.textPrimary)
         } else {
             Text("KSSDeck")
                 .font(.system(size: 18, weight: .heavy))
@@ -66,9 +105,7 @@ struct AppHeader: View {
     }
 
     @ViewBuilder private var kmark: some View {
-        if let img = bundledImage("kmark") {
-            Image(nsImage: img).resizable().scaledToFit()
-        } else if let img = bundledImage("logo") {
+        if let img = bundledImage("kmark") ?? bundledImage("logo") {
             Image(nsImage: img).resizable().scaledToFit()
         } else {
             Image(systemName: "k.square.fill").resizable().scaledToFit().foregroundStyle(KSSTheme.up)
@@ -81,12 +118,19 @@ struct AppHeader: View {
     }
 }
 
-/// 边栏底部：GitHub 链接（纯图标+文字，无线框背景）。
+/// 边栏底部：只保留 GitHub 跳转（折叠态仅图标）。
 struct SidebarFooter: View {
+    var collapsed: Bool
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let url = URL(string: "https://github.com/ZCDeng/KSS") {
-                Link(destination: url) {
+        if let url = URL(string: "https://github.com/ZCDeng/KSS") {
+            Link(destination: url) {
+                if collapsed {
+                    Image(systemName: "chevron.left.forwardslash.chevron.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(KSSTheme.accent)
+                        .frame(maxWidth: .infinity, minHeight: 28)
+                } else {
                     HStack(spacing: 8) {
                         Image(systemName: "chevron.left.forwardslash.chevron.right")
                             .font(.system(size: 11, weight: .semibold))
@@ -102,41 +146,9 @@ struct SidebarFooter: View {
                     }
                     .padding(.horizontal, 6)
                 }
-                .buttonStyle(.plain)
             }
+            .buttonStyle(.plain)
+            .help("GitHub · ZCDeng/KSS")
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-/// 状态信息：纯图标 + 文字，不带线框和背景。
-struct StatusCard: View {
-    var snapshot: AppSnapshot
-    var watchlistCount: Int
-
-    var body: some View {
-        VStack(spacing: 7) {
-            row("chart.bar.fill", "股票数", "\(snapshot.stockCount)")
-            row("calendar", "数据日期", snapshot.latestDataDate ?? "-")
-            row("target", "最新推荐", snapshot.recommendationDate ?? "-")
-            row("star.fill", "自选数", "\(watchlistCount)")
-        }
-    }
-
-    private func row(_ icon: String, _ label: String, _ value: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(KSSTheme.accent)
-                .frame(width: 15)
-            Text(label)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(KSSTheme.textSecondary)
-            Spacer()
-            Text(value)
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundStyle(KSSTheme.textBody)
-        }
-        .padding(.horizontal, 6)
     }
 }

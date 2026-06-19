@@ -4,6 +4,7 @@ struct ContentView: View {
     @EnvironmentObject private var store: KSSStore
     @AppStorage("watchlistSymbols") private var watchlistSymbols = "688017.SH,688322.SH"
     @AppStorage("appearanceMode") private var appearanceMode = "dark"
+    @AppStorage("sidebarCollapsed") private var sidebarCollapsed = false
     @State private var searchText = ""
 
     private var watchlist: [String] {
@@ -17,9 +18,13 @@ struct ContentView: View {
         NavigationSplitView {
             SidebarView(
                 selection: $store.selectedSection,
-                snapshot: store.snapshot,
-                watchlist: watchlist
+                collapsed: sidebarCollapsed,
+                onToggleCollapse: {
+                    withAnimation(.easeInOut(duration: 0.2)) { sidebarCollapsed.toggle() }
+                }
             )
+            .navigationSplitViewColumnWidth(sidebarCollapsed ? 66 : 224)
+            .toolbar(removing: .sidebarToggle)
         } detail: {
             detail
                 .background(KSSTheme.canvas)
@@ -93,6 +98,7 @@ struct ContentView: View {
             case .reviews:
                 ReviewsView(
                     reviews: snapshot.reviews,
+                    sectorPulse: snapshot.sectorPulse,
                     selectedPath: store.selectedReportPath,
                     detail: store.reportDetail,
                     isLoadingDetail: store.isLoadingReport,

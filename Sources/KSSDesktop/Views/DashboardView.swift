@@ -12,6 +12,11 @@ struct DashboardView: View {
                 // 此处不再重复（避免标题副标题 + KPI 条 + 边栏三处同值）。
                 PageTitle("总览", subtitle: "本地量化研究工作台 · log_mv 选股 / 紫苏叶供应链 / 北证扫描")
 
+                // 0) 今日板块信息图：资金申赎 + 强势确认，一目了然
+                if let pulse = snapshot.sectorPulse, !pulse.themes.isEmpty {
+                    SectorPulseStrip(pulse: pulse)
+                }
+
                 // 1) 主区两栏：今日推荐 | 纸交易跟踪 + 资产计数
                 //    左栏按内容宽度封顶（避免表格被拉得过宽留大片空白），
                 //    多出的横向空间收进两栏之间的留白槽，右栏继续贴右。
@@ -145,17 +150,19 @@ struct TodayPicksList: View {
     }
 }
 
-/// 紫苏叶选股表：供应链护城河评分 Top 标的（全宽，产业链列自适应填满）。
+/// 紫苏叶选股表：供应链护城河评分 + 日/周/月/年涨幅 + PE/PB + 流通市值（全宽）。
+/// 名称下挂代码、产业链下挂层级·护城河，省出横向空间给行情/估值列。
 struct PerillaPicksTable: View {
     var items: [PerillaPick]
     var onSelect: (String) -> Void
 
-    private let wName: CGFloat = 132
-    private let wSymbol: CGFloat = 116
-    private let wLayer: CGFloat = 116
-    private let wMoat: CGFloat = 172
-    private let wScore: CGFloat = 64
-    private let colSpacing: CGFloat = 14
+    private let wName: CGFloat = 124
+    private let wRet: CGFloat = 58
+    private let wPe: CGFloat = 60
+    private let wPb: CGFloat = 50
+    private let wMv: CGFloat = 80
+    private let wScore: CGFloat = 52
+    private let colSpacing: CGFloat = 10
     private let rowPadH: CGFloat = 14
 
     var body: some View {
@@ -177,15 +184,19 @@ struct PerillaPicksTable: View {
 
     private var header: some View {
         HStack(spacing: colSpacing) {
-            Text("名称").frame(width: wName, alignment: .leading)
-            Text("代码").frame(width: wSymbol, alignment: .leading)
-            Text("产业链").frame(maxWidth: .infinity, alignment: .leading)
-            Text("层级").frame(width: wLayer, alignment: .leading)
-            Text("护城河").frame(width: wMoat, alignment: .leading)
+            Text("名称 / 代码").frame(width: wName, alignment: .leading)
+            Text("产业链 / 层级·护城河").frame(maxWidth: .infinity, alignment: .leading)
+            Text("日").frame(width: wRet, alignment: .trailing)
+            Text("周").frame(width: wRet, alignment: .trailing)
+            Text("月").frame(width: wRet, alignment: .trailing)
+            Text("年").frame(width: wRet, alignment: .trailing)
+            Text("PE").frame(width: wPe, alignment: .trailing)
+            Text("PB").frame(width: wPb, alignment: .trailing)
+            Text("流通市值").frame(width: wMv, alignment: .trailing)
             Text("评分").frame(width: wScore, alignment: .trailing)
         }
         .font(.system(size: 10.5, weight: .medium))
-        .tracking(0.5)
+        .tracking(0.3)
         .foregroundStyle(KSSTheme.textSecondary)
         .padding(.horizontal, rowPadH)
         .padding(.vertical, 9)
@@ -193,47 +204,88 @@ struct PerillaPicksTable: View {
 
     private func row(_ item: PerillaPick) -> some View {
         HStack(spacing: colSpacing) {
-            Text(item.name)
-                .font(.system(size: 14.5, weight: .bold))
-                .foregroundStyle(KSSTheme.textPrimary)
-                .lineLimit(1)
-                .frame(width: wName, alignment: .leading)
-            Text(item.symbol)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(KSSTheme.textSecondary)
-                .lineLimit(1)
-                .frame(width: wSymbol, alignment: .leading)
-            Text(item.chains.isEmpty ? "—" : item.chains)
-                .font(.system(size: 12.5))
-                .foregroundStyle(KSSTheme.textBody)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Text(layerLabel(item))
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(KSSTheme.textBody)
-                .lineLimit(1)
-                .frame(width: wLayer, alignment: .leading)
-            HStack(spacing: 5) {
-                Text(item.moat)
-                    .font(.system(size: 12))
+            // 名称 + 代码
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.name)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(KSSTheme.textPrimary)
+                    .lineLimit(1)
+                Text(item.symbol)
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(KSSTheme.textSecondary)
+                    .lineLimit(1)
+            }
+            .frame(width: wName, alignment: .leading)
+
+            // 产业链 + 层级·护城河
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.chains.isEmpty ? "—" : item.chains)
+                    .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(KSSTheme.textBody)
                     .lineLimit(1)
-                if item.locked {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(KSSTheme.accent)
+                HStack(spacing: 5) {
+                    Text("\(layerLabel(item)) · \(item.moat)")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(KSSTheme.textSecondary)
+                        .lineLimit(1)
+                    if item.locked {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(KSSTheme.accent)
+                    }
                 }
             }
-            .frame(width: wMoat, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            retCell(item.ret1d)
+            retCell(item.ret5d)
+            retCell(item.ret20d)
+            retCell(item.retYear)
+
+            Text(numText(item.pe))
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(KSSTheme.textBody)
+                .lineLimit(1)
+                .frame(width: wPe, alignment: .trailing)
+            Text(numText(item.pb))
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(KSSTheme.textBody)
+                .lineLimit(1)
+                .frame(width: wPb, alignment: .trailing)
+            Text(mvText(item.circMvYi))
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(KSSTheme.textBody)
+                .lineLimit(1)
+                .frame(width: wMv, alignment: .trailing)
+
             Text(String(format: "%.2f", item.score))
-                .font(.system(size: 13.5, weight: .heavy, design: .monospaced))
+                .font(.system(size: 13, weight: .heavy, design: .monospaced))
                 .foregroundStyle(KSSTheme.accent)
                 .lineLimit(1)
                 .frame(width: wScore, alignment: .trailing)
         }
         .contentShape(Rectangle())
         .padding(.horizontal, rowPadH)
-        .padding(.vertical, 11)
+        .padding(.vertical, 9)
+    }
+
+    private func retCell(_ value: Double?) -> some View {
+        Text(value.map { KSSFormat.percent($0) } ?? "—")
+            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+            .foregroundStyle(value == nil ? KSSTheme.textSecondary : KSSTheme.signColor(value!))
+            .lineLimit(1)
+            .frame(width: wRet, alignment: .trailing)
+    }
+
+    private func numText(_ v: Double?) -> String {
+        guard let v else { return "—" }
+        return String(format: "%.1f", v)
+    }
+
+    private func mvText(_ yi: Double?) -> String {
+        guard let yi else { return "—" }
+        if yi >= 1000 { return String(format: "%.0f亿", yi) }
+        return String(format: "%.1f亿", yi)
     }
 
     private func layerLabel(_ item: PerillaPick) -> String {
@@ -245,7 +297,107 @@ struct PerillaPicksTable: View {
         case "assembly": roleCN = "整机"
         default: roleCN = item.role
         }
-        return "L\(item.layer) · \(roleCN)"
+        return "L\(item.layer)·\(roleCN)"
+    }
+}
+
+/// 今日板块信息图：6 个主题卡片，资金申赎 + 近 5 日涨幅 + 强势确认分级。
+struct SectorPulseStrip: View {
+    var pulse: SectorPulse
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 2).fill(KSSTheme.accent).frame(width: 4, height: 18)
+                Text("今日板块")
+                    .font(KSSFont.serif(18, .semibold))
+                    .foregroundStyle(KSSTheme.textPrimary)
+                Text(regimeText)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(pulse.regimeInRegime == true ? KSSTheme.up : KSSTheme.textSecondary)
+                Spacer()
+                Text("资金正=申购/负=赎回 · 5日赎回≥2%=强势确认")
+                    .font(.system(size: 11))
+                    .foregroundStyle(KSSTheme.textSecondary)
+                    .lineLimit(1)
+            }
+            .padding(.top, 6)
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 188), spacing: 10)], spacing: 10) {
+                ForEach(pulse.themes) { theme in
+                    SectorChip(theme: theme)
+                }
+            }
+        }
+    }
+
+    private var regimeText: String {
+        guard let mom = pulse.regimeMom20 else { return "" }
+        let on = pulse.regimeInRegime == true
+        return "动量 \(String(format: "%.1f", mom)) · \(on ? "趋势确认" : "震荡")"
+    }
+}
+
+struct SectorChip: View {
+    var theme: SectorTheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                Text(theme.name)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(KSSTheme.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                gradeBadge
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text("近5日")
+                    .font(.system(size: 10))
+                    .foregroundStyle(KSSTheme.textSecondary)
+                Text(theme.past5Ret.map { KSSFormat.percent($0 / 100) } ?? "—")
+                    .font(.system(size: 18, weight: .heavy).monospacedDigit())
+                    .foregroundStyle(KSSTheme.signColor(theme.past5Ret ?? 0))
+            }
+            HStack(spacing: 8) {
+                flowItem("1日", theme.flow1d)
+                flowItem("5日", theme.flow5d)
+                if theme.accel {
+                    Label("加速", systemImage: "bolt.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(KSSTheme.accent)
+                        .labelStyle(.titleAndIcon)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .kssCard(padding: 12)
+    }
+
+    private var gradeBadge: some View {
+        let warn = theme.divergence || theme.grade.contains("预警") || theme.grade.contains("见顶")
+        let strong = theme.grade.contains("强势")
+        let bg = warn ? KSSTheme.up : (strong ? KSSTheme.accent : KSSTheme.textSecondary.opacity(0.18))
+        let fg = (warn || strong) ? Color.white : KSSTheme.textBody
+        return Text(theme.divergence ? "见顶预警" : theme.grade)
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(fg)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(bg, in: Capsule())
+    }
+
+    /// 资金流（正=申购/负=赎回）。语义上「赎回≠利空」由分级徽标承载，故此处中性着色，
+    /// 只呈现方向与量级，避免把申购误读成上涨。
+    private func flowItem(_ label: String, _ flow: Double?) -> some View {
+        HStack(spacing: 3) {
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundStyle(KSSTheme.textSecondary)
+            Text(flow.map { String(format: "%+.1f", $0) } ?? "—")
+                .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(KSSTheme.textBody)
+        }
     }
 }
 

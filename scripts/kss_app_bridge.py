@@ -1253,6 +1253,21 @@ def _run_refresh_bj_daily() -> dict[str, Any]:
     )
 
 
+def _run_refresh_daily_basic() -> dict[str, Any]:
+    started = _now_iso()
+    python = _full_python()
+    if python is None:
+        return _missing_full_env_result("refresh-daily-basic", "刷新流通市值/估值", started)
+    return _run_process_task(
+        "refresh-daily-basic",
+        "刷新流通市值/估值",
+        [str(python), "scripts/refresh_daily_basic.py"],
+        started,
+        artifacts=["storage/macro/dailybasic_latest.json"],
+        timeout=300,
+    )
+
+
 def run_task(task_id: str, argv: list[str]) -> dict[str, Any]:
     args = _parse_args(argv)
     if task_id == "daily-picks":
@@ -1287,6 +1302,8 @@ def run_task(task_id: str, argv: list[str]) -> dict[str, Any]:
         return _run_formal_etf_backtest(args)
     if task_id == "refresh-bj-daily":
         return _run_refresh_bj_daily()
+    if task_id == "refresh-daily-basic":
+        return _run_refresh_daily_basic()
     return _task_result(
         task_id,
         task_id,
@@ -1454,6 +1471,110 @@ def _bj_detail(symbol: str) -> dict[str, Any] | None:
     return None
 
 
+_DAILYBASIC_JSON = PROJECT_ROOT / "storage" / "macro" / "dailybasic_latest.json"
+ETF_RADAR_DIR = PROJECT_ROOT / "storage" / "etf_radar"
+
+
+def _load_dailybasic_cache() -> dict[str, Any]:
+    """流通市值 / PE / PB 切片缓存（scripts/refresh_daily_basic.py 产出，单位万元）。"""
+    if not _DAILYBASIC_JSON.exists():
+        return {}
+    try:
+        return json.loads(_DAILYBASIC_JSON.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _cs_metrics(symbol: str) -> dict[str, Any]:
+    """从 cs_data_<code>.csv 计算 日/周/月/年 涨幅 + 最新 PE/PB/总市值。"""
+    digits = symbol.split(".")[0]
+    fp = PROJECT_ROOT / f"cs_data_{digits}.csv"
+    if not fp.exists():
+        return {}
+    rows = _read_csv_rows(fp)
+    if not rows:
+        return {}
+    rows.sort(key=lambda r: r.get("trade_date", ""))
+    closes: list[float] = []
+    for r in rows:
+        try:
+            closes.append(float(r["close"]))
+        except (TypeError, ValueError):
+            pass
+    if len(closes) < 2:
+        return {}
+
+    def ret(n: int) -> float | None:
+        if len(closes) > n and closes[-1 - n]:
+            return round(closes[-1] / closes[-1 - n] - 1.0, 4)
+        return None
+
+    last = rows[-1]
+
+    def fnum(key: str) -> float | None:
+        try:
+            return float(last[key])
+        except (TypeError, ValueError, KeyError):
+            return None
+
+    yr_n = min(244, len(closes) - 1)
+    ret_year = round(closes[-1] / closes[-1 - yr_n] - 1.0, 4) if yr_n > 0 and closes[-1 - yr_n] else None
+    return {
+        "ret1d": ret(1),
+        "ret5d": ret(5),
+        "ret20d": ret(20),
+        "retYear": ret_year,
+        "pe": fnum("pe"),
+        "pb": fnum("pb"),
+        "totalMv": fnum("total_mv"),
+    }
+
+
+def _sector_pulse() -> dict[str, Any] | None:
+    """今日板块脉冲：取最新 etf_radar 切片（资金申赎 + 强势确认分级）。
+
+    数据源 storage/etf_radar/YYYYMMDD.json，同时服务总览板块信息图与复盘板块复盘。
+    """
+    if not ETF_RADAR_DIR.exists():
+        return None
+    files = sorted(ETF_RADAR_DIR.glob("*.json"))
+    if not files:
+        return None
+    try:
+        d = json.loads(files[-1].read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    themes_raw = d.get("themes") or {}
+    themes: list[dict[str, Any]] = []
+    for name, v in themes_raw.items():
+        if not isinstance(v, dict):
+            continue
+        themes.append({
+            "name": name,
+            "flow1d": v.get("flow_1d"),
+            "flow5d": v.get("flow_5d"),
+            "past5Ret": v.get("past5_ret"),
+            "grade": v.get("grade", ""),
+            "divergence": bool(v.get("divergence")),
+            "accel": bool(v.get("accel")),
+            "rank5d": v.get("rank_5d"),
+            "nFunds": v.get("n_funds"),
+        })
+    # 强势确认优先，其次按近 5 日涨幅降序
+    themes.sort(key=lambda x: (x["grade"] != "强势确认", -(x["past5Ret"] if x["past5Ret"] is not None else -999)))
+    regime = d.get("momentum_regime_r3") or {}
+    return {
+        "tradeDate": str(d.get("trade_date", "")),
+        "dataDate": str(d.get("data_date", "")),
+        "stale": bool(d.get("stale")),
+        "note": d.get("note", ""),
+        "regimeInRegime": regime.get("in_regime"),
+        "regimeMom20": regime.get("mom20"),
+        "regimeMom20Th": regime.get("mom20_th"),
+        "themes": themes,
+    }
+
+
 def _perilla_picks(top_n: int = 12, min_score: float = 0.4) -> list[dict[str, Any]]:
     """紫苏叶（供应链护城河）选股：按 perilla_score 排序的注册表标的。
 
@@ -1473,6 +1594,7 @@ def _perilla_picks(top_n: int = 12, min_score: float = 0.4) -> list[dict[str, An
     except Exception:
         return []
 
+    daily_basic = _load_dailybasic_cache()
     picks: list[dict[str, Any]] = []
     for code, score in candidates[:top_n]:
         info = reg.get(code)
@@ -1482,6 +1604,15 @@ def _perilla_picks(top_n: int = 12, min_score: float = 0.4) -> list[dict[str, An
             moat = f"全球{info.n_competitors_global}家国内独家"
         else:
             moat = f"全球{info.n_competitors_global}家"
+
+        metrics = _cs_metrics(code)
+        dbv = daily_basic.get(code, {}) if isinstance(daily_basic, dict) else {}
+        circ_mv_wan = dbv.get("circ_mv")            # 流通市值（万元）
+        pe = dbv.get("pe") if dbv.get("pe") is not None else metrics.get("pe")
+        pb = dbv.get("pb") if dbv.get("pb") is not None else metrics.get("pb")
+        # 流通市值优先；缺失时回退 cs_data 总市值
+        mv_wan = circ_mv_wan if circ_mv_wan is not None else metrics.get("totalMv")
+
         picks.append({
             "symbol": code,
             "name": info.name or code,
@@ -1491,6 +1622,14 @@ def _perilla_picks(top_n: int = 12, min_score: float = 0.4) -> list[dict[str, An
             "moat": moat,
             "locked": bool(info.demand_locked),
             "score": round(float(score), 3),
+            "ret1d": metrics.get("ret1d"),
+            "ret5d": metrics.get("ret5d"),
+            "ret20d": metrics.get("ret20d"),
+            "retYear": metrics.get("retYear"),
+            "pe": round(pe, 1) if isinstance(pe, (int, float)) else None,
+            "pb": round(pb, 2) if isinstance(pb, (int, float)) else None,
+            "circMvYi": round(mv_wan / 10000.0, 1) if isinstance(mv_wan, (int, float)) else None,
+            "mvIsFloat": circ_mv_wan is not None,
         })
     return picks
 
@@ -1515,6 +1654,7 @@ def snapshot() -> dict[str, Any]:
         "recommendationTracking": _recommendation_tracking(names),
         "bjScan": _bj_scan_summary(),
         "perillaPicks": _perilla_picks(),
+        "sectorPulse": _sector_pulse(),
         "pythonEnvironment": _python_env_status(),
         "recentTaskRuns": _task_history(),
     }

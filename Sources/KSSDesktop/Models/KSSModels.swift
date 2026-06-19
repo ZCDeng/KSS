@@ -14,6 +14,7 @@ struct AppSnapshot: Codable {
     var recommendationTracking: [RecTrackingDay]?
     var bjScan: BJScan?
     var perillaPicks: [PerillaPick]?
+    var sectorPulse: SectorPulse?
     var pythonEnvironment: PythonEnvironment?
     var recentTaskRuns: [TaskRunResult]
 }
@@ -29,6 +30,40 @@ struct PerillaPick: Codable, Identifiable, Hashable {
     var moat: String
     var locked: Bool
     var score: Double
+    // 行情 / 估值（cs_data + daily_basic 切片）
+    var ret1d: Double?
+    var ret5d: Double?
+    var ret20d: Double?
+    var retYear: Double?
+    var pe: Double?
+    var pb: Double?
+    var circMvYi: Double?   // 流通市值（亿元）；缺失时回退总市值
+    var mvIsFloat: Bool?    // true=流通市值, false=回退总市值
+}
+
+/// 今日板块脉冲：etf_radar 切片，资金申赎 + 强势确认分级。
+struct SectorPulse: Codable, Hashable {
+    var tradeDate: String
+    var dataDate: String
+    var stale: Bool
+    var note: String
+    var regimeInRegime: Bool?
+    var regimeMom20: Double?
+    var regimeMom20Th: Double?
+    var themes: [SectorTheme]
+}
+
+struct SectorTheme: Codable, Identifiable, Hashable {
+    var id: String { name }
+    var name: String
+    var flow1d: Double?
+    var flow5d: Double?
+    var past5Ret: Double?
+    var grade: String
+    var divergence: Bool
+    var accel: Bool
+    var rank5d: Int?
+    var nFunds: Int?
 }
 
 struct RecTrackingDay: Codable, Identifiable, Hashable {
@@ -206,6 +241,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
     case formalSectorReview = "formal-sector-review"
     case formalEtfRadarBacktest = "formal-etf-radar-backtest"
     case refreshBjDaily = "refresh-bj-daily"
+    case refreshDailyBasic = "refresh-daily-basic"
 
     var id: String { rawValue }
 
@@ -222,6 +258,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
         case .formalSectorReview: return "正式板块复盘"
         case .formalEtfRadarBacktest: return "正式 ETF 回测"
         case .refreshBjDaily: return "刷新北证日线"
+        case .refreshDailyBasic: return "刷新流通市值/估值"
         }
     }
 
@@ -238,6 +275,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
         case .formalSectorReview: return "chart.bar.xaxis"
         case .formalEtfRadarBacktest: return "waveform.path.ecg"
         case .refreshBjDaily: return "arrow.triangle.2.circlepath"
+        case .refreshDailyBasic: return "yensign.circle"
         }
     }
 
@@ -245,7 +283,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
         switch self {
         case .previewPicks, .generatePicks, .paperSummary, .logmvBacktest, .radarArchiveAnalysis:
             return "轻量"
-        case .formalDailyPicks, .formalPaperSummary, .formalDailyReview, .formalSectorReview, .formalEtfRadarBacktest, .refreshBjDaily:
+        case .formalDailyPicks, .formalPaperSummary, .formalDailyReview, .formalSectorReview, .formalEtfRadarBacktest, .refreshBjDaily, .refreshDailyBasic:
             return "正式"
         }
     }
