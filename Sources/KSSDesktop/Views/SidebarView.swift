@@ -9,19 +9,20 @@ struct SidebarView: View {
         List(selection: $selection) {
             Section {
                 ForEach(WorkspaceSection.allCases) { section in
-                    Label(section.rawValue, systemImage: section.symbol)
+                    Label(section.displayName, systemImage: section.symbol)
+                        .font(.system(size: 15, weight: .semibold))
                         .tag(section)
                 }
             }
             if let snapshot {
-                Section("Status") {
-                    LabeledContent("Stocks", value: "\(snapshot.stockCount)")
-                    LabeledContent("Latest", value: snapshot.latestDataDate ?? "-")
-                    LabeledContent("Picks", value: snapshot.recommendationDate ?? "-")
-                    LabeledContent("Watchlist", value: "\(watchlist.count)")
+                Section("状态") {
+                    LabeledContent("股票数", value: "\(snapshot.stockCount)")
+                    LabeledContent("数据日期", value: snapshot.latestDataDate ?? "-")
+                    LabeledContent("最新推荐", value: snapshot.recommendationDate ?? "-")
+                    LabeledContent("自选数", value: "\(watchlist.count)")
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 12.5))
+                .foregroundStyle(KSSTheme.textSecondary)
             }
         }
         .listStyle(.sidebar)

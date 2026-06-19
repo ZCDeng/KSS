@@ -1,5 +1,13 @@
 import SwiftUI
 
+enum StockSort: String, CaseIterable, Identifiable {
+    case symbol = "代码"
+    case name = "名称"
+    case pct = "涨跌幅"
+    case close = "收盘价"
+    var id: String { rawValue }
+}
+
 struct StockBrowserView: View {
     var title: String
     var stocks: [StockSummary]
@@ -10,45 +18,79 @@ struct StockBrowserView: View {
     var onSelect: (String) -> Void
     var onToggleWatchlist: (String) -> Void
 
+    @State private var sort: StockSort = .symbol
+    @State private var ascending = true
+
     private var filteredStocks: [StockSummary] {
-        guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return stocks
+        var items = stocks
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            let q = trimmed.lowercased()
+            items = items.filter {
+                $0.symbol.lowercased().contains(q)
+                    || $0.name.lowercased().contains(q)
+                    || $0.industry.lowercased().contains(q)
+                    || $0.concept.lowercased().contains(q)
+            }
         }
-        let q = searchText.lowercased()
-        return stocks.filter {
-            $0.symbol.lowercased().contains(q)
-                || $0.name.lowercased().contains(q)
-                || $0.industry.lowercased().contains(q)
-                || $0.concept.lowercased().contains(q)
+        return items.sorted { a, b in
+            switch sort {
+            case .symbol: return ascending ? a.symbol < b.symbol : a.symbol > b.symbol
+            case .name: return ascending ? a.name < b.name : a.name > b.name
+            case .pct: return ascending ? (a.pctChange ?? 0) < (b.pctChange ?? 0) : (a.pctChange ?? 0) > (b.pctChange ?? 0)
+            case .close: return ascending ? (a.close ?? 0) < (b.close ?? 0) : (a.close ?? 0) > (b.close ?? 0)
+            }
         }
     }
 
     var body: some View {
         NavigationSplitView {
-            List(filteredStocks, selection: Binding(
-                get: { selectedSymbol },
-                set: { symbol in if let symbol { onSelect(symbol) } }
-            )) { stock in
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack {
-                        Text(stock.name.isEmpty ? stock.symbol : stock.name)
-                            .font(.headline)
-                            .lineLimit(1)
-                        if watchlist.contains(stock.symbol) {
-                            Image(systemName: "star.fill")
-                                .foregroundStyle(.yellow)
-                        }
-                    }
-                    Text("\(stock.symbol) · \(stock.industry)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("\(KSSFormat.number(stock.close))  \(KSSFormat.pctPoints(stock.pctChange))")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(KSSTheme.signColor(stock.pctChange))
+            VStack(spacing: 0) {
+                HStack {
+                    SortControl(
+                        options: StockSort.allCases.map { ($0, $0.rawValue) },
+                        selection: $sort,
+                        ascending: $ascending
+                    )
+                    Spacer()
+                    Text("\(filteredStocks.count)")
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(KSSTheme.textSecondary)
                 }
-                .tag(stock.symbol)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+
+                List(filteredStocks, selection: Binding(
+                    get: { selectedSymbol },
+                    set: { symbol in if let symbol { onSelect(symbol) } }
+                )) { stock in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(stock.name.isEmpty ? stock.symbol : stock.name)
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(KSSTheme.textPrimary)
+                                .lineLimit(1)
+                            if watchlist.contains(stock.symbol) {
+                                Image(systemName: "star.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(KSSTheme.ma5)
+                            }
+                            Spacer()
+                            Text(KSSFormat.pctPoints(stock.pctChange))
+                                .font(.system(size: 12.5, weight: .bold, design: .monospaced))
+                                .foregroundStyle(KSSTheme.signColor(stock.pctChange))
+                        }
+                        Text("\(stock.symbol) · \(stock.industry)")
+                            .font(.system(size: 11.5, design: .monospaced))
+                            .foregroundStyle(KSSTheme.textSecondary)
+                    }
+                    .padding(.vertical, 2)
+                    .tag(stock.symbol)
+                }
+                .scrollContentBackground(.hidden)
+                .background(KSSTheme.canvas)
             }
-            .searchable(text: $searchText, placement: .sidebar)
+            .searchable(text: $searchText, placement: .sidebar, prompt: "搜索代码 / 名称 / 行业")
         } detail: {
             if let detail {
                 StockDetailView(
@@ -57,8 +99,11 @@ struct StockBrowserView: View {
                     onToggleWatchlist: { onToggleWatchlist(detail.symbol) }
                 )
             } else {
-                Text("Select a stock")
-                    .foregroundStyle(.secondary)
+                Text("选择一只股票查看详情")
+                    .font(.system(size: 14))
+                    .foregroundStyle(KSSTheme.textSecondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(KSSTheme.canvas)
             }
         }
         .navigationTitle(title)
@@ -76,22 +121,26 @@ struct StockDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text(detail.name.isEmpty ? detail.symbol : detail.name)
-                            .font(.largeTitle.weight(.semibold))
+                            .font(.system(size: 30, weight: .heavy))
+                            .foregroundStyle(KSSTheme.textPrimary)
                         Text("\(detail.symbol) · \(detail.industry)")
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 14, weight: .medium, design: .monospaced))
+                            .foregroundStyle(KSSTheme.textSecondary)
                     }
                     Spacer()
                     Button(action: onToggleWatchlist) {
-                        Label(isWatched ? "Remove" : "Watch", systemImage: isWatched ? "star.fill" : "star")
+                        Label(isWatched ? "取消自选" : "加自选", systemImage: isWatched ? "star.fill" : "star")
+                            .font(.system(size: 13, weight: .semibold))
                     }
+                    .tint(KSSTheme.accent)
                 }
 
                 if let latest = detail.latest {
-                    HStack(spacing: 12) {
+                    HStack(spacing: 10) {
                         StatTile(title: "收盘", value: KSSFormat.number(latest.close))
                         StatTile(title: "涨跌", value: KSSFormat.pctPoints(latest.pctChange), tint: KSSTheme.signColor(latest.pctChange))
                         StatTile(title: "MA5 / MA20", value: "\(KSSFormat.number(latest.ma5)) / \(KSSFormat.number(latest.ma20))")
@@ -99,8 +148,8 @@ struct StockDetailView: View {
                     }
                 }
 
-                SectionHeader("Analysis")
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 12)], spacing: 12) {
+                SectionHeader("分析指标")
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 10)], spacing: 10) {
                     StatTile(title: "20日收益", value: KSSFormat.percent(analysis.return20), tint: KSSTheme.signColor(analysis.return20))
                     StatTile(title: "60日收益", value: KSSFormat.percent(analysis.return60), tint: KSSTheme.signColor(analysis.return60))
                     StatTile(title: "20日波动", value: KSSFormat.percent(analysis.volatility20))
@@ -125,11 +174,11 @@ struct StockDetailView: View {
 
                 if !detail.concept.isEmpty {
                     Text(detail.concept)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 13.5))
+                        .foregroundStyle(KSSTheme.textSecondary)
                 }
             }
-            .padding(24)
+            .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollContentBackground(.hidden)

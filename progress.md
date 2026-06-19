@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-06-19 — macOS App 第十阶段：UI/UX 重构（中文优先 / 列表排序筛选 / Markdown 渲染）
+
+**起因**：界面还是英文为主、列表不能排序、复盘只能看 raw markdown 文本、留白偏大、状态用纯色点不带文字。按用户 7 条要求整体重构。
+
+**已交付**
+- **中文优先**：侧栏 `WorkspaceSection.displayName`（总览/每日推荐/自选/任务/复盘/回测/股票池）、`KSSTask.title`、各页文案、按钮（加自选/取消自选）、空态、搜索 placeholder 全部中文。
+- **所有列表可排序 + 日期排序筛选**：新增 `SortControl` 组件。股票池/自选按 代码·名称·涨跌幅·收盘价；每日推荐按 排名·权重·跟踪收益；回测按 更新时间·标题；复盘按日期 最新/最早 + 日期筛选（全部/近7天/近30天，相对最新复盘日）。
+- **状态统一图标+文字**：新增 `StatusBadge`。跟踪状态 上涨↗/下跌↘/待T+2⏱（红涨绿跌）；任务状态 成功✓/跳过/失败（语义色，不蹭价格红绿）。
+- **Markdown 渲染**：bundle `marked.min.js` + `markdown.html`（Discord 暗色 CSS：标题/表格/代码/引用），新增 `MarkdownWebView.swift`（复用 WKWebView 离线注入模式）。复盘和回测报告全文从等宽 raw 文本换成排版 HTML，表格/标题/列表正常渲染。
+- **字体加大、标题加粗**：`SectionHeader` 改 18pt 粗体 + blurple 竖条；个股标题 30pt heavy；列表行标题 15pt 粗；KPI tile 数值加粗等宽。
+- **收紧留白**：页面 padding 24→16/18，栅格 spacing 18→10/14，卡片与行内边距收紧。
+
+**验证**
+- `swift build`、`./script/build_and_run.sh --verify` 通过；`markdown.html` + `marked.min.js` 已进 `.app` bundle。
+- 实机：侧栏全中文；复盘详情 markdown 渲染出粗体标题 + 情形分布表格（情形/原始/修正后/备注）+ 关注代码 + blurple 日期徽标；每日推荐顶部 排名 排序 + 升序 + “5 只”计数，每行 待T+2 图标徽标。
+
+**剩余风险 / 下一步**
+- 复盘列表“近 N 天”以最新复盘日为基准（非系统今天），符合离线数据语义；如需绝对日期可再加日期选择器。
+- markedjs 默认不开启 raw HTML sanitize；复盘/报告都是项目自产内容，暂不引入 DOMPurify。
+
 ## 2026-06-19 — macOS App 第九阶段：TradingView 图表 + 暗色交易台 UI
 
 **起因**：价格图此前只是 SwiftUI Canvas 画一条 close 折线，看不出 K 线、量能和均线结构；整体 UI 还是系统默认浅色卡片。目标要求把图表按 TradingView lightweight-charts 刷新，UI 参照暗色交易台风格。

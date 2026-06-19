@@ -157,16 +157,16 @@ enum KSSTask: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .previewPicks: return "Preview Picks"
-        case .generatePicks: return "Save Daily Picks"
-        case .paperSummary: return "Paper Tracking"
-        case .logmvBacktest: return "log_mv Backtest"
-        case .radarArchiveAnalysis: return "Radar Archive Analysis"
-        case .formalDailyPicks: return "Formal Daily Picks"
-        case .formalPaperSummary: return "Formal Paper Summary"
-        case .formalDailyReview: return "Formal Daily Review"
-        case .formalSectorReview: return "Formal Sector Review"
-        case .formalEtfRadarBacktest: return "Formal ETF Backtest"
+        case .previewPicks: return "预览推荐"
+        case .generatePicks: return "保存每日推荐"
+        case .paperSummary: return "纸交易跟踪"
+        case .logmvBacktest: return "log_mv 轻量回测"
+        case .radarArchiveAnalysis: return "雷达归档分析"
+        case .formalDailyPicks: return "正式每日选股"
+        case .formalPaperSummary: return "正式纸交易汇总"
+        case .formalDailyReview: return "正式每日复盘"
+        case .formalSectorReview: return "正式板块复盘"
+        case .formalEtfRadarBacktest: return "正式 ETF 回测"
         }
     }
 
@@ -188,9 +188,9 @@ enum KSSTask: String, CaseIterable, Identifiable {
     var lane: String {
         switch self {
         case .previewPicks, .generatePicks, .paperSummary, .logmvBacktest, .radarArchiveAnalysis:
-            return "Quick"
+            return "轻量"
         case .formalDailyPicks, .formalPaperSummary, .formalDailyReview, .formalSectorReview, .formalEtfRadarBacktest:
-            return "Full"
+            return "正式"
         }
     }
 
@@ -214,6 +214,18 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     case stocks = "Stocks"
 
     var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .dashboard: return "总览"
+        case .recommendations: return "每日推荐"
+        case .watchlist: return "自选"
+        case .runbook: return "任务"
+        case .reviews: return "复盘"
+        case .backtests: return "回测"
+        case .stocks: return "股票池"
+        }
+    }
 
     var symbol: String {
         switch self {

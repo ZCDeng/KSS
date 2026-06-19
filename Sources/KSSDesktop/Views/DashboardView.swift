@@ -6,42 +6,42 @@ struct DashboardView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 10) {
                     StatTile(title: "数据日期", value: snapshot.latestDataDate ?? "-")
                     StatTile(title: "自有股票池", value: "\(snapshot.stockCount)")
                     StatTile(title: "最新推荐", value: snapshot.recommendationDate ?? "-")
                     StatTile(title: "跟踪 Sharpe", value: KSSFormat.number(snapshot.tracking.sharpe), tint: KSSTheme.signColor(snapshot.tracking.sharpe))
                 }
 
-                SectionHeader("Daily Recommendations")
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 12)], spacing: 12) {
+                SectionHeader("每日推荐")
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 10)], spacing: 10) {
                     ForEach(snapshot.recommendations.prefix(6)) { item in
                         RecommendationCard(item: item)
                             .onTapGesture { onSelectSymbol(item.symbol) }
                     }
                 }
 
-                SectionHeader("Recent Reviews")
-                VStack(spacing: 10) {
+                SectionHeader("最近复盘")
+                VStack(spacing: 8) {
                     ForEach(snapshot.reviews.prefix(4)) { review in
                         ReviewRow(review: review)
                     }
                 }
 
-                SectionHeader("Backtest Evidence")
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 12)], spacing: 12) {
+                SectionHeader("回测证据")
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 10)], spacing: 10) {
                     ForEach(snapshot.backtests.prefix(4)) { report in
                         BacktestCard(report: report)
                     }
                 }
             }
-            .padding(24)
+            .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollContentBackground(.hidden)
         .background(KSSTheme.canvas)
-        .navigationTitle("KSS Workbench")
+        .navigationTitle("总览")
     }
 }
 
@@ -53,12 +53,16 @@ struct SectionHeader: View {
     }
 
     var body: some View {
-        // Discord section-eyebrow: mono, uppercase, tracked, accent.
-        Text(title.uppercased())
-            .font(.system(.caption, design: .monospaced).weight(.semibold))
-            .tracking(1.2)
-            .foregroundStyle(KSSTheme.accent)
-            .padding(.top, 6)
+        // Bold section title with a blurple accent bar for clear hierarchy.
+        HStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(KSSTheme.accent)
+                .frame(width: 4, height: 18)
+            Text(title)
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(KSSTheme.textPrimary)
+        }
+        .padding(.top, 6)
     }
 }
 
@@ -92,22 +96,20 @@ struct RecommendationCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("#\(item.rank)")
-                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .font(.system(size: 13, weight: .bold).monospacedDigit())
                     .foregroundStyle(KSSTheme.accent)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(KSSTheme.accent.opacity(0.15), in: Capsule())
                 Spacer()
-                Text(item.status)
-                    .font(.caption)
-                    .foregroundStyle(KSSTheme.textSecondary)
+                StatusBadge.tracking(item.status)
             }
             Text(item.name.isEmpty ? item.symbol : item.name)
-                .font(.headline)
+                .font(.system(size: 17, weight: .bold))
                 .foregroundStyle(KSSTheme.textPrimary)
                 .lineLimit(1)
             Text(item.symbol)
-                .font(.subheadline.monospaced())
+                .font(.system(size: 13, weight: .medium, design: .monospaced))
                 .foregroundStyle(KSSTheme.textSecondary)
             HStack {
                 LabeledMetric("权重", KSSFormat.percent(item.weight))

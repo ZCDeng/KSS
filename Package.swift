@@ -16,7 +16,9 @@ let package = Package(
             path: "Sources/KSSDesktop",
             resources: [
                 .copy("Resources/lightweight-charts.standalone.production.js"),
-                .copy("Resources/chart.html")
+                .copy("Resources/chart.html"),
+                .copy("Resources/marked.min.js"),
+                .copy("Resources/markdown.html")
             ]
         )
     ]

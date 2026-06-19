@@ -7,42 +7,43 @@ struct RunbookView: View {
     var onRun: (KSSTask) -> Void
 
     private var quickTasks: [KSSTask] {
-        KSSTask.allCases.filter { $0.lane == "Quick" }
+        KSSTask.allCases.filter { $0.lane == "轻量" }
     }
 
     private var fullTasks: [KSSTask] {
-        KSSTask.allCases.filter { $0.lane == "Full" }
+        KSSTask.allCases.filter { $0.lane == "正式" }
     }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 14) {
                 PythonEnvironmentBanner(environment: pythonEnvironment)
 
-                SectionHeader("Quick")
+                SectionHeader("轻量任务")
                 TaskGrid(tasks: quickTasks, isRunning: isRunning, onRun: onRun)
 
-                SectionHeader("Full")
+                SectionHeader("正式任务")
                 TaskGrid(tasks: fullTasks, isRunning: isRunning, onRun: onRun)
 
-                SectionHeader("Task Log")
+                SectionHeader("任务记录")
                 if results.isEmpty {
-                    Text("No task runs yet")
-                        .foregroundStyle(.secondary)
+                    Text("暂无任务运行记录")
+                        .font(.system(size: 13.5))
+                        .foregroundStyle(KSSTheme.textSecondary)
                 } else {
-                    VStack(spacing: 12) {
+                    VStack(spacing: 10) {
                         ForEach(results) { result in
                             TaskResultCard(result: result)
                         }
                     }
                 }
             }
-            .padding(24)
+            .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollContentBackground(.hidden)
         .background(KSSTheme.canvas)
-        .navigationTitle("Runbook")
+        .navigationTitle("任务")
     }
 }
 
@@ -52,12 +53,14 @@ struct PythonEnvironmentBanner: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: environment?.usable == true ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                .foregroundStyle(environment?.usable == true ? .green : .orange)
+                .font(.system(size: 18))
+                .foregroundStyle(environment?.usable == true ? KSSTheme.accent : KSSTheme.ma5)
             VStack(alignment: .leading, spacing: 3) {
-                Text(environment?.usable == true ? "Full Python environment ready" : "Full Python environment unavailable")
-                    .font(.headline)
-                Text(environment?.selected ?? "No interpreter with pandas/lightgbm/tushare/akshare")
-                    .font(.caption.monospaced())
+                Text(environment?.usable == true ? "正式 Python 环境就绪" : "正式 Python 环境不可用")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(KSSTheme.textPrimary)
+                Text(environment?.selected ?? "缺少 pandas / lightgbm / tushare / akshare 解释器")
+                    .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(KSSTheme.textSecondary)
                     .lineLimit(1)
             }
@@ -82,9 +85,10 @@ struct TaskGrid: View {
                     HStack(spacing: 10) {
                         Image(systemName: task.systemImage)
                             .font(.title3)
+                            .foregroundStyle(KSSTheme.accent)
                             .frame(width: 24)
                         Text(task.title)
-                            .font(.headline)
+                            .font(.system(size: 14, weight: .bold))
                             .lineLimit(1)
                         Spacer()
                         if isRunning {
@@ -105,45 +109,35 @@ struct TaskGrid: View {
 struct TaskResultCard: View {
     var result: TaskRunResult
 
-    private var statusColor: Color {
-        switch result.status {
-        case "success": return KSSTheme.down
-        case "skipped": return KSSTheme.ma5
-        default: return KSSTheme.up
-        }
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 9, height: 9)
                 Text(result.title)
-                    .font(.headline)
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(KSSTheme.textPrimary)
                 Spacer()
-                Text(result.status)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
+                StatusBadge.task(result.status)
             }
             Text(result.summary)
-                .font(.callout)
+                .font(.system(size: 13.5))
+                .foregroundStyle(KSSTheme.textPrimary)
             if !result.artifacts.isEmpty {
                 Text(result.artifacts.joined(separator: "  "))
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .foregroundStyle(KSSTheme.textSecondary)
             }
             if !result.stdout.isEmpty {
                 Text(result.stdout)
-                    .font(.caption.monospaced())
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .foregroundStyle(KSSTheme.textPrimary)
                     .textSelection(.enabled)
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+                    .background(KSSTheme.canvas, in: RoundedRectangle(cornerRadius: 6))
             }
             if !result.stderr.isEmpty {
                 Text(result.stderr)
-                    .font(.caption.monospaced())
+                    .font(.system(size: 11.5, design: .monospaced))
                     .foregroundStyle(KSSTheme.up)
                     .textSelection(.enabled)
             }
