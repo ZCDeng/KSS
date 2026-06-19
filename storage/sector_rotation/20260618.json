@@ -1,12 +1,41 @@
 {
   "tradeDate": "20260618",
-  "lookbackDays": 1,
+  "lookbackDays": 5,
   "tradingDaysUsed": [
-    "20260618"
+    "20260618",
+    "20260617",
+    "20260616",
+    "20260615",
+    "20260612"
   ],
   "historyCoverage": 1.0,
-  "missing": [],
+  "missing": [
+    "kaipan:disabled"
+  ],
   "industries": [
+    {
+      "name": "文字媒体",
+      "source": "industry",
+      "boardCode": "BK1298.DC",
+      "pctChange": 5.41,
+      "heatScore": 0.790084925066118,
+      "todayRank": 6,
+      "previousRank": null,
+      "rankJump": null,
+      "top3Appearances": 0,
+      "streakDays": 0,
+      "strengthDelta": null,
+      "kaipanStrengthScore": null,
+      "kaipanRank": null,
+      "flowPersistenceScore": null,
+      "classification": "demonBoard",
+      "classificationConfidence": "low",
+      "evidenceSources": [
+        "industry"
+      ],
+      "leaderStocks": null,
+      "missing": []
+    },
     {
       "name": "钨",
       "source": "industry",
@@ -22,7 +51,7 @@
       "kaipanStrengthScore": null,
       "kaipanRank": null,
       "flowPersistenceScore": null,
-      "classification": "satellite",
+      "classification": "demonBoard",
       "classificationConfidence": "low",
       "evidenceSources": [
         "industry"
@@ -45,7 +74,7 @@
       "kaipanStrengthScore": null,
       "kaipanRank": null,
       "flowPersistenceScore": null,
-      "classification": "satellite",
+      "classification": "demonBoard",
       "classificationConfidence": "low",
       "evidenceSources": [
         "industry"
@@ -68,7 +97,76 @@
       "kaipanStrengthScore": null,
       "kaipanRank": null,
       "flowPersistenceScore": null,
-      "classification": "satellite",
+      "classification": "demonBoard",
+      "classificationConfidence": "low",
+      "evidenceSources": [
+        "industry"
+      ],
+      "leaderStocks": null,
+      "missing": []
+    },
+    {
+      "name": "图片媒体",
+      "source": "industry",
+      "boardCode": "BK1297.DC",
+      "pctChange": 5.03,
+      "heatScore": 0.7243458932901293,
+      "todayRank": 7,
+      "previousRank": null,
+      "rankJump": null,
+      "top3Appearances": 0,
+      "streakDays": 0,
+      "strengthDelta": null,
+      "kaipanStrengthScore": null,
+      "kaipanRank": null,
+      "flowPersistenceScore": null,
+      "classification": "demonBoard",
+      "classificationConfidence": "low",
+      "evidenceSources": [
+        "industry"
+      ],
+      "leaderStocks": null,
+      "missing": []
+    },
+    {
+      "name": "磁性材料",
+      "source": "industry",
+      "boardCode": "BK1618.DC",
+      "pctChange": 4.73,
+      "heatScore": 0.7181658547585412,
+      "todayRank": 8,
+      "previousRank": null,
+      "rankJump": null,
+      "top3Appearances": 0,
+      "streakDays": 0,
+      "strengthDelta": null,
+      "kaipanStrengthScore": null,
+      "kaipanRank": null,
+      "flowPersistenceScore": null,
+      "classification": "demonBoard",
+      "classificationConfidence": "low",
+      "evidenceSources": [
+        "industry"
+      ],
+      "leaderStocks": null,
+      "missing": []
+    },
+    {
+      "name": "医疗研发外包",
+      "source": "industry",
+      "boardCode": "BK1600.DC",
+      "pctChange": 3.34,
+      "heatScore": 0.6913599937771171,
+      "todayRank": 10,
+      "previousRank": null,
+      "rankJump": null,
+      "top3Appearances": 0,
+      "streakDays": 0,
+      "strengthDelta": null,
+      "kaipanStrengthScore": null,
+      "kaipanRank": null,
+      "flowPersistenceScore": null,
+      "classification": "demonBoard",
       "classificationConfidence": "low",
       "evidenceSources": [
         "industry"
@@ -91,7 +189,7 @@
       "kaipanStrengthScore": null,
       "kaipanRank": null,
       "flowPersistenceScore": null,
-      "classification": "satellite",
+      "classification": "demonBoard",
       "classificationConfidence": "low",
       "evidenceSources": [
         "industry"
@@ -114,7 +212,30 @@
       "kaipanStrengthScore": null,
       "kaipanRank": null,
       "flowPersistenceScore": null,
-      "classification": "satellite",
+      "classification": "demonBoard",
+      "classificationConfidence": "low",
+      "evidenceSources": [
+        "industry"
+      ],
+      "leaderStocks": null,
+      "missing": []
+    },
+    {
+      "name": "集成电路制造",
+      "source": "industry",
+      "boardCode": "BK1329.DC",
+      "pctChange": 3.52,
+      "heatScore": 0.6401593254457769,
+      "todayRank": 9,
+      "previousRank": null,
+      "rankJump": null,
+      "top3Appearances": 0,
+      "streakDays": 0,
+      "strengthDelta": null,
+      "kaipanStrengthScore": null,
+      "kaipanRank": null,
+      "flowPersistenceScore": null,
+      "classification": "demonBoard",
       "classificationConfidence": "low",
       "evidenceSources": [
         "industry"
@@ -139,7 +260,7 @@
       "kaipanStrengthScore": null,
       "kaipanRank": null,
       "flowPersistenceScore": null,
-      "classification": "satellite",
+      "classification": "demonBoard",
       "classificationConfidence": "low",
       "evidenceSources": [
         "concept"
@@ -162,7 +283,7 @@
       "kaipanStrengthScore": null,
       "kaipanRank": null,
       "flowPersistenceScore": null,
-      "classification": "satellite",
+      "classification": "demonBoard",
       "classificationConfidence": "low",
       "evidenceSources": [
         "concept"
@@ -185,7 +306,30 @@
       "kaipanStrengthScore": null,
       "kaipanRank": null,
       "flowPersistenceScore": null,
-      "classification": "satellite",
+      "classification": "demonBoard",
+      "classificationConfidence": "low",
+      "evidenceSources": [
+        "concept"
+      ],
+      "leaderStocks": null,
+      "missing": []
+    },
+    {
+      "name": "共封装光学(CPO)",
+      "source": "concept",
+      "boardCode": null,
+      "pctChange": 2.14,
+      "heatScore": 0.8656003423943461,
+      "todayRank": 7,
+      "previousRank": null,
+      "rankJump": null,
+      "top3Appearances": 0,
+      "streakDays": 0,
+      "strengthDelta": null,
+      "kaipanStrengthScore": null,
+      "kaipanRank": null,
+      "flowPersistenceScore": null,
+      "classification": "demonBoard",
       "classificationConfidence": "low",
       "evidenceSources": [
         "concept"
@@ -208,7 +352,53 @@
       "kaipanStrengthScore": null,
       "kaipanRank": null,
       "flowPersistenceScore": null,
-      "classification": "satellite",
+      "classification": "demonBoard",
+      "classificationConfidence": "low",
+      "evidenceSources": [
+        "concept"
+      ],
+      "leaderStocks": null,
+      "missing": []
+    },
+    {
+      "name": "铜缆高速连接",
+      "source": "concept",
+      "boardCode": null,
+      "pctChange": 2.3,
+      "heatScore": 0.8588314695521438,
+      "todayRank": 6,
+      "previousRank": null,
+      "rankJump": null,
+      "top3Appearances": 0,
+      "streakDays": 0,
+      "strengthDelta": null,
+      "kaipanStrengthScore": null,
+      "kaipanRank": null,
+      "flowPersistenceScore": null,
+      "classification": "demonBoard",
+      "classificationConfidence": "low",
+      "evidenceSources": [
+        "concept"
+      ],
+      "leaderStocks": null,
+      "missing": []
+    },
+    {
+      "name": "F5G概念",
+      "source": "concept",
+      "boardCode": null,
+      "pctChange": 2.09,
+      "heatScore": 0.8514776730353477,
+      "todayRank": 9,
+      "previousRank": null,
+      "rankJump": null,
+      "top3Appearances": 0,
+      "streakDays": 0,
+      "strengthDelta": null,
+      "kaipanStrengthScore": null,
+      "kaipanRank": null,
+      "flowPersistenceScore": null,
+      "classification": "demonBoard",
       "classificationConfidence": "low",
       "evidenceSources": [
         "concept"
@@ -231,7 +421,53 @@
       "kaipanStrengthScore": null,
       "kaipanRank": null,
       "flowPersistenceScore": null,
-      "classification": "satellite",
+      "classification": "demonBoard",
+      "classificationConfidence": "low",
+      "evidenceSources": [
+        "concept"
+      ],
+      "leaderStocks": null,
+      "missing": []
+    },
+    {
+      "name": "AI手机",
+      "source": "concept",
+      "boardCode": null,
+      "pctChange": 2.1,
+      "heatScore": 0.8338520461354433,
+      "todayRank": 8,
+      "previousRank": null,
+      "rankJump": null,
+      "top3Appearances": 0,
+      "streakDays": 0,
+      "strengthDelta": null,
+      "kaipanStrengthScore": null,
+      "kaipanRank": null,
+      "flowPersistenceScore": null,
+      "classification": "demonBoard",
+      "classificationConfidence": "low",
+      "evidenceSources": [
+        "concept"
+      ],
+      "leaderStocks": null,
+      "missing": []
+    },
+    {
+      "name": "重组蛋白",
+      "source": "concept",
+      "boardCode": null,
+      "pctChange": 2.09,
+      "heatScore": 0.8167509849324539,
+      "todayRank": 9,
+      "previousRank": null,
+      "rankJump": null,
+      "top3Appearances": 0,
+      "streakDays": 0,
+      "strengthDelta": null,
+      "kaipanStrengthScore": null,
+      "kaipanRank": null,
+      "flowPersistenceScore": null,
+      "classification": "demonBoard",
       "classificationConfidence": "low",
       "evidenceSources": [
         "concept"
@@ -244,7 +480,28 @@
   "leaderBoards": [],
   "crossSourceSignals": {
     "mainline": [],
-    "demonBoard": [],
+    "demonBoard": [
+      "文字媒体",
+      "钨",
+      "稀土",
+      "磨具磨料",
+      "图片媒体",
+      "磁性材料",
+      "医疗研发外包",
+      "非金属材料Ⅲ",
+      "非金属材料Ⅱ",
+      "集成电路制造",
+      "牙科医疗",
+      "科创次新股",
+      "培育钻石",
+      "共封装光学(CPO)",
+      "稀土永磁",
+      "铜缆高速连接",
+      "F5G概念",
+      "国家大基金持股",
+      "AI手机",
+      "重组蛋白"
+    ],
     "oldHotspotFading": [],
     "satellite": []
   }
