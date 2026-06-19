@@ -96,6 +96,27 @@ struct SectorTheme: Codable, Identifiable, Hashable {
     var nFunds: Int?
 }
 
+/// 定时任务（launchd）一项：deploy/launchd/*.plist + launchctl 状态 + 日志末行。
+struct ScheduledJob: Codable, Identifiable, Hashable {
+    var id: String { label }
+    var label: String
+    var title: String
+    var schedule: String      // 人读调度，如「工作日 17:30」
+    var script: String
+    var enabled: Bool         // 是否启用（未被 launchctl disable）
+    var loaded: Bool          // 是否已 bootstrap 到 gui 域
+    var lastStatus: String    // success / failed / unknown
+    var lastRunAt: String?    // 上次运行时间（日志 mtime）
+    var lastLine: String?     // 上次运行日志末行摘要
+}
+
+/// cron-rerun / cron-enable / cron-disable 的返回。
+struct CronActionResult: Codable, Hashable {
+    var ok: Bool
+    var error: String?
+    var job: ScheduledJob?
+}
+
 struct RecTrackingDay: Codable, Identifiable, Hashable {
     var id: String { date }
     var date: String

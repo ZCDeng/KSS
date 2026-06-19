@@ -126,7 +126,12 @@ struct ContentView: View {
                     pythonEnvironment: snapshot.pythonEnvironment,
                     isRunning: store.isRunningTask,
                     results: store.taskResults,
-                    onRun: { task in Task { await store.runTask(task) } }
+                    scheduledJobs: store.scheduledJobs,
+                    scheduledBusy: store.scheduledBusy,
+                    onRun: { task in Task { await store.runTask(task) } },
+                    onLoadSchedules: { Task { await store.loadScheduledJobs() } },
+                    onRerunSchedule: { label in Task { await store.rerunScheduledJob(label) } },
+                    onToggleSchedule: { label, enabled in Task { await store.toggleScheduledJob(label, enabled: enabled) } }
                 )
             case .reviews:
                 ReviewsView(

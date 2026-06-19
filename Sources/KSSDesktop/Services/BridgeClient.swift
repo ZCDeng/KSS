@@ -55,6 +55,20 @@ struct BridgeClient {
         try run(["import", codes.joined(separator: ",")], as: TaskRunResult.self)
     }
 
+    // MARK: 定时任务（launchd）
+
+    func scheduledJobs() throws -> [ScheduledJob] {
+        try run(["cron-list"], as: [ScheduledJob].self)
+    }
+
+    func rerunJob(_ label: String) throws -> CronActionResult {
+        try run(["cron-rerun", label], as: CronActionResult.self)
+    }
+
+    func setJobEnabled(_ label: String, enabled: Bool) throws -> CronActionResult {
+        try run([enabled ? "cron-enable" : "cron-disable", label], as: CronActionResult.self)
+    }
+
     private func run<T: Decodable>(_ args: [String], as type: T.Type) throws -> T {
         let bridge = projectRoot.appending(path: "scripts/kss_app_bridge.py")
         let process = Process()

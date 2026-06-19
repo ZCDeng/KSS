@@ -12,6 +12,8 @@ final class KSSStore: ObservableObject {
     @Published var isLoadingReport = false
     @Published var isRunningTask = false
     @Published var taskResults: [TaskRunResult] = []
+    @Published var scheduledJobs: [ScheduledJob] = []
+    @Published var scheduledBusy: Set<String> = []   // 正在操作的 label（行级 loading）
     @Published var errorMessage: String?
 
     private let bridge: BridgeClient?
@@ -117,6 +119,42 @@ final class KSSStore: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
             return nil
+        }
+    }
+
+    // MARK: 定时任务（launchd）
+
+    /// 拉取 launchd 任务清单（调度 / 状态 / 上次运行）。
+    func loadScheduledJobs() async {
+        guard let bridge else { return }
+        let jobs = (try? await Task.detached { try bridge.scheduledJobs() }.value) ?? []
+        self.scheduledJobs = jobs
+    }
+
+    /// 一键重跑某任务，就地刷新该行状态。
+    func rerunScheduledJob(_ label: String) async {
+        await runScheduledAction(label) { bridge in try bridge.rerunJob(label) }
+    }
+
+    /// 启用/停用某任务，就地刷新该行状态。
+    func toggleScheduledJob(_ label: String, enabled: Bool) async {
+        await runScheduledAction(label) { bridge in try bridge.setJobEnabled(label, enabled: enabled) }
+    }
+
+    private func runScheduledAction(_ label: String, _ action: @escaping (BridgeClient) throws -> CronActionResult) async {
+        guard let bridge else { return }
+        scheduledBusy.insert(label)
+        defer { scheduledBusy.remove(label) }
+        do {
+            let result = try await Task.detached { try action(bridge) }.value
+            if let job = result.job, let idx = scheduledJobs.firstIndex(where: { $0.label == label }) {
+                scheduledJobs[idx] = job
+            }
+            if !result.ok {
+                errorMessage = result.error ?? "定时任务操作失败"
+            }
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 
