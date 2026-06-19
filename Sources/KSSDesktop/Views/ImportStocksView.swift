@@ -149,12 +149,12 @@ struct ImportStocksView: View {
                 Text(item.code)
                     .font(.system(size: 11.5, design: .monospaced))
                     .foregroundStyle(KSSTheme.textSecondary)
-                if item.kind == "fund" {
-                    Text("ETF")
+                if let tag = kindTag(item.kind) {
+                    Text(tag.0)
                         .font(.system(size: 9.5, weight: .bold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 5).padding(.vertical, 1.5)
-                        .background(KSSTheme.ma20, in: Capsule())
+                        .background(tag.1, in: Capsule())
                 }
             } else {
                 Text("未匹配")
@@ -173,6 +173,14 @@ struct ImportStocksView: View {
         .padding(.horizontal, 10).padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: 7))
+    }
+
+    private func kindTag(_ kind: String?) -> (String, Color)? {
+        switch kind {
+        case "fund": return ("ETF", KSSTheme.ma20)
+        case "index": return ("指数", KSSTheme.ma5)
+        default: return nil
+        }
     }
 
     // MARK: 动作

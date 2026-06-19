@@ -49,6 +49,14 @@ def fetch_one(ts_code: str, client, start: str, end: str, kind: str = "stock") -
             f"fund_daily {ts_code}",
         )
         daily_basic = None
+    elif kind == "index":
+        # 指数走 index_daily（仅 OHLC，无估值/换手）
+        pro = client.get_pro()
+        daily = _fetch_with_retry(
+            lambda: pro.index_daily(ts_code=ts_code, start_date=start, end_date=end),
+            f"index_daily {ts_code}",
+        )
+        daily_basic = None
     else:
         daily = client.fetch_daily(ts_code, start, end)
         daily_basic = client.fetch_daily_basic(ts_code, start, end)

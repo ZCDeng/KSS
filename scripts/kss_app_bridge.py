@@ -1577,32 +1577,39 @@ def resolve_stocks(text: str) -> list[dict[str, Any]]:
         })
 
     text = text or ""
-    # 1) 6 位代码（独立成词，避免误抓价格里的数字）
-    has_codes = False
+    # 名称 token：含中文字符的才算名称（指数名带数字如「科创100」也保留；价格/涨跌幅/纯代码无中文 → 排除）
+    name_tokens = [t.strip() for t in re.split(r"[\s,，、;；/\|]+", text.strip())]
+    name_tokens = [t for t in name_tokens if t and re.search(r"[一-龥]", t)]
+    has_codes = bool(re.search(r"(?<![\d.])\d{6}(?![\d.])", text))
+    claimed: set[str] = set()   # 被指数名认领的 6 位代码，避免与同号个股重复
+
+    # A) 精确名称（含指数）：指数认领其代码
+    for tok in name_tokens:
+        ts = by_name.get(tok)
+        if ts:
+            push(tok, ts)
+            if meta.get(ts, {}).get("kind") == "index":
+                claimed.add(ts.split(".")[0])
+
+    # B) 6 位代码（跳过被指数认领的；忽略价格里的数字）
     for code6 in re.findall(r"(?<![\d.])\d{6}(?![\d.])", text):
+        if code6 in claimed:
+            continue
         ts = by_code.get(code6)
         if ts:
-            has_codes = True
             push(code6, ts)
 
-    # 2) 名称 token：精确匹配始终生效（兼容名称+代码混输）；
-    #    模糊匹配与「未匹配」反馈只在「无代码」的纯名称输入下启用 ——
-    #    券商截图每行都有代码，截断名做模糊会误配，故有代码时只认精确名。
-    for tok in re.split(r"[\s,，、;；/\|]+", text.strip()):
-        tok = tok.strip()
-        if not tok or re.search(r"\d", tok) or not re.search(r"[一-龥A-Za-z]", tok):
-            continue  # 跳过价格/涨跌幅/纯符号
-        if tok in by_name:
-            push(tok, by_name[tok])
-            continue
-        if has_codes:
-            continue
-        hit = ""
-        for n, c in pairs:
-            if len(tok) >= 2 and (tok in n or n in tok):
-                hit = c
-                break
-        push(tok, hit)   # 含未匹配（ok=false）反馈
+    # C) 纯名称输入（无代码）才做模糊 + 未匹配反馈；券商截图有代码，截断名不模糊以免误配
+    if not has_codes:
+        for tok in name_tokens:
+            if any(o["query"] == tok for o in out):
+                continue
+            hit = ""
+            for n, c in pairs:
+                if len(tok) >= 2 and (tok in n or n in tok):
+                    hit = c
+                    break
+            push(tok, hit)
     return out
 
 

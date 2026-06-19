@@ -36,14 +36,25 @@ def main() -> None:
     pairs: list[list[str]] = []
     meta: dict[str, dict[str, str]] = {}
 
-    def add(ts: str, name: str, industry: str, kind: str) -> None:
+    def add(ts: str, name: str, industry: str, kind: str, overwrite_code: bool = True) -> None:
         if not ts or "." not in ts:
             return
-        by_code[ts.split(".")[0]] = ts
+        code6 = ts.split(".")[0]
+        if overwrite_code or code6 not in by_code:   # 指数不覆盖同号个股
+            by_code[code6] = ts
         meta[ts] = {"name": name, "industry": industry, "kind": kind}
         if name and name not in by_name:
             by_name[name] = ts
             pairs.append([name, ts])
+
+    # 常见指数（curated；代码与个股 6 位冲突时只进 byName，不覆盖 byCode）
+    INDICES = [
+        ("上证指数", "000001.SH"), ("深证成指", "399001.SZ"), ("创业板指", "399006.SZ"),
+        ("科创50", "000688.SH"), ("科创100", "000698.SH"), ("科创综指", "000680.SH"),
+        ("沪深300", "000300.SH"), ("上证50", "000016.SH"), ("中证500", "000905.SH"),
+        ("中证1000", "000852.SH"), ("中证A500", "000510.SH"), ("中证2000", "932000.CSI"),
+        ("北证50", "899050.BJ"),
+    ]
 
     # 1) A 股
     df = pd.read_parquet(SRC)
@@ -66,10 +77,15 @@ def main() -> None:
                 add(str(r["ts_code"]), str(r.get("name") or "").strip(), "ETF/基金", "fund")
     except Exception as e:  # noqa: BLE001
         print(f"⚠️ ETF 索引跳过（{e}）")
+    n_fund = len(by_code) - n_stock
+
+    # 3) 指数
+    for nm, ts in INDICES:
+        add(ts, nm, "指数", "index", overwrite_code=False)
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps({"byName": by_name, "byCode": by_code, "pairs": pairs, "meta": meta}, ensure_ascii=False), encoding="utf-8")
-    print(f"✅ {OUT.name}: {len(by_code)} 代码（股票 {n_stock} + ETF {len(by_code) - n_stock}）")
+    print(f"✅ {OUT.name}: 股票 {n_stock} + ETF {n_fund} + 指数 {len(INDICES)}")
 
 
 if __name__ == "__main__":
