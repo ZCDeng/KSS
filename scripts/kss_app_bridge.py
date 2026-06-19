@@ -2274,6 +2274,113 @@ def _cron_action(label: str, action: str) -> dict[str, Any]:
     return {"ok": True, "job": job}
 
 
+# ---------------------------------------------------------------------------
+# 概念主题龙头 / 第二梯队（十五五科技主题）
+#
+# 数据 = storage/themes_15th_5y.yaml（主题 → 行业/概念板块名）
+#      + 最新归档快照 leaderBoards 的 leaderStocks（龙一~龙五 positions）。
+# 龙头 = 最近一次位列龙一/龙二；第二梯队 = 龙三/龙四/龙五。
+# 板块龙头数据只在快照 leaderBoards 里（getLongByPlate 拉到的 top 板块），
+# 故主题覆盖度随每日 hotspot_rotation 归档逐日累积而提升。
+# ---------------------------------------------------------------------------
+
+_LEADER_RANK = {"龙一": 1, "龙二": 2, "龙三": 3, "龙四": 4, "龙五": 5}
+THEMES_PATH = PROJECT_ROOT / "storage" / "themes_15th_5y.yaml"
+
+
+def _load_themes() -> dict[str, dict[str, list[str]]]:
+    """读 themes_15th_5y.yaml → {主题名: {industries, concepts}}。
+
+    直接用 PyYAML 解析，不走 kss.sector.themes（其包 __init__ 会 import tushare，
+    系统 python 没装）。文件缺失 / 解析失败 → 空字典（页面显示空态，不崩）。
+    """
+    if not THEMES_PATH.exists():
+        return {}
+    try:
+        import yaml
+
+        raw = yaml.safe_load(THEMES_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(raw, dict) or not isinstance(raw.get("themes"), dict):
+        return {}
+    out: dict[str, dict[str, list[str]]] = {}
+    for name, body in raw["themes"].items():
+        if not isinstance(name, str) or not isinstance(body, dict):
+            continue
+        out[name] = {
+            "industries": [str(x) for x in (body.get("industries") or [])],
+            "concepts": [str(x) for x in (body.get("concepts") or [])],
+        }
+    return out
+
+
+def _split_leader_tiers(stocks: list[dict]) -> tuple[list[dict], list[dict]]:
+    """leaderStocks → (龙头[龙一二], 第二梯队[龙三+])，按最近一次 position 的龙X 排名。"""
+    leaders: list[dict] = []
+    second: list[dict] = []
+    for s in stocks:
+        positions = s.get("positions") or []
+        rank = 99
+        if positions:
+            rank = _LEADER_RANK.get(positions[0].split("/")[-1], 99)
+        item = {
+            "symbol": s.get("code") or s.get("symbol") or "",
+            "name": s.get("name") or "",
+            "appearances": s.get("count") or s.get("appearances") or 0,
+            "positions": positions,
+        }
+        (leaders if rank <= 2 else second).append(item)
+    return leaders, second
+
+
+def _theme_leaders() -> list[dict[str, Any]]:
+    """十五五科技主题 → 各板块龙头 / 第二梯队（数据驱动，主题数以 yaml 为准）。"""
+    themes = _load_themes()
+    if not themes:
+        return []
+
+    snap: dict[str, Any] = {}
+    if SECTOR_ROTATION_DIR.exists():
+        files = sorted(SECTOR_ROTATION_DIR.glob("*.json"), reverse=True)
+        if files:
+            snap = _sector_rotation_snapshot(files[0]) or {}
+
+    leaders_by_board: dict[str, list[dict]] = {}
+    for b in snap.get("leaderBoards") or []:
+        if b.get("leaderStocks"):
+            leaders_by_board[b.get("name", "")] = b["leaderStocks"]
+    cls_by_board: dict[str, str] = {}
+    for key in ("industries", "concepts"):
+        for b in snap.get(key) or []:
+            if b.get("classification"):
+                cls_by_board[b.get("name", "")] = b["classification"]
+
+    out: list[dict[str, Any]] = []
+    for name, bucket in themes.items():
+        board_names = list(bucket["industries"]) + list(bucket["concepts"])
+        boards: list[dict[str, Any]] = []
+        for bn in board_names:
+            stocks = leaders_by_board.get(bn)
+            if not stocks:
+                continue
+            tier1, tier2 = _split_leader_tiers(stocks)
+            boards.append({
+                "board": bn,
+                "classification": cls_by_board.get(bn),
+                "leaders": tier1,
+                "secondTier": tier2,
+            })
+        out.append({
+            "name": name,
+            "boardNames": board_names,
+            "boardCount": len(board_names),
+            "boards": boards,
+            "leaderBoardCount": len(boards),
+        })
+    return out
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print(
@@ -2331,6 +2438,9 @@ def main(argv: list[str]) -> int:
         result = run_task(argv[2], argv[3:])
         _append_task_history(result)
         _json_dump(result)
+        return 0
+    if command == "theme-leaders":
+        _json_dump(_theme_leaders())
         return 0
     if command == "cron-list":
         _json_dump(_scheduled_jobs())
