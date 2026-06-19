@@ -17,6 +17,7 @@ final class KSSStore: ObservableObject {
     @Published var taskResults: [TaskRunResult] = []
     @Published var scheduledJobs: [ScheduledJob] = []
     @Published var scheduledBusy: Set<String> = []   // 正在操作的 label（行级 loading）
+    @Published var themeLeaders: [ThemeLeaders] = []
     @Published var errorMessage: String?
 
     private let bridge: BridgeClient?
@@ -150,6 +151,13 @@ final class KSSStore: ObservableObject {
         guard let bridge else { return }
         let jobs = (try? await Task.detached { try bridge.scheduledJobs() }.value) ?? []
         self.scheduledJobs = jobs
+    }
+
+    /// 拉取十五五科技主题 → 板块龙头/第二梯队。
+    func loadThemeLeaders() async {
+        guard let bridge else { return }
+        let themes = (try? await Task.detached { try bridge.themeLeaders() }.value) ?? []
+        self.themeLeaders = themes
     }
 
     /// 一键重跑某任务，就地刷新该行状态。

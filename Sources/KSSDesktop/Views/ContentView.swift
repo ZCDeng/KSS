@@ -133,6 +133,20 @@ struct ContentView: View {
                     onRerunSchedule: { label in Task { await store.rerunScheduledJob(label) } },
                     onToggleSchedule: { label, enabled in Task { await store.toggleScheduledJob(label, enabled: enabled) } }
                 )
+            case .hotspot:
+                HotspotRotationView(
+                    rotation: snapshot.latestSectorRotation,
+                    onOpenThemes: { store.selectedSection = .themes }
+                )
+            case .themes:
+                ThemesView(
+                    themes: store.themeLeaders,
+                    onLoad: { Task { await store.loadThemeLeaders() } },
+                    onSelectSymbol: { symbol in
+                        Task { await store.loadStock(symbol: symbol) }
+                        store.selectedSection = .stocks
+                    }
+                )
             case .reviews:
                 ReviewsView(
                     reviews: snapshot.reviews,

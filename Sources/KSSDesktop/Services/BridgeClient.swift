@@ -64,6 +64,10 @@ struct BridgeClient {
         try run(["sector-rotation-history", String(limit)], as: [HotspotRotationHistoryItem].self)
     }
 
+    func themeLeaders() throws -> [ThemeLeaders] {
+        try run(["theme-leaders"], as: [ThemeLeaders].self)
+    }
+
     // MARK: 定时任务（launchd）
 
     func scheduledJobs() throws -> [ScheduledJob] {

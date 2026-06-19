@@ -200,6 +200,24 @@ struct CronActionResult: Codable, Hashable {
     var job: ScheduledJob?
 }
 
+/// 十五五科技主题 → 板块龙头/第二梯队（数据源 themes_15th_5y.yaml + 热点轮动归档）。
+struct ThemeLeaders: Codable, Hashable, Identifiable {
+    var id: String { name }
+    var name: String
+    var boardNames: [String]
+    var boardCount: Int
+    var boards: [ThemeBoard]
+    var leaderBoardCount: Int
+}
+
+struct ThemeBoard: Codable, Hashable, Identifiable {
+    var id: String { board }
+    var board: String
+    var classification: String?
+    var leaders: [HotspotLeaderStock]      // 龙一/龙二
+    var secondTier: [HotspotLeaderStock]   // 龙三/龙四/龙五
+}
+
 struct RecTrackingDay: Codable, Identifiable, Hashable {
     var id: String { date }
     var date: String
@@ -466,6 +484,8 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     case dashboard = "Dashboard"
     case recommendations = "Daily Picks"
     case watchlist = "Watchlist"
+    case hotspot = "Hotspot"
+    case themes = "Themes"
     case reviews = "Reviews"
     case backtests = "Backtests"
     case stocks = "Stocks"
@@ -479,6 +499,8 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .dashboard: return "总览"
         case .recommendations: return "推荐"
         case .watchlist: return "自选"
+        case .hotspot: return "热点"
+        case .themes: return "主题"
         case .runbook: return "任务"
         case .reviews: return "复盘"
         case .backtests: return "回测"
@@ -492,6 +514,8 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .dashboard: return "gauge.with.dots.needle.50percent"
         case .recommendations: return "target"
         case .watchlist: return "star"
+        case .hotspot: return "flame"
+        case .themes: return "square.grid.2x2"
         case .runbook: return "terminal"
         case .reviews: return "doc.text.magnifyingglass"
         case .backtests: return "chart.xyaxis.line"
