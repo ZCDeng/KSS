@@ -77,32 +77,35 @@ struct StockBrowserView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
 
-                List(filteredStocks, selection: Binding(
-                    get: { selectedSymbol },
-                    set: { symbol in if let symbol { onSelect(symbol) } }
-                )) { stock in
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Text(stock.name.isEmpty ? stock.symbol : stock.name)
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundStyle(KSSTheme.textPrimary)
-                                .lineLimit(1)
-                            if watchlist.contains(stock.symbol) {
-                                Image(systemName: "star.fill")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(KSSTheme.ma5)
+                List(filteredStocks) { stock in
+                    let isOn = stock.symbol == selectedSymbol
+                    Button { onSelect(stock.symbol) } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Text(stock.name.isEmpty ? stock.symbol : stock.name)
+                                    .font(.system(size: 15, weight: .bold))
+                                    .foregroundStyle(isOn ? KSSTheme.accent : KSSTheme.textPrimary)
+                                    .lineLimit(1)
+                                if watchlist.contains(stock.symbol) {
+                                    Image(systemName: "star.fill")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(KSSTheme.ma5)
+                                }
+                                Spacer()
+                                Text(KSSFormat.pctPoints(stock.pctChange))
+                                    .font(.system(size: 12.5, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(KSSTheme.signColor(stock.pctChange))
                             }
-                            Spacer()
-                            Text(KSSFormat.pctPoints(stock.pctChange))
-                                .font(.system(size: 12.5, weight: .bold, design: .monospaced))
-                                .foregroundStyle(KSSTheme.signColor(stock.pctChange))
+                            Text("\(stock.symbol) · \(stock.industry)")
+                                .font(.system(size: 11.5, design: .monospaced))
+                                .foregroundStyle(KSSTheme.textSecondary)
                         }
-                        Text("\(stock.symbol) · \(stock.industry)")
-                            .font(.system(size: 11.5, design: .monospaced))
-                            .foregroundStyle(KSSTheme.textSecondary)
+                        .padding(.vertical, 2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                     }
-                    .padding(.vertical, 2)
-                    .tag(stock.symbol)
+                    .buttonStyle(.plain)
+                    .listRowBackground(isOn ? KSSTheme.accent.opacity(0.16) : Color.clear)
                 }
                 .scrollContentBackground(.hidden)
                 .background(KSSTheme.canvas)

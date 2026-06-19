@@ -114,8 +114,15 @@ struct ReviewsView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
 
-            List(visibleReviews, selection: $selectedReview) { review in
-                ReviewRow(review: review).tag(review)
+            List(visibleReviews) { review in
+                let isOn = selectedReview?.id == review.id
+                Button { selectedReview = review } label: {
+                    ReviewRow(review: review)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .listRowBackground(isOn ? KSSTheme.accent.opacity(0.16) : Color.clear)
             }
             .scrollContentBackground(.hidden)
             .background(KSSTheme.canvas)
@@ -123,8 +130,15 @@ struct ReviewsView: View {
     }
 
     private var sectorList: some View {
-        List(sectorReviews, selection: $selectedSectorDate) { pulse in
-            SectorReviewRow(pulse: pulse).tag(pulse.tradeDate)
+        List(sectorReviews) { pulse in
+            let isOn = (selectedSectorDate ?? sectorReviews.first?.tradeDate) == pulse.tradeDate
+            Button { selectedSectorDate = pulse.tradeDate } label: {
+                SectorReviewRow(pulse: pulse)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .listRowBackground(isOn ? KSSTheme.accent.opacity(0.16) : Color.clear)
         }
         .scrollContentBackground(.hidden)
         .background(KSSTheme.canvas)

@@ -43,9 +43,15 @@ struct BacktestsView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
 
-                List(sortedReports, selection: $selectedReport) { report in
-                    BacktestReportRow(report: report)
-                        .tag(report)
+                List(sortedReports) { report in
+                    let isOn = selectedReport?.id == report.id
+                    Button { selectedReport = report } label: {
+                        BacktestReportRow(report: report)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(isOn ? KSSTheme.accent.opacity(0.16) : Color.clear)
                 }
                 .scrollContentBackground(.hidden)
                 .background(KSSTheme.canvas)
