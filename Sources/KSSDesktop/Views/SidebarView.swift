@@ -35,29 +35,49 @@ struct SidebarView: View {
     }
 }
 
-/// 边栏顶部：透明 logo + “KSS Desktop”（无卡片边框）。
+/// 边栏顶部：KSSDeck 锁定式标志 —— wordmark（随主题黑↔白翻转）+ 恒定红 K。
+/// 资源直接取自品牌参考图：wordmark.png 为可着色模板，kmark.png 为玻璃高光红 K。
 struct AppHeader: View {
     var body: some View {
-        HStack(spacing: 9) {
-            logo
-                .frame(width: 30, height: 30)
-            Text("KSS Desktop")
-                .font(KSSFont.serif(18, .semibold))
-                .foregroundStyle(KSSTheme.textPrimary)
-            Spacer()
+        HStack(alignment: .center, spacing: 6) {
+            wordmark
+                .frame(height: 20)
+            kmark
+                .frame(height: 26)
+            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
     }
 
-    @ViewBuilder private var logo: some View {
-        if let url = Bundle.module.url(forResource: "logo", withExtension: "png"),
-           let image = NSImage(contentsOf: url) {
-            Image(nsImage: image).resizable().scaledToFit()
+    @ViewBuilder private var wordmark: some View {
+        if let img = bundledImage("wordmark") {
+            Image(nsImage: img)
+                .resizable()
+                .renderingMode(.template)          // 取模板，按主题着色
+                .scaledToFit()
+                .foregroundStyle(KSSTheme.textPrimary)   // 亮→近黑 / 暗→近白
+        } else {
+            Text("KSSDeck")
+                .font(.system(size: 18, weight: .heavy))
+                .foregroundStyle(KSSTheme.textPrimary)
+        }
+    }
+
+    @ViewBuilder private var kmark: some View {
+        if let img = bundledImage("kmark") {
+            Image(nsImage: img).resizable().scaledToFit()
+        } else if let img = bundledImage("logo") {
+            Image(nsImage: img).resizable().scaledToFit()
         } else {
             Image(systemName: "k.square.fill").resizable().scaledToFit().foregroundStyle(KSSTheme.up)
         }
+    }
+
+    private func bundledImage(_ name: String) -> NSImage? {
+        guard let url = Bundle.module.url(forResource: name, withExtension: "png") else { return nil }
+        return NSImage(contentsOf: url)
     }
 }
 

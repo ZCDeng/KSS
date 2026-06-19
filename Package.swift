@@ -20,7 +20,9 @@ let package = Package(
                 .copy("Resources/marked.min.js"),
                 .copy("Resources/markdown.html"),
                 .copy("Resources/architecture.html"),
-                .copy("Resources/logo.png")
+                .copy("Resources/logo.png"),
+                .copy("Resources/kmark.png"),
+                .copy("Resources/wordmark.png")
             ]
         )
     ]
