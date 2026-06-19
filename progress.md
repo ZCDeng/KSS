@@ -4,6 +4,23 @@
 
 ---
 
+## 2026-06-19 — macOS App 第十五阶段：前端改用架构图设计系统（暖纸/clay，亮+暗两套）
+
+**起因**：反过来——不再用 Discord token，改用项目交互架构图（html-diagram skill 产出）的设计系统，做亮色+暗色两套。
+
+**已交付**
+- **设计 token 取自 `kss_architecture_interactive.html`**（Anthropic 暖纸/clay）：
+  - 亮：bg #FAF9F5 / surface #FFFFFF / ink #141413 / muted #87867F / line #D1CFC5；暗：bg #141413 / surface #1F1F1D / ink #FAF9F5 / line #3D3D3A。
+  - 强调色 clay 赤陶 #D97757(暗 #E48A6E)；olive/gold/blue 辅助。
+  - **A股红涨绿跌 → clay(暖红) / olive(橄榄绿)**，与设计系统统一；图表均线 gold/blue。
+- **亮暗自适应**：`KSSTheme` 每个 token 改 `NSColor(name:dynamicProvider:)`，随窗口 effectiveAppearance 解析；工具栏加「主题」按钮（日/月图标）切 `@AppStorage("appearanceMode")` → `.preferredColorScheme`，全 app 一键换肤。
+- **serif 标题**：`KSSFont.serif`（Georgia/Songti），PageTitle / SectionHeader / 个股标题 / AppHeader 改衬线，呼应设计系统。
+- **WebView 双主题**：`chart.html` + `markdown.html` 改 CSS 变量亮暗双调色板；`ChartWebView`/`MarkdownWebView` 注入当前 colorScheme（`kssSetData(json,isDark)` / `kssSetMarkdown(text,isDark)`，主题切换时 lightweight-charts remove+重建调色板）；`architecture.html` 经 `LocalHTMLView` 同步 `html.dark` class。
+
+**验证**
+- `swift build`、`build_and_run --verify` 通过。
+- 实机两套都正常：暗色暖近黑 + clay + serif；亮色暖纸 + 白卡 + clay；K 线 clay/olive 蜡烛 + gold/blue 均线随主题切换；复盘 markdown 亮暗双版（白卡 ink 文 / 暗卡）；工具栏日/月按钮切换。
+
 ## 2026-06-19 — macOS App 第十四阶段：架构图移植 + 边栏头尾 + 总览计数卡（4 项反馈）
 
 **已交付**

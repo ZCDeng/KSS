@@ -43,7 +43,7 @@ struct AppHeader: View {
                 .frame(width: 34, height: 34)
             VStack(alignment: .leading, spacing: 1) {
                 Text("KSS 工作台")
-                    .font(.system(size: 16, weight: .heavy))
+                    .font(KSSFont.serif(16, .semibold))
                     .foregroundStyle(KSSTheme.textPrimary)
                 Text("科创 · 创业 · 北证 量化选股")
                     .font(.system(size: 10.5))

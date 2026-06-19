@@ -5,26 +5,28 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <style>
   :root { color-scheme: dark; }
+  :root { --bg:#FFFFFF; --text:#141413; --muted:#87867F; --ma5:#C9A45C; --ma20:#5B7E96; }
+  html.dark { --bg:#1F1F1D; --text:#FAF9F5; --muted:#8A8980; --ma5:#D4B36F; --ma20:#7FA3BC; }
   html, body {
     margin: 0; padding: 0; height: 100%; width: 100%;
-    background: #2B2D31;
+    background: var(--bg);
     overflow: hidden;
-    font-family: -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+    font-family: -apple-system, "SF Pro Text", "PingFang SC", sans-serif;
   }
   #chart { position: absolute; inset: 0; }
   #legend {
     position: absolute; top: 10px; left: 12px; z-index: 5;
-    font-size: 11px; line-height: 1.5; color: #DBDEE1;
+    font-size: 11px; line-height: 1.5; color: var(--text);
     pointer-events: none; letter-spacing: 0.2px;
   }
   #legend .row { display: flex; gap: 12px; }
-  #legend .k { color: #949BA4; }
-  .ma5 { color: #FF9F1C; }
-  .ma20 { color: #5865F2; }
+  #legend .k { color: var(--muted); }
+  .ma5 { color: var(--ma5); }
+  .ma20 { color: var(--ma20); }
   #empty {
     position: absolute; inset: 0; display: none;
     align-items: center; justify-content: center;
-    color: #949BA4; font-size: 13px;
+    color: var(--muted); font-size: 13px;
   }
 </style>
 </head>
@@ -35,18 +37,17 @@
   <script src="lightweight-charts.standalone.production.js"></script>
   <script>
   (function () {
-    const COLORS = {
-      up: "#F23645",      // A股 红涨
-      down: "#089981",    // A股 绿跌
-      ma5: "#FF9F1C",
-      ma20: "#5865F2",    // Discord blurple
-      grid: "#3F4147",    // --border
-      text: "#949BA4",    // --muted
-      bg: "#2B2D31",      // --surface
+    // 设计系统调色板：A股红涨绿跌 → clay(暖红) / olive(橄榄绿)，均线 gold/blue。
+    const PALETTES = {
+      dark:  { up:"#E48A6E", down:"#9DB07C", ma5:"#D4B36F", ma20:"#7FA3BC", grid:"#3D3D3A", text:"#8A8980", bg:"#1F1F1D", cross:"#E48A6E", upFill:"rgba(228,138,110,0.5)", downFill:"rgba(157,176,124,0.5)" },
+      light: { up:"#D97757", down:"#788C5D", ma5:"#C9A45C", ma20:"#5B7E96", grid:"#D1CFC5", text:"#87867F", bg:"#FFFFFF", cross:"#D97757", upFill:"rgba(217,119,87,0.45)", downFill:"rgba(120,140,93,0.45)" },
     };
+    let COLORS = PALETTES.dark;
+    let currentTheme = "dark";
 
     let chart, candleSeries, volumeSeries, ma5Series, ma20Series;
     let pending = null;
+    let lastPayload = null;
 
     function sma(values, period) {
       const out = [];
@@ -77,8 +78,8 @@
         timeScale: { borderColor: COLORS.grid, rightOffset: 4, fixLeftEdge: true },
         crosshair: {
           mode: LightweightCharts.CrosshairMode.Normal,
-          vertLine: { color: "#5865F2", width: 1, style: 3, labelBackgroundColor: "#5865F2" },
-          horzLine: { color: "#5865F2", width: 1, style: 3, labelBackgroundColor: "#5865F2" },
+          vertLine: { color: COLORS.cross, width: 1, style: 3, labelBackgroundColor: COLORS.cross },
+          horzLine: { color: COLORS.cross, width: 1, style: 3, labelBackgroundColor: COLORS.cross },
         },
         handleScroll: true,
         handleScale: true,
@@ -162,7 +163,7 @@
       const vols = bars.map(p => ({
         time: p.date,
         value: p.volume != null ? p.volume : 0,
-        color: (p.close >= (p.open != null ? p.open : p.close)) ? "rgba(242,54,69,0.5)" : "rgba(8,153,129,0.5)",
+        color: (p.close >= (p.open != null ? p.open : p.close)) ? COLORS.upFill : COLORS.downFill,
       }));
       candleSeries.setData(candles);
       volumeSeries.setData(vols);
@@ -177,9 +178,21 @@
       chart.timeScale().fitContent();
     }
 
-    window.kssSetData = function (json) {
-      try { setData(typeof json === "string" ? JSON.parse(json) : json); }
-      catch (e) { document.getElementById("legend").textContent = "chart error: " + e; }
+    function applyTheme(isDark) {
+      const want = isDark ? "dark" : "light";
+      document.documentElement.classList.toggle("dark", isDark);
+      if (want === currentTheme) return;
+      currentTheme = want;
+      COLORS = PALETTES[want];
+      if (chart) { chart.remove(); chart = null; }  // rebuild with new palette
+    }
+
+    window.kssSetData = function (json, isDark) {
+      try {
+        if (typeof isDark === "boolean") applyTheme(isDark);
+        lastPayload = typeof json === "string" ? JSON.parse(json) : json;
+        setData(lastPayload);
+      } catch (e) { document.getElementById("legend").textContent = "chart error: " + e; }
     };
 
     document.addEventListener("DOMContentLoaded", function () {

@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var store: KSSStore
     @AppStorage("watchlistSymbols") private var watchlistSymbols = "688017.SH,688322.SH"
+    @AppStorage("appearanceMode") private var appearanceMode = "dark"
     @State private var searchText = ""
 
     private var watchlist: [String] {
@@ -29,9 +30,15 @@ struct ContentView: View {
                                 .controlSize(.small)
                         }
                         Button {
+                            appearanceMode = (appearanceMode == "dark") ? "light" : "dark"
+                        } label: {
+                            Label("主题", systemImage: appearanceMode == "dark" ? "sun.max" : "moon")
+                        }
+                        .help(appearanceMode == "dark" ? "切换到亮色" : "切换到暗色")
+                        Button {
                             Task { await store.loadSnapshot() }
                         } label: {
-                            Label("Refresh", systemImage: "arrow.clockwise")
+                            Label("刷新", systemImage: "arrow.clockwise")
                         }
                     }
                 }

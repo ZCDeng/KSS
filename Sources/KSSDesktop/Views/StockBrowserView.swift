@@ -147,7 +147,7 @@ struct StockDetailView: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(detail.name.isEmpty ? detail.symbol : detail.name)
-                            .font(.system(size: 30, weight: .heavy))
+                            .font(KSSFont.serif(30, .bold))
                             .foregroundStyle(KSSTheme.textPrimary)
                         Text("\(detail.symbol) · \(detail.industry)")
                             .font(.system(size: 14, weight: .medium, design: .monospaced))

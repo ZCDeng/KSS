@@ -201,7 +201,7 @@ struct SectionHeader: View {
                     .fill(KSSTheme.accent)
                     .frame(width: 4, height: 18)
                 Text(title)
-                    .font(.system(size: 18, weight: .bold))
+                    .font(KSSFont.serif(18, .semibold))
                     .foregroundStyle(KSSTheme.textPrimary)
             }
             if let caption {

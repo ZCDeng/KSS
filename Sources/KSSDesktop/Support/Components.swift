@@ -62,11 +62,11 @@ struct PageTitle: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
-                .font(.system(size: 28, weight: .heavy))
+                .font(KSSFont.serif(28, .bold))
                 .foregroundStyle(KSSTheme.textPrimary)
             if let subtitle, !subtitle.isEmpty {
                 Text(subtitle)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
                     .foregroundStyle(KSSTheme.textSecondary)
                     .lineLimit(1)
             }

@@ -20,23 +20,45 @@ struct ArchitectureView: View {
             .padding(16)
 
             LocalHTMLView(resource: "architecture")
-                .background(Color.white)
+                .background(KSSTheme.canvas)
         }
         .background(KSSTheme.canvas)
     }
 }
 
-/// Loads a bundled, self-contained HTML resource (no data injection) into a WKWebView.
+/// Loads a bundled, self-contained HTML resource into a WKWebView and syncs its
+/// `html.dark` class to the app's color scheme.
 struct LocalHTMLView: NSViewRepresentable {
     var resource: String
+    @Environment(\.colorScheme) private var colorScheme
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> WKWebView {
         let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        webView.navigationDelegate = context.coordinator
         if let html = Bundle.module.url(forResource: resource, withExtension: "html") {
             webView.loadFileURL(html, allowingReadAccessTo: html.deletingLastPathComponent())
         }
         return webView
     }
 
-    func updateNSView(_ webView: WKWebView, context: Context) {}
+    func updateNSView(_ webView: WKWebView, context: Context) {
+        context.coordinator.isDark = colorScheme == .dark
+        if context.coordinator.isLoaded { context.coordinator.applyTheme(webView) }
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        var isLoaded = false
+        var isDark = true
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            isLoaded = true
+            applyTheme(webView)
+        }
+
+        func applyTheme(_ webView: WKWebView) {
+            webView.evaluateJavaScript("document.documentElement.classList.toggle('dark', \(isDark));", completionHandler: nil)
+        }
+    }
 }

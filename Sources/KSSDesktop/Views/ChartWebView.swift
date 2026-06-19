@@ -6,6 +6,7 @@ import WebKit
 /// MA5/MA20 are pushed in as JSON whenever `points` changes.
 struct ChartWebView: NSViewRepresentable {
     var points: [PricePoint]
+    @Environment(\.colorScheme) private var colorScheme
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -14,7 +15,6 @@ struct ChartWebView: NSViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.setValue(false, forKey: "drawsBackground") // transparent until chart paints
-        webView.underPageBackgroundColor = NSColor(red: 0x2B/255, green: 0x2D/255, blue: 0x31/255, alpha: 1)
 
         if let html = Bundle.module.url(forResource: "chart", withExtension: "html") {
             webView.loadFileURL(html, allowingReadAccessTo: html.deletingLastPathComponent())
@@ -23,8 +23,11 @@ struct ChartWebView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        let json = Self.encode(points)
-        context.coordinator.latestJSON = json
+        context.coordinator.latestJSON = Self.encode(points)
+        context.coordinator.isDark = colorScheme == .dark
+        webView.underPageBackgroundColor = colorScheme == .dark
+            ? NSColor(srgbRed: 0x1F/255, green: 0x1F/255, blue: 0x1D/255, alpha: 1)
+            : NSColor.white
         if context.coordinator.isLoaded {
             context.coordinator.push(into: webView)
         }
@@ -41,6 +44,7 @@ struct ChartWebView: NSViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         var isLoaded = false
         var latestJSON = "[]"
+        var isDark = true
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             isLoaded = true
@@ -48,7 +52,7 @@ struct ChartWebView: NSViewRepresentable {
         }
 
         func push(into webView: WKWebView) {
-            webView.evaluateJavaScript("window.kssSetData(\(latestJSON));", completionHandler: nil)
+            webView.evaluateJavaScript("window.kssSetData(\(latestJSON), \(isDark));", completionHandler: nil)
         }
     }
 }
