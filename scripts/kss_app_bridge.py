@@ -1954,10 +1954,233 @@ def stock_detail(symbol: str) -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# 定时任务（launchd）自省与操作
+#
+# 真正的定时任务是 deploy/launchd/com.zcdeng.kss.*.plist（crontab 已是 legacy）。
+# 这里只用标准库 plistlib + 系统 launchctl 读状态、重跑、启停，绝不改 plist 内容。
+# 所有 launchctl 调用都走列表参数 + label 白名单（白名单由 plist 文件名派生），
+# 不拼接用户输入，杜绝注入。
+# ---------------------------------------------------------------------------
+
+LAUNCHD_DIR = PROJECT_ROOT / "deploy" / "launchd"
+
+# label 后缀 → 中文任务名（新增 launchd 任务时在此补一条）。
+LABEL_TITLES = {
+    "macro_daily": "宏观数据更新",
+    "morning_divergence_alert": "开盘见顶快讯",
+    "paper_trade_daily": "纸交易日更",
+    "paper_trade_weekly": "纸交易周报",
+    "prediction_validation_weekly": "预测校验周报",
+    "scan_bj50_daily": "北证50扫描",
+    "scanner": "科创共振扫描",
+    "sector_review_daily": "板块复盘",
+    "update_data_daily": "股票池日线更新",
+}
+
+_WEEKDAY_CN = {0: "日", 1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "日"}
+
+
+def _launchd_plists() -> dict[str, Path]:
+    """label → plist 路径。白名单的唯一事实源。"""
+    out: dict[str, Path] = {}
+    for path in sorted(LAUNCHD_DIR.glob("com.zcdeng.kss.*.plist")):
+        label = path.stem  # 文件名去 .plist == Label
+        out[label] = path
+    return out
+
+
+def _hm(entry: dict) -> str:
+    return f"{int(entry.get('Hour', 0)):02d}:{int(entry.get('Minute', 0)):02d}"
+
+
+def _parse_schedule(interval: Any) -> str:
+    """StartCalendarInterval（dict 或 list[dict]）→ 人读调度串。"""
+    if interval is None:
+        return "未设定"
+    entries = interval if isinstance(interval, list) else [interval]
+    entries = [e for e in entries if isinstance(e, dict)]
+    if not entries:
+        return "未设定"
+
+    times = {_hm(e) for e in entries}
+    weekdays = {int(e["Weekday"]) for e in entries if "Weekday" in e}
+
+    # 工作日同一时刻
+    if len(times) == 1 and weekdays == {1, 2, 3, 4, 5}:
+        return f"工作日 {next(iter(times))}"
+    # 单条
+    if len(entries) == 1:
+        e = entries[0]
+        if "Weekday" in e:
+            return f"每周{_WEEKDAY_CN.get(int(e['Weekday']), '?')} {_hm(e)}"
+        return f"每天 {_hm(e)}"
+    # 其余：逐条列出
+    parts = []
+    for e in entries:
+        if "Weekday" in e:
+            parts.append(f"周{_WEEKDAY_CN.get(int(e['Weekday']), '?')} {_hm(e)}")
+        else:
+            parts.append(_hm(e))
+    return " / ".join(parts)
+
+
+def _run_launchctl(args: list[str], timeout: int = 15) -> tuple[int, str, str]:
+    try:
+        proc = subprocess.run(
+            ["launchctl", *args],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+        return proc.returncode, proc.stdout, proc.stderr
+    except FileNotFoundError:
+        return 127, "", "launchctl not found"
+    except subprocess.TimeoutExpired:
+        return 124, "", "launchctl timeout"
+
+
+def _disabled_labels(uid: int) -> set[str]:
+    """gui 域里被 disable 的 label 集合。"""
+    rc, out, _ = _run_launchctl(["print-disabled", f"gui/{uid}"])
+    if rc != 0:
+        return set()
+    disabled: set[str] = set()
+    for line in out.splitlines():
+        m = re.search(r'"([^"]+)"\s*=>\s*(?:disabled|true)', line)
+        if m and "true" in line:
+            disabled.add(m.group(1))
+    return disabled
+
+
+def _launchctl_status(label: str, uid: int) -> dict[str, Any]:
+    """单任务运行态：是否加载、上次退出码、pid。"""
+    rc, out, _ = _run_launchctl(["print", f"gui/{uid}/{label}"])
+    if rc == 0:
+        last_exit = None
+        pid = None
+        m = re.search(r"last exit code\s*=\s*(\-?\d+)", out)
+        if m:
+            last_exit = int(m.group(1))
+        m = re.search(r"\bpid\s*=\s*(\d+)", out)
+        if m:
+            pid = int(m.group(1))
+        return {"loaded": True, "lastExit": last_exit, "pid": pid}
+    # 未 bootstrap：回退 launchctl list 取 LastExitStatus
+    rc2, out2, _ = _run_launchctl(["list", label])
+    if rc2 == 0:
+        m = re.search(r'"LastExitStatus"\s*=\s*(\-?\d+)', out2)
+        last_exit = int(m.group(1)) if m else None
+        return {"loaded": False, "lastExit": last_exit, "pid": None}
+    return {"loaded": False, "lastExit": None, "pid": None}
+
+
+def _last_run(log_path: str | None) -> dict[str, Any]:
+    """从任务日志取上次运行时间（文件 mtime）+ 末行摘要。"""
+    if not log_path:
+        return {"at": None, "line": None}
+    p = Path(log_path)
+    if not p.exists() or p.stat().st_size == 0:
+        return {"at": None, "line": None}
+    at = datetime.fromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+    line = None
+    try:
+        lines = [ln.strip() for ln in p.read_text(encoding="utf-8", errors="ignore").splitlines() if ln.strip()]
+        if lines:
+            line = _shorten(lines[-1], 160)
+    except OSError:
+        pass
+    return {"at": at, "line": line}
+
+
+def _scheduled_job(label: str, path: Path, uid: int, disabled: set[str]) -> dict[str, Any]:
+    import plistlib
+
+    try:
+        with path.open("rb") as fh:
+            pl = plistlib.load(fh)
+    except (OSError, ValueError):
+        pl = {}
+
+    suffix = label.replace("com.zcdeng.kss.", "")
+    prog = pl.get("ProgramArguments") or []
+    script = Path(prog[0]).name if prog else ""
+    schedule = _parse_schedule(pl.get("StartCalendarInterval"))
+    status = _launchctl_status(label, uid)
+    last = _last_run(pl.get("StandardOutPath"))
+
+    last_exit = status["lastExit"]
+    if last_exit is None:
+        last_status = "unknown"
+    elif last_exit == 0:
+        last_status = "success"
+    else:
+        last_status = "failed"
+
+    return {
+        "label": label,
+        "title": LABEL_TITLES.get(suffix, suffix),
+        "schedule": schedule,
+        "script": script,
+        "enabled": label not in disabled,
+        "loaded": status["loaded"],
+        "lastStatus": last_status,
+        "lastRunAt": last["at"],
+        "lastLine": last["line"],
+    }
+
+
+def _scheduled_jobs() -> list[dict[str, Any]]:
+    uid = os.getuid()
+    disabled = _disabled_labels(uid)
+    plists = _launchd_plists()
+    return [_scheduled_job(label, path, uid, disabled) for label, path in plists.items()]
+
+
+def _cron_action(label: str, action: str) -> dict[str, Any]:
+    """对单个 launchd 任务重跑/启用/停用。label 必须命中白名单。"""
+    plists = _launchd_plists()
+    if label not in plists:
+        return {"ok": False, "error": f"unknown label: {label}"}
+    if action not in {"rerun", "enable", "disable"}:
+        return {"ok": False, "error": f"unknown action: {action}"}
+
+    uid = os.getuid()
+    domain = f"gui/{uid}"
+    path = str(plists[label])
+    errors: list[str] = []
+
+    if action == "rerun":
+        rc, _, err = _run_launchctl(["kickstart", "-k", f"{domain}/{label}"])
+        if rc != 0:
+            errors.append(err.strip() or f"kickstart rc={rc}")
+    elif action == "disable":
+        # 立即卸载（未加载则忽略错误）+ 持久化停用
+        _run_launchctl(["bootout", f"{domain}/{label}"])
+        rc, _, err = _run_launchctl(["disable", f"{domain}/{label}"])
+        if rc != 0:
+            errors.append(err.strip() or f"disable rc={rc}")
+    elif action == "enable":
+        _run_launchctl(["enable", f"{domain}/{label}"])
+        rc, _, err = _run_launchctl(["bootstrap", domain, path])
+        # bootstrap 对已加载任务会报错，可忽略
+        if rc != 0 and "already" not in err.lower():
+            errors.append(err.strip() or f"bootstrap rc={rc}")
+
+    disabled = _disabled_labels(uid)
+    job = _scheduled_job(label, plists[label], uid, disabled)
+    if errors:
+        return {"ok": False, "error": "; ".join(errors), "job": job}
+    return {"ok": True, "job": job}
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print(
-            "usage: kss_app_bridge.py snapshot|stock SYMBOL|report PATH|paper-summary|run TASK",
+            "usage: kss_app_bridge.py snapshot|stock SYMBOL|report PATH|paper-summary|run TASK"
+            "|cron-list|cron-rerun LABEL|cron-enable LABEL|cron-disable LABEL",
             file=sys.stderr,
         )
         return 2
@@ -1999,6 +2222,16 @@ def main(argv: list[str]) -> int:
         result = run_task(argv[2], argv[3:])
         _append_task_history(result)
         _json_dump(result)
+        return 0
+    if command == "cron-list":
+        _json_dump(_scheduled_jobs())
+        return 0
+    if command in {"cron-rerun", "cron-enable", "cron-disable"}:
+        if len(argv) < 3:
+            print(f"{command} requires LABEL", file=sys.stderr)
+            return 2
+        action = command.split("-", 1)[1]  # rerun / enable / disable
+        _json_dump(_cron_action(argv[2], action))
         return 0
     print(f"unknown command: {command}", file=sys.stderr)
     return 2
