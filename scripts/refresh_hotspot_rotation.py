@@ -5,7 +5,7 @@
     python3 scripts/refresh_hotspot_rotation.py --date 20260618
     python3 scripts/refresh_hotspot_rotation.py --date latest
     python3 scripts/refresh_hotspot_rotation.py --date latest --dry-run
-    python3 scripts/refresh_hotspot_rotation.py --date 20260618 --lookback-days 10 --enable-kaipan
+    python3 scripts/refresh_hotspot_rotation.py --date 20260618 --lookback-days 10 --enable-kaipan --enable-leaders
 
 默认保存到 ``storage/sector_rotation/YYYYMMDD.json``.
 """
@@ -94,6 +94,23 @@ def main() -> int:
         help="启用 KAIPAN 外部数据源",
     )
     ap.add_argument(
+        "--enable-leaders",
+        action="store_true",
+        help="启用板块龙头股 persistence 计算",
+    )
+    ap.add_argument(
+        "--leaders-top-n-boards",
+        type=int,
+        default=15,
+        help="最多为前 N 个板块获取龙头",
+    )
+    ap.add_argument(
+        "--leaders-top-n-stocks",
+        type=int,
+        default=5,
+        help="每个板块返回前 N 个龙头",
+    )
+    ap.add_argument(
         "--dry-run",
         action="store_true",
         help="只打印 JSON，不写文件",
@@ -118,6 +135,9 @@ def main() -> int:
         top_n_kaipan=args.top_n_kaipan,
         classification_top_n=args.classification_top_n,
         enable_kaipan=args.enable_kaipan,
+        enable_leaders=args.enable_leaders,
+        leaders_top_n_boards=args.leaders_top_n_boards,
+        leaders_top_n_stocks=args.leaders_top_n_stocks,
     )
     if snap is None:
         logger.error("无法生成 %s 的快照", trade_date)

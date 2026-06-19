@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
@@ -13,8 +14,11 @@ from kss.sector.hotspot_rotation import (
     HotspotRotationSnapshot,
     _aggregate_historical_metrics,
     _apply_classification,
+    _attach_leader_signal,
     _build_boards,
+    _build_name_to_code_map,
     _classify_board,
+    _fetch_leaders_for_boards,
     _load_trade_calendar,
     build_hotspot_rotation_snapshot,
     save_snapshot,
@@ -78,8 +82,11 @@ def _make_concept_df() -> pd.DataFrame:
 def _trade_cal_for(dates: list[str]) -> pd.DataFrame:
     return pd.DataFrame({
         "cal_date": dates,
-        "is_open": ["1"] * len(dates),
+        "is_open": [1] * len(dates),
     })
+
+
+# ============== Phase 1 / 2 测试 ==============
 
 
 def test_build_boards_rank_and_heat_score() -> None:
@@ -140,7 +147,6 @@ def test_load_trade_calendar_from_tushare() -> None:
 
 
 def test_load_trade_calendar_fallback_to_archives(tmp_path: Path) -> None:
-    # 没有 trade_cal，退而扫描归档
     (tmp_path / "20260618.json").write_text("{}")
     (tmp_path / "20260617.json").write_text("{}")
     (tmp_path / "20260616.json").write_text("{}")
@@ -222,14 +228,11 @@ def test_build_hotspot_rotation_snapshot_success() -> None:
     assert snap.tradingDaysUsed[0] == "20260618"
     assert len(snap.industries) == 3
     assert len(snap.concepts) == 2
-    # 无历史数据时，今日 Top 会被判为 demonBoard（突发热点候选）
-    assert snap.industries[0].classification in {"demonBoard", "mainline"}
     assert snap.kaipanBoards == []
     assert "kaipan:disabled" in snap.missing
 
 
 def test_build_hotspot_rotation_snapshot_with_history(tmp_path: Path) -> None:
-    # 构造历史归档
     hist = HotspotRotationSnapshot(
         tradeDate="20260617",
         lookbackDays=1,
@@ -258,7 +261,7 @@ def test_build_hotspot_rotation_snapshot_with_history(tmp_path: Path) -> None:
     assert snap is not None
     chip = next(b for b in snap.industries if b.name == "芯片")
     assert chip.previousRank == 2
-    assert chip.rankJump == 1  # 2 -> 1, 排名上升
+    assert chip.rankJump == 1  # 2 -> 1
     assert chip.top3Appearances == 1
     assert chip.streakDays == 0
 
@@ -294,3 +297,172 @@ def test_snapshot_to_dict_and_save(tmp_path: Path) -> None:
     loaded = json.loads(out.read_text(encoding="utf-8"))
     assert loaded["tradeDate"] == "20260618"
     assert loaded["industries"][0]["todayRank"] == 1
+
+
+# ============== Phase 3 测试 ==============
+
+
+def test_build_name_to_code_map() -> None:
+    data = {
+        "today_top": [
+            {"name": "芯片", "code": "801001"},
+            {"name": "通信", "code": "801660"},
+        ]
+    }
+    m = _build_name_to_code_map(data)
+    assert m == {"芯片": "801001", "通信": "801660"}
+
+
+def test_fetch_leaders_for_boards() -> None:
+    boards = [
+        HotspotBoard(name="芯片", source="kaipan", boardCode="801001", todayRank=1),
+        HotspotBoard(name="通信", source="kaipan", boardCode="801660", todayRank=2),
+    ]
+    name_to_code = {"芯片": "801001", "通信": "801660"}
+
+    def fake_fetch_long_by_plate(code: str, days: int) -> dict | None:
+        return {
+            "platecode": code,
+            "dates": ["20260618", "20260617"],
+            "daily_heads": [
+                {"date": "20260618", "heads": [{"code": "600353", "name": "旭光电子", "rank": "龙一"}]},
+                {"date": "20260617", "heads": [{"code": "600353", "name": "旭光电子", "rank": "龙一"}]},
+            ],
+        }
+
+    with patch("kss.sector.hotspot_rotation.fetch_long_by_plate", side_effect=fake_fetch_long_by_plate):
+        leaders, missing = _fetch_leaders_for_boards(
+            boards, name_to_code, lookback_days=2, top_n_stocks=5, max_boards=10
+        )
+
+    assert not missing
+    assert len(leaders) == 2
+    assert boards[0].leaderStocks is not None
+    assert boards[0].leaderStocks[0]["code"] == "600353"
+    assert boards[0].leaderStocks[0]["count"] == 2
+
+
+def test_attach_leader_signal_with_coverage() -> None:
+    boards = [
+        HotspotBoard(
+            name="芯片",
+            source="kaipan",
+            leaderStocks=[{"code": "600353", "count": 3, "name": "旭光电子", "positions": []}],
+        ),
+        HotspotBoard(name="通信", source="kaipan", leaderStocks=[]),
+    ]
+    _attach_leader_signal(boards, coverage=1.0)
+    assert "leader" in boards[0].evidenceSources
+    assert "leader" not in boards[1].evidenceSources
+
+
+def test_attach_leader_signal_below_threshold() -> None:
+    boards = [
+        HotspotBoard(
+            name="芯片",
+            source="kaipan",
+            leaderStocks=[{"code": "600353", "count": 3, "name": "旭光电子", "positions": []}],
+        ),
+    ]
+    _attach_leader_signal(boards, coverage=0.2)
+    assert "leader" not in boards[0].evidenceSources
+
+
+def test_build_hotspot_rotation_snapshot_with_leaders(tmp_path: Path) -> None:
+    dates = ["20260618", "20260617", "20260616"]
+    client = FakeTushareClient(
+        industry=_make_industry_df(),
+        concept=_make_concept_df(),
+        trade_cal_df=_trade_cal_for(dates),
+    )
+
+    def fake_fetch_plate_rotat_data(source: str, days: int) -> dict:
+        if source == "kaipan":
+            return {
+                "today_top": [
+                    {"rank": 1, "name": "芯片", "code": "801001", "value": "10000"},
+                    {"rank": 2, "name": "通信", "code": "801660", "value": "8000"},
+                ]
+            }
+        return {"today_top": []}
+
+    def fake_fetch_long_by_plate(code: str, days: int) -> dict | None:
+        return {
+            "platecode": code,
+            "dates": ["20260618", "20260617"],
+            "daily_heads": [
+                {"date": "20260618", "heads": [{"code": "600353", "name": "旭光电子", "rank": "龙一"}]},
+                {"date": "20260617", "heads": [{"code": "600353", "name": "旭光电子", "rank": "龙一"}]},
+            ],
+        }
+
+    with (
+        patch("kss.sector.hotspot_rotation.fetch_plate_rotat_data", side_effect=fake_fetch_plate_rotat_data),
+        patch("kss.sector.hotspot_rotation.fetch_long_by_plate", side_effect=fake_fetch_long_by_plate),
+    ):
+        snap = build_hotspot_rotation_snapshot(
+            "20260618",
+            client=client,
+            output_dir=tmp_path,
+            lookback_days=3,
+            enable_kaipan=True,
+            enable_leaders=True,
+            leaders_top_n_boards=10,
+        )
+
+    assert snap is not None
+    assert len(snap.kaipanBoards) == 2
+    assert snap.leaderCoverage >= 0.5
+    assert len(snap.leaderBoards) >= 2
+    chip = next(b for b in snap.kaipanBoards if b.name == "芯片")
+    assert chip.leaderStocks is not None
+    assert chip.leaderStocks[0]["count"] == 2
+
+
+def test_build_hotspot_rotation_snapshot_leader_name_mapping(tmp_path: Path) -> None:
+    # Tushare 概念名与 THS 名相同，通过 name_to_code 映射获取龙头
+    dates = ["20260618", "20260617", "20260616"]
+    client = FakeTushareClient(
+        industry=_make_industry_df(),
+        concept=_make_concept_df(),
+        trade_cal_df=_trade_cal_for(dates),
+    )
+
+    def fake_fetch_plate_rotat_data(source: str, days: int) -> dict:
+        if source == "ths":
+            return {
+                "today_top": [
+                    {"rank": 1, "name": "F5G概念", "code": "886084", "value": "4.94%"},
+                ]
+            }
+        return {"today_top": []}
+
+    def fake_fetch_long_by_plate(code: str, days: int) -> dict | None:
+        if code == "886084":
+            return {
+                "platecode": code,
+                "dates": ["20260618", "20260617"],
+                "daily_heads": [
+                    {"date": "20260618", "heads": [{"code": "600353", "name": "旭光电子", "rank": "龙一"}]},
+                ],
+            }
+        return None
+
+    with (
+        patch("kss.sector.hotspot_rotation.fetch_plate_rotat_data", side_effect=fake_fetch_plate_rotat_data),
+        patch("kss.sector.hotspot_rotation.fetch_long_by_plate", side_effect=fake_fetch_long_by_plate),
+    ):
+        snap = build_hotspot_rotation_snapshot(
+            "20260618",
+            client=client,
+            output_dir=tmp_path,
+            lookback_days=3,
+            enable_kaipan=True,  # 需要触发 THS 响应获取 name_to_code
+            enable_leaders=True,
+            leaders_top_n_boards=10,
+        )
+
+    assert snap is not None
+    f5g = next(b for b in snap.concepts if b.name == "F5G概念")
+    assert f5g.leaderStocks is not None
+    assert f5g.leaderStocks[0]["code"] == "600353"

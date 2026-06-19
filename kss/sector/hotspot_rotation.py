@@ -1,16 +1,17 @@
-"""板块热点轮动 —— 单日快照与历史聚合.
+"""板块热点轮动 —— 单日快照、历史聚合与龙头 persistence.
 
-Phase 2 扩展：
-- 加载最近 N 个交易日归档，计算历史聚合指标.
-- 接入 KAIPAN adapter 获取持续强度分.
-- 四象限分类：真主线 / 妖板 / 老热点退潮 / 卫星.
+Phase 3 扩展：
+- 从 KAIPAN / THS 双源获取板块龙头股矩阵.
+- 计算龙头跨天频次（妖王榜）并写入各板块 ``leaderStocks``.
+- 输出 ``leaderBoards`` 与 ``leaderCoverage``.
 
 设计纪律：
 
 - 数据层失败 → 返回 ``None`` + warning，不外抛.
 - 输出 schema 与 ``docs/plans/2026-06-19-001-feat-sector-hotspot-rotation-plan.md``
   保持一致.
-- 所有比率/金额保留原始单位，JSON 中显式标注.
+- 板块名称空间不一致：Tushare 行业/概念名与 KAIPAN/THS 名不一定一一对应，
+  仅当名字能匹配时才写入 ``leaderStocks``；覆盖率不足时 leader 信号不用于分类.
 """
 
 from __future__ import annotations
@@ -23,7 +24,11 @@ from typing import Any
 
 import pandas as pd
 
-from kss.data.plate_rotation_adapter import fetch_plate_rotat_data
+from kss.data.plate_rotation_adapter import (
+    fetch_long_by_plate,
+    fetch_plate_rotat_data,
+    rank_plate_long_persistence,
+)
 from kss.data.tushare_client import TushareClient
 from kss.sector.scorer import compute_heat_score, load_config
 
@@ -37,6 +42,9 @@ _SOURCE_KEY_MAP: dict[str, str] = {
 }
 DEFAULT_LOOKBACK_DAYS = 5
 DEFAULT_CLASSIFICATION_TOP_N = 10
+DEFAULT_LEADERS_TOP_N_BOARDS = 15
+DEFAULT_LEADERS_TOP_N_STOCKS = 5
+LEADER_COVERAGE_THRESHOLD = 0.5
 
 
 @dataclass
@@ -72,6 +80,7 @@ class HotspotRotationSnapshot:
     lookbackDays: int = 1
     tradingDaysUsed: list[str] = field(default_factory=list)
     historyCoverage: float = 1.0
+    leaderCoverage: float = 0.0
     missing: list[str] = field(default_factory=list)
     industries: list[HotspotBoard] = field(default_factory=list)
     concepts: list[HotspotBoard] = field(default_factory=list)
@@ -106,7 +115,6 @@ def _load_trade_calendar(
     if client is None:
         client = TushareClient()
 
-    # 估算起始日：lookback_days * 1.5 个自然日足够覆盖节假日
     end_dt = pd.to_datetime(trade_date, format="%Y%m%d")
     start_dt = end_dt - pd.Timedelta(days=int(lookback_days * 1.8))
     start_str = start_dt.strftime("%Y%m%d")
@@ -127,7 +135,6 @@ def _load_trade_calendar(
     except Exception as exc:  # noqa: BLE001
         logger.warning("[hotspot_rotation] trade_cal 获取失败: %s", exc)
 
-    # fallback: 扫描归档文件
     try:
         files = sorted(output_dir.glob("*.json"), reverse=True)
         dates = [p.stem for p in files if p.stem.isdigit() and len(p.stem) == 8]
@@ -137,7 +144,6 @@ def _load_trade_calendar(
     except OSError as exc:
         logger.warning("[hotspot_rotation] 扫描归档目录失败: %s", exc)
 
-    # 最后 fallback: 按自然日倒退（只跳过周末）
     days: list[str] = []
     d = end_dt
     while len(days) < lookback_days:
@@ -177,7 +183,6 @@ def _aggregate_historical_metrics(
         boards: 当日板块列表.
         history: ``[(date, boards_that_day), ...]``，newest first，不含当日.
     """
-    # 构建历史索引：name -> list of (date, board)
     hist_by_name: dict[str, list[tuple[str, HotspotBoard]]] = {}
     for date, hist_boards in history:
         for b in hist_boards:
@@ -188,14 +193,10 @@ def _aggregate_historical_metrics(
         if not series:
             continue
 
-        # previousRank: 最近一个交易日的排名
         board.previousRank = series[0][1].todayRank
         board.rankJump = (board.previousRank or 0) - board.todayRank
-
-        # top3Appearances: 近 N 日进入 Top3 的次数
         board.top3Appearances = sum(1 for _, b in series if b.todayRank <= 3)
 
-        # streakDays: 从当前往前连续 todayRank == 1 的交易日数
         streak = 0
         for _, b in series:
             if b.todayRank == 1:
@@ -203,9 +204,6 @@ def _aggregate_historical_metrics(
             else:
                 break
         board.streakDays = streak
-
-        # strengthDelta: 只有当当前 leader 与昨日 leader 同名时才算
-        # Phase 2 无 leader 数据，留 None；用 pct_change 近似不适合，保持 null
         board.strengthDelta = None
 
 
@@ -290,16 +288,71 @@ def _build_kaipan_boards(
     return boards, []
 
 
+def _build_name_to_code_map(
+    plate_rotat_data: dict | None,
+) -> dict[str, str]:
+    """从 getPlateRotatData 响应中提取 name -> code 映射."""
+    if plate_rotat_data is None:
+        return {}
+    rows = plate_rotat_data.get("today_top") or []
+    return {str(r.get("name", "")): str(r.get("code", "")) for r in rows if r.get("name")}
+
+
+def _fetch_leaders_for_boards(
+    boards: list[HotspotBoard],
+    name_to_code: dict[str, str],
+    lookback_days: int,
+    top_n_stocks: int,
+    max_boards: int,
+) -> tuple[list[HotspotBoard], list[str]]:
+    """为可映射的板块获取龙头股并就地写入 ``leaderStocks``.
+
+    Returns:
+        (boards_with_leaders, missing)。
+    """
+    missing: list[str] = []
+    boards_with_leaders: list[HotspotBoard] = []
+
+    for board in boards[:max_boards]:
+        code = board.boardCode or name_to_code.get(board.name)
+        if not code:
+            continue
+        try:
+            long_data = fetch_long_by_plate(code, days=lookback_days)
+            if long_data is None:
+                missing.append(f"leader:{board.name}")
+                continue
+            leaders = rank_plate_long_persistence(long_data, top_n=top_n_stocks)
+            if leaders:
+                board.leaderStocks = leaders
+                boards_with_leaders.append(board)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[hotspot_rotation] 获取 %s 龙头股失败: %s", board.name, exc)
+            missing.append(f"leader:{board.name}")
+
+    return boards_with_leaders, missing
+
+
+def _attach_leader_signal(
+    boards: list[HotspotBoard],
+    coverage: float,
+) -> None:
+    """在覆盖率达标时，为有 persistent leader 的板块追加证据源."""
+    if coverage < LEADER_COVERAGE_THRESHOLD:
+        return
+    for board in boards:
+        leaders = board.leaderStocks or []
+        if any(leader.get("count", 0) >= 2 for leader in leaders):
+            if "leader" not in board.evidenceSources:
+                board.evidenceSources.append("leader")
+
+
 def _classify_board(
     board: HotspotBoard,
     top_n: int,
     kaipan_available: bool,
 ) -> tuple[str, str]:
-    """对单个板块做四象限分类.
-
-    Returns:
-        (classification, confidence)。
-    """
+    """对单个板块做四象限分类."""
     burst = board.todayRank <= top_n
 
     sustained_sources = 0
@@ -347,6 +400,9 @@ def build_hotspot_rotation_snapshot(
     top_n_kaipan: int | None = None,
     classification_top_n: int = DEFAULT_CLASSIFICATION_TOP_N,
     enable_kaipan: bool = False,
+    enable_leaders: bool = False,
+    leaders_top_n_boards: int = DEFAULT_LEADERS_TOP_N_BOARDS,
+    leaders_top_n_stocks: int = DEFAULT_LEADERS_TOP_N_STOCKS,
 ) -> HotspotRotationSnapshot | None:
     """生成板块热点轮动快照.
 
@@ -355,12 +411,15 @@ def build_hotspot_rotation_snapshot(
         client: ``TushareClient`` 实例；``None`` 时用默认单例.
         config_path: 评分配置文件路径.
         lookback_days: 历史回看交易日数（含当日）.
-        output_dir: 历史归档目录，用于加载历史快照.
+        output_dir: 历史归档目录.
         top_n_industry: 行业榜保留前 N；``None`` 保留全部.
         top_n_concept: 概念榜保留前 N；``None`` 保留全部.
         top_n_kaipan: KAIPAN 榜保留前 N；``None`` 保留全部.
-        classification_top_n: 分类阈值（今日爆发/持续强度判断用）.
+        classification_top_n: 分类阈值.
         enable_kaipan: 是否调用 KAIPAN 外部接口.
+        enable_leaders: 是否获取板块龙头股.
+        leaders_top_n_boards: 最多为前 N 个板块获取龙头.
+        leaders_top_n_stocks: 每个板块返回前 N 个龙头.
 
     Returns:
         :class:`HotspotRotationSnapshot`；核心数据源失败时返回 ``None``.
@@ -393,17 +452,14 @@ def build_hotspot_rotation_snapshot(
         historyCoverage=history_coverage,
     )
 
-    # 加载历史归档
     history: list[tuple[str, list[HotspotBoard]]] = []
     for d in history_days:
-        # 尝试加载 industry 和 concept，任一成功即可用于聚合
         ind_hist = _load_historical_boards(d, "industry", output_dir=out_dir)
         cnt_hist = _load_historical_boards(d, "concept", output_dir=out_dir)
         combined = (ind_hist or []) + (cnt_hist or [])
         if combined:
             history.append((d, combined))
 
-    # 行业
     if raw_ind is not None and "content_type" in raw_ind.columns:
         raw_ind = raw_ind[raw_ind["content_type"] == "行业"].reset_index(drop=True)
 
@@ -418,7 +474,6 @@ def build_hotspot_rotation_snapshot(
     _aggregate_historical_metrics(snap.industries, history)
     snap.missing.extend(ind_missing)
 
-    # 概念
     snap.concepts, cnt_missing = _build_boards(
         raw_cnt,
         source="concept",
@@ -430,14 +485,15 @@ def build_hotspot_rotation_snapshot(
     _aggregate_historical_metrics(snap.concepts, history)
     snap.missing.extend(cnt_missing)
 
-    # KAIPAN
+    kaipan_data: dict | None = None
+    ths_data: dict | None = None
     kaipan_missing: list[str] = []
     if enable_kaipan:
         kaipan_data = fetch_plate_rotat_data("kaipan", days=lookback_days)
+        ths_data = fetch_plate_rotat_data("ths", days=lookback_days)
         snap.kaipanBoards, kaipan_missing = _build_kaipan_boards(
             kaipan_data, top_n=top_n_kaipan
         )
-        # 尝试按名称把 KAIPAN 强度分嫁接到 industry/concept 板上
         kaipan_by_name = {b.name: b for b in snap.kaipanBoards}
         for b in snap.industries + snap.concepts:
             k = kaipan_by_name.get(b.name)
@@ -451,7 +507,44 @@ def build_hotspot_rotation_snapshot(
 
     snap.missing.extend(kaipan_missing)
 
-    # 分类
+    # 龙头 persistence
+    if enable_leaders:
+        name_to_code: dict[str, str] = {}
+        name_to_code.update(_build_name_to_code_map(kaipan_data))
+        name_to_code.update(_build_name_to_code_map(ths_data))
+
+        candidate_boards = (
+            snap.kaipanBoards[:leaders_top_n_boards]
+            + snap.concepts[:leaders_top_n_boards]
+            + snap.industries[:leaders_top_n_boards]
+        )
+        # 去重，KAIPAN 板优先
+        seen: set[str] = set()
+        unique_candidates: list[HotspotBoard] = []
+        for b in candidate_boards:
+            key = f"{b.source}:{b.name}"
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_candidates.append(b)
+
+        boards_with_leaders, leader_missing = _fetch_leaders_for_boards(
+            unique_candidates,
+            name_to_code,
+            lookback_days=lookback_days,
+            top_n_stocks=leaders_top_n_stocks,
+            max_boards=leaders_top_n_boards,
+        )
+        snap.leaderBoards = sorted(
+            boards_with_leaders,
+            key=lambda b: b.todayRank if b.todayRank > 0 else 999,
+        )
+        attempted = len(unique_candidates)
+        snap.leaderCoverage = len(boards_with_leaders) / attempted if attempted > 0 else 0.0
+        snap.missing.extend(leader_missing)
+
+        _attach_leader_signal(snap.industries + snap.concepts + snap.kaipanBoards, snap.leaderCoverage)
+
     kaipan_available = enable_kaipan and not any("disabled" in m for m in kaipan_missing)
     _apply_classification(snap.industries, classification_top_n, kaipan_available, snap.crossSourceSignals)
     _apply_classification(snap.concepts, classification_top_n, kaipan_available, snap.crossSourceSignals)
