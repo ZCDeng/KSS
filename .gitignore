@@ -62,3 +62,6 @@ storage/legacy/
 
 # scan 排名输出（数据产物，可重建）
 scan_*_rank.csv
+
+# SwiftPM 桌面 app 构建产物
+/dist/
