@@ -52,6 +52,7 @@ struct SectorPulse: Codable, Hashable, Identifiable {
     var regimeMom20: Double?
     var regimeMom20Th: Double?
     var themes: [SectorTheme]
+    var commentary: String?   // 投顾点评 Markdown（概念轮动 / 七大主题 / 加减仓建议 等）
 }
 
 struct SectorTheme: Codable, Identifiable, Hashable {

@@ -130,7 +130,24 @@ def run_review(
         client=llm_client,
         etf_radar=etf_radar,
     )
+    _archive_commentary(trade_date, commentary)
     return commentary, snap.missing
+
+
+def _archive_commentary(trade_date: str, commentary: str) -> None:
+    """投顾点评落盘 ``storage/etf_radar/YYYYMMDD.commentary.md``（桌面端复盘读取）。
+
+    first-write-wins：与雷达存档一致，回放旧日期不覆盖当时发布内容。
+    """
+    if not commentary:
+        return
+    RADAR_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+    path = RADAR_ARCHIVE_DIR / f"{trade_date}.commentary.md"
+    if path.exists():
+        logger.info("点评存档已存在, 跳过: %s", path)
+        return
+    path.write_text(commentary, encoding="utf-8")
+    logger.info("点评存档: %s", path)
 
 
 def main() -> None:

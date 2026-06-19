@@ -1565,11 +1565,28 @@ def _pulse_from_dict(d: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _commentary_to_md(raw: str) -> str:
+    """投顾点评 HTML 化标签 → Markdown：段标题转 ##，行内 <b>/<i>/<u> 转强调。"""
+    lines: list[str] = []
+    for line in raw.splitlines():
+        s = line.strip()
+        header = re.fullmatch(r"<b>(.+?)</b>", s)
+        if header:
+            lines.append(f"## {header.group(1)}")
+        else:
+            lines.append(line)
+    text = "\n".join(lines)
+    for src, dst in (("<b>", "**"), ("</b>", "**"), ("<i>", "*"), ("</i>", "*"), ("<u>", "**"), ("</u>", "**")):
+        text = text.replace(src, dst)
+    return text
+
+
 def _sector_reviews(limit: int = 40) -> list[dict[str, Any]]:
     """每日板块复盘序列：逐份 etf_radar 切片，新到旧。
 
-    数据源 storage/etf_radar/YYYYMMDD.json。板块复盘与个股复盘一样是每日一篇，
-    故返回列表供复盘页按日期浏览；总览板块信息图取首项（最新一天）。
+    数据源 storage/etf_radar/YYYYMMDD.json；同名 .commentary.md 为投顾点评
+    （含 概念轮动 / 七大主题 / 加减仓建议 等段落）。板块复盘与个股复盘一样每日一篇，
+    返回列表供复盘页按日期浏览；总览板块信息图取首项（最新一天）。
     """
     if not ETF_RADAR_DIR.exists():
         return []
@@ -1581,8 +1598,17 @@ def _sector_reviews(limit: int = 40) -> list[dict[str, Any]]:
         except Exception:
             continue
         pulse = _pulse_from_dict(d)
-        if pulse:
-            out.append(pulse)
+        if not pulse:
+            continue
+        commentary_path = fp.with_name(f"{fp.stem}.commentary.md")
+        if commentary_path.exists():
+            try:
+                pulse["commentary"] = _commentary_to_md(commentary_path.read_text(encoding="utf-8"))
+            except Exception:
+                pulse["commentary"] = None
+        else:
+            pulse["commentary"] = None
+        out.append(pulse)
     return out
 
 

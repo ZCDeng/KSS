@@ -249,11 +249,26 @@ struct SectorReviewPanel: View {
                         .foregroundStyle(KSSTheme.textBody)
                 }
 
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 188), spacing: 10)], spacing: 10) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 152), spacing: 12)], spacing: 12) {
                     ForEach(pulse.themes) { SectorChip(theme: $0) }
                 }
 
                 SectorReviewTable(themes: pulse.themes)
+
+                // 投顾点评：概念轮动 / 七大主题 / 加减仓建议 等文字，附在表格下方
+                if let commentary = pulse.commentary, !commentary.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            RoundedRectangle(cornerRadius: 2).fill(KSSTheme.accent).frame(width: 4, height: 16)
+                            Text("投顾点评")
+                                .font(KSSFont.serif(16, .semibold))
+                                .foregroundStyle(KSSTheme.textPrimary)
+                        }
+                        CommentaryView(markdown: commentary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .kssCard(padding: 16)
+                    }
+                }
 
                 if !pulse.note.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
@@ -286,6 +301,58 @@ struct SectorReviewPanel: View {
         let on = pulse.regimeInRegime == true
         let th = pulse.regimeMom20Th.map { String(format: "%.1f", $0) } ?? "-"
         return "动量体制：mom20 \(String(format: "%.1f", mom))（阈值 \(th)）· \(on ? "趋势确认 ✅" : "未达阈值 / 震荡")"
+    }
+}
+
+/// 投顾点评：把 `## 段标题` + `**强调**` 的 Markdown 原生渲染（避免 ScrollView 内嵌 WebView 测高问题）。
+struct CommentaryView: View {
+    var markdown: String
+
+    private struct Block: Identifiable {
+        let id = UUID()
+        let isHeader: Bool
+        let text: String
+    }
+
+    private var blocks: [Block] {
+        var out: [Block] = []
+        for para in markdown.components(separatedBy: "\n\n") {
+            let trimmed = para.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { continue }
+            if trimmed.hasPrefix("## ") {
+                out.append(Block(isHeader: true, text: String(trimmed.dropFirst(3))))
+            } else {
+                out.append(Block(isHeader: false, text: trimmed))
+            }
+        }
+        return out
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            ForEach(blocks) { block in
+                if block.isHeader {
+                    Text(block.text)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(KSSTheme.accent)
+                        .padding(.top, 2)
+                } else {
+                    Text(attributed(block.text))
+                        .font(.system(size: 13))
+                        .foregroundStyle(KSSTheme.textBody)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    private func attributed(_ text: String) -> AttributedString {
+        (try? AttributedString(
+            markdown: text,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )) ?? AttributedString(text)
     }
 }
 

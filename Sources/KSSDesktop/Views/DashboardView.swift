@@ -361,12 +361,18 @@ struct SectorChip: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 6) {
+            HStack(spacing: 5) {
                 Text(theme.name)
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(KSSTheme.textPrimary)
                     .lineLimit(1)
-                Spacer(minLength: 0)
+                if theme.accel {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(KSSTheme.accent)
+                        .help("资金加速")
+                }
+                Spacer(minLength: 4)
                 gradeBadge
             }
             HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -377,15 +383,10 @@ struct SectorChip: View {
                     .font(.system(size: 18, weight: .heavy).monospacedDigit())
                     .foregroundStyle(KSSTheme.signColor(theme.past5Ret ?? 0))
             }
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 flowItem("1日", theme.flow1d)
                 flowItem("5日", theme.flow5d)
-                if theme.accel {
-                    Label("加速", systemImage: "bolt.fill")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(KSSTheme.accent)
-                        .labelStyle(.titleAndIcon)
-                }
+                Spacer(minLength: 0)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -416,6 +417,8 @@ struct SectorChip: View {
                 .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
                 .foregroundStyle(KSSTheme.textBody)
         }
+        .lineLimit(1)
+        .fixedSize()
     }
 }
 
