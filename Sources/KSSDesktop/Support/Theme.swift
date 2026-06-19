@@ -1,29 +1,29 @@
 import SwiftUI
 
-/// Dark fintech trading-dashboard design system. Charcoal canvas, raised card
-/// surfaces, a single blue accent for chrome, and A-share semantics (红涨绿跌)
-/// reserved strictly for price/return values.
+/// Design system aligned to the Discord token set (design-systems/discord):
+/// warm near-black canvas, raised card surfaces, blurple accent for chrome.
+/// A-share semantics (红涨绿跌) are reserved strictly for price/return values.
 enum KSSTheme {
-    // Surfaces
-    static let canvas = Color(hex: 0x131722)        // app background
-    static let surface = Color(hex: 0x1E222D)        // cards
-    static let surfaceRaised = Color(hex: 0x252A38)  // hover / nested
-    static let chartSurface = Color(hex: 0x1E222D)
-    static let hairline = Color(hex: 0x2A2E39)       // borders / dividers
+    // Surfaces (Discord: --bg / --surface / elevated / --border)
+    static let canvas = Color(hex: 0x1E1F22)         // --bg
+    static let surface = Color(hex: 0x2B2D31)        // --surface (cards)
+    static let surfaceRaised = Color(hex: 0x313338)  // elevated / nested
+    static let chartSurface = Color(hex: 0x2B2D31)
+    static let hairline = Color(hex: 0x3F4147)       // --border
 
-    // Text
-    static let textPrimary = Color(hex: 0xD1D4DC)
-    static let textSecondary = Color(hex: 0x787B86)
+    // Text (Discord: --fg / --muted)
+    static let textPrimary = Color(hex: 0xDBDEE1)
+    static let textSecondary = Color(hex: 0x949BA4)
 
     // Accents
-    static let accent = Color(hex: 0x4C82FB)         // selection / links / chrome
+    static let accent = Color(hex: 0x5865F2)         // Discord blurple
     static let up = Color(hex: 0xF23645)             // 红涨
     static let down = Color(hex: 0x089981)           // 绿跌
     static let ma5 = Color(hex: 0xFF9F1C)
-    static let ma20 = Color(hex: 0x4C82FB)
+    static let ma20 = Color(hex: 0x5865F2)
 
     // Geometry
-    static let cardRadius: CGFloat = 12
+    static let cardRadius: CGFloat = 14
 
     /// Tint a number by sign using A-share semantics. nil/zero stays neutral.
     static func signColor(_ value: Double?) -> Color {

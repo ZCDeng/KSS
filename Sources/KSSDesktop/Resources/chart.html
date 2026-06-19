@@ -7,24 +7,24 @@
   :root { color-scheme: dark; }
   html, body {
     margin: 0; padding: 0; height: 100%; width: 100%;
-    background: #1E222D;
+    background: #2B2D31;
     overflow: hidden;
     font-family: -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
   }
   #chart { position: absolute; inset: 0; }
   #legend {
     position: absolute; top: 10px; left: 12px; z-index: 5;
-    font-size: 11px; line-height: 1.5; color: #D1D4DC;
+    font-size: 11px; line-height: 1.5; color: #DBDEE1;
     pointer-events: none; letter-spacing: 0.2px;
   }
   #legend .row { display: flex; gap: 12px; }
-  #legend .k { color: #787B86; }
+  #legend .k { color: #949BA4; }
   .ma5 { color: #FF9F1C; }
-  .ma20 { color: #4C82FB; }
+  .ma20 { color: #5865F2; }
   #empty {
     position: absolute; inset: 0; display: none;
     align-items: center; justify-content: center;
-    color: #787B86; font-size: 13px;
+    color: #949BA4; font-size: 13px;
   }
 </style>
 </head>
@@ -39,10 +39,10 @@
       up: "#F23645",      // A股 红涨
       down: "#089981",    // A股 绿跌
       ma5: "#FF9F1C",
-      ma20: "#4C82FB",
-      grid: "#2A2E39",
-      text: "#787B86",
-      bg: "#1E222D",
+      ma20: "#5865F2",    // Discord blurple
+      grid: "#3F4147",    // --border
+      text: "#949BA4",    // --muted
+      bg: "#2B2D31",      // --surface
     };
 
     let chart, candleSeries, volumeSeries, ma5Series, ma20Series;
@@ -77,8 +77,8 @@
         timeScale: { borderColor: COLORS.grid, rightOffset: 4, fixLeftEdge: true },
         crosshair: {
           mode: LightweightCharts.CrosshairMode.Normal,
-          vertLine: { color: "#4C82FB", width: 1, style: 3, labelBackgroundColor: "#4C82FB" },
-          horzLine: { color: "#4C82FB", width: 1, style: 3, labelBackgroundColor: "#4C82FB" },
+          vertLine: { color: "#5865F2", width: 1, style: 3, labelBackgroundColor: "#5865F2" },
+          horzLine: { color: "#5865F2", width: 1, style: 3, labelBackgroundColor: "#5865F2" },
         },
         handleScroll: true,
         handleScale: true,

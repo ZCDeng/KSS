@@ -53,10 +53,12 @@ struct SectionHeader: View {
     }
 
     var body: some View {
-        Text(title)
-            .font(.headline)
-            .foregroundStyle(KSSTheme.textPrimary)
-            .padding(.top, 4)
+        // Discord section-eyebrow: mono, uppercase, tracked, accent.
+        Text(title.uppercased())
+            .font(.system(.caption, design: .monospaced).weight(.semibold))
+            .tracking(1.2)
+            .foregroundStyle(KSSTheme.accent)
+            .padding(.top, 6)
     }
 }
 
@@ -66,12 +68,14 @@ struct StatTile: View {
     var tint: Color = KSSTheme.textPrimary
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.caption)
+        // Discord KPI tile: uppercase tracked muted label, display value, optional delta tint.
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title.uppercased())
+                .font(.system(size: 10.5, weight: .medium))
+                .tracking(0.6)
                 .foregroundStyle(KSSTheme.textSecondary)
             Text(value)
-                .font(.title3.weight(.semibold).monospacedDigit())
+                .font(.title3.weight(.bold).monospacedDigit())
                 .foregroundStyle(tint)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)

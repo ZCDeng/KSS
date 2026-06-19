@@ -14,7 +14,7 @@ struct ChartWebView: NSViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.setValue(false, forKey: "drawsBackground") // transparent until chart paints
-        webView.underPageBackgroundColor = NSColor(red: 0x1E/255, green: 0x22/255, blue: 0x2D/255, alpha: 1)
+        webView.underPageBackgroundColor = NSColor(red: 0x2B/255, green: 0x2D/255, blue: 0x31/255, alpha: 1)
 
         if let html = Bundle.module.url(forResource: "chart", withExtension: "html") {
             webView.loadFileURL(html, allowingReadAccessTo: html.deletingLastPathComponent())

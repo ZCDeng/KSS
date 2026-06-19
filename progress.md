@@ -15,7 +15,7 @@
   - 新增 `Views/ChartWebView.swift`：`NSViewRepresentable` 包 `WKWebView`，Swift 持有数据、Web 只负责渲染，OHLC/量能以 JSON 注入。
   - `Package.swift` 声明 resources；`script/build_and_run.sh` 把 `KSSDesktop_KSSDesktop.bundle` 拷进 `.app`，保证 `Bundle.module` 运行时可解析。
 - **数据层补全 OHLC**：bridge `stock_detail` 的 history 增加 `open/high/low/volume`；`PricePoint` 同步加字段（不动选股逻辑与本地 CSV）。
-- **暗色交易台设计系统**：新增 `Support/Theme.swift`（画布 #131722 / 卡片 #1E222D / 描边 #2A2E39 / 蓝色强调 #4C82FB），`kssCard` 卡片修饰符，`signColor` 按红涨绿跌着色。Dashboard / Stocks / Backtests / Reviews / Runbook / Recommendations 全量改用暗色卡片与画布；强制 `.preferredColorScheme(.dark)`。
+- **暗色设计系统对齐 Discord token**：`Support/Theme.swift` 采用 Discord design system（`Discord-showcase.html` 的 DESIGN.md token）——画布 #1E1F22(--bg) / 卡片 #2B2D31(--surface) / 描边 #3F4147(--border) / blurple 强调 #5865F2(--accent) / 正文 #DBDEE1(--fg) / 次要 #949BA4(--muted)，圆角 14。组件采用 Discord 习语：KPI tile 大写 tracked 标签 + 等宽数值，SectionHeader 改 mono 大写 blurple eyebrow，badge 用 accent 染色。`kssCard` 修饰符 + `signColor` 红涨绿跌。Dashboard / Stocks / Backtests / Reviews / Runbook / Recommendations 全量改用 Discord 卡片与画布；强制 `.preferredColorScheme(.dark)`。图表同步换 Discord token（surface 底、blurple MA20/crosshair、muted 轴）。
 - **修掉一个会卡死的 bridge bug**（阻塞全 App，非本次新引入）：`BridgeClient.run` 原先 `waitUntilExit()` 之后才读 stdout；snapshot JSON 已涨到 ~83KB，超过 ~64KB 管道缓冲，bridge 卡在 `print` 写、App 卡在等退出，死锁。改为后台并发抽干 stderr、主线程读 stdout、再 wait。snapshot 子进程从“分钟级不返回”变为正常完成。
 
 **验证**
