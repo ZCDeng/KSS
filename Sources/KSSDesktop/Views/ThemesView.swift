@@ -104,7 +104,7 @@ private struct ThemeCard: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(KSSTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: 9))
+        .background(KSSTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
     }
 
     @ViewBuilder

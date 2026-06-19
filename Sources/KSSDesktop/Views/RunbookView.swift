@@ -166,7 +166,7 @@ struct ScheduledJobRow: View {
         }
         .padding(.horizontal, 14).padding(.vertical, 11)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: 10))
+        .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
         .opacity(job.enabled ? 1 : 0.55)   // 停用态整行降透明
     }
 
@@ -269,7 +269,7 @@ struct TaskResultCard: View {
                     .textSelection(.enabled)
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(KSSTheme.canvas, in: RoundedRectangle(cornerRadius: 6))
+                    .background(KSSTheme.canvas, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
             }
             if !result.stderr.isEmpty {
                 Text(result.stderr)

@@ -80,7 +80,7 @@ struct SidebarView: View {
             .padding(.vertical, 9)
             .background(
                 isOn ? KSSTheme.accent : Color.clear,
-                in: RoundedRectangle(cornerRadius: 9)
+                in: RoundedRectangle(cornerRadius: KSSTheme.shapeS)
             )
             .contentShape(Rectangle())
         }
@@ -99,7 +99,7 @@ struct SidebarView: View {
                         .foregroundStyle(isOn ? Color.white : KSSTheme.accent)
                         .background(
                             isOn ? KSSTheme.accent : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 9)
+                            in: RoundedRectangle(cornerRadius: KSSTheme.shapeS)
                         )
                 }
                 .buttonStyle(.plain)

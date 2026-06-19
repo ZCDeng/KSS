@@ -6,6 +6,8 @@ struct HotspotRotationView: View {
     var rotation: HotspotRotationSummary?
     /// 点击板块名跳概念主题页（可选）。
     var onOpenThemes: () -> Void
+    /// 点击妖王股票 → 不在池则导入。
+    var onSelectSymbol: (String) -> Void
 
     // M3：内容封顶 1080 居中，统一外边距。
     private let margin: CGFloat = 24
@@ -159,37 +161,42 @@ struct HotspotRotationView: View {
     }
 
     private func leaderRow(rank: Int, leader: HotspotLeaderStock) -> some View {
-        HStack(spacing: 12) {
-            Text("\(rank)")
-                .font(.system(size: 14, weight: .heavy).monospacedDigit())
-                .foregroundStyle(rank <= 3 ? KSSTheme.accent : KSSTheme.textSecondary)
-                .frame(width: 22)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    Text(leader.name)
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(KSSTheme.textPrimary)
-                    Text(leader.symbol)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(KSSTheme.textSecondary)
-                    Text("霸榜 \(leader.appearances) 次")
-                        .font(.system(size: 10.5, weight: .bold))
-                        .foregroundStyle(KSSTheme.up)
-                        .padding(.horizontal, 6).padding(.vertical, 1.5)
-                        .background(KSSTheme.up.opacity(0.12), in: Capsule())
+        Button { onSelectSymbol(leader.symbol) } label: {
+            HStack(spacing: 12) {
+                Text("\(rank)")
+                    .font(.system(size: 14, weight: .heavy).monospacedDigit())
+                    .foregroundStyle(rank <= 3 ? KSSTheme.accent : KSSTheme.textSecondary)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(leader.name)
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(KSSTheme.textPrimary)
+                        Text(leader.symbol)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(KSSTheme.textSecondary)
+                        Text("霸榜 \(leader.appearances) 次")
+                            .font(.system(size: 10.5, weight: .bold))
+                            .foregroundStyle(KSSTheme.up)
+                            .padding(.horizontal, 6).padding(.vertical, 1.5)
+                            .background(KSSTheme.up.opacity(0.12), in: Capsule())
+                    }
+                    if let positions = leader.positions, !positions.isEmpty {
+                        Text(positions.prefix(4).map(Self.shortPosition).joined(separator: "  "))
+                            .font(.system(size: 10.5, design: .monospaced))
+                            .foregroundStyle(KSSTheme.textSecondary)
+                            .lineLimit(1)
+                    }
                 }
-                if let positions = leader.positions, !positions.isEmpty {
-                    Text(positions.prefix(4).map(Self.shortPosition).joined(separator: "  "))
-                        .font(.system(size: 10.5, design: .monospaced))
-                        .foregroundStyle(KSSTheme.textSecondary)
-                        .lineLimit(1)
-                }
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 14).padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: 10))
+        .buttonStyle(.plain)
+        .help("\(leader.name) \(leader.symbol) · 点击查看 / 不在池则导入")
     }
 
     /// "2026-06-18/龙一" → "06-18 龙一"

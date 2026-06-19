@@ -32,13 +32,30 @@ enum KSSTheme {
     static let ma5 = adaptive(light: 0xF5A623, dark: 0xFF9F1C)
     static let ma20 = adaptive(light: 0x2962FF, dark: 0x4C82FB)
 
-    // Geometry
-    static let cardRadius: CGFloat = 12
+    // Geometry — M3 形状比例（corner radius, dp）
+    // https://m3.material.io/styles/shape  none=0 / xs=4 / s=8 / m=12 / l=16 / xl=28 / full=胶囊
+    static let shapeXS: CGFloat = 4    // 小徽标 / 细分隔
+    static let shapeS: CGFloat = 8     // 内嵌小卡 / chip 容器 / 列表行
+    static let shapeM: CGFloat = 12    // 卡片（默认）
+    static let shapeL: CGFloat = 16    // 大容器 / 浮层 / 弹窗条
+    static let shapeXL: CGFloat = 28   // 对话框 / 全屏浮层
+    /// 卡片默认圆角（= M3 medium）。保留旧名，统一指向 shapeM。
+    static let cardRadius: CGFloat = shapeM
 
     static func signColor(_ value: Double?) -> Color {
         guard let value, value != 0 else { return textBody }
         return value > 0 ? up : down
     }
+
+    // MARK: M3 Motion
+    // https://m3.material.io/styles/motion/transitions/transition-patterns
+    /// emphasized 缓动（M3 标准强调曲线）+ medium 时长 300ms。
+    static let motionStandard = Animation.timingCurve(0.2, 0, 0, 1, duration: 0.3)
+    /// 页面切换 = M3「fade through」：入场淡入+从 94% 放大，出场淡出。
+    static let fadeThrough = AnyTransition.asymmetric(
+        insertion: .opacity.combined(with: .scale(scale: 0.94)),
+        removal: .opacity
+    )
 
     private static func adaptive(light: UInt, dark: UInt) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in

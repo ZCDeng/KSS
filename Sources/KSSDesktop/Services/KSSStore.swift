@@ -18,6 +18,7 @@ final class KSSStore: ObservableObject {
     @Published var scheduledJobs: [ScheduledJob] = []
     @Published var scheduledBusy: Set<String> = []   // 正在操作的 label（行级 loading）
     @Published var themeLeaders: [ThemeLeaders] = []
+    @Published var importingSymbol: String?   // 点击导入进行中的代码（行级/全局指示）
     @Published var errorMessage: String?
 
     private let bridge: BridgeClient?
@@ -61,6 +62,34 @@ final class KSSStore: ObservableObject {
             self.stockDetail = detail
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    /// 点击任意页面出现的股票：在池→直接看；不在池→先导入（拉日线进池）再看。
+    /// symbol 可为完整 ts_code（如 688114.SH）或裸 6 位码（如 603407）。
+    func selectStock(_ symbol: String, navigate: Bool = true) async {
+        if let s = poolStock(matching: symbol) {
+            if navigate { selectedSection = .stocks }
+            await loadStock(symbol: s.symbol)
+            return
+        }
+        // 不在池 → 导入（resolve + fetch_stock_data 拉日线 + reload snapshot）
+        importingSymbol = symbol
+        defer { importingSymbol = nil }
+        _ = await importStocks([symbol])
+        if let s = poolStock(matching: symbol) {
+            if navigate { selectedSection = .stocks }
+            await loadStock(symbol: s.symbol)
+        } else {
+            errorMessage = "无法导入「\(symbol)」：未能解析或拉取该股票数据（需正式 Python 环境 + 可识别的代码）。"
+        }
+    }
+
+    /// 在当前快照股票池里按 ts_code 或裸 6 位码匹配。
+    private func poolStock(matching symbol: String) -> StockSummary? {
+        let bare = String(symbol.split(separator: ".").first ?? Substring(symbol))
+        return snapshot?.stocks.first { s in
+            s.symbol == symbol || String(s.symbol.split(separator: ".").first ?? "") == bare
         }
     }
 

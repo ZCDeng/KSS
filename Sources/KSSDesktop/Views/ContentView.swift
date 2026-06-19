@@ -58,9 +58,15 @@ struct ContentView: View {
             Divider().overlay(KSSTheme.hairline)
 
             NavigationStack {
-                detail
-                    .background(KSSTheme.canvas)
-                    .toolbar {
+                ZStack {
+                    detail
+                        .id(store.selectedSection)
+                        .transition(KSSTheme.fadeThrough)
+                }
+                .animation(KSSTheme.motionStandard, value: store.selectedSection)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(KSSTheme.canvas)
+                .toolbar {
                         ToolbarItemGroup {
                             if store.isLoading {
                                 ProgressView()
@@ -82,6 +88,23 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 1080, minHeight: 720)
+        .overlay(alignment: .bottom) {
+            if let sym = store.importingSymbol {
+                HStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text("正在导入 \(sym) … 拉取日线并加入股票池")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(KSSTheme.textPrimary)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 11)
+                .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeL))
+                .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeL).stroke(KSSTheme.hairline))
+                .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
+                .padding(.bottom, 24)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: store.importingSymbol)
         .alert("KSS", isPresented: Binding(
             get: { store.errorMessage != nil },
             set: { if !$0 { store.errorMessage = nil } }
@@ -99,16 +122,12 @@ struct ContentView: View {
             case .dashboard:
                 DashboardView(
                     snapshot: snapshot,
-                    onSelectSymbol: { symbol in
-                        Task { await store.loadStock(symbol: symbol) }
-                        store.selectedSection = .stocks
-                    },
+                    onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } },
                     onOpenSection: { section in store.selectedSection = section }
                 )
             case .recommendations:
                 RecommendationsView(snapshot: snapshot) { symbol in
-                    Task { await store.loadStock(symbol: symbol) }
-                    store.selectedSection = .stocks
+                    Task { await store.selectStock(symbol) }
                 }
             case .watchlist:
                 StockBrowserView(
@@ -118,7 +137,7 @@ struct ContentView: View {
                     detail: store.stockDetail,
                     watchlist: watchlist,
                     searchText: $searchText,
-                    onSelect: { symbol in Task { await store.loadStock(symbol: symbol) } },
+                    onSelect: { symbol in Task { await store.selectStock(symbol, navigate: false) } },
                     onToggleWatchlist: toggleWatchlist
                 )
             case .runbook:
@@ -136,16 +155,14 @@ struct ContentView: View {
             case .hotspot:
                 HotspotRotationView(
                     rotation: snapshot.latestSectorRotation,
-                    onOpenThemes: { store.selectedSection = .themes }
+                    onOpenThemes: { store.selectedSection = .themes },
+                    onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } }
                 )
             case .themes:
                 ThemesView(
                     themes: store.themeLeaders,
                     onLoad: { Task { await store.loadThemeLeaders() } },
-                    onSelectSymbol: { symbol in
-                        Task { await store.loadStock(symbol: symbol) }
-                        store.selectedSection = .stocks
-                    }
+                    onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } }
                 )
             case .reviews:
                 ReviewsView(
@@ -177,7 +194,7 @@ struct ContentView: View {
                     detail: store.stockDetail,
                     watchlist: watchlist,
                     searchText: $searchText,
-                    onSelect: { symbol in Task { await store.loadStock(symbol: symbol) } },
+                    onSelect: { symbol in Task { await store.selectStock(symbol, navigate: false) } },
                     onToggleWatchlist: toggleWatchlist
                 )
             case .architecture:

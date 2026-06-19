@@ -232,8 +232,8 @@ struct TrackingDayCard: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .background(KSSTheme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(KSSTheme.hairline))
+        .clipShape(RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+        .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeM).stroke(KSSTheme.hairline))
     }
 
     private func horizonCell(_ value: Double?, bold: Bool) -> some View {
