@@ -28,6 +28,38 @@ struct HotspotLeaderStock: Codable, Hashable, Identifiable {
     var name: String
     var appearances: Int
     var positions: [String]?
+
+    // bridge 有两种 leaderStocks 形态：摘要卡 topLeaders 用 symbol/appearances，
+    // 归档全快照 leaderBoards[].leaderStocks 是原始 code/count。两者都要能解码，
+    // 否则进「复盘」加载全快照时 keyNotFound → "Bridge returned invalid JSON"。
+    enum CodingKeys: String, CodingKey {
+        case symbol, code, name, appearances, count, positions
+    }
+
+    init(symbol: String, name: String, appearances: Int, positions: [String]?) {
+        self.symbol = symbol
+        self.name = name
+        self.appearances = appearances
+        self.positions = positions
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        symbol = (try? c.decode(String.self, forKey: .symbol))
+            ?? (try? c.decode(String.self, forKey: .code)) ?? ""
+        name = (try? c.decode(String.self, forKey: .name)) ?? ""
+        appearances = (try? c.decode(Int.self, forKey: .appearances))
+            ?? (try? c.decode(Int.self, forKey: .count)) ?? 0
+        positions = try? c.decode([String].self, forKey: .positions)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(symbol, forKey: .symbol)
+        try c.encode(name, forKey: .name)
+        try c.encode(appearances, forKey: .appearances)
+        try c.encodeIfPresent(positions, forKey: .positions)
+    }
 }
 
 /// 板块热点轮动：单个板块（行业/概念/KAIPAN/leader 板）.
