@@ -175,9 +175,9 @@ struct StockDetailView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     ChartLegend()
                     ChartWebView(points: detail.history)
-                        .frame(minHeight: 360)
+                        .frame(minHeight: 520)
                 }
-                .frame(height: 400)
+                .frame(height: 560)
                 .background(KSSTheme.chartSurface)
                 .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
                 .overlay(

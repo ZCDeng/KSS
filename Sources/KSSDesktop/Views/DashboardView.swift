@@ -15,12 +15,17 @@ struct DashboardView: View {
                     StatTile(title: "跟踪 Sharpe", value: KSSFormat.number(snapshot.tracking.sharpe), tint: KSSTheme.signColor(snapshot.tracking.sharpe))
                 }
 
-                SectionHeader("每日推荐")
+                SectionHeader("推荐")
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 10)], spacing: 10) {
                     ForEach(snapshot.recommendations.prefix(6)) { item in
                         RecommendationCard(item: item)
                             .onTapGesture { onSelectSymbol(item.symbol) }
                     }
+                }
+
+                if let scan = snapshot.bjScan {
+                    SectionHeader("北证 50 扫描")
+                    BJScanSection(scan: scan, onSelect: onSelectSymbol)
                 }
 
                 SectionHeader("最近复盘")
@@ -121,6 +126,59 @@ struct RecommendationCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .kssCard(padding: 14)
+    }
+}
+
+struct BJScanSection: View {
+    var scan: BJScan
+    var onSelect: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                StatTile(title: "扫描日", value: bjDate(scan.scanDate))
+                StatTile(title: "标的数", value: "\(scan.total)")
+                StatTile(title: "通过筛选", value: "\(scan.passed)", tint: KSSTheme.accent)
+            }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 10)], spacing: 10) {
+                ForEach(scan.top) { item in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(item.name.isEmpty ? item.symbol : item.name)
+                                .font(.system(size: 14.5, weight: .bold))
+                                .foregroundStyle(KSSTheme.textPrimary)
+                                .lineLimit(1)
+                            Spacer()
+                            Text(KSSFormat.number(item.score, digits: 2))
+                                .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                                .foregroundStyle(KSSTheme.accent)
+                        }
+                        Text("\(item.symbol) · \(item.industry)")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(KSSTheme.textSecondary)
+                            .lineLimit(1)
+                        HStack {
+                            Text(item.tag)
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(KSSTheme.textSecondary)
+                                .lineLimit(1)
+                            Spacer()
+                            Text("20日 " + KSSFormat.percent(item.ret20d))
+                                .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(KSSTheme.signColor(item.ret20d))
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .kssCard(padding: 12)
+                    .onTapGesture { onSelect(item.symbol) }
+                }
+            }
+        }
+    }
+
+    private func bjDate(_ raw: String?) -> String {
+        guard let raw, raw.count == 8 else { return raw ?? "-" }
+        return "\(raw.prefix(4))-\(raw.dropFirst(4).prefix(2))-\(raw.suffix(2))"
     }
 }
 

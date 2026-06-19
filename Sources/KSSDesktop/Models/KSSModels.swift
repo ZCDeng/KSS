@@ -11,8 +11,47 @@ struct AppSnapshot: Codable {
     var reviews: [DailyReview]
     var backtests: [BacktestReport]
     var tracking: TrackingSummary
+    var recommendationTracking: [RecTrackingDay]?
+    var bjScan: BJScan?
     var pythonEnvironment: PythonEnvironment?
     var recentTaskRuns: [TaskRunResult]
+}
+
+struct RecTrackingDay: Codable, Identifiable, Hashable {
+    var id: String { date }
+    var date: String
+    var nPicks: Int
+    var ret1d: Double?
+    var ret5d: Double?
+    var ret20d: Double?
+    var picks: [RecTrackingPick]
+}
+
+struct RecTrackingPick: Codable, Identifiable, Hashable {
+    var id: String { symbol }
+    var symbol: String
+    var name: String
+    var ret1d: Double?
+    var ret5d: Double?
+    var ret20d: Double?
+}
+
+struct BJScan: Codable, Hashable {
+    var scanDate: String?
+    var total: Int
+    var passed: Int
+    var top: [BJScanItem]
+}
+
+struct BJScanItem: Codable, Identifiable, Hashable {
+    var id: String { symbol }
+    var symbol: String
+    var name: String
+    var industry: String
+    var score: Double?
+    var ret20d: Double?
+    var close: Double?
+    var tag: String
 }
 
 struct StockSummary: Codable, Identifiable, Hashable {
@@ -208,17 +247,17 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     case dashboard = "Dashboard"
     case recommendations = "Daily Picks"
     case watchlist = "Watchlist"
-    case runbook = "Runbook"
     case reviews = "Reviews"
     case backtests = "Backtests"
     case stocks = "Stocks"
+    case runbook = "Runbook"
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
         case .dashboard: return "总览"
-        case .recommendations: return "每日推荐"
+        case .recommendations: return "推荐"
         case .watchlist: return "自选"
         case .runbook: return "任务"
         case .reviews: return "复盘"

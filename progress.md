@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-06-19 — macOS App 第十二阶段：往期推荐跟踪 + 北证接入（5 项反馈）
+
+**已交付**
+1. **图表加大**：个股 K 线 inline 高度 400→560，阅读更友好。
+2. **任务移到末尾**：`WorkspaceSection` 重排，任务排到股票池之后（总览/推荐/自选/复盘/回测/股票池/任务）。
+3. **推荐表格对齐**：推荐列表改定宽列（# / 名称·代码 / 状态 / log_mv / 权重 / 跟踪 + 列头），数值列右对齐，不再因 `LabeledMetric` 撑开而错位。
+4. **每日推荐→推荐 + 往期跟踪**：侧栏与页面改“推荐”；新增「往期跟踪」Tab——bridge `_recommendation_tracking` 读 `storage/paper_trade/*.json`，按 日(1d)/周(5d)/月(20d) 用本地 CSV 算每个预测日的等权实际收益（买 T+1 open、卖 T+(1+n) open），未到期显示“待结算”，红涨绿跌。
+5. **北证接入**：
+   - bridge `_bj_stock_summaries` 把 `storage/reports/bj50_scan/scan_*.csv`（50 只 920xxx.BJ）注入股票池，stockCount 102→152；BJ 无日线 CSV，`stock_detail` 走 `_bj_detail` 兜底（摘要 + 空 history，图表显示“暂无数据”）。
+   - 总览新增「北证 50 扫描」区块：扫描日 / 标的数 / 通过筛选 + total_score 前 8（名称/行业/评分/20日收益/perilla_tag）。
+
+**验证**
+- `python3 -m py_compile`、`swift build`、`build_and_run --verify` 通过；bridge 实测 BJ 50 入池、recTracking 4 天（2026-05-11: 1d-2.04/5d-1.44/20d-3.79；2025-03-01: 1d+0.88/5d+5.83/20d-3.33）、BJ 详情不崩。
+- 实机：侧栏任务在末；推荐列对齐 + 往期跟踪表配色正确；总览北证50区块；股票数 152。
+
 ## 2026-06-19 — macOS App 第十一阶段：UI 细节打磨（7 项截图反馈）
 
 **起因**：用户对照截图提了 7 个具体问题。逐项修。

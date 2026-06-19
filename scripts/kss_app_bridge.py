@@ -26,6 +26,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PAPER_DIR = PROJECT_ROOT / "storage" / "paper_trade"
 REVIEW_DIR = PROJECT_ROOT / "storage" / "daily_review"
 REPORT_DIR = PROJECT_ROOT / "storage" / "reports"
+BJ_SCAN_DIR = REPORT_DIR / "bj50_scan"
 APP_RUN_DIR = PROJECT_ROOT / "storage" / "app_runs"
 TASK_LOG_PATH = APP_RUN_DIR / "kss_desktop_tasks.jsonl"
 NAMES_PATH = PROJECT_ROOT / "storage" / "stock_names.csv"
@@ -177,10 +178,8 @@ def _stock_summary(path: Path, names: dict[str, dict[str, str]]) -> dict[str, An
 def _load_stock_summaries(names: dict[str, dict[str, str]]) -> list[dict[str, Any]]:
     paths = sorted(PROJECT_ROOT.glob("cs_data_*.csv"))
     summaries = [_stock_summary(path, names) for path in paths]
-    return sorted(
-        [item for item in summaries if item is not None],
-        key=lambda item: (item.get("symbol") or ""),
-    )
+    combined = [item for item in summaries if item is not None] + _bj_stock_summaries()
+    return sorted(combined, key=lambda item: (item.get("symbol") or ""))
 
 
 def _latest_paper_log() -> dict[str, Any] | None:
@@ -1280,6 +1279,131 @@ def run_task(task_id: str, argv: list[str]) -> dict[str, Any]:
     )
 
 
+def _horizon_return(symbol: str, prediction_date: str, hold: int) -> float | None:
+    """Equal-entry realized return: buy T+1 open, sell T+(1+hold) open."""
+    path = _stock_file(symbol)
+    if not path.exists():
+        return None
+    rows = _read_csv_rows(path)
+    future = [row for row in rows if row.get("trade_date", "") > prediction_date]
+    if len(future) < hold + 1:
+        return None
+    entry = _safe_float(future[0].get("open"))
+    exit_price = _safe_float(future[hold].get("open"))
+    if entry in (None, 0) or exit_price is None:
+        return None
+    return exit_price / entry - 1
+
+
+# 日 = 持有 1 个交易日 (T+1 open -> T+2 open); 周 ~= 5 个交易日; 月 ~= 20 个交易日
+_HORIZONS = (("ret1d", 1), ("ret5d", 5), ("ret20d", 20))
+
+
+def _recommendation_tracking(names: dict[str, dict[str, str]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for path in sorted(PAPER_DIR.glob("*.json"), reverse=True):
+        try:
+            log = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        date = log.get("prediction_date")
+        if not date:
+            continue
+        picks_out: list[dict[str, Any]] = []
+        buckets: dict[str, list[float]] = {key: [] for key, _ in _HORIZONS}
+        for pick in log.get("picks", []):
+            symbol = pick.get("symbol", "")
+            meta = names.get(symbol, {})
+            pick_row: dict[str, Any] = {"symbol": symbol, "name": meta.get("name", "")}
+            for key, hold in _HORIZONS:
+                ret = _horizon_return(symbol, date, hold)
+                pick_row[key] = ret
+                if ret is not None:
+                    buckets[key].append(ret)
+            picks_out.append(pick_row)
+        row: dict[str, Any] = {"date": date, "nPicks": len(picks_out), "picks": picks_out}
+        for key, _ in _HORIZONS:
+            values = buckets[key]
+            row[key] = (sum(values) / len(values)) if values else None
+        out.append(row)
+    return out
+
+
+def _latest_bj_scan() -> tuple[str | None, list[dict[str, str]]]:
+    files = sorted(BJ_SCAN_DIR.glob("scan_*.csv"))
+    if not files:
+        return None, []
+    path = files[-1]
+    return path.stem.replace("scan_", ""), _read_csv_rows(path)
+
+
+def _bj_scan_summary() -> dict[str, Any] | None:
+    date, rows = _latest_bj_scan()
+    if not rows:
+        return None
+    passed = [row for row in rows if str(row.get("pass", "")).strip().lower() == "true"]
+    ranked = sorted(rows, key=lambda row: _safe_float(row.get("total_score")) or 0, reverse=True)
+    top = [
+        {
+            "symbol": row.get("ts_code", ""),
+            "name": row.get("name", ""),
+            "industry": row.get("industry", ""),
+            "score": _safe_float(row.get("total_score")),
+            "ret20d": _safe_float(row.get("ret_20d")),
+            "close": _safe_float(row.get("close")),
+            "tag": row.get("perilla_tag", ""),
+        }
+        for row in ranked[:8]
+    ]
+    return {"scanDate": date, "total": len(rows), "passed": len(passed), "top": top}
+
+
+def _bj_stock_summaries() -> list[dict[str, Any]]:
+    date, rows = _latest_bj_scan()
+    out: list[dict[str, Any]] = []
+    archive_date = f"{date[:4]}-{date[4:6]}-{date[6:8]}" if date and len(date) == 8 else (date or "")
+    for row in rows:
+        symbol = row.get("ts_code", "")
+        if not symbol:
+            continue
+        mv_yi = _safe_float(row.get("total_mv_yi"))
+        out.append({
+            "symbol": symbol,
+            "name": row.get("name", ""),
+            "industry": row.get("industry", ""),
+            "concept": row.get("perilla_tag", "") or "北证50",
+            "latestDate": archive_date,
+            "close": _safe_float(row.get("close")),
+            "pctChange": None,
+            "turnoverRate": _safe_float(row.get("turnover_mean")),
+            "amount": None,
+            "pe": _safe_float(row.get("pe_ttm")),
+            "pb": _safe_float(row.get("pb")),
+            "totalMv": (mv_yi * 1e8) if mv_yi is not None else None,
+            "ma5": None,
+            "ma20": None,
+            "high20": None,
+            "low20": None,
+        })
+    return out
+
+
+def _bj_detail(symbol: str) -> dict[str, Any] | None:
+    _, rows = _latest_bj_scan()
+    for row in rows:
+        if row.get("ts_code") == symbol:
+            summary = next((s for s in _bj_stock_summaries() if s["symbol"] == symbol), None)
+            return {
+                "symbol": symbol,
+                "name": row.get("name", ""),
+                "industry": row.get("industry", ""),
+                "concept": row.get("perilla_tag", "") or "北证50扫描（无日线历史）",
+                "latest": summary,
+                "history": [],
+            }
+    return None
+
+
 def snapshot() -> dict[str, Any]:
     names = _load_names()
     stocks = _load_stock_summaries(names)
@@ -1297,6 +1421,8 @@ def snapshot() -> dict[str, Any]:
         "reviews": _reviews(),
         "backtests": _backtest_reports(),
         "tracking": _paper_summary(),
+        "recommendationTracking": _recommendation_tracking(names),
+        "bjScan": _bj_scan_summary(),
         "pythonEnvironment": _python_env_status(),
         "recentTaskRuns": _task_history(),
     }
@@ -1309,6 +1435,9 @@ def stock_detail(symbol: str) -> dict[str, Any]:
     names = _load_names()
     path = _stock_file(symbol)
     if not path.exists():
+        bj = _bj_detail(symbol)
+        if bj is not None:
+            return bj
         raise SystemExit(f"stock data not found: {symbol}")
     rows = _read_csv_rows(path)
     history = []
