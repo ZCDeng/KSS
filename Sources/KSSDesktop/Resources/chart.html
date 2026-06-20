@@ -6,8 +6,10 @@
 <style>
   :root { color-scheme: dark; }
   :root { --bg:#FFFFFF; --text:#141413; --muted:#87867F; --ma5:#F5A623; --ma20:#2962FF;
+          --bbi:#8E24AA; --boll:#0097A7;
           --chip:#F0EEE6; --chipText:#3D3D3A; --chipOn:#D97757; --hair:#D1CFC5; }
   html.dark { --bg:#1F1F1D; --text:#FAF9F5; --muted:#8A8980; --ma5:#FF9F1C; --ma20:#4C82FB;
+          --bbi:#C792EA; --boll:#26C6DA;
           --chip:#2A2A28; --chipText:#D1CFC5; --chipOn:#E48A6E; --hair:#3D3D3A; }
   html, body {
     margin: 0; padding: 0; height: 100%; width: 100%;
@@ -25,6 +27,8 @@
   #legend .k { color: var(--muted); }
   .ma5 { color: var(--ma5); }
   .ma20 { color: var(--ma20); }
+  .bbi { color: var(--bbi); }
+  .boll { color: var(--boll); }
   #tf {
     position: absolute; top: 8px; right: 10px; z-index: 6;
     display: flex; gap: 4px;
@@ -57,14 +61,15 @@
   (function () {
     // 醒目标准红绿（红涨绿跌），均线橙/蓝；MACD/OBV 副图各占一带。
     const PALETTES = {
-      dark:  { up:"#F6465D", down:"#2EBD85", ma5:"#FF9F1C", ma20:"#4C82FB", grid:"#3D3D3A", text:"#8A8980", bg:"#1F1F1D", cross:"#9AA0A6", upFill:"rgba(246,70,93,0.5)", downFill:"rgba(46,189,133,0.5)", dif:"#FF9F1C", dea:"#4C82FB", obv:"#B388FF" },
-      light: { up:"#F23645", down:"#089981", ma5:"#F5A623", ma20:"#2962FF", grid:"#D1CFC5", text:"#87867F", bg:"#FFFFFF", cross:"#787B86", upFill:"rgba(242,54,69,0.4)", downFill:"rgba(8,153,129,0.4)", dif:"#F5A623", dea:"#2962FF", obv:"#7C4DFF" },
+      dark:  { up:"#F6465D", down:"#2EBD85", ma5:"#FF9F1C", ma20:"#4C82FB", grid:"#3D3D3A", text:"#8A8980", bg:"#1F1F1D", cross:"#9AA0A6", upFill:"rgba(246,70,93,0.5)", downFill:"rgba(46,189,133,0.5)", dif:"#FF9F1C", dea:"#4C82FB", obv:"#B388FF", bbi:"#C792EA", boll:"#26C6DA" },
+      light: { up:"#F23645", down:"#089981", ma5:"#F5A623", ma20:"#2962FF", grid:"#D1CFC5", text:"#87867F", bg:"#FFFFFF", cross:"#787B86", upFill:"rgba(242,54,69,0.4)", downFill:"rgba(8,153,129,0.4)", dif:"#F5A623", dea:"#2962FF", obv:"#7C4DFF", bbi:"#8E24AA", boll:"#0097A7" },
     };
     let COLORS = PALETTES.dark;
     let currentTheme = "dark";
     let currentTF = "D";
 
     let chart, candleSeries, volumeSeries, ma5Series, ma20Series;
+    let bbiSeries, bollUpper, bollMid, bollLower;
     let macdHist, difSeries, deaSeries, obvSeries;
     let pending = null;
     let rawBars = [];
@@ -78,6 +83,44 @@
         if (i >= period - 1) out.push({ time: values[i].time, value: +(sum / period).toFixed(3) });
       }
       return out;
+    }
+    function smaAt(candles, period) { // 对齐索引的 MA，未满窗为 null
+      const out = []; let sum = 0;
+      for (let i = 0; i < candles.length; i++) {
+        sum += candles[i].close;
+        if (i >= period) sum -= candles[i - period].close;
+        out.push(i >= period - 1 ? sum / period : null);
+      }
+      return out;
+    }
+    function bbi(candles) { // 多空指标 = (MA3+MA6+MA12+MA24)/4
+      const a = smaAt(candles, 3), b = smaAt(candles, 6), c = smaAt(candles, 12), d = smaAt(candles, 24);
+      const out = [];
+      for (let i = 0; i < candles.length; i++) {
+        if (a[i] != null && b[i] != null && c[i] != null && d[i] != null) {
+          out.push({ time: candles[i].time, value: +((a[i] + b[i] + c[i] + d[i]) / 4).toFixed(3) });
+        }
+      }
+      return out;
+    }
+    function boll(candles, period, mult) { // 布林带：MA20 ± mult·σ（总体标准差）
+      period = period || 20; mult = mult || 2;
+      const up = [], mid = [], low = []; let sum = 0;
+      for (let i = 0; i < candles.length; i++) {
+        sum += candles[i].close;
+        if (i >= period) sum -= candles[i - period].close;
+        if (i >= period - 1) {
+          const m = sum / period;
+          let sq = 0;
+          for (let j = i - period + 1; j <= i; j++) { const dv = candles[j].close - m; sq += dv * dv; }
+          const sd = Math.sqrt(sq / period);
+          const t = candles[i].time;
+          mid.push({ time: t, value: +m.toFixed(3) });
+          up.push({ time: t, value: +(m + mult * sd).toFixed(3) });
+          low.push({ time: t, value: +(m - mult * sd).toFixed(3) });
+        }
+      }
+      return { up, mid, low };
     }
     function ema(src, period) { // src: [{time, value}]
       const k = 2 / (period + 1); let prev = null; const out = [];
@@ -178,6 +221,11 @@
       });
       ma5Series = chart.addLineSeries({ color: COLORS.ma5, lineWidth: 1, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false });
       ma20Series = chart.addLineSeries({ color: COLORS.ma20, lineWidth: 1, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false });
+      // 主图叠加：BBI（多空线）+ BOLL（上/中/下轨，上下轨虚线）
+      bbiSeries = chart.addLineSeries({ color: COLORS.bbi, lineWidth: 1, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false });
+      bollUpper = chart.addLineSeries({ color: COLORS.boll, lineWidth: 1, lineStyle: 2, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false });
+      bollMid = chart.addLineSeries({ color: COLORS.boll, lineWidth: 1, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false });
+      bollLower = chart.addLineSeries({ color: COLORS.boll, lineWidth: 1, lineStyle: 2, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false });
 
       // 成交量带
       volumeSeries = chart.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "vol", priceLineVisible: false, lastValueVisible: false });
@@ -205,7 +253,12 @@
         const dif = param.seriesData.get(difSeries);
         const dea = param.seriesData.get(deaSeries);
         const ob = param.seriesData.get(obvSeries);
-        if (c) renderLegend(param.time, c, m5 && m5.value, m20 && m20.value, dif && dif.value, dea && dea.value, ob && ob.value);
+        const bb = param.seriesData.get(bbiSeries);
+        const bu = param.seriesData.get(bollUpper);
+        const bm = param.seriesData.get(bollMid);
+        const blw = param.seriesData.get(bollLower);
+        if (c) renderLegend(param.time, c, m5 && m5.value, m20 && m20.value, dif && dif.value, dea && dea.value, ob && ob.value,
+                            bb && bb.value, bu && bu.value, bm && bm.value, blw && blw.value);
       });
       return true;
     }
@@ -218,7 +271,7 @@
     }
     function pct(o, c) { return o ? ((c - o) / o * 100).toFixed(2) + "%" : "-"; }
     function num(v) { return v == null ? "-" : (Math.abs(v) >= 10000 ? (v / 10000).toFixed(1) + "万" : (+v).toFixed(2)); }
-    function renderLegend(t, c, m5, m20, dif, dea, ob) {
+    function renderLegend(t, c, m5, m20, dif, dea, ob, bbiV, bUp, bMid, bLow) {
       const col = c.close >= c.open ? COLORS.up : COLORS.down;
       const tfName = { D: "日", W: "周", M: "月", Y: "年" }[currentTF];
       document.getElementById("legend").innerHTML =
@@ -229,13 +282,16 @@
         `<span class="k">收</span><span style="color:${col}">${c.close}</span>` +
         `<span style="color:${col}">${pct(c.open, c.close)}</span></div>` +
         `<div class="row"><span class="ma5">MA5 ${m5 != null ? m5 : "-"}</span>` +
-        `<span class="ma20">MA20 ${m20 != null ? m20 : "-"}</span></div>` +
+        `<span class="ma20">MA20 ${m20 != null ? m20 : "-"}</span>` +
+        `<span class="bbi">BBI ${bbiV != null ? bbiV : "-"}</span></div>` +
+        `<div class="row"><span class="boll">BOLL ${bUp != null ? bUp : "-"} / ${bMid != null ? bMid : "-"} / ${bLow != null ? bLow : "-"}</span></div>` +
         `<div class="row"><span class="k">DIF</span><span style="color:${COLORS.dif}">${num(dif)}</span>` +
         `<span class="k">DEA</span><span style="color:${COLORS.dea}">${num(dea)}</span>` +
         `<span class="k">OBV</span><span style="color:${COLORS.obv}">${num(ob)}</span></div>`;
     }
     function renderLegendLast() {
-      if (lastCtx) renderLegend(lastCtx.time, lastCtx.c, lastCtx.m5, lastCtx.m20, lastCtx.dif, lastCtx.dea, lastCtx.ob);
+      if (lastCtx) renderLegend(lastCtx.time, lastCtx.c, lastCtx.m5, lastCtx.m20, lastCtx.dif, lastCtx.dea, lastCtx.ob,
+                                lastCtx.bbi, lastCtx.bUp, lastCtx.bMid, lastCtx.bLow);
     }
 
     function setData(payload) {
@@ -251,7 +307,7 @@
       const bars = resample(rawBars, currentTF);
       document.getElementById("empty").style.display = bars.length ? "none" : "flex";
       if (!bars.length) {
-        [candleSeries, volumeSeries, ma5Series, ma20Series, macdHist, difSeries, deaSeries, obvSeries].forEach(s => s.setData([]));
+        [candleSeries, volumeSeries, ma5Series, ma20Series, bbiSeries, bollUpper, bollMid, bollLower, macdHist, difSeries, deaSeries, obvSeries].forEach(s => s.setData([]));
         return;
       }
       const candles = bars.map(p => ({
@@ -268,17 +324,24 @@
       }));
       const mm = macd(candles);
       const ob = obv(candles, vols);
+      const bb = bbi(candles);
+      const bl = boll(candles, 20, 2);
 
       candleSeries.setData(candles);
       volumeSeries.setData(vols);
       ma5Series.setData(sma(candles, 5));
       ma20Series.setData(sma(candles, 20));
+      bbiSeries.setData(bb);
+      bollUpper.setData(bl.up);
+      bollMid.setData(bl.mid);
+      bollLower.setData(bl.low);
       macdHist.setData(mm.hist);
       difSeries.setData(mm.dif);
       deaSeries.setData(mm.dea);
       obvSeries.setData(ob);
 
       const m5a = sma(candles, 5), m20a = sma(candles, 20);
+      const last = (arr) => (arr && arr.length ? arr[arr.length - 1].value : null);
       lastCtx = {
         time: candles[candles.length - 1].time, c: candles[candles.length - 1],
         m5: m5a.length ? m5a[m5a.length - 1].value : null,
@@ -286,6 +349,7 @@
         dif: mm.dif.length ? mm.dif[mm.dif.length - 1].value : null,
         dea: mm.dea.length ? mm.dea[mm.dea.length - 1].value : null,
         ob: ob.length ? ob[ob.length - 1].value : null,
+        bbi: last(bb), bUp: last(bl.up), bMid: last(bl.mid), bLow: last(bl.low),
       };
       renderLegendLast();
       chart.timeScale().fitContent();
