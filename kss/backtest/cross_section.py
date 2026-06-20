@@ -17,9 +17,11 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
+import numpy as np
 import pandas as pd
+from scipy import stats
 
 from kss.backtest.cost_model import CostModel, ExecutionModel
 
@@ -38,6 +40,7 @@ def factor_cross_section_backtest(
     ret_col: str = "next_day_return",
     *,
     execution: ExecutionModel | None = None,
+    health_hook: "Callable[[str, str, str, pd.Series], None] | None" = None,
 ) -> pd.DataFrame | None:
     """单因子横截面 Top-Pct 选股回测.
 
@@ -212,4 +215,41 @@ def factor_cross_section_backtest(
     result_df.attrs["factor_col"] = factor_col
     result_df.attrs["direction"] = direction
     result_df.attrs["top_pct"] = top_pct
+
+    # U3 健康度 hook（surgical，默认 None 不改现有行为）：用全市场每日面板算逐日
+    # 截面 Rank-IC（因子值 vs 次日收益的当日 Spearman），入库做因子健康度追踪。
+    # PIT 清白：panel 已是回测内可观测的 (因子@t, next_day_return) 配对，无未来引用。
+    if health_hook is not None and panel_records:
+        try:
+            panel = pd.concat(panel_records, ignore_index=True)
+            ic_daily = _cross_section_daily_ic(
+                panel, date_col=date_col, score_col="pred_score", ret_col=ret_col
+            )
+            if not ic_daily.empty:
+                w_start = str(ic_daily.index.min())
+                w_end = str(ic_daily.index.max())
+                health_hook(factor_col, w_start, w_end, ic_daily)
+        except Exception as exc:  # noqa: BLE001 —— hook 失败不打断回测
+            logger.warning("cross_section health_hook 失败: %s", exc)
+
     return result_df
+
+
+def _cross_section_daily_ic(
+    panel: pd.DataFrame, *, date_col: str, score_col: str, ret_col: str
+) -> pd.Series:
+    """逐交易日截面 Rank-IC（因子值 vs 次日收益的当日 Spearman），index=trade_date.
+
+    每日 ≥ 3 支股票才算（Spearman 退化保护）；不足跳过该日。有效 n = 去重交易日数。
+    """
+    out: dict[Any, float] = {}
+    for d, day in panel.groupby(date_col):
+        sub = day[[score_col, ret_col]].dropna()
+        if len(sub) < 3:
+            continue
+        if sub[score_col].std() == 0 or sub[ret_col].std() == 0:
+            continue
+        rho, _ = stats.spearmanr(sub[score_col].values, sub[ret_col].values)
+        if np.isfinite(rho):
+            out[d] = float(rho)
+    return pd.Series(out, dtype=float).sort_index()

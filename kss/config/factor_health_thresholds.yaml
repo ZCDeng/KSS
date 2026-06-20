@@ -1,0 +1,28 @@
+# 因子健康度闭环阈值（U3，回测闭环计划）
+#
+# 纪律（见 docs/plans/2026-06-21-001-backtest-loop-closure-plan.md）：
+# - 阈值外化 + walk-forward 标定，不硬编码进逻辑（与 significance.py strategy_family 同理念）。
+# - 这里的值是 walk-forward 标定脚本（scripts/calibrate_factor_thresholds.py，待建）
+#   首次运行前的「合理起点」建议值（OQ3：N=5、阈值=0.02），供用户确认后由标定覆盖。
+# - 删除本文件后告警逻辑应 fail loud（FileNotFoundError），不回退硬编码值（R5/SC6）。
+
+factor_health:
+  # ICIR 衰减告警基线：60 日滚动 ICIR 跌破此值 → PENDING_REVIEW + 告警（F2）。
+  icir_baseline: 0.25
+  # 滚动 ICIR 的窗口长度（去重交易日数，非事件数）。
+  rolling_icir_window: 60
+
+  # 崩盘判定（F3）：IC 绝对值连续 N 期 < ic_floor → 记一条 IC_DECAY 崩盘。
+  crash_consecutive_n: 5
+  ic_floor: 0.02
+
+  # IC 半衰期拟合：滚动 IC 均值序列点数下限，不足返回 null（不强行输出，R12）。
+  half_life_min_periods: 20
+
+  # IC 双源仲裁（Global Decision #8）：
+  # 实盘 IC 有效 n（去重交易日数）低于此值 → 仅供参考，不得单独翻转状态。
+  realized_ic_min_n: 20
+  # 实盘 IC 升权门：实盘 ICIR 须 ≥ 此值「且」回测先验一致才放行 ACTIVE/升权。
+  realized_icir_promote: 0.30
+  # 实盘 IC 降权门：实盘 ICIR 跌破此值 → 单独即可置 PENDING_REVIEW（fail-safe）。
+  realized_icir_demote: 0.25

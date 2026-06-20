@@ -31,6 +31,22 @@ logger = logging.getLogger(__name__)
 CombinerBuilder = Callable[[SingleStockAnalyzer, list[str]], MultiFactorCombiner]
 
 
+def _daily_sign_ic(
+    factor: pd.Series, ret: pd.Series, dates: pd.Series
+) -> pd.Series:
+    """单股票时序的日级 IC 代理：``sign(因子去均值) × sign(次日收益)`` ∈ {-1,+1}.
+
+    单股票一日仅一条 (因子, 收益)，无法逐日做截面 Spearman；用符号一致性作为日级
+    方向信号的代理，正向均值≈方向命中率正偏。index = trade_date 供 health hook 折
+    成去重日 IC（有效 n = 去重交易日数）。PIT 清白：只用已观测的训练窗口数据。
+    """
+    f = factor.astype(float)
+    r = ret.astype(float)
+    f_demean = f - f.mean()
+    sign_ic = np.sign(f_demean.values) * np.sign(r.values)
+    return pd.Series(sign_ic, index=pd.Index(dates.values), dtype=float)
+
+
 @dataclass
 class WalkForwardCombiner:
     """时序滚动多因子组合器.
@@ -63,6 +79,10 @@ class WalkForwardCombiner:
     sell_cost: float = 0.002
     ret_col: str = "next_day_return"
     date_col: str = "trade_date"
+    # U3 因子健康度 hook：回测结束点把各 retrain 因子 IC 快照入库；默认 None =
+    # 不改变现有调用方行为（surgical）。签名 (factor_id, window_start, window_end,
+    # ic_series) → None。
+    health_hook: Callable[[str, str, str, "pd.Series"], None] | None = None
     min_warm_up: int = field(init=False)
 
     def __post_init__(self) -> None:
@@ -135,6 +155,28 @@ class WalkForwardCombiner:
                 "weights": dict(combiner.weights),
                 "factors": list(combiner.factors),
             })
+
+            # U3 健康度 hook（surgical）：在 retrain 点用 *训练窗口* 算各因子逐日
+            # Rank-IC 并入库。PIT 清白：只用 [i-train_window, i) 历史，绝不引用未来。
+            if self.health_hook is not None:
+                window_start = str(hist_slice[self.date_col].iloc[0])
+                window_end = str(self._df[self.date_col].iloc[i])
+                for f in combiner.factors:
+                    if f not in hist_slice.columns:
+                        continue
+                    pair = hist_slice[[self.date_col, f, self.ret_col]].dropna()
+                    if len(pair) < 10:
+                        continue
+                    # 单股票时序场景：一日一条 (因子, 次日收益) 观测，无法逐日定义
+                    # 截面 Spearman；用「因子去均值符号 × 收益符号」的逐日一致性作为
+                    # 日级 IC 代理（∈{-1,+1}），index=trade_date，交 hook 折成去重日 IC。
+                    ic_daily = _daily_sign_ic(
+                        pair[f], pair[self.ret_col], pair[self.date_col]
+                    )
+                    try:
+                        self.health_hook(f, window_start, window_end, ic_daily)
+                    except Exception as exc:  # noqa: BLE001 —— hook 失败不打断回测
+                        logger.warning("health_hook(%s) 失败: %s", f, exc)
 
             # 在 [i, i + retrain_freq) 上合成 z-score.
             # 关键防 look-ahead：rolling z-score 的 mean/std 用 ``[t - rolling_window, t]``，
