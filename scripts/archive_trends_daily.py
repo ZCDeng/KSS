@@ -198,21 +198,23 @@ def _clamp(x: float, lo: float = -1.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, x))
 
 
-# 增量资金合成（强度+方向）：北向(亿，真金，主导) + 两只 A500ETF 涨跌幅(宽基方向佐证)。
-# 单位不同故各自归一后加权：北向 0.6、ETF 均值 0.4；结果 -1..1（红流入/绿流出）。
+# 增量资金合成（强度+方向）：宽基(两只 A500ETF 涨跌幅，主导) + 北向(亿，佐证)。
+# 单位不同故各自归一后加权：ETF 均值 0.6、北向 0.4；结果 -1..1（红流入/绿流出）。
 NORTH_NORM_YI = 50.0   # 北向 ±50 亿归一到 ±1
 ETF_NORM_PCT = 1.5     # ETF ±1.5% 归一到 ±1
+W_NORTH = 0.4
+W_ETF = 0.6
 
 
 def _inflow_score(north: dict[str, Any] | None, etfs: list[dict[str, Any]] | None) -> tuple[float | None, str]:
     """三指标合成增量资金分（-1..1）+ 方向。缺项按可得指标退化加权，全缺返回 None。"""
     parts: list[tuple[float, float]] = []  # (归一值, 权重)
     if north is not None:
-        parts.append((_clamp(north["money"] / NORTH_NORM_YI), 0.6))
+        parts.append((_clamp(north["money"] / NORTH_NORM_YI), W_NORTH))
     etf_pcts = [e["pct"] for e in (etfs or []) if e.get("pct") is not None]
     if etf_pcts:
         avg = sum(etf_pcts) / len(etf_pcts)
-        parts.append((_clamp(avg / ETF_NORM_PCT), 0.4))
+        parts.append((_clamp(avg / ETF_NORM_PCT), W_ETF))
     if not parts:
         return None, "flat"
     wsum = sum(w for _, w in parts)
