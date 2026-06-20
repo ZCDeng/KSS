@@ -49,12 +49,15 @@ enum KSSTheme {
 
     // MARK: M3 Motion
     // https://m3.material.io/styles/motion/transitions/transition-patterns
-    /// emphasized 缓动（M3 标准强调曲线）+ medium 时长 300ms。
-    static let motionStandard = Animation.timingCurve(0.2, 0, 0, 1, duration: 0.3)
-    /// 页面切换 = M3「fade through」：入场淡入+从 94% 放大，出场淡出。
+    /// emphasized 缓动（M3 标准强调曲线）+ medium 时长 350ms（页面切换看得清）。
+    static let motionStandard = Animation.timingCurve(0.2, 0, 0, 1, duration: 0.35)
+    /// 页面切换 = M3「fade through」(强调版，让切换明显)：
+    /// 入场 = 淡入 + 从 92% 放大 + 自下方 14pt 上移；出场 = 淡出 + 轻微放大 1.03 推开。
     static let fadeThrough = AnyTransition.asymmetric(
-        insertion: .opacity.combined(with: .scale(scale: 0.94)),
-        removal: .opacity
+        insertion: .opacity
+            .combined(with: .scale(scale: 0.92, anchor: .center))
+            .combined(with: .offset(y: 14)),
+        removal: .opacity.combined(with: .scale(scale: 1.03, anchor: .center))
     )
 
     private static func adaptive(light: UInt, dark: UInt) -> Color {

@@ -60,6 +60,7 @@ struct ContentView: View {
             NavigationStack {
                 ZStack {
                     detail
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .id(store.selectedSection)
                         .transition(KSSTheme.fadeThrough)
                 }
