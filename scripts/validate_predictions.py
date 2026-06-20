@@ -165,6 +165,13 @@ def score(verifiable: list[dict]) -> dict:
     np_ = len(probs_realized)
     correct = sum(1 for pu, pd, pc in dir_records
                   if (pu > pd and pc > 0) or (pd > pu and pc < 0))
+    # 方向 Brier 分解 (R6): p_up 归一化到 P(up)/(P(up)+P(down)), hit = 实际上涨
+    dir_pairs: list[tuple[float, int]] = []
+    for pu, pd, pc in dir_records:
+        denom = pu + pd
+        p_up = pu / denom if denom > 0 else 0.5
+        dir_pairs.append((p_up, 1 if pc > 0 else 0))
+    decomp = brier_decomposition(dir_pairs)
     return {
         "n": n,
         "cov50": n50 / n if n else 0.0,
@@ -174,9 +181,90 @@ def score(verifiable: list[dict]) -> dict:
         "brier": sum(briers) / np_ if np_ else 0.0,
         "dir_rate": correct / np_ if np_ else 0.0,
         "median_mae": sum(median_errs) / len(median_errs) if median_errs else 0.0,
+        "decomp": decomp,
         "details": details,
         "devs": sorted(devs, reverse=True, key=lambda t: t[0]),
     }
+
+
+def brier_decomposition(records: list[tuple[float, int]], n_bins: int = 5) -> dict:
+    """方向 Brier 的 calibration-resolution 分解 (Murphy 1973, R6).
+
+    ``records`` = ``[(p_up, hit), ...]``: ``p_up`` 为预测的上涨概率 (0..1),
+    ``hit`` 为是否实际上涨 (0/1)。把 p_up 分桶, 输出:
+
+      - ``reliability`` (校准损失): Σ n_k/N · (p̄_k - ō_k)²  —— 越小越校准好
+      - ``resolution`` (分辨): Σ n_k/N · (ō_k - ō)²        —— 越大越有区分度
+      - ``uncertainty``: ō·(1-ō)  (基率方差, 不可控)
+      - 恒等式: brier ≈ reliability - resolution + uncertainty
+
+    定位「预测太自信 (reliability 高)」vs「预测无区分度 (resolution≈0)」两类失效。
+    """
+    if not records:
+        return {"reliability": 0.0, "resolution": 0.0, "uncertainty": 0.0,
+                "brier": 0.0, "n": 0}
+    n = len(records)
+    base = sum(h for _, h in records) / n  # ō 整体上涨基率
+    edges = [i / n_bins for i in range(n_bins + 1)]
+    reliability = resolution = 0.0
+    for b in range(n_bins):
+        lo, hi = edges[b], edges[b + 1]
+        # 最后一桶闭区间含 1.0
+        bucket = [(p, h) for p, h in records
+                  if (lo <= p < hi) or (b == n_bins - 1 and p == hi)]
+        if not bucket:
+            continue
+        nk = len(bucket)
+        pbar = sum(p for p, _ in bucket) / nk     # p̄_k 桶内平均预测概率
+        obar = sum(h for _, h in bucket) / nk     # ō_k 桶内实际频率
+        reliability += nk / n * (pbar - obar) ** 2
+        resolution += nk / n * (obar - base) ** 2
+    uncertainty = base * (1 - base)
+    return {
+        "reliability": reliability,
+        "resolution": resolution,
+        "uncertainty": uncertainty,
+        "brier": reliability - resolution + uncertainty,
+        "n": n,
+    }
+
+
+def calibration_from_ledger(
+    records: list[dict],
+    *,
+    by: str = "regime_label",
+) -> dict:
+    """从 U2 账本结算记录聚合校准统计 (R6 / U2 取数), 不读价格细节.
+
+    只用 ``realized_ret`` + ``outcome`` 两个已结算字段 (代码渲染真值, 见 ledger.py),
+    按 ``by`` (默认 ``regime_label``, 可传 ``prediction_date``) 分组聚合每组的
+    胜率 / 平均收益 / 样本数。下游用它定位「哪个 regime 下方向系统性反」。
+
+    Args:
+        records: ``PredictionLedger.query(status="settled")`` 的输出 (dict 列表)。
+        by: 聚合键 (``regime_label`` 或 ``prediction_date``)。
+
+    Returns:
+        ``{group_key: {"n": int, "win_rate": float, "mean_ret": float}}``;
+        仅纳入 ``realized_ret`` 非空的记录 (未结算不计)。
+    """
+    groups: dict[str, list[dict]] = {}
+    for rec in records:
+        if rec.get("realized_ret") is None:
+            continue
+        key = rec.get(by)
+        key = key if key is not None else "unknown"
+        groups.setdefault(str(key), []).append(rec)
+    out: dict[str, dict] = {}
+    for key, recs in groups.items():
+        rets = [r["realized_ret"] for r in recs]
+        wins = sum(1 for r in recs if r.get("outcome") == "win")
+        out[key] = {
+            "n": len(recs),
+            "win_rate": wins / len(recs),
+            "mean_ret": sum(rets) / len(rets),
+        }
+    return out
 
 
 def flag(cond_ok: bool) -> str:
@@ -195,6 +283,14 @@ def render_summary(s: dict, lookback_days: int) -> str:
         f"  {flag(s['brier'] < 0.75)} 多类 Brier: {s['brier']:.3f} (随机 0.80)",
         f"  {flag(s['dir_rate'] > 0.5)} 方向命中: {s['dir_rate'] * 100:.0f}% (基线 50%)",
         f"  中位预测 MAE: {s['median_mae']:.2f}%",
+    ]
+    # Brier 分解 (R6): 校准 (reliability, 越小越好) / 分辨 (resolution, 越大越好)
+    dec = s.get("decomp")
+    if dec and dec.get("n"):
+        lines.append(
+            f"  校准损失: {dec['reliability']:.3f} / 分辨: {dec['resolution']:.3f} "
+            f"(基率方差 {dec['uncertainty']:.3f})")
+    lines += [
         "",
         "*偏差最大条目* (预期中位隐含% vs 实际%)",
     ]
@@ -203,7 +299,14 @@ def render_summary(s: dict, lookback_days: int) -> str:
             f"  · {r['fdate'][5:]} {r['name']}: {implied:+.1f}% → {r['act']['pct_chg']:+.1f}% (偏 {d:.1f}pp)")
     stop_hits = sum(1 for d in s["details"] if d["stop_hit"])
     lines += ["", f"破止损位天次: {stop_hits}/{s['n']}"]
-    lines += ["", "_历史 IC≈0 的先验如果连续两周 Brier>0.8 或方向<45%, 建议停用情形分布段_"]
+    # 撤段判据 (R5): 本窗口 Brier>0.8 或方向<45% → 明确停用提示 (用户手动改 flag)
+    if s["brier"] > 0.8 or s["dir_rate"] < 0.45:
+        lines += ["",
+                  "⛔ 情形分布停用判据已触发 (本窗口 Brier>0.8 或方向<45%)。"
+                  "若连续两周触发, 建议将 daily_review_322_017.py 的 "
+                  "SCENARIO_ENABLED = False 并重启 cron。"]
+    else:
+        lines += ["", "_历史 IC≈0 的先验如果连续两周 Brier>0.8 或方向<45%, 建议停用情形分布段_"]
     return "\n".join(lines)
 
 

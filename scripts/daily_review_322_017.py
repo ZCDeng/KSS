@@ -63,6 +63,16 @@ INDICES = [
 ]
 ROLL_WIN = 480  # 滚动 2 年分位
 
+# 撤段闸 (U4 / R5): 次日情形分布段已触发停用判据时置 False, 该段不渲染,
+# 版面交还给关键位 + 3 口径均值 + 操作建议. 单用户本地, 手动改 (cron 不自改代码).
+SCENARIO_ENABLED: bool = True
+
+# regime 标签 (U4 / R2): 复用 kss/sector/momentum_regime.build_regime_status,
+# 动量态 (momentum) 关掉均值回归先验; 取不到时 fail-safe 退化 neutral.
+REGIME_MOMENTUM = "momentum"
+REGIME_NEUTRAL = "neutral"
+COND_INTERVAL_MIN_N = 20  # 条件样本 < 此值 → 强制无条件分位 (不允许小样本收窄)
+
 
 # ===== 数据加载 =====
 
@@ -263,6 +273,61 @@ def scenario_distribution(hist: pd.DataFrame, mask: pd.Series) -> dict:
     }
 
 
+def unconditional_interval(df: pd.DataFrame) -> dict:
+    """全历史无条件 ``fwd_1d`` 分位作区间底线 (U4 / R1).
+
+    条件样本 (n<20) 推 P10/P90 对 20cm 涨跌停的科创板票天然低估尾部
+    (实测 80% 区间覆盖仅 53%)。以全样本无条件分位为底, 条件样本只允许
+    收窄不允许放宽尾部。返回 ``{}`` 表示无可用样本 (调用方降级)。
+    """
+    r = df['fwd_1d'].dropna()
+    if len(r) == 0:
+        return {}
+    return {
+        'n': len(r),
+        'p10': float(r.quantile(0.10)),
+        'p25': float(r.quantile(0.25)),
+        'p75': float(r.quantile(0.75)),
+        'p90': float(r.quantile(0.90)),
+    }
+
+
+def widen_interval(cond: dict, uncond: dict) -> dict:
+    """条件分位与无条件分位取宽 (U4 / R1).
+
+    ``p10/p25`` 取更负值 (min), ``p75/p90`` 取更正值 (max), 保证区间只宽不窄。
+    条件样本 n < ``COND_INTERVAL_MIN_N`` 时强制用无条件分位 (不允许小样本收窄)。
+    任一侧条件值缺失时退化到无条件值。返回 ``{}`` 表示两侧都不可用。
+    """
+    if not uncond:
+        # 无条件分位不可用 → 只能用条件值 (退化, 保留旧行为)
+        if not cond or cond.get('n', 0) == 0:
+            return {}
+        return {k: cond.get(k) for k in ('p10', 'p25', 'p75', 'p90')}
+    cond_n = cond.get('n', 0) if cond else 0
+    force_uncond = cond_n < COND_INTERVAL_MIN_N
+
+    def _neg(key):  # 更负 (尾部更宽)
+        u = uncond.get(key)
+        c = cond.get(key) if (cond and not force_uncond) else None
+        if c is None or pd.isna(c):
+            return u
+        return min(c, u)
+
+    def _pos(key):  # 更正 (尾部更宽)
+        u = uncond.get(key)
+        c = cond.get(key) if (cond and not force_uncond) else None
+        if c is None or pd.isna(c):
+            return u
+        return max(c, u)
+
+    return {
+        'p10': _neg('p10'), 'p25': _neg('p25'),
+        'p75': _pos('p75'), 'p90': _pos('p90'),
+        'basis': 'uncond' if force_uncond else 'widened',
+    }
+
+
 def key_levels(df: pd.DataFrame, last: pd.Series) -> dict:
     """关键位: MA / 前高 / 涨停 等."""
     c = df['close']
@@ -282,28 +347,76 @@ def key_levels(df: pd.DataFrame, last: pd.Series) -> dict:
     }
 
 
-def adjusted_scenarios(base_dist: dict, stock: dict) -> tuple[dict, dict]:
+def detect_regime(
+    trade_date: str,
+    *,
+    regime_status: dict | None = None,
+    status_fn=None,
+    cs_dir: Path | None = None,
+) -> str:
+    """板块动量 regime 判定 (U4 / R2) → ``"momentum"`` 或 ``"neutral"``.
+
+    复用 ``kss/sector/momentum_regime.build_regime_status`` (非新建); 离线 / 测试
+    可注入已算好的 ``regime_status`` dict 或自定义 ``status_fn(trade_date)`` 以避免
+    联网 (TushareClient)。任何异常 / 取不到 → fail-safe 返回 ``"neutral"``。
+
+    Args:
+        trade_date: ``YYYYMMDD``.
+        regime_status: 直接注入 ``build_regime_status`` 结果 (含 ``in_regime``);
+            提供时不再调用 ``status_fn``。
+        status_fn: 可注入的 ``(trade_date) -> dict|None`` (默认 build_regime_status,
+            会联网); 测试传 lambda 即离线。
+        cs_dir: 透传给默认 ``build_regime_status`` 的 cs_data 目录。
+    """
+    status = regime_status
+    if status is None:
+        try:
+            if status_fn is None:
+                from kss.sector.momentum_regime import build_regime_status
+                status = build_regime_status(trade_date, cs_dir=cs_dir)
+            else:
+                status = status_fn(trade_date)
+        except Exception as e:  # noqa: BLE001  fail-safe: regime 取不到 → neutral
+            logger.warning("  detect_regime 失败, 退化 neutral: %s", e)
+            return REGIME_NEUTRAL
+    if status and status.get('in_regime'):
+        return REGIME_MOMENTUM
+    return REGIME_NEUTRAL
+
+
+def adjusted_scenarios(base_dist: dict, stock: dict,
+                       regime: str = REGIME_NEUTRAL) -> tuple[dict, dict]:
     """基于 当前形态特征 对基础情形分布做修正, 返回 (adjusted_probs, reason_map).
 
     修正规则 (累乘小幅 boost / dampen):
-      - MACD 缩柱(顶背离前奏): D 上调 + E 上调, A 下调
+      - MACD 缩柱(顶背离前奏): D 上调 + E 上调, A 下调  —— **均值回归先验**
       - 三类形态全触发(P1+P2+P3): A 上调, D/E 下调
       - 资金条件 fund_10d > 3% (历史利多): A/B 上调
       - 资金条件 fund_1d < 0 (短期偏负, 如 017): D/C 上调, A 下调
     最后归一化到 sum=1.
+
+    ``regime == "momentum"`` (U4 / R2): 动量行情里均值回归全反 (涨停潮里
+    MACD 缩柱乘子把 A_break 系统性压低, 实测方向命中 43%)。动量态下:
+      - 跳过 MACD 缩柱均值回归乘子 (D/E 上调 + A 下调不执行);
+      - A_break / B_up 牛市乘子小幅强化 (×1.1)。
     """
     if base_dist.get('n', 0) == 0:
         return base_dist, {}
     probs = {k: base_dist[k] for k in ['A_break', 'B_up', 'C_flat', 'D_down', 'E_break']}
     reasons = {k: [] for k in probs}
+    momentum = regime == REGIME_MOMENTUM
 
-    # MACD 缩柱
+    # MACD 缩柱 (均值回归先验): 动量 regime 下跳过, 改为牛市方向强化
     if (pd.notna(stock['macd_yest']) and stock['macd_hist'] < stock['macd_yest']
             and stock['macd_hist_q'] > 0.9):
-        probs['A_break'] *= 0.7; reasons['A_break'].append('MACD缩柱-')
-        probs['B_up']    *= 0.9
-        probs['D_down']  *= 1.3; reasons['D_down'].append('MACD缩柱+')
-        probs['E_break'] *= 1.2; reasons['E_break'].append('MACD缩柱+')
+        if momentum:
+            probs['A_break'] *= 1.1; reasons['A_break'].append('动量·缩柱不反')
+            probs['B_up']    *= 1.1
+        else:
+            probs['A_break'] *= 0.7; reasons['A_break'].append('MACD缩柱-')
+            probs['B_up']    *= 0.9
+            probs['D_down']  *= 1.3; reasons['D_down'].append('MACD缩柱+')
+            probs['E_break'] *= 1.2; reasons['E_break'].append('MACD缩柱+')
 
     # 三类全触发
     if stock['p1'] and stock['p2'] and stock['p3']:
@@ -331,8 +444,13 @@ def adjusted_scenarios(base_dist: dict, stock: dict) -> tuple[dict, dict]:
 
 # ===== 报告生成 =====
 
-def stock_section(sym: str, name: str, df: pd.DataFrame, mf_today: dict | None) -> dict:
-    """单只股票指标快照 + 形态触发 + 后续条件均值."""
+def stock_section(sym: str, name: str, df: pd.DataFrame, mf_today: dict | None,
+                  regime: str = REGIME_NEUTRAL) -> dict:
+    """单只股票指标快照 + 形态触发 + 后续条件均值.
+
+    ``regime`` (U4 / R2) 透传给 ``adjusted_scenarios`` (动量态关均值回归先验)
+    并落入 ``out['regime']`` 供表头标注。
+    """
     last = df.iloc[-1]
     hist = df.iloc[:-1]
 
@@ -388,7 +506,10 @@ def stock_section(sym: str, name: str, df: pd.DataFrame, mf_today: dict | None) 
     else:
         out['scenario_basis'] = f'三类形态共触'
     out['scenario'] = base_dist
-    out['scenario_adj'], out['scenario_reasons'] = adjusted_scenarios(base_dist, out)
+    out['regime'] = regime
+    out['scenario_adj'], out['scenario_reasons'] = adjusted_scenarios(base_dist, out, regime)
+    # 区间底线: 全历史无条件分位与条件分位取宽 (U4 / R1)
+    out['scenario_band'] = widen_interval(base_dist, unconditional_interval(df))
     # 关键位
     out['levels'] = key_levels(df, last)
     return out
@@ -449,7 +570,9 @@ def _scenario_table(s: dict) -> list[str]:
     if not sc or sc.get('n', 0) == 0:
         return ['  _情形分布: 样本不足_']
     lines = []
-    lines.append(f"  *次日情形分布* (n={sc['n']}, 基于 {s['scenario_basis']})")
+    regime = s.get('regime', REGIME_NEUTRAL)
+    regime_zh = '动量' if regime == REGIME_MOMENTUM else '中性'
+    lines.append(f"  *次日情形分布* (n={sc['n']}, 基于 {s['scenario_basis']}, regime={regime_zh})")
     lines.append("  ```")
     lines.append("  情形                       原始    修正后  备注")
     for key, label in _SCEN_LABEL.items():
@@ -464,12 +587,17 @@ def _scenario_table(s: dict) -> list[str]:
         rs_short = rs[:12] if rs else ''
         lines.append(f"  {label:<24}  {raw:5.1f}%  {adj_p:5.1f}%{arrow:<2} {rs_short}")
     lines.append("  ```")
-    # 区间
-    p25, p50, p75 = sc.get('p25'), sc.get('p50'), sc.get('p75')
-    p10, p90 = sc.get('p10'), sc.get('p90')
+    # 区间: 以全样本无条件分位为底, 条件分位只允许收窄 (U4 / R1)
+    band = s.get('scenario_band') or {}
+    p25 = band.get('p25', sc.get('p25'))
+    p75 = band.get('p75', sc.get('p75'))
+    p10 = band.get('p10', sc.get('p10'))
+    p90 = band.get('p90', sc.get('p90'))
+    p50 = sc.get('p50')  # 中位仍用条件样本 (位置无关宽度)
     cl = s['close']
-    if all(pd.notna(x) for x in [p25, p75, p10, p90]):
-        lines.append(f"  *预期区间* (历史 P10/P90):")
+    if all(pd.notna(x) for x in [p25, p75, p10, p90, p50]):
+        basis_note = '无条件底线' if band.get('basis') == 'uncond' else '条件+无条件取宽'
+        lines.append(f"  *预期区间* (区间底线: 全样本 P10/P90, {basis_note}):")
         lines.append(f"     收盘 50% 概率落 *{cl*(1+p25):.2f} ~ {cl*(1+p75):.2f}* (中位 {cl*(1+p50):.2f})")
         lines.append(f"     极端 80% 区间 {cl*(1+p10):.2f} ~ {cl*(1+p90):.2f}")
     return lines
@@ -553,12 +681,14 @@ def _advice_block(s: dict) -> list[str]:
     if has_short_neg:
         actions.append('周一短期 1 日偏弱大概率, *不要追高*, 让子弹飞一天')
 
-    if bull_signals and pd.notna(s['fund_10d']) and s['fund_10d'] > 0.03:
-        actions.append(f"5-10 日仍看涨 (历史 10d {s['fund_10d']*100:+.1f}% · 胜率 {s['fund_w10']*100:.0f}%)")
+    # R3: 删除常量「5-10 日仍看涨」—— 实测历史 IC≈0、无区分度 (validate 验证),
+    # bull_signals + fund_10d>3% 触发的无条件涨观点对错都不是信号, 直接删。
 
-    # 止损位: 今日最低 -1% (不取 MA20, 避免回调期 MA20 反成天花板)
+    # 止损位: 今日最低 -1% (不取 MA20, 避免回调期 MA20 反成天花板)。
+    # R4: 改为仓位语义, 与中期观点显式解耦 (破位减半仓留底仓, 不全清)。
     stop = lv['low_today'] * 0.99
-    actions.append(f"止损位 *{stop:.2f}* (今日最低 -1%)")
+    actions.append(f"止损触发 → 减半仓留底仓, 止损位 *{stop:.2f}* (今日最低 -1%); "
+                   f"破位后若中期看涨则保留 50% 底仓观察, 不全清 (与中期观点解耦)")
 
     # 突破观察位: 20 日高优先 (短线), 否则 2y 高
     if '_df' in s:
@@ -683,9 +813,10 @@ def render(stocks: list[dict], idx_dfs: dict, today_str: str, t1_str: str,
                          f"次日 {kc100['mean']*100:+.2f}% (胜率 {kc100['win']*100:.0f}%)")
         lines.append("")
 
-        # 情形分布表
-        lines.extend(_scenario_table(s))
-        lines.append("")
+        # 情形分布表 (撤段闸: SCENARIO_ENABLED=False 时该段不渲染, U4 / R5)
+        if SCENARIO_ENABLED:
+            lines.extend(_scenario_table(s))
+            lines.append("")
 
         # 操作建议
         lines.extend(_advice_block(s))
@@ -718,6 +849,10 @@ def main():
             logger.warning(f"  指数 {code} 加载失败: {e}")
             idx_dfs[code] = None
 
+    # 板块动量 regime (U4 / R2): 全市场一次性判定; 取不到 fail-safe neutral
+    regime = detect_regime(target)
+    logger.info(f"  动量 regime = {regime}")
+
     stocks_data = []
     stale_through: str | None = None  # 实时源失败退化到缓存时的最早数据截止日
     for sym, name, category in STOCKS:
@@ -735,7 +870,7 @@ def main():
         # 合并大单净流到 df 用于条件回测
         if len(mf):
             df = df.merge(mf[['trade_date', 'lg_total_net']], on='trade_date', how='left')
-        s = stock_section(sym, name, df, mf_today)
+        s = stock_section(sym, name, df, mf_today, regime=regime)
         s['_df'] = df
         s['category'] = category
         stocks_data.append(s)
