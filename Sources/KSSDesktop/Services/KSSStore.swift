@@ -17,6 +17,8 @@ final class KSSStore: ObservableObject {
     @Published var taskResults: [TaskRunResult] = []
     @Published var scheduledJobs: [ScheduledJob] = []
     @Published var scheduledBusy: Set<String> = []   // 正在操作的 label（行级 loading）
+    @Published var scheduledBatchBusy = false         // 批量补跑/重跑进行中
+    @Published var scheduledBatchNote: String?        // 批量操作结果提示（一次性 toast 文案）
     @Published var themeLeaders: [ThemeLeaders] = []
     @Published var importingSymbol: String?   // 点击导入进行中的代码（行级/全局指示）
     @Published var errorMessage: String?
@@ -197,6 +199,41 @@ final class KSSStore: ObservableObject {
     /// 启用/停用某任务，就地刷新该行状态。
     func toggleScheduledJob(_ label: String, enabled: Bool) async {
         await runScheduledAction(label) { bridge in try bridge.setJobEnabled(label, enabled: enabled) }
+    }
+
+    /// 漏跑任务（关机自检命中的）。
+    var staleJobs: [ScheduledJob] { scheduledJobs.filter { $0.stale } }
+
+    /// 一键补跑所有漏跑任务（关机自检）。
+    func catchUpStaleJobs() async {
+        await runScheduledBatch { bridge in try bridge.catchUpJobs() }
+    }
+
+    /// 批量重跑指定 label（某分类「全部重跑」/「全部重跑」）。
+    func rerunScheduledJobs(_ labels: [String]) async {
+        await runScheduledBatch { bridge in try bridge.rerunJobs(labels) }
+    }
+
+    private func runScheduledBatch(_ action: @escaping (BridgeClient) throws -> CronBatchResult) async {
+        guard let bridge, !scheduledBatchBusy else { return }
+        scheduledBatchBusy = true
+        defer { scheduledBatchBusy = false }
+        do {
+            let result = try await Task.detached { try action(bridge) }.value
+            if result.count == 0 {
+                scheduledBatchNote = "没有需要触发的任务"
+            } else {
+                let failed = result.ran.filter { !$0.ok }
+                scheduledBatchNote = failed.isEmpty
+                    ? "已触发 \(result.count) 个任务"
+                    : "触发 \(result.count) 个，\(failed.count) 个失败：\(failed.map(\.title).joined(separator: "、"))"
+            }
+            // launchctl kickstart 后状态有延迟，稍等再刷新行状态。
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            await loadScheduledJobs()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func runScheduledAction(_ label: String, _ action: @escaping (BridgeClient) throws -> CronActionResult) async {

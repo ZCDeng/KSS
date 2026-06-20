@@ -147,10 +147,15 @@ struct ContentView: View {
                     results: store.taskResults,
                     scheduledJobs: store.scheduledJobs,
                     scheduledBusy: store.scheduledBusy,
+                    scheduledBatchBusy: store.scheduledBatchBusy,
+                    scheduledBatchNote: store.scheduledBatchNote,
                     onRun: { task in Task { await store.runTask(task) } },
                     onLoadSchedules: { Task { await store.loadScheduledJobs() } },
                     onRerunSchedule: { label in Task { await store.rerunScheduledJob(label) } },
-                    onToggleSchedule: { label, enabled in Task { await store.toggleScheduledJob(label, enabled: enabled) } }
+                    onToggleSchedule: { label, enabled in Task { await store.toggleScheduledJob(label, enabled: enabled) } },
+                    onCatchUp: { Task { await store.catchUpStaleJobs() } },
+                    onRerunMany: { labels in Task { await store.rerunScheduledJobs(labels) } },
+                    onDismissBatchNote: { store.scheduledBatchNote = nil }
                 )
             case .hotspot:
                 HotspotRotationView(

@@ -2074,7 +2074,25 @@ LABEL_TITLES = {
     "sector_review_daily": "板块复盘",
     "update_data_daily": "股票池日线更新",
     "hotspot_rotation_daily": "板块热点轮动归档",
+    "selfcheck": "开机自检补跑",
 }
+
+# label 后缀 → 分类（任务页按此分组 + 批量重跑）。
+LABEL_CATEGORY = {
+    "update_data_daily": "数据更新",
+    "macro_daily": "数据更新",
+    "scanner": "扫描选股",
+    "scan_bj50_daily": "扫描选股",
+    "sector_review_daily": "板块复盘",
+    "hotspot_rotation_daily": "板块复盘",
+    "paper_trade_daily": "纸交易",
+    "paper_trade_weekly": "纸交易",
+    "prediction_validation_weekly": "校验回测",
+    "morning_divergence_alert": "盘中快讯",
+    "selfcheck": "系统",
+}
+# 分类展示顺序（未列出的归「其他」并排末尾）。
+CATEGORY_ORDER = ["数据更新", "扫描选股", "板块复盘", "盘中快讯", "纸交易", "校验回测", "系统", "其他"]
 
 _WEEKDAY_CN = {0: "日", 1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "日"}
 
@@ -2121,6 +2139,63 @@ def _parse_schedule(interval: Any) -> str:
         else:
             parts.append(_hm(e))
     return " / ".join(parts)
+
+
+def _interval_entries(interval: Any) -> list[dict]:
+    if interval is None:
+        return []
+    entries = interval if isinstance(interval, list) else [interval]
+    return [e for e in entries if isinstance(e, dict)]
+
+
+def _entry_dt_on(entry: dict, day) -> "datetime | None":
+    """某天 day 上这条 StartCalendarInterval 的触发时刻；weekday 不匹配返回 None。"""
+    wd = entry.get("Weekday")
+    if wd is not None:
+        wd_norm = 7 if int(wd) == 0 else int(wd)  # launchd 0/7=周日；对齐 isoweekday
+        if day.isoweekday() != wd_norm:
+            return None
+    return datetime(day.year, day.month, day.day, int(entry.get("Hour", 0)), int(entry.get("Minute", 0)))
+
+
+def _fire_times(interval: Any, now: "datetime") -> tuple["datetime | None", "datetime | None"]:
+    """(expected, next)：最近一次 ≤now 的预定触发 / 最近一次 >now 的预定触发。"""
+    from datetime import timedelta
+
+    entries = _interval_entries(interval)
+    if not entries:
+        return None, None
+    prev = nxt = None
+    for d in range(0, 9):
+        day = (now - timedelta(days=d)).date()
+        for e in entries:
+            dt = _entry_dt_on(e, day)
+            if dt is not None and dt <= now and (prev is None or dt > prev):
+                prev = dt
+    for d in range(0, 9):
+        day = (now + timedelta(days=d)).date()
+        for e in entries:
+            dt = _entry_dt_on(e, day)
+            if dt is not None and dt > now and (nxt is None or dt < nxt):
+                nxt = dt
+    return prev, nxt
+
+
+def _missed_cycles(interval: Any, now: "datetime", last_run: "datetime | None") -> int:
+    """(last_run, now] 区间内本该触发的次数；last_run 为空按全区间计。"""
+    from datetime import timedelta
+
+    entries = _interval_entries(interval)
+    if not entries:
+        return 0
+    cnt = 0
+    for d in range(0, 15):
+        day = (now - timedelta(days=d)).date()
+        for e in entries:
+            dt = _entry_dt_on(e, day)
+            if dt is not None and dt <= now and (last_run is None or dt > last_run):
+                cnt += 1
+    return cnt
 
 
 def _run_launchctl(args: list[str], timeout: int = 15) -> tuple[int, str, str]:
@@ -2203,11 +2278,13 @@ def _scheduled_job(label: str, path: Path, uid: int, disabled: set[str]) -> dict
         pl = {}
 
     suffix = label.replace("com.zcdeng.kss.", "")
+    interval = pl.get("StartCalendarInterval")
     prog = pl.get("ProgramArguments") or []
     script = Path(prog[0]).name if prog else ""
-    schedule = _parse_schedule(pl.get("StartCalendarInterval"))
+    schedule = _parse_schedule(interval)
     status = _launchctl_status(label, uid)
-    last = _last_run(pl.get("StandardOutPath"))
+    out_path = pl.get("StandardOutPath")
+    last = _last_run(out_path)
 
     last_exit = status["lastExit"]
     if last_exit is None:
@@ -2217,16 +2294,36 @@ def _scheduled_job(label: str, path: Path, uid: int, disabled: set[str]) -> dict
     else:
         last_status = "failed"
 
+    # 漏跑判定：日志 mtime 当作上次实际运行时刻，与最近一次预定触发比较。
+    last_run_dt = None
+    if out_path:
+        p = Path(out_path)
+        if p.exists() and p.stat().st_size > 0:
+            last_run_dt = datetime.fromtimestamp(p.stat().st_mtime)
+    now = datetime.now()
+    expected, nxt = _fire_times(interval, now)
+    enabled = label not in disabled
+    # selfcheck 是补跑看门狗本身，永不算漏跑（否则会把自己列进补跑横幅）。
+    is_watchdog = label.endswith(".selfcheck")
+    stale = bool(not is_watchdog and enabled and expected is not None and (last_run_dt is None or last_run_dt < expected))
+    missed = _missed_cycles(interval, now, last_run_dt) if stale else 0
+
     return {
         "label": label,
         "title": LABEL_TITLES.get(suffix, suffix),
+        "category": LABEL_CATEGORY.get(suffix, "其他"),
         "schedule": schedule,
         "script": script,
-        "enabled": label not in disabled,
+        "enabled": enabled,
         "loaded": status["loaded"],
+        "running": status["pid"] is not None,
         "lastStatus": last_status,
         "lastRunAt": last["at"],
         "lastLine": last["line"],
+        "stale": stale,
+        "missedCycles": missed,
+        "expectedAt": expected.strftime("%Y-%m-%d %H:%M") if expected else None,
+        "nextRunAt": nxt.strftime("%Y-%m-%d %H:%M") if nxt else None,
     }
 
 
@@ -2272,6 +2369,53 @@ def _cron_action(label: str, action: str) -> dict[str, Any]:
     if errors:
         return {"ok": False, "error": "; ".join(errors), "job": job}
     return {"ok": True, "job": job}
+
+
+def _kickstart_labels(labels: list[str], require_stale: bool) -> dict[str, Any]:
+    """批量 kickstart：require_stale=True 只补跑漏跑项（开机自检/补跑），否则重跑全部启用项。
+    label 必须命中白名单；停用项跳过；selfcheck 自身永不参与（避免递归补跑）。"""
+    uid = os.getuid()
+    domain = f"gui/{uid}"
+    plists = _launchd_plists()
+    disabled = _disabled_labels(uid)
+    ran: list[dict[str, Any]] = []
+    skipped: list[str] = []
+    for label in labels:
+        if label not in plists or label.endswith(".selfcheck"):
+            skipped.append(label)
+            continue
+        job = _scheduled_job(label, plists[label], uid, disabled)
+        if not job["enabled"]:
+            skipped.append(label)
+            continue
+        if require_stale and not job["stale"]:
+            skipped.append(label)
+            continue
+        rc, _, err = _run_launchctl(["kickstart", "-k", f"{domain}/{label}"])
+        ran.append({
+            "label": label,
+            "title": job["title"],
+            "ok": rc == 0,
+            "error": (err.strip() or f"kickstart rc={rc}") if rc != 0 else None,
+        })
+    return {
+        "ok": all(r["ok"] for r in ran) if ran else True,
+        "count": len(ran),
+        "ran": ran,
+        "skipped": skipped,
+    }
+
+
+def _cron_catchup() -> dict[str, Any]:
+    """补跑所有「应跑未跑」的启用任务（开机自检 / 应用内一键补跑共用）。"""
+    return _kickstart_labels(list(_launchd_plists().keys()), require_stale=True)
+
+
+def _cron_rerun_many(labels: list[str]) -> dict[str, Any]:
+    """批量重跑指定 label（按分类全部重跑 / 全部重跑），无视漏跑与否，但跳过停用项。"""
+    if not labels:
+        labels = list(_launchd_plists().keys())
+    return _kickstart_labels(labels, require_stale=False)
 
 
 # ---------------------------------------------------------------------------
@@ -2385,7 +2529,8 @@ def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print(
             "usage: kss_app_bridge.py snapshot|stock SYMBOL|report PATH|paper-summary|run TASK"
-            "|cron-list|cron-rerun LABEL|cron-enable LABEL|cron-disable LABEL",
+            "|cron-list|cron-rerun LABEL|cron-enable LABEL|cron-disable LABEL"
+            "|cron-catchup|cron-rerun-many LABEL,LABEL",
             file=sys.stderr,
         )
         return 2
@@ -2451,6 +2596,14 @@ def main(argv: list[str]) -> int:
             return 2
         action = command.split("-", 1)[1]  # rerun / enable / disable
         _json_dump(_cron_action(argv[2], action))
+        return 0
+    if command == "cron-catchup":
+        _json_dump(_cron_catchup())
+        return 0
+    if command == "cron-rerun-many":
+        # 逗号分隔 label 列表，空则重跑全部启用项；每个 label 仍走白名单校验。
+        labels = [s for s in (argv[2].split(",") if len(argv) >= 3 else []) if s]
+        _json_dump(_cron_rerun_many(labels))
         return 0
     print(f"unknown command: {command}", file=sys.stderr)
     return 2

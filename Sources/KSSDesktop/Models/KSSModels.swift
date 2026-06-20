@@ -216,13 +216,29 @@ struct ScheduledJob: Codable, Identifiable, Hashable {
     var id: String { label }
     var label: String
     var title: String
+    var category: String      // 数据更新 / 扫描选股 / 板块复盘 / 纸交易 / 校验回测 / 盘中快讯 / 系统 / 其他
     var schedule: String      // 人读调度，如「工作日 17:30」
     var script: String
     var enabled: Bool         // 是否启用（未被 launchctl disable）
     var loaded: Bool          // 是否已 bootstrap 到 gui 域
+    var running: Bool         // 当前是否有进程在跑
     var lastStatus: String    // success / failed / unknown
     var lastRunAt: String?    // 上次运行时间（日志 mtime）
     var lastLine: String?     // 上次运行日志末行摘要
+    var stale: Bool           // 应跑未跑（关机漏跑）
+    var missedCycles: Int     // 漏跑了几个预定周期
+    var expectedAt: String?   // 最近一次本该触发的时刻
+    var nextRunAt: String?    // 下次预定触发时刻
+
+    /// 综合健康态（监控用）：运行中 > 漏跑 > 失败 > 停用 > 正常。
+    enum Health { case running, stale, failed, disabled, ok }
+    var health: Health {
+        if running { return .running }
+        if !enabled { return .disabled }
+        if stale { return .stale }
+        if lastStatus == "failed" { return .failed }
+        return .ok
+    }
 }
 
 /// cron-rerun / cron-enable / cron-disable 的返回。
@@ -230,6 +246,22 @@ struct CronActionResult: Codable, Hashable {
     var ok: Bool
     var error: String?
     var job: ScheduledJob?
+}
+
+/// cron-catchup / cron-rerun-many 批量结果。
+struct CronBatchResult: Codable, Hashable {
+    var ok: Bool
+    var count: Int                  // 实际触发的任务数
+    var ran: [CronBatchItem]
+    var skipped: [String]
+
+    struct CronBatchItem: Codable, Hashable, Identifiable {
+        var id: String { label }
+        var label: String
+        var title: String
+        var ok: Bool
+        var error: String?
+    }
 }
 
 /// 十五五科技主题 → 板块龙头/第二梯队（数据源 themes_15th_5y.yaml + 热点轮动归档）。

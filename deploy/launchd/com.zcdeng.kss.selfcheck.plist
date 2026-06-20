@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.zcdeng.kss.selfcheck</string>
+
+    <!-- 关机漏跑自检：每次登录触发一次（RunAtLoad），脚本内睡 90s 后补跑漏跑任务。
+         另设中午 12:00 一个兜底点，覆盖「登录后长时间不关机但白天才开机」的场景。 -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartCalendarInterval</key>
+    <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>0</integer></dict>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/zcdeng/projects/KSS/scripts/run_cron_selfcheck.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/zcdeng/projects/KSS</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/zcdeng</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/zcdeng/projects/KSS/storage/logs/cron/selfcheck.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/zcdeng/projects/KSS/storage/logs/cron/selfcheck.log</string>
+
+    <key>ThrottleInterval</key>
+    <integer>300</integer>
+</dict>
+</plist>

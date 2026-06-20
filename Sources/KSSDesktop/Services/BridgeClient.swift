@@ -82,6 +82,16 @@ struct BridgeClient {
         try run([enabled ? "cron-enable" : "cron-disable", label], as: CronActionResult.self)
     }
 
+    /// 补跑所有「应跑未跑」的启用任务（关机漏跑自检）。
+    func catchUpJobs() throws -> CronBatchResult {
+        try run(["cron-catchup"], as: CronBatchResult.self)
+    }
+
+    /// 批量重跑指定 label（空 = 全部启用项）；每个 label 仍走 bridge 白名单校验。
+    func rerunJobs(_ labels: [String]) throws -> CronBatchResult {
+        try run(["cron-rerun-many", labels.joined(separator: ",")], as: CronBatchResult.self)
+    }
+
     private func run<T: Decodable>(_ args: [String], as type: T.Type) throws -> T {
         let bridge = projectRoot.appending(path: "scripts/kss_app_bridge.py")
         let process = Process()

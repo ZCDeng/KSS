@@ -45,6 +45,29 @@ def main() -> int:
     check("whitelist-nonempty", len(labels) >= 9, True)
     check("whitelist-prefix", all(k.startswith("com.zcdeng.kss.") for k in labels), True)
 
+    # ---- 漏跑判定（_fire_times / _missed_cycles）：固定 now，不依赖真实时间 ----
+    from datetime import datetime
+    # 2026-06-20 是周六；工作日 08:30 任务最近一次预定 = 周五 06-19 08:30，下次 = 周一 06-22 08:30
+    now = datetime(2026, 6, 20, 15, 0)
+    wd_interval = [{"Weekday": w, "Hour": 8, "Minute": 30} for w in range(1, 6)]
+    exp, nxt = b._fire_times(wd_interval, now)
+    check("fire-expected", exp, datetime(2026, 6, 19, 8, 30))
+    check("fire-next-skips-weekend", nxt, datetime(2026, 6, 22, 8, 30))
+    # 周六同日的「每天 12:00」：expected = 当天 12:00（已过），next = 次日 12:00
+    daily = {"Hour": 12, "Minute": 0}
+    exp2, nxt2 = b._fire_times(daily, now)
+    check("daily-expected-today", exp2, datetime(2026, 6, 20, 12, 0))
+    check("daily-next-tomorrow", nxt2, datetime(2026, 6, 21, 12, 0))
+    # launchd Weekday 0/7 = 周日，对齐 isoweekday 7
+    sun = b._entry_dt_on({"Weekday": 0, "Hour": 9, "Minute": 0}, datetime(2026, 6, 21).date())  # 06-21 是周日
+    check("weekday-0-is-sunday", sun, datetime(2026, 6, 21, 9, 0))
+    # 漏跑次数：上次运行在周三，到周六 15:00 应触发周四、周五两次
+    missed = b._missed_cycles(wd_interval, now, datetime(2026, 6, 17, 8, 32))
+    check("missed-cycles-2", missed, 2)
+    # 无调度（selfcheck 之类 RunAtLoad-only）→ 无 expected/next，0 漏跑
+    check("no-interval-fire", b._fire_times(None, now), (None, None))
+    check("no-interval-missed", b._missed_cycles(None, now, None), 0)
+
     if failures:
         print("FAIL:")
         for f in failures:
