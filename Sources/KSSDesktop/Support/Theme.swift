@@ -137,9 +137,10 @@ struct KSSCard: ViewModifier {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .strokeBorder(KSSTheme.outlineVariant, lineWidth: style == .outlined ? 1 : 0)
             )
-            // M3 elevation level 1：暗色靠 tonal 抬升、阴影极淡；亮色靠柔影。
-            .shadow(color: .black.opacity(style == .elevated ? 0.16 : 0), radius: 5, x: 0, y: 2)
-            .shadow(color: .black.opacity(style == .elevated ? 0.06 : 0), radius: 1.5, x: 0, y: 1)
+            // M3 elevation level 1（克制版）：密集卡片下靠 tonal 抬升为主、阴影只留一丝，
+            // 避免多卡并排时阴影叠加造成审美疲劳。
+            .shadow(color: .black.opacity(style == .elevated ? 0.10 : 0), radius: 3, x: 0, y: 1)
+            .shadow(color: .black.opacity(style == .elevated ? 0.04 : 0), radius: 1, x: 0, y: 0.5)
     }
 }
 
