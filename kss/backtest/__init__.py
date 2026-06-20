@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 from kss.backtest.engine import BacktestEngine
+from kss.backtest.lookahead_guard import (
+    FeatureLookaheadGuard,
+    LookaheadFeatureError,
+)
 from kss.backtest.metrics import Metrics
 from kss.backtest.cost_model import CostModel
 
 __all__ = [
     "BacktestEngine",
-    "Metrics",
     "CostModel",
+    "FeatureLookaheadGuard",
+    "LookaheadFeatureError",
+    "Metrics",
 ]

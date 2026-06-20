@@ -16,26 +16,41 @@ source: kss/tests/test_adversarial.py
 | 场景 | 工具表现 | 状态 |
 | --- | --- | --- |
 | 1. 纯随机噪声 | `Significance.deflated_sharpe` 稳稳拒绝；`cross_section_ic_scan` |t| 受控；50 次 Type-I 错误率 ≤ 20% | PASS |
-| 2. 特征级 look-ahead | `walk_forward.purge_gap` 只防 label leak，feature leak 无防御 | **xfail** |
+| 2. 特征级 look-ahead | `FeatureLookaheadGuard` 入口粗检（复制 label）+ 时序检查（label 平移敏感度）（U1） | **RESOLVED** |
 | 3. 单股噪声伪 alpha | `cross_section_ic_scan` 自动稀释，揭穿 | PASS |
 | 4. 末段集中回撤 | 60 日滚动 Sharpe / `max_dd` / `calmar` 联合警示 | PASS |
 | 5. 同质化多因子 | `cross_section_ic_scan` 显假象，但因子相关矩阵 `panel[fs].corr()` 揭穿 | PASS |
 | 6. 幸存者偏差 | `ExecutionModel + SuspensionData` 停牌名单显式 PIT 过滤（4.2） | **RESOLVED** |
 
-最终：18 pass / 3 xfail / 0 fail（4.2 修复后从 16/5/0 改善）.
+最终：对抗套件 0 xfail / 0 fail（U1 后场景 2 三 seed 由 xfail 转 pass）.
 
-## Gap 1：Feature-level Look-ahead
+## Gap 1：Feature-level Look-ahead —— **RESOLVED 2026-06-21（U1）**
 
-**现象**：`walk_forward` 的 `purge_gap=N` 只剔训练区间尾部 N 天的 `future_return_Nd`，
+**原现象**：`walk_forward` 的 `purge_gap=N` 只剔训练区间尾部 N 天的 `future_return_Nd`，
 **防的是 label leak**。若使用者把 `next_day_return`（或衍生的未来值）放进
 `feature_cols`，test 时该 feature 依旧泄漏未来 → 模型在 test 上作弊，sharpe 爆表。
 
-**复现**：`test_lookahead_factor_caught_by_purge_gap`（seeds 0/1/2 全部 sharpe ≥ 5）.
+**修复方案（U1）**：`kss/backtest/lookahead_guard.py` 的 `FeatureLookaheadGuard.check()`，
+在 `walk_forward` 入口（任何数据切分前）跑两道互补检查：
+1. **粗检** —— feature 与 `label_col` 全 panel |Spearman IC| > 0.95（严格 `>`）→ 抛
+   `LookaheadFeatureError`（拦近似复制 label）。
+2. **时序检查** —— label 平移敏感度：symbol 内把 label 前移一格得「当期对齐」对照，
+   feature 对当期对齐 label 的 IC 量级显著超过对预测 label 的 IC 且非平凡（≥0.10、超
+   预测 IC × 1.5、配对样本 ≥100）→ 判时序泄漏抛错。抓 IC<0.95 的 close-at-open 型同期
+   信息（粗检漏掉的关键用例）。
 
-**补法**（备选）：
-1. 在 `walk_forward` 入口校验 `feature_cols` 与 `next_day_return` / `future_return_Nd`
-   不能有 row-aligned 完美相关（IC > 0.95 时拒绝）。
-2. 文档级警示 + AGENTS.md 加红字"feature 不得含未来观测值"。
+**逃生口**：`lookahead_whitelist` 命中只 `logger.warning` 不抛错；`lookahead_guard=False`
+或 `lookahead_ic_threshold=float("inf")` 可关检查（研究/调试）。阈值经
+`config/settings.yaml` `backtest.lookahead_guard` 外化。
+
+**「U1 单独 ≠ 可信回测」**：粗检 + 时序检查只是地基之一；完整信任 = U1 + purge/embargo
++ CPCV OOS 三者合力（见 `docs/plans/2026-06-21-001-backtest-loop-closure-plan.md` U1 段）。
+
+**验证**：`test_adversarial.py` 场景 2 三 seed 由 xfail 转 pass（断言抛
+`LookaheadFeatureError`）；新增 `test_lookahead_guard_temporal_leak_under_threshold`
+（IC<0.95 时序泄漏被拒）、`test_lookahead_guard_normal_feature_passes`、
+`test_lookahead_guard_whitelist_passes`、`test_lookahead_guard_threshold_boundary`。
+入口：`kss/backtest/engine.py::BacktestEngine.walk_forward`。
 
 ## Gap 2：Survivorship Bias —— **RESOLVED 2026-05-12**
 

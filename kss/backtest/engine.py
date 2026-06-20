@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from kss.backtest.cost_model import CostModel
+from kss.backtest.lookahead_guard import FeatureLookaheadGuard
 from kss.backtest.metrics import Metrics
 from kss.features.pipeline import FactorPipeline
 
@@ -293,6 +294,9 @@ class BacktestEngine:
         model_type: Literal["regression", "ranker"] = "regression",
         execution: "ExecutionModel | None" = None,
         sample_weight_decay: float = 0.0,
+        lookahead_guard: bool = True,
+        lookahead_ic_threshold: float | None = None,
+        lookahead_whitelist: list[str] | None = None,
     ) -> pd.DataFrame | None:
         """执行 Walk-forward 纯多头回测.
 
@@ -339,6 +343,12 @@ class BacktestEngine:
                 ``age`` 为相对当窗 train_df 最末一日的天数（远样本权重低）.
                 典型值 ``0.005``（半衰期 ~140 天）；DDG-DA 轻量版概念漂移加权.
                 必须用 walk-forward 选 decay，否则触发 hyperparam in-sample bias.
+            lookahead_guard: 是否在入口跑 :class:`FeatureLookaheadGuard` 拦截 feature
+                泄漏（粗检 + 时序检查），默认 True. 设 ``False`` 完全跳过（研究/调试）.
+                对无泄漏特征零副作用，正常回测行为不变.
+            lookahead_ic_threshold: 粗检 |Spearman IC| 拒绝线（严格 ``>``）；``None``
+                用 Guard 配置/默认 0.95. 传 ``float("inf")`` 关粗检留时序检查.
+            lookahead_whitelist: 命中泄漏只 warning 不抛错的特征名单（人工逃生口）.
 
         Returns:
             回测结果 DataFrame，列为：
@@ -348,7 +358,20 @@ class BacktestEngine:
 
         Raises:
             ValueError: ``label_col`` 不符合 ``future_return_Nd`` 格式时抛出.
+            LookaheadFeatureError: ``lookahead_guard`` 开启且 ``feature_cols`` 命中
+                feature 泄漏（复制 label 或时序不可得）时抛出.
         """
+        # Feature 泄漏防护：在任何数据切分前对整体 panel 跑粗检 + 时序检查.
+        # 拦截把 next_day_return 衍生 / 当期信息塞进 feature_cols 的 look-ahead.
+        if lookahead_guard:
+            FeatureLookaheadGuard.check(
+                factor_df,
+                feature_cols,
+                label_col,
+                ic_threshold=lookahead_ic_threshold,
+                whitelist=lookahead_whitelist,
+            )
+
         # 从 label_col 中解析预测周期 N，用于 purge gap
         # 训练区间尾部 N 天的 future_return_Nd = close.shift(-N) 会窥见测试期收益
         match = _LABEL_PATTERN.match(label_col)

@@ -16,6 +16,10 @@ import pytest
 from kss.backtest.cost_model import CostModel
 from kss.backtest.diagnostics import SignalDiagnostics
 from kss.backtest.engine import BacktestEngine
+from kss.backtest.lookahead_guard import (
+    FeatureLookaheadGuard,
+    LookaheadFeatureError,
+)
 from kss.backtest.metrics import Metrics
 from kss.backtest.significance import Significance
 
@@ -77,22 +81,14 @@ def test_random_noise_false_positive_rate_bounded() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 场景 2：未来数据 feature → walk_forward 防得住 label-leak,
-#         防不住 feature-leak（已知 gap, xfail）
+# 场景 2：未来数据 feature → FeatureLookaheadGuard 拦截（U1 转正）
+#         粗检抓复制 label；时序检查抓 IC<0.95 的当期信息泄漏；白名单只 warning
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize("seed", [0, 1, 2])
-def test_lookahead_factor_caught_by_purge_gap(seed: int) -> None:
-    """``cheat_factor[t] = next_day_return[t]``（直接看未来）.
-
-    KSS 现状：``walk_forward`` 的 ``purge_gap=N`` 只剔训练区间尾部 N 天,
-    防的是 **label leak**（``future_return_Nd = close.shift(-N)`` 穿透）.
-    它**无法**阻止使用者把 ``next_day_return`` 直接塞进 ``feature_cols``——
-    test 时该 feature 仍是未来值，模型在 test 上"作弊", sharpe 会爆表 (≥5).
-    """
+def _lookahead_panel(seed: int, n_dates: int = 80, n_stocks: int = 12) -> pd.DataFrame:
+    """``cheat_factor[t] = next_day_return[t]``（直接复制未来 label）panel."""
     rng = np.random.default_rng(seed)
-    n_dates, n_stocks = 80, 12
     rows: list[dict] = []
     for d in pd.date_range("2024-01-01", periods=n_dates):
         for s in range(n_stocks):
@@ -104,25 +100,143 @@ def test_lookahead_factor_caught_by_purge_gap(seed: int) -> None:
                 "future_return_5d": next_ret,     # label 对齐
                 "next_day_return": next_ret,
             })
-    factor_df = pd.DataFrame(rows)
+    return pd.DataFrame(rows)
 
-    res = BacktestEngine(cost_model=CostModel()).walk_forward(
+
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_lookahead_factor_caught_by_purge_gap(seed: int) -> None:
+    """``cheat_factor[t] = next_day_return[t]``（直接看未来）被粗检拦截.
+
+    原 xfail：``walk_forward`` 的 purge_gap 只防 label leak，防不住把
+    ``next_day_return`` 塞进 ``feature_cols`` 的 feature leak（sharpe 爆表）.
+    U1 上线后：:class:`FeatureLookaheadGuard` 在入口对 ``cheat_factor`` 算
+    |IC|≈1 > 0.95，抛 :class:`LookaheadFeatureError`，回测根本不会跑起来.
+    """
+    factor_df = _lookahead_panel(seed)
+
+    with pytest.raises(LookaheadFeatureError, match="cheat_factor"):
+        BacktestEngine(cost_model=CostModel()).walk_forward(
+            factor_df=factor_df,
+            feature_cols=["noise", "cheat_factor"],
+            label_col="future_return_5d",
+            train_window=20, retrain_freq=5, top_pct=0.25,
+            min_train=30, min_test=5, min_stocks=4,
+        )
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_lookahead_guard_whitelist_passes(seed: int) -> None:
+    """同一 ``cheat_factor`` 加入 ``lookahead_whitelist`` → 不抛异常（warning 路径）.
+
+    白名单是逃生口：命中只 ``logger.warning``，回测继续。验证 walk_forward
+    不再抛 :class:`LookaheadFeatureError`（结果非空与否取决于数据，不在本测试约束）.
+    """
+    factor_df = _lookahead_panel(seed)
+
+    # 不应抛 LookaheadFeatureError —— 白名单豁免.
+    BacktestEngine(cost_model=CostModel()).walk_forward(
         factor_df=factor_df,
         feature_cols=["noise", "cheat_factor"],
         label_col="future_return_5d",
         train_window=20, retrain_freq=5, top_pct=0.25,
         min_train=30, min_test=5, min_stocks=4,
+        lookahead_whitelist=["cheat_factor"],
     )
-    assert res is not None and not res.empty
-    sharpe = float(Metrics.calc(res["net_return"]).get("sharpe", 0.0))
 
-    if sharpe >= 5.0:
-        pytest.xfail(
-            f"KSS 当前 gap: walk_forward purge_gap 只防 label leak,"
-            f" 防不住 feature-level look-ahead；sharpe={sharpe:.2f} (seed={seed})"
+
+def test_lookahead_guard_temporal_leak_under_threshold() -> None:
+    """**关键用例**：|IC|<0.95 的时序泄漏特征也被时序检查拒（粗检漏、新检查抓）.
+
+    构造 close-at-open 型同期信息：特征用「当期/已实现」收益（symbol 内 label 前移
+    一格 + 少量噪声）拼出——它对**未来** label 的 |IC| 中等（远 < 0.95，过得了粗检），
+    但对「向当期对齐一格」的 label |IC| 显著更高，时序检查必须捕获并抛错.
+    """
+    rng = np.random.default_rng(0)
+    n_dates, n_stocks = 120, 20
+    rows: list[dict] = []
+    # 先按 symbol 生成时间序列，使「前一期已实现 label」可得.
+    dates = list(pd.date_range("2024-01-01", periods=n_dates))
+    for s in range(n_stocks):
+        rets = rng.standard_normal(n_dates) * 0.02
+        for i, d in enumerate(dates):
+            # 时序泄漏特征：吃「上一期已实现」label（= 当期对齐目标），加噪声压低绝对 IC.
+            prev_realized = rets[i - 1] if i > 0 else 0.0
+            cheat = prev_realized + 0.02 * rng.standard_normal()
+            rows.append({
+                "trade_date": d, "symbol": f"S{s:02d}",
+                "noise": float(rng.standard_normal()),
+                "temporal_cheat": float(cheat),
+                "future_return_5d": float(rets[i]),
+                "next_day_return": float(rets[i]),
+            })
+    factor_df = pd.DataFrame(rows)
+
+    # 先确认它过得了粗检（绝对 IC 远 < 0.95）—— 证明不是复制检测器在抓.
+    from kss.backtest.lookahead_guard import _abs_spearman_ic
+    coarse_ic = _abs_spearman_ic(
+        factor_df["temporal_cheat"], factor_df["future_return_5d"]
+    )
+    assert coarse_ic < 0.95, f"构造失败：粗检 IC={coarse_ic:.3f} 不该 ≥ 0.95"
+
+    with pytest.raises(LookaheadFeatureError, match="temporal_cheat"):
+        FeatureLookaheadGuard.check(
+            factor_df,
+            feature_cols=["noise", "temporal_cheat"],
+            label_col="future_return_5d",
         )
-    # 防御性：即便偶然欠拟合也不该完全失控
-    assert sharpe <= 10.0, f"seed={seed}: sharpe={sharpe:.2f} 离谱失控"
+
+
+def test_lookahead_guard_normal_feature_passes() -> None:
+    """正常预测特征（modest IC，非时序泄漏）放行，无误杀.
+
+    特征与**未来** label 弱相关（预测力），与「当期对齐」label 不更相关——既不触
+    粗检也不触时序检查，:meth:`check` 应静默返回.
+    """
+    rng = np.random.default_rng(7)
+    n_dates, n_stocks = 120, 20
+    rows: list[dict] = []
+    dates = list(pd.date_range("2024-01-01", periods=n_dates))
+    for s in range(n_stocks):
+        for i, d in enumerate(dates):
+            signal = rng.standard_normal()
+            # 合法预测：未来 label 含一点 signal + 噪声（modest IC）.
+            future = 0.3 * signal + np.sqrt(1 - 0.3 ** 2) * rng.standard_normal()
+            rows.append({
+                "trade_date": d, "symbol": f"S{s:02d}",
+                "noise": float(rng.standard_normal()),
+                "rsi_14": float(signal),
+                "future_return_5d": float(future) * 0.01,
+                "next_day_return": float(future) * 0.01,
+            })
+    factor_df = pd.DataFrame(rows)
+
+    # 不应抛任何异常.
+    FeatureLookaheadGuard.check(
+        factor_df,
+        feature_cols=["noise", "rsi_14"],
+        label_col="future_return_5d",
+    )
+
+
+def test_lookahead_guard_threshold_boundary() -> None:
+    """粗检阈值边界语义：严格 ``>``，|IC| 恰好等于阈值时放行（边界容错）.
+
+    用 ``ic_threshold`` 调到刚好等于 ``cheat_factor`` 的 |IC| → 不应抛错.
+    """
+    from kss.backtest.lookahead_guard import _abs_spearman_ic
+
+    factor_df = _lookahead_panel(0)
+    ic = _abs_spearman_ic(
+        factor_df["cheat_factor"], factor_df["future_return_5d"]
+    )
+    # 阈值 = 实际 IC：严格 > 不触发，放行.
+    FeatureLookaheadGuard.check(
+        factor_df,
+        feature_cols=["cheat_factor"],
+        label_col="future_return_5d",
+        ic_threshold=ic,
+        temporal_check=False,  # 隔离粗检边界，单测 > 语义
+    )
 
 
 # --------------------------------------------------------------------------- #

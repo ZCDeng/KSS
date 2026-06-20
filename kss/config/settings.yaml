@@ -59,6 +59,15 @@ backtest:
     n_quantiles: 5                      # 分位数分组数量
     ic_method: "spearman"              # spearman / pearson
 
+  # Feature 泄漏防护（U1）—— walk_forward 入口粗检 + 时序检查
+  lookahead_guard:
+    ic_threshold: 0.95                  # 粗检：|Spearman IC| > 此值判复制 label（严格 >）
+    temporal_min_ic: 0.10               # 时序检查：当期对齐 IC 量级「非平凡」下限
+    temporal_margin: 0.50               # 时序检查：当期 IC 须超预测 IC 的相对裕度
+    temporal_min_samples: 100           # 时序检查：配对样本数下限（小样本 Spearman 噪声跳过）
+    # whitelist 由调用方按需在 walk_forward(lookahead_whitelist=[...]) 显式传入，
+    # 不在此内置默认豁免（避免静默放行真泄漏）。
+
   # 稳健性扫描（Phase 3）
   robustness:
     cost_grid:                          # cost_sensitivity 默认 grid
