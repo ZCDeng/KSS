@@ -55,8 +55,10 @@ struct DashboardView: View {
                         BJScanSection(scan: scan, onSelect: onSelectSymbol)
                     }
 
-                    // 底部：指数一览（13 个常用指数当日表现）
+                    // 底部：指数跑马灯（按涨跌幅排序滚动）+ 指数一览
                     if let board = snapshot.marketStrip?.indexBoard, !board.isEmpty {
+                        SectionHeader("指数跑马灯", caption: "13 指数按涨跌幅排序 · 持续滚动")
+                        IndexMarquee(indices: board)
                         SectionHeader("指数一览", caption: "常用宽基 / 主题指数当日表现")
                         IndexBoardGrid(indices: board)
                     }
@@ -630,6 +632,101 @@ struct IndexBoardGrid: View {
                 .kssCard(padding: 11)
             }
         }
+    }
+}
+
+/// 指数跑马灯：13 指数按涨跌幅降序，TimelineView 驱动无缝循环横向滚动。
+/// 参照 M3 carousel —— 圆角容器(shapeL) + 两端淡出遮罩 + 一致项高，展示型不可点。
+struct IndexMarquee: View {
+    var indices: [IndexQuote]
+
+    private let gap: CGFloat = 10
+    private let speed: Double = 42            // 滚动速度 pts/s
+    @State private var rowWidth: CGFloat = 0  // 单份内容宽（含内部间距）
+
+    private var sorted: [IndexQuote] {
+        indices.sorted { $0.pct > $1.pct }    // 涨幅高→低
+    }
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let period = rowWidth + gap        // 一个循环周期 = 单份宽 + 拼接缝
+            let elapsed = timeline.date.timeIntervalSinceReferenceDate
+            let offset = period > 0
+                ? -CGFloat((elapsed * speed).truncatingRemainder(dividingBy: Double(period)))
+                : 0
+            HStack(spacing: gap) {
+                row(measured: true)
+                row(measured: false)           // 第二份用于无缝衔接
+            }
+            .offset(x: offset)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: true, vertical: false)
+        }
+        .frame(height: 46)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipped()
+        .mask(edgeFade)                        // M3 carousel 两端淡出
+        .onPreferenceChange(MarqueeWidthKey.self) { rowWidth = $0 }
+    }
+
+    private func row(measured: Bool) -> some View {
+        HStack(spacing: gap) {
+            ForEach(sorted) { chip($0) }
+        }
+        .background {
+            if measured {
+                GeometryReader { g in
+                    Color.clear.preference(key: MarqueeWidthKey.self, value: g.size.width)
+                }
+            }
+        }
+    }
+
+    private func chip(_ idx: IndexQuote) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: idx.pct >= 0 ? "arrowtriangle.up.fill" : "arrowtriangle.down.fill")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(KSSTheme.signColor(idx.pct))
+            Text(idx.name)
+                .font(.system(size: 12.5, weight: .bold))
+                .foregroundStyle(KSSTheme.textPrimary)
+                .lineLimit(1)
+            Text(String(format: "%.2f", idx.close))
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundStyle(KSSTheme.textSecondary)
+                .lineLimit(1)
+            Text(String(format: "%+.2f%%", idx.pct))
+                .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                .foregroundStyle(KSSTheme.signColor(idx.pct))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 9)
+        .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeL))
+        .overlay(
+            RoundedRectangle(cornerRadius: KSSTheme.shapeL)
+                .strokeBorder(KSSTheme.signColor(idx.pct).opacity(0.18), lineWidth: 1)
+        )
+        .fixedSize()
+    }
+
+    private var edgeFade: some View {
+        LinearGradient(
+            stops: [
+                .init(color: .clear, location: 0),
+                .init(color: .black, location: 0.035),
+                .init(color: .black, location: 0.965),
+                .init(color: .clear, location: 1),
+            ],
+            startPoint: .leading, endPoint: .trailing
+        )
+    }
+}
+
+private struct MarqueeWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
