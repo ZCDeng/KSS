@@ -194,6 +194,32 @@ def _recs_for_date(date: str) -> tuple[list[dict[str, Any]], float | None]:
     return recs, rec_avg
 
 
+def _clamp(x: float, lo: float = -1.0, hi: float = 1.0) -> float:
+    return max(lo, min(hi, x))
+
+
+# 增量资金合成（强度+方向）：北向(亿，真金，主导) + 两只 A500ETF 涨跌幅(宽基方向佐证)。
+# 单位不同故各自归一后加权：北向 0.6、ETF 均值 0.4；结果 -1..1（红流入/绿流出）。
+NORTH_NORM_YI = 50.0   # 北向 ±50 亿归一到 ±1
+ETF_NORM_PCT = 1.5     # ETF ±1.5% 归一到 ±1
+
+
+def _inflow_score(north: dict[str, Any] | None, etfs: list[dict[str, Any]] | None) -> tuple[float | None, str]:
+    """三指标合成增量资金分（-1..1）+ 方向。缺项按可得指标退化加权，全缺返回 None。"""
+    parts: list[tuple[float, float]] = []  # (归一值, 权重)
+    if north is not None:
+        parts.append((_clamp(north["money"] / NORTH_NORM_YI), 0.6))
+    etf_pcts = [e["pct"] for e in (etfs or []) if e.get("pct") is not None]
+    if etf_pcts:
+        avg = sum(etf_pcts) / len(etf_pcts)
+        parts.append((_clamp(avg / ETF_NORM_PCT), 0.4))
+    if not parts:
+        return None, "flat"
+    wsum = sum(w for _, w in parts)
+    score = round(sum(v * w for v, w in parts) / wsum, 3)
+    return score, ("in" if score > 0 else ("out" if score < 0 else "flat"))
+
+
 def build_trend_day(date: str) -> dict[str, Any]:
     """聚合单日 trends dict（契约见计划 U1）。缺源置 null + flags，不抛。"""
     cd = _compact(date)
@@ -206,13 +232,19 @@ def build_trend_day(date: str) -> dict[str, Any]:
     if north is not None:
         heat = round(min(abs(north["money"]) / NORTH_HEAT_REF_YI, 1.0), 3)
 
+    inflow_score, inflow_dir = _inflow_score(north, etfs)
+    top_sector = sector_top[0]["name"] if sector_top else None
+
     return {
         "date": date,
         "isTrading": north is not None or sector_count > 0 or bool(recs),
         "north": north,
         "etfs": etfs,
+        "inflowScore": inflow_score,     # 增量资金合成强度(-1..1)，驱动顶部热力图
+        "inflowDir": inflow_dir,         # in/out/flat
         "sectorTop": sector_top,
         "sectorCount": sector_count,
+        "topSector": top_sector,         # 当天最强主题名，日历格子直观显示
         "recs": recs,
         "recCount": len(recs),
         "recAvgFwd": rec_avg,

@@ -25,14 +25,24 @@ struct TrendsView: View {
                     PageTitle("趋势", subtitle: "主力资金 / 板块 / 推荐 · 按天看本周本月变化")
 
                     monthHeader
-                    legendRow
-                    heatGrid
+
+                    // ① 增量资金热力图（北向 + 两只 A500ETF 合成的强度+方向）
+                    SectionHeader("增量资金", caption: "北向 + A500ETF 合成 · 强度与方向（红流入 / 绿流出）")
+                    inflowHeatmap
+                    inflowLegend
+                    if let d = detail, d.found {
+                        inflowBreakdown(d)   // 点某天 → 三项具体值显示在热力图下方
+                    }
+
+                    // ② 日历：格子直观显示当天强势板块
+                    SectionHeader("日历", caption: "格子显示当天强势板块 · 点看当日明细")
+                    calendarGrid
 
                     SectionHeader("本周", caption: "最近 5 个交易日")
                     weekTimeline
 
                     if let d = detail, d.found {
-                        SectionHeader(dayTitle(d.date), caption: "当日明细 · 点股票即导入")
+                        SectionHeader(dayTitle(d.date), caption: "当日板块与推荐 · 点股票即导入")
                         dayDetail(d)
                     } else if selectedDate != nil {
                         Text("该日暂无归档数据")
@@ -80,49 +90,17 @@ struct TrendsView: View {
         }
     }
 
-    private var legendRow: some View {
-        HStack(spacing: 14) {
-            legendChip(color: KSSTheme.up, "北向流入", icon: "arrowtriangle.up.fill")
-            legendChip(color: KSSTheme.down, "流出", icon: "arrowtriangle.down.fill")
-            HStack(spacing: 5) {
-                Circle().fill(KSSTheme.accent).frame(width: 6, height: 6)
-                Text("板块强势").font(.system(size: 11)).foregroundStyle(KSSTheme.textSecondary)
-            }
-            HStack(spacing: 5) {
-                RoundedRectangle(cornerRadius: 1).fill(KSSTheme.up).frame(width: 12, height: 3)
-                Text("推荐均 T+5").font(.system(size: 11)).foregroundStyle(KSSTheme.textSecondary)
-            }
-            Spacer()
-        }
-    }
+    // MARK: ① 增量资金热力图（紧凑，仅色彩，按 inflowScore 强度+方向）
 
-    private func legendChip(color: Color, _ label: String, icon: String) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon).font(.system(size: 8, weight: .bold)).foregroundStyle(color)
-            RoundedRectangle(cornerRadius: 3).fill(color.opacity(0.5)).frame(width: 12, height: 12)
-            Text(label).font(.system(size: 11)).foregroundStyle(KSSTheme.textSecondary)
-        }
-    }
-
-    // MARK: 月热力格
-
-    private var heatGrid: some View {
+    private var inflowHeatmap: some View {
         let days = Self.daysInMonth(currentMonth)
-        let leading = Self.leadingBlanks(currentMonth)   // 月首前补空格（周一为列首）
-        let cols = Array(repeating: GridItem(.flexible(), spacing: 6), count: 7)
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                ForEach(["一", "二", "三", "四", "五", "六", "日"], id: \.self) { wd in
-                    Text(wd).font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(KSSTheme.textSecondary)
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            LazyVGrid(columns: cols, spacing: 6) {
-                ForEach(0..<leading, id: \.self) { _ in Color.clear.frame(height: 52) }
-                ForEach(days, id: \.self) { date in
-                    heatCell(date)
-                }
+        let leading = Self.leadingBlanks(currentMonth)
+        let cols = Array(repeating: GridItem(.flexible(), spacing: 5), count: 7)
+        return VStack(alignment: .leading, spacing: 6) {
+            weekdayHeader(size: 9)
+            LazyVGrid(columns: cols, spacing: 5) {
+                ForEach(0..<leading, id: \.self) { _ in Color.clear.frame(height: 26) }
+                ForEach(days, id: \.self) { date in inflowCell(date) }
             }
         }
         .padding(12)
@@ -130,42 +108,21 @@ struct TrendsView: View {
     }
 
     @ViewBuilder
-    private func heatCell(_ date: String) -> some View {
+    private func inflowCell(_ date: String) -> some View {
         let cell = cellByDate[date]
-        let day = String(date.suffix(2))
         let isSelected = date == selectedDate
         let weekend = Self.isWeekend(date)
-        Button {
-            if cell != nil { onSelectDay(date) }
-        } label: {
-            VStack(spacing: 3) {
-                Text(day)
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(cell != nil ? KSSTheme.textPrimary : KSSTheme.textSecondary.opacity(0.5))
-                Spacer(minLength: 0)
-                // 北向方向微标（色盲兜底）
-                if let c = cell, let n = c.north {
-                    Image(systemName: n.dir == "out" ? "arrowtriangle.down.fill" : "arrowtriangle.up.fill")
+        Button { if cell != nil { onSelectDay(date) } } label: {
+            ZStack {
+                inflowBackground(cell, weekend: weekend)
+                if let c = cell, let s = c.inflowScore, abs(s) >= 0.45 {
+                    Image(systemName: (c.inflowDir == "out") ? "arrowtriangle.down.fill" : "arrowtriangle.up.fill")
                         .font(.system(size: 7, weight: .bold))
-                        .foregroundStyle(n.dir == "out" ? KSSTheme.down : KSSTheme.up)
+                        .foregroundStyle(.white.opacity(0.85))
                 }
-                // 板块点 + 推荐微条
-                HStack(spacing: 3) {
-                    if let c = cell, c.flags.sector {
-                        Circle().fill(KSSTheme.accent.opacity(0.4 + 0.6 * (c.sectorHeat ?? 0)))
-                            .frame(width: 5, height: 5)
-                    }
-                    if let c = cell, let avg = c.recAvgFwd {
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(avg >= 0 ? KSSTheme.up : KSSTheme.down)
-                            .frame(width: 10, height: 3)
-                    }
-                }
-                .frame(height: 6)
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 52)
-            .background(cellBackground(cell, weekend: weekend))
+            .frame(height: 26)
             .overlay(
                 RoundedRectangle(cornerRadius: KSSTheme.shapeS)
                     .strokeBorder(isSelected ? KSSTheme.accent : .clear, lineWidth: 2)
@@ -174,18 +131,141 @@ struct TrendsView: View {
         }
         .buttonStyle(.plain)
         .disabled(cell == nil)
+        .help(cell?.inflowScore.map { String(format: "%@ 增量资金 %.2f", date, $0) } ?? (weekend ? "非交易日" : date))
+    }
+
+    private func inflowBackground(_ cell: TrendDayCell?, weekend: Bool) -> some View {
+        Group {
+            if let c = cell, let s = c.inflowScore {
+                let base = (c.inflowDir == "out") ? KSSTheme.down : KSSTheme.up
+                base.opacity(0.12 + 0.65 * min(abs(s), 1))
+            } else if weekend {
+                Color.clear
+            } else {
+                KSSTheme.textSecondary.opacity(0.07)
+            }
+        }
+    }
+
+    private var inflowLegend: some View {
+        HStack(spacing: 14) {
+            legendSwatch(KSSTheme.up, "流入", icon: "arrowtriangle.up.fill")
+            legendSwatch(KSSTheme.down, "流出", icon: "arrowtriangle.down.fill")
+            Text("色深 = 强度").font(.system(size: 11)).foregroundStyle(KSSTheme.textSecondary)
+            Spacer()
+        }
+    }
+
+    private func legendSwatch(_ color: Color, _ label: String, icon: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon).font(.system(size: 8, weight: .bold)).foregroundStyle(color)
+            RoundedRectangle(cornerRadius: 3).fill(color.opacity(0.55)).frame(width: 12, height: 12)
+            Text(label).font(.system(size: 11)).foregroundStyle(KSSTheme.textSecondary)
+        }
+    }
+
+    /// 点某天 → 三项指标具体值（北向 + 两只 A500ETF）+ 合成分，显示在热力图下方。
+    private func inflowBreakdown(_ d: TrendDayDetail) -> some View {
+        let cell = cellByDate[d.date]
+        return HStack(spacing: 12) {
+            Text(String(d.date.suffix(5)))
+                .font(.system(size: 13, weight: .bold, design: .monospaced))
+                .foregroundStyle(KSSTheme.textSecondary)
+            if let n = d.north {
+                statTile("北向资金", String(format: "%+.1f 亿", n.money), n.dir == "out" ? KSSTheme.down : KSSTheme.up)
+            }
+            ForEach(d.etfs ?? []) { e in
+                statTile(e.name, e.pct.map { String(format: "%+.2f%%", $0) } ?? "—",
+                         (e.pct ?? 0) >= 0 ? KSSTheme.up : KSSTheme.down)
+            }
+            if let s = cell?.inflowScore {
+                statTile("增量资金", String(format: "%+.2f", s), s >= 0 ? KSSTheme.up : KSSTheme.down)
+            }
+            Spacer()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+    }
+
+    // MARK: ② 日历（格子显示强势板块名）
+
+    private var calendarGrid: some View {
+        let days = Self.daysInMonth(currentMonth)
+        let leading = Self.leadingBlanks(currentMonth)
+        let cols = Array(repeating: GridItem(.flexible(), spacing: 6), count: 7)
+        return VStack(alignment: .leading, spacing: 8) {
+            weekdayHeader(size: 10)
+            LazyVGrid(columns: cols, spacing: 6) {
+                ForEach(0..<leading, id: \.self) { _ in Color.clear.frame(height: 60) }
+                ForEach(days, id: \.self) { date in calendarCell(date) }
+            }
+        }
+        .padding(12)
+        .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+    }
+
+    @ViewBuilder
+    private func calendarCell(_ date: String) -> some View {
+        let cell = cellByDate[date]
+        let day = String(date.suffix(2))
+        let isSelected = date == selectedDate
+        let weekend = Self.isWeekend(date)
+        Button { if cell != nil { onSelectDay(date) } } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(day)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(cell != nil ? KSSTheme.textPrimary : KSSTheme.textSecondary.opacity(0.5))
+                Spacer(minLength: 0)
+                // 强势板块名（直观，替掉小圆点）
+                if let c = cell, let top = c.topSector {
+                    Text(top)
+                        .font(.system(size: 10.5, weight: .bold))
+                        .foregroundStyle(KSSTheme.accent)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    if c.sectorCount > 1 {
+                        Text("+\(c.sectorCount - 1)")
+                            .font(.system(size: 8.5))
+                            .foregroundStyle(KSSTheme.textSecondary)
+                    }
+                } else if cell != nil {
+                    Text("—").font(.system(size: 10)).foregroundStyle(KSSTheme.textSecondary.opacity(0.5))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: 60)
+            .padding(.horizontal, 6).padding(.vertical, 5)
+            .background(calendarCellBg(cell, weekend: weekend))
+            .overlay(
+                RoundedRectangle(cornerRadius: KSSTheme.shapeS)
+                    .strokeBorder(isSelected ? KSSTheme.accent : (cell?.flags.sector == true ? KSSTheme.accent.opacity(0.25) : .clear), lineWidth: isSelected ? 2 : 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: KSSTheme.shapeS))
+        }
+        .buttonStyle(.plain)
+        .disabled(cell == nil)
         .help(cell == nil ? (weekend ? "非交易日" : "无归档数据") : date)
     }
 
-    private func cellBackground(_ cell: TrendDayCell?, weekend: Bool) -> some View {
+    private func calendarCellBg(_ cell: TrendDayCell?, weekend: Bool) -> some View {
         Group {
-            if let c = cell, let n = c.north {
-                let base = n.dir == "out" ? KSSTheme.down : KSSTheme.up
-                base.opacity(0.12 + 0.55 * (c.heat ?? 0))
+            if let c = cell {
+                c.flags.sector ? KSSTheme.accent.opacity(0.06) : KSSTheme.canvas.opacity(0.5)
             } else if weekend {
-                Color.clear     // 非交易日：空
+                Color.clear
             } else {
-                KSSTheme.textSecondary.opacity(0.07)   // 交易日缺数据：淡灰
+                KSSTheme.textSecondary.opacity(0.05)
+            }
+        }
+    }
+
+    private func weekdayHeader(size: CGFloat) -> some View {
+        HStack(spacing: 6) {
+            ForEach(["一", "二", "三", "四", "五", "六", "日"], id: \.self) { wd in
+                Text(wd).font(.system(size: size, weight: .semibold))
+                    .foregroundStyle(KSSTheme.textSecondary)
+                    .frame(maxWidth: .infinity)
             }
         }
     }

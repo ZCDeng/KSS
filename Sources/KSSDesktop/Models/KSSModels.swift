@@ -236,10 +236,13 @@ struct TrendDayCell: Codable, Hashable, Identifiable {
     var date: String
     var isTrading: Bool = true
     var heat: Double?
+    var inflowScore: Double?     // 增量资金合成强度(-1..1)，驱动顶部增量资金热力图
+    var inflowDir: String?       // in / out / flat
     var sectorHeat: Double?
     var recAvgFwd: Double?
     var north: TrendNorth?
     var sectorCount: Int = 0
+    var topSector: String?       // 当天最强主题名，日历格子直观显示
     var recCount: Int = 0
     var flags: TrendFlags = TrendFlags()
     var hasData: Bool = false
