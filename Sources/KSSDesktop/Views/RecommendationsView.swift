@@ -153,7 +153,7 @@ struct RecommendationsView: View {
                 ScrollView {
                     VStack(spacing: 8) {
                         HStack(spacing: 12) {
-                            Text("预测日").frame(width: 120, alignment: .leading)
+                            Text("预测日").frame(width: 150, alignment: .leading)
                             Text("选股").frame(width: 50, alignment: .trailing)
                             Text("日 (1d)").frame(maxWidth: .infinity, alignment: .trailing)
                             Text("周 (5d)").frame(maxWidth: .infinity, alignment: .trailing)
@@ -191,9 +191,9 @@ struct TrackingDayCard: View {
                         Image(systemName: expanded ? "chevron.down" : "chevron.right")
                             .font(.system(size: 10, weight: .bold)).foregroundStyle(KSSTheme.textSecondary)
                         Image(systemName: "calendar").font(.system(size: 11, weight: .semibold)).foregroundStyle(KSSTheme.accent)
-                        Text(day.date).font(.system(size: 14, weight: .bold, design: .monospaced)).foregroundStyle(KSSTheme.textPrimary)
+                        Text(day.date).font(.system(size: 14, weight: .bold, design: .monospaced)).foregroundStyle(KSSTheme.textPrimary).lineLimit(1).fixedSize()
                     }
-                    .frame(width: 120, alignment: .leading)
+                    .frame(width: 150, alignment: .leading)
                     Text("\(day.nPicks)")
                         .font(.system(size: 13, design: .monospaced)).foregroundStyle(KSSTheme.textSecondary)
                         .frame(width: 50, alignment: .trailing)
