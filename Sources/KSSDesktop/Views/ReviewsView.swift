@@ -416,11 +416,39 @@ struct CommentaryView: View {
 struct SectorReviewTable: View {
     var themes: [SectorTheme]
 
+    enum SectorSort: Hashable { case name, past5Ret, flow1d, flow5d, nFunds, rank5d }
+    @State private var sortKey: SectorSort = .rank5d
+    @State private var ascending = true
+
+    private var sortedThemes: [SectorTheme] {
+        let asc = ascending
+        func cmp<T: Comparable>(_ a: T?, _ b: T?) -> Bool {
+            switch (a, b) {
+            case let (x?, y?): return asc ? x < y : x > y
+            case (nil, _?): return false   // nil 末尾
+            case (_?, nil): return true
+            case (nil, nil): return false
+            }
+        }
+        return themes.sorted { a, b in
+            switch sortKey {
+            case .name:
+                let r = a.name.localizedCompare(b.name)
+                return asc ? r == .orderedAscending : r == .orderedDescending
+            case .past5Ret: return cmp(a.past5Ret, b.past5Ret)
+            case .flow1d:   return cmp(a.flow1d, b.flow1d)
+            case .flow5d:   return cmp(a.flow5d, b.flow5d)
+            case .nFunds:   return cmp(a.nFunds, b.nFunds)
+            case .rank5d:   return cmp(a.rank5d, b.rank5d)
+            }
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider().overlay(KSSTheme.hairline)
-            ForEach(Array(themes.enumerated()), id: \.element.id) { index, t in
+            ForEach(Array(sortedThemes.enumerated()), id: \.element.id) { index, t in
                 row(t)
                 if index < themes.count - 1 {
                     Divider().overlay(KSSTheme.hairline)
@@ -434,12 +462,18 @@ struct SectorReviewTable: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Text("板块").frame(width: 96, alignment: .leading)
-            Text("近5日").frame(width: 72, alignment: .trailing)
-            Text("资金1日").frame(width: 72, alignment: .trailing)
-            Text("资金5日").frame(width: 72, alignment: .trailing)
-            Text("基金").frame(width: 48, alignment: .trailing)
-            Text("5日排名").frame(width: 64, alignment: .trailing)
+            SortHeaderCell(title: "板块", key: SectorSort.name, selection: $sortKey, ascending: $ascending,
+                           alignment: .leading, width: 96)
+            SortHeaderCell(title: "近5日", key: SectorSort.past5Ret, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: 72)
+            SortHeaderCell(title: "资金1日", key: SectorSort.flow1d, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: 72)
+            SortHeaderCell(title: "资金5日", key: SectorSort.flow5d, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: 72)
+            SortHeaderCell(title: "基金", key: SectorSort.nFunds, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: 48)
+            SortHeaderCell(title: "5日排名", key: SectorSort.rank5d, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: 64)
             Spacer(minLength: 8)
             Text("分级").frame(width: 84, alignment: .trailing)
         }
@@ -648,11 +682,39 @@ struct HotspotRotationPanel: View {
 struct HotspotBoardTable: View {
     var boards: [HotspotBoard]
 
+    enum BoardSort: Hashable { case name, pctChange, rank, classification }
+    @State private var sortKey: BoardSort = .rank
+    @State private var ascending = true
+
+    private var sortedBoards: [HotspotBoard] {
+        let asc = ascending
+        func cmp<T: Comparable>(_ a: T?, _ b: T?) -> Bool {
+            switch (a, b) {
+            case let (x?, y?): return asc ? x < y : x > y
+            case (nil, _?): return false   // nil 末尾
+            case (_?, nil): return true
+            case (nil, nil): return false
+            }
+        }
+        return boards.sorted { a, b in
+            switch sortKey {
+            case .name:
+                let r = a.name.localizedCompare(b.name)
+                return asc ? r == .orderedAscending : r == .orderedDescending
+            case .pctChange: return cmp(a.pctChange, b.pctChange)
+            case .rank:      return asc ? a.todayRank < b.todayRank : a.todayRank > b.todayRank
+            case .classification:
+                let r = a.classification.localizedCompare(b.classification)
+                return asc ? r == .orderedAscending : r == .orderedDescending
+            }
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider().overlay(KSSTheme.hairline)
-            ForEach(Array(boards.enumerated()), id: \.element.id) { index, b in
+            ForEach(Array(sortedBoards.enumerated()), id: \.element.id) { index, b in
                 row(b)
                 if index < boards.count - 1 {
                     Divider().overlay(KSSTheme.hairline)
@@ -666,10 +728,14 @@ struct HotspotBoardTable: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Text("板块").frame(width: 96, alignment: .leading)
-            Text("今日").frame(width: 64, alignment: .trailing)
-            Text("排名").frame(width: 48, alignment: .trailing)
-            Text("分类").frame(width: 84, alignment: .trailing)
+            SortHeaderCell(title: "板块", key: BoardSort.name, selection: $sortKey, ascending: $ascending,
+                           alignment: .leading, width: 96)
+            SortHeaderCell(title: "今日", key: BoardSort.pctChange, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: 64)
+            SortHeaderCell(title: "排名", key: BoardSort.rank, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: 48)
+            SortHeaderCell(title: "分类", key: BoardSort.classification, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: 84)
             Spacer(minLength: 8)
             Text("龙头").frame(width: 120, alignment: .leading)
         }

@@ -76,6 +76,40 @@ struct PageTitle: View {
 
 /// Compact sort control used at the head of every list. Shows the current key
 /// and toggles ascending/descending; the caller owns the binding.
+/// 可点击排序列头：点击切到该列（默认降序），已选中再点切换升/降。
+/// 与 SortControl 共享同一对 selection/ascending 绑定，下拉控件与列头状态一致。
+/// width=nil 时占满弹性宽度（maxWidth:.infinity），否则固定宽度（对齐数据行列宽）。
+struct SortHeaderCell<Key: Hashable>: View {
+    let title: String
+    let key: Key
+    @Binding var selection: Key
+    @Binding var ascending: Bool
+    var alignment: Alignment = .leading
+    var width: CGFloat? = nil
+
+    private var active: Bool { selection == key }
+
+    var body: some View {
+        Button {
+            if active { ascending.toggle() } else { selection = key; ascending = false }
+        } label: {
+            HStack(spacing: 3) {
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(active ? KSSTheme.textPrimary : KSSTheme.textSecondary)
+                Image(systemName: active ? (ascending ? "chevron.up" : "chevron.down") : "arrow.up.arrow.down")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(active ? KSSTheme.accent : KSSTheme.textSecondary.opacity(0.35))
+            }
+            .frame(maxWidth: width == nil ? .infinity : nil, alignment: alignment)
+            .frame(width: width, alignment: alignment)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("点击按「\(title)」排序")
+    }
+}
+
 struct SortControl<Key: Hashable>: View {
     var options: [(key: Key, label: String)]
     @Binding var selection: Key

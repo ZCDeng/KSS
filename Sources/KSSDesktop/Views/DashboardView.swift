@@ -114,9 +114,16 @@ struct DashboardView: View {
 /// 今日推荐：固定列宽的对齐表格（排名 / 名称 / 代码 / 行业 / 状态 / 权重）。
 /// 列宽全部固定，表头与每一行共用，保证网格逐列对齐；代码与行业拆成独立列填满版面，
 /// 消除名称与右侧之间的大片留白。
+enum TodayPickSort: Hashable {
+    case rank, name, symbol, industry, status, weight
+}
+
 struct TodayPicksList: View {
     var items: [Recommendation]
     var onSelect: (String) -> Void
+
+    @State private var sortKey: TodayPickSort = .rank
+    @State private var ascending = false
 
     private let wRank: CGFloat = 38
     private let wName: CGFloat = 128
@@ -126,14 +133,46 @@ struct TodayPicksList: View {
     private let colSpacing: CGFloat = 14
     private let rowPadH: CGFloat = 14
 
+    private var sortedItems: [Recommendation] {
+        let asc = ascending
+        switch sortKey {
+        case .rank:
+            // 默认：排名升序（#1 在前），与现有视觉顺序一致
+            return items.sorted { asc ? $0.rank < $1.rank : $0.rank > $1.rank }
+        case .name:
+            return items.sorted {
+                let r = $0.name.localizedCompare($1.name)
+                return asc ? r == .orderedAscending : r == .orderedDescending
+            }
+        case .symbol:
+            return items.sorted {
+                let r = $0.symbol.localizedCompare($1.symbol)
+                return asc ? r == .orderedAscending : r == .orderedDescending
+            }
+        case .industry:
+            return items.sorted {
+                let r = $0.industry.localizedCompare($1.industry)
+                return asc ? r == .orderedAscending : r == .orderedDescending
+            }
+        case .status:
+            return items.sorted {
+                let r = $0.status.localizedCompare($1.status)
+                return asc ? r == .orderedAscending : r == .orderedDescending
+            }
+        case .weight:
+            return items.sorted { asc ? $0.weight < $1.weight : $0.weight > $1.weight }
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider().overlay(KSSTheme.hairline)
-            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+            let rows = sortedItems
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in
                 Button { onSelect(item.symbol) } label: { row(item) }
                     .buttonStyle(.plain)
-                if index < items.count - 1 {
+                if index < rows.count - 1 {
                     Divider().overlay(KSSTheme.hairline)
                 }
             }
@@ -146,11 +185,16 @@ struct TodayPicksList: View {
     private var header: some View {
         HStack(spacing: colSpacing) {
             Text("排名").frame(width: wRank, alignment: .leading)
-            Text("名称").frame(width: wName, alignment: .leading)
-            Text("代码").frame(width: wSymbol, alignment: .leading)
-            Text("行业").frame(maxWidth: .infinity, alignment: .leading)
-            Text("状态").frame(width: wStatus, alignment: .leading)
-            Text("权重").frame(width: wWeight, alignment: .trailing)
+            SortHeaderCell(title: "名称", key: TodayPickSort.name, selection: $sortKey, ascending: $ascending,
+                           alignment: .leading, width: wName)
+            SortHeaderCell(title: "代码", key: TodayPickSort.symbol, selection: $sortKey, ascending: $ascending,
+                           alignment: .leading, width: wSymbol)
+            SortHeaderCell(title: "行业", key: TodayPickSort.industry, selection: $sortKey, ascending: $ascending,
+                           alignment: .leading)
+            SortHeaderCell(title: "状态", key: TodayPickSort.status, selection: $sortKey, ascending: $ascending,
+                           alignment: .leading, width: wStatus)
+            SortHeaderCell(title: "权重", key: TodayPickSort.weight, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: wWeight)
         }
         .font(.system(size: 10.5, weight: .medium))
         .tracking(0.5)
@@ -196,9 +240,17 @@ struct TodayPicksList: View {
 
 /// 紫苏叶选股表：供应链护城河评分 + 日/周/月/年涨幅 + PE/PB + 流通市值（全宽）。
 /// 名称下挂代码、产业链下挂层级·护城河，省出横向空间给行情/估值列。
+enum PerillaSort: Hashable {
+    case none, name, chains, ret1d, ret5d, ret20d, retYear, pe, pb, mv, score
+}
+
 struct PerillaPicksTable: View {
     var items: [PerillaPick]
     var onSelect: (String) -> Void
+
+    // 默认 .none = 保持 bridge 返回的原始顺序（不打乱当前视觉）
+    @State private var sortKey: PerillaSort = .none
+    @State private var ascending = false
 
     private let wName: CGFloat = 124
     private let wRet: CGFloat = 58
@@ -209,14 +261,51 @@ struct PerillaPicksTable: View {
     private let colSpacing: CGFloat = 10
     private let rowPadH: CGFloat = 14
 
+    // 数值列：降序=大在前，nil 排末尾（无论升降）。
+    private func byNumber(_ a: Double?, _ b: Double?, asc: Bool) -> Bool {
+        switch (a, b) {
+        case let (x?, y?): return asc ? x < y : x > y
+        case (nil, _?): return false   // nil 永远靠后
+        case (_?, nil): return true
+        case (nil, nil): return false
+        }
+    }
+
+    private var sortedItems: [PerillaPick] {
+        let asc = ascending
+        switch sortKey {
+        case .none:
+            return items
+        case .name:
+            return items.sorted {
+                let r = $0.name.localizedCompare($1.name)
+                return asc ? r == .orderedAscending : r == .orderedDescending
+            }
+        case .chains:
+            return items.sorted {
+                let r = $0.chains.localizedCompare($1.chains)
+                return asc ? r == .orderedAscending : r == .orderedDescending
+            }
+        case .ret1d:  return items.sorted { byNumber($0.ret1d, $1.ret1d, asc: asc) }
+        case .ret5d:  return items.sorted { byNumber($0.ret5d, $1.ret5d, asc: asc) }
+        case .ret20d: return items.sorted { byNumber($0.ret20d, $1.ret20d, asc: asc) }
+        case .retYear: return items.sorted { byNumber($0.retYear, $1.retYear, asc: asc) }
+        case .pe:     return items.sorted { byNumber($0.pe, $1.pe, asc: asc) }
+        case .pb:     return items.sorted { byNumber($0.pb, $1.pb, asc: asc) }
+        case .mv:     return items.sorted { byNumber($0.circMvYi, $1.circMvYi, asc: asc) }
+        case .score:  return items.sorted { asc ? $0.score < $1.score : $0.score > $1.score }
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider().overlay(KSSTheme.hairline)
-            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+            let rows = sortedItems
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in
                 Button { onSelect(item.symbol) } label: { row(item) }
                     .buttonStyle(.plain)
-                if index < items.count - 1 {
+                if index < rows.count - 1 {
                     Divider().overlay(KSSTheme.hairline)
                 }
             }
@@ -228,16 +317,26 @@ struct PerillaPicksTable: View {
 
     private var header: some View {
         HStack(spacing: colSpacing) {
-            Text("名称 / 代码").frame(width: wName, alignment: .leading)
-            Text("产业链 / 层级·护城河").frame(maxWidth: .infinity, alignment: .leading)
-            Text("日").frame(width: wRet, alignment: .trailing)
-            Text("周").frame(width: wRet, alignment: .trailing)
-            Text("月").frame(width: wRet, alignment: .trailing)
-            Text("年").frame(width: wRet, alignment: .trailing)
-            Text("PE").frame(width: wPe, alignment: .trailing)
-            Text("PB").frame(width: wPb, alignment: .trailing)
-            Text("流通市值").frame(width: wMv, alignment: .trailing)
-            Text("评分").frame(width: wScore, alignment: .trailing)
+            SortHeaderCell(title: "名称 / 代码", key: PerillaSort.name, selection: $sortKey, ascending: $ascending,
+                           alignment: .leading, width: wName)
+            SortHeaderCell(title: "产业链 / 层级·护城河", key: PerillaSort.chains, selection: $sortKey, ascending: $ascending,
+                           alignment: .leading)
+            SortHeaderCell(title: "日", key: PerillaSort.ret1d, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: wRet)
+            SortHeaderCell(title: "周", key: PerillaSort.ret5d, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: wRet)
+            SortHeaderCell(title: "月", key: PerillaSort.ret20d, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: wRet)
+            SortHeaderCell(title: "年", key: PerillaSort.retYear, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: wRet)
+            SortHeaderCell(title: "PE", key: PerillaSort.pe, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: wPe)
+            SortHeaderCell(title: "PB", key: PerillaSort.pb, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: wPb)
+            SortHeaderCell(title: "流通市值", key: PerillaSort.mv, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: wMv)
+            SortHeaderCell(title: "评分", key: PerillaSort.score, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: wScore)
         }
         .font(.system(size: 10.5, weight: .medium))
         .tracking(0.3)

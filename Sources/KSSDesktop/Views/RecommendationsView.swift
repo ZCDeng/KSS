@@ -83,12 +83,15 @@ struct RecommendationsView: View {
 
             // column header
             HStack(spacing: 12) {
-                Text("#").frame(width: 44, alignment: .leading)
+                SortHeaderCell(title: "#", key: RecSort.rank, selection: $sort, ascending: $ascending,
+                               alignment: .leading, width: 44)
                 Text("名称 / 代码").frame(maxWidth: .infinity, alignment: .leading)
                 Text("状态").frame(width: 96, alignment: .center)
                 Text("log_mv").frame(width: 86, alignment: .trailing)
-                Text("权重").frame(width: 64, alignment: .trailing)
-                Text("跟踪").frame(width: 84, alignment: .trailing)
+                SortHeaderCell(title: "权重", key: RecSort.weight, selection: $sort, ascending: $ascending,
+                               alignment: .trailing, width: 64)
+                SortHeaderCell(title: "跟踪", key: RecSort.tracking, selection: $sort, ascending: $ascending,
+                               alignment: .trailing, width: 84)
             }
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(KSSTheme.textSecondary)

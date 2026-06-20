@@ -43,6 +43,16 @@ struct BacktestsView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
 
+                // column header
+                HStack(spacing: 6) {
+                    SortHeaderCell(title: "标题", key: BacktestSort.title, selection: $sort, ascending: $ascending,
+                                   alignment: .leading)
+                    SortHeaderCell(title: "更新时间", key: BacktestSort.updated, selection: $sort, ascending: $ascending,
+                                   alignment: .trailing, width: 96)
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 4)
+
                 List(sortedReports) { report in
                     let isOn = selectedReport?.id == report.id
                     Button { selectedReport = report } label: {

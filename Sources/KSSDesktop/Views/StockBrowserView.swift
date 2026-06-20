@@ -84,6 +84,16 @@ struct StockBrowserView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
 
+                // column header
+                HStack(spacing: 6) {
+                    SortHeaderCell(title: "名称 / 代码", key: StockSort.name, selection: $sort, ascending: $ascending,
+                                   alignment: .leading)
+                    SortHeaderCell(title: "涨跌幅", key: StockSort.pct, selection: $sort, ascending: $ascending,
+                                   alignment: .trailing, width: 64)
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 4)
+
                 List(filteredStocks) { stock in
                     let isOn = stock.symbol == selectedSymbol
                     Button { onSelect(stock.symbol) } label: {

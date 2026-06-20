@@ -2,6 +2,14 @@ import SwiftUI
 
 /// 趋势页（U6）：月热力格（北向底色 + 板块点 + 推荐微条 + 三态）+ 本周时间线 + 当日明细。
 /// Dayflow 设计参照（GitHub 活跃度格 + 日卡），原生 SwiftUI，红涨绿跌，M3 shape/motion。
+enum TrendRecSort: Hashable {
+    case none      // 维持后端下发顺序（默认）
+    case name
+    case t1
+    case t5
+    case t20
+}
+
 struct TrendsView: View {
     var month: TrendMonth?
     var detail: TrendDayDetail?
@@ -12,6 +20,8 @@ struct TrendsView: View {
     var onSelectSymbol: (String) -> Void
 
     @State private var currentMonth: String = ""   // YYYY-MM
+    @State private var recSortKey: TrendRecSort = .none
+    @State private var recSortAsc = false
 
     private var cellByDate: [String: TrendDayCell] {
         Dictionary(uniqueKeysWithValues: (month?.days ?? []).map { ($0.date, $0) })
@@ -345,7 +355,7 @@ struct TrendsView: View {
                 Text("当日推荐 · 后续表现").font(.system(size: 12, weight: .bold)).foregroundStyle(KSSTheme.textSecondary)
                 VStack(spacing: 6) {
                     recHeaderRow
-                    ForEach(d.recs) { r in recRow(r) }
+                    ForEach(sortedRecs(d.recs)) { r in recRow(r) }
                 }
             }
         }
@@ -366,10 +376,42 @@ struct TrendsView: View {
 
     private var recHeaderRow: some View {
         HStack(spacing: 8) {
-            Text("名称").font(.system(size: 10.5)).foregroundStyle(KSSTheme.textSecondary).frame(width: 150, alignment: .leading)
-            Group { Text("T+1"); Text("T+5"); Text("T+20") }
-                .font(.system(size: 10.5)).foregroundStyle(KSSTheme.textSecondary).frame(width: 56, alignment: .trailing)
+            SortHeaderCell(title: "名称", key: TrendRecSort.name, selection: $recSortKey, ascending: $recSortAsc,
+                           alignment: .leading, width: 150)
+            SortHeaderCell(title: "T+1", key: TrendRecSort.t1, selection: $recSortKey, ascending: $recSortAsc,
+                           alignment: .trailing, width: 56)
+            SortHeaderCell(title: "T+5", key: TrendRecSort.t5, selection: $recSortKey, ascending: $recSortAsc,
+                           alignment: .trailing, width: 56)
+            SortHeaderCell(title: "T+20", key: TrendRecSort.t20, selection: $recSortKey, ascending: $recSortAsc,
+                           alignment: .trailing, width: 56)
             Spacer()
+        }
+    }
+
+    /// 当日推荐排序：默认维持下发顺序；数值列降序大在前、nil 末尾；名称走 localizedCompare。
+    private func sortedRecs(_ recs: [TrendRec]) -> [TrendRec] {
+        guard recSortKey != .none else { return recs }
+        if recSortKey == .name {
+            return recs.sorted {
+                let r = $0.name.localizedCompare($1.name)
+                return recSortAsc ? r == .orderedAscending : r == .orderedDescending
+            }
+        }
+        let value: (TrendRec) -> Double? = { rec in
+            switch recSortKey {
+            case .t1: return rec.fwd.t1
+            case .t5: return rec.fwd.t5
+            case .t20: return rec.fwd.t20
+            default: return nil
+            }
+        }
+        return recs.sorted { a, b in
+            switch (value(a), value(b)) {
+            case let (x?, y?): return recSortAsc ? x < y : x > y
+            case (nil, _?): return false   // nil 永远排在末尾
+            case (_?, nil): return true
+            case (nil, nil): return false
+            }
         }
     }
 
