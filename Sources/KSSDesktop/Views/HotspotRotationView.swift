@@ -70,7 +70,7 @@ struct HotspotRotationView: View {
     private func statTile(_ value: String, _ label: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(value)
-                .font(.system(size: 22, weight: .heavy).monospacedDigit())
+                .font(KSSFont.harmonyNumber(22))
                 .foregroundStyle(KSSTheme.textPrimary)
             Text(label)
                 .font(.system(size: 11, weight: .semibold))

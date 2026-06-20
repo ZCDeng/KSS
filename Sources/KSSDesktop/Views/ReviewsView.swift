@@ -660,7 +660,7 @@ struct HotspotRotationPanel: View {
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(tint)
             Text("\(count)")
-                .font(.system(size: 20, weight: .heavy).monospacedDigit())
+                .font(KSSFont.harmonyNumber(20))
                 .foregroundStyle(KSSTheme.textPrimary)
         }
         .frame(maxWidth: .infinity)

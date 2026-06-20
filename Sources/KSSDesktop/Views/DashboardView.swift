@@ -541,7 +541,7 @@ struct SectorChip: View {
                     .font(.system(size: 10))
                     .foregroundStyle(KSSTheme.textSecondary)
                 Text(theme.past5Ret.map { KSSFormat.percent($0 / 100) } ?? "—")
-                    .font(.system(size: 18, weight: .heavy).monospacedDigit())
+                    .font(KSSFont.harmonyNumber(18))
                     .foregroundStyle(KSSTheme.signColor(theme.past5Ret ?? 0))
             }
             HStack(spacing: 10) {
@@ -662,7 +662,7 @@ struct MarketStripRow: View {
             }
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(value)
-                    .font(.system(size: 22, weight: .heavy).monospacedDigit())
+                    .font(KSSFont.harmonyNumber(22))
                     .foregroundStyle(KSSTheme.signColor(delta))
                     .lineLimit(1)
                 Text(deltaText)
@@ -691,7 +691,7 @@ struct IndexBoardGrid: View {
                         .lineLimit(1)
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text(String(format: "%.2f", idx.close))
-                            .font(.system(size: 16, weight: .heavy).monospacedDigit())
+                            .font(KSSFont.harmonyNumber(16))
                             .foregroundStyle(KSSTheme.signColor(idx.pct))
                             .lineLimit(1)
                         Spacer(minLength: 0)
@@ -870,7 +870,7 @@ struct CountCard: View {
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
                     Text("\(count)")
-                        .font(.system(size: 24, weight: .heavy).monospacedDigit())
+                        .font(KSSFont.harmonyNumber(24))
                         .foregroundStyle(KSSTheme.textPrimary)
                     Text(unit)
                         .font(.system(size: 12))
@@ -924,7 +924,7 @@ struct TrackingSummaryCard: View {
                 .font(.system(size: 10, weight: .medium)).tracking(0.5)
                 .foregroundStyle(KSSTheme.textSecondary)
             Text(value)
-                .font(.system(size: 19, weight: .bold).monospacedDigit())
+                .font(KSSFont.harmonyNumber(19))
                 .foregroundStyle(tint)
                 .lineLimit(1).minimumScaleFactor(0.7)
         }
@@ -975,7 +975,7 @@ struct StatTile: View {
                 .tracking(0.6)
                 .foregroundStyle(KSSTheme.textSecondary)
             Text(value)
-                .font(.title3.weight(.bold).monospacedDigit())
+                .font(KSSFont.harmonyNumber(20))
                 .foregroundStyle(tint)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
