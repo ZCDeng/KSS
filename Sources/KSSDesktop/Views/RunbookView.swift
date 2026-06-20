@@ -150,7 +150,7 @@ struct ScheduledTasksSection: View {
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+        .background(KSSTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
     }
 
     private func healthStat(_ label: String, _ n: Int, _ tint: Color) -> some View {
@@ -336,7 +336,7 @@ struct ScheduledJobRow: View {
         }
         .padding(.horizontal, 14).padding(.vertical, 11)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+        .background(KSSTheme.surfaceContainer, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
         .overlay(
             RoundedRectangle(cornerRadius: KSSTheme.shapeM)
                 .strokeBorder(job.stale ? KSSTheme.ma5.opacity(0.4) : .clear, lineWidth: 1)

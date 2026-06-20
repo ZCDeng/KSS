@@ -59,7 +59,7 @@ struct StockBrowserView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
-                .background(KSSTheme.surface)
+                .background(KSSTheme.surfaceRaised)
                 .clipShape(RoundedRectangle(cornerRadius: KSSTheme.shapeS))
                 .padding(.horizontal, 12)
                 .padding(.top, 12)

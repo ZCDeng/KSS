@@ -98,7 +98,7 @@ struct ContentView: View {
                         .foregroundStyle(KSSTheme.textPrimary)
                 }
                 .padding(.horizontal, 16).padding(.vertical, 11)
-                .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeL))
+                .background(KSSTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeL))
                 .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeL).stroke(KSSTheme.hairline))
                 .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
                 .padding(.bottom, 24)

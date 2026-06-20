@@ -455,7 +455,7 @@ struct SectorReviewTable: View {
                 }
             }
         }
-        .background(KSSTheme.surface)
+        .background(KSSTheme.surfaceRaised)
         .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
         .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
     }
@@ -673,7 +673,7 @@ struct HotspotRotationPanel: View {
             .foregroundStyle(KSSTheme.textSecondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(KSSTheme.surface, in: Capsule())
+            .background(KSSTheme.surfaceRaised, in: Capsule())
             .overlay(Capsule().stroke(KSSTheme.hairline))
     }
 }
@@ -721,7 +721,7 @@ struct HotspotBoardTable: View {
                 }
             }
         }
-        .background(KSSTheme.surface)
+        .background(KSSTheme.surfaceRaised)
         .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
         .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
     }
@@ -825,7 +825,7 @@ struct HotspotLeaderTable: View {
                 }
             }
         }
-        .background(KSSTheme.surface)
+        .background(KSSTheme.surfaceRaised)
         .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
         .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
     }

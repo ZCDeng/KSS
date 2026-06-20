@@ -371,7 +371,7 @@ struct TrendsView: View {
         }
         .frame(minWidth: 96, alignment: .leading)
         .padding(10)
-        .background(KSSTheme.canvas, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
+        .background(KSSTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
     }
 
     private var recHeaderRow: some View {
@@ -432,7 +432,7 @@ struct TrendsView: View {
                 }
             }
             .padding(.vertical, 5).padding(.horizontal, 8)
-            .background(KSSTheme.canvas, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
+            .background(KSSTheme.surfaceContainer, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
         }
         .buttonStyle(.plain)
     }

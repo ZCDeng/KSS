@@ -93,7 +93,7 @@ struct HotspotRotationView: View {
             }
             GeometryReader { g in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(KSSTheme.surfaceRaised)
+                    Capsule().fill(KSSTheme.surfaceContainerHighest)
                     Capsule().fill(tint).frame(width: max(4, g.size.width * v))
                 }
             }
@@ -140,7 +140,7 @@ struct HotspotRotationView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
-        .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
+        .background(KSSTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
         .overlay(
             RoundedRectangle(cornerRadius: KSSTheme.cardRadius)
                 .stroke(tint.opacity(0.25), lineWidth: 1)
@@ -193,7 +193,7 @@ struct HotspotRotationView: View {
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+            .background(KSSTheme.surfaceContainer, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

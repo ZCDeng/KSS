@@ -7,12 +7,19 @@ import AppKit
 /// resolved per the window's effective appearance, so a `.preferredColorScheme`
 /// toggle reskins the whole app.
 enum KSSTheme {
-    // Surfaces
-    static let canvas = adaptive(light: 0xFAF9F5, dark: 0x141413)        // --bg
-    static let surface = adaptive(light: 0xFFFFFF, dark: 0x1F1F1D)        // --surface (cards)
-    static let surfaceRaised = adaptive(light: 0xF0EEE6, dark: 0x2A2A28)  // --surface2
-    static let chartSurface = adaptive(light: 0xFFFFFF, dark: 0x1F1F1D)
-    static let hairline = adaptive(light: 0xD1CFC5, dark: 0x3D3D3A)       // --line
+    // Surfaces — M3 dynamic color：中性表面随层级递增掺入 clay 主色调，
+    // 形成 surface-container 色阶（tonal elevation），高层级容器更暖、更亮。
+    // https://m3.material.io/styles/color/roles  ·  https://m3.material.io/components/cards
+    static let canvas = adaptive(light: 0xFAF9F5, dark: 0x141413)               // surfaceDim / 页面底
+    static let surfaceContainerLowest = adaptive(light: 0xFFFFFF, dark: 0x100F0E)
+    static let surface = adaptive(light: 0xFFFFFF, dark: 0x1D1B19)              // containerLow（elevated 卡）
+    static let surfaceContainer = adaptive(light: 0xF6F4EC, dark: 0x232120)     // container（默认嵌套）
+    static let surfaceRaised = adaptive(light: 0xEFEDE4, dark: 0x2C2926)        // containerHigh（嵌套小卡）
+    static let surfaceContainerHighest = adaptive(light: 0xE8E4D8, dark: 0x363230) // containerHighest（filled / 顶层嵌套）
+    static let surfaceTint = adaptive(light: 0xD97757, dark: 0xE48A6E)          // M3 primary tint（高度叠色）
+    static let chartSurface = adaptive(light: 0xFFFFFF, dark: 0x1D1B19)
+    static let hairline = adaptive(light: 0xD1CFC5, dark: 0x3D3D3A)             // outline
+    static let outlineVariant = adaptive(light: 0xDED9CC, dark: 0x35332F)       // M3 outline-variant（更弱边）
 
     // Text
     static let textPrimary = adaptive(light: 0x141413, dark: 0xFAF9F5)    // --ink
@@ -102,23 +109,42 @@ extension Color {
     }
 }
 
-/// A raised card surface in the warm-paper design system.
+/// M3 card 三型：
+/// - elevated：containerLow 表面 + 柔和高度阴影，无边框（默认，最「卡片」）。
+/// - filled：containerHighest 表面，无阴影无边框（嵌在已抬高的容器里用）。
+/// - outlined：surface 表面 + outline-variant 细边，无阴影（强调边界 / 平铺）。
+enum KSSCardStyle { case elevated, filled, outlined }
+
+/// M3 dynamic-color 卡片：tonal 表面 + 连续圆角 + 按型给阴影/边框。
 struct KSSCard: ViewModifier {
+    var style: KSSCardStyle = .elevated
     var padding: CGFloat = 16
+    var radius: CGFloat = KSSTheme.shapeM
+
+    private var fill: Color {
+        switch style {
+        case .elevated: return KSSTheme.surface
+        case .filled:   return KSSTheme.surfaceContainerHighest
+        case .outlined: return KSSTheme.surface
+        }
+    }
+
     func body(content: Content) -> some View {
         content
             .padding(padding)
-            .background(KSSTheme.surface)
-            .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
+            .background(fill, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: KSSTheme.cardRadius)
-                    .stroke(KSSTheme.hairline, lineWidth: 1)
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(KSSTheme.outlineVariant, lineWidth: style == .outlined ? 1 : 0)
             )
+            // M3 elevation level 1：暗色靠 tonal 抬升、阴影极淡；亮色靠柔影。
+            .shadow(color: .black.opacity(style == .elevated ? 0.16 : 0), radius: 5, x: 0, y: 2)
+            .shadow(color: .black.opacity(style == .elevated ? 0.06 : 0), radius: 1.5, x: 0, y: 1)
     }
 }
 
 extension View {
-    func kssCard(padding: CGFloat = 16) -> some View {
-        modifier(KSSCard(padding: padding))
+    func kssCard(_ style: KSSCardStyle = .elevated, padding: CGFloat = 16, radius: CGFloat = KSSTheme.shapeM) -> some View {
+        modifier(KSSCard(style: style, padding: padding, radius: radius))
     }
 }

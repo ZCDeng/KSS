@@ -777,7 +777,7 @@ struct IndexMarquee: View {
                 .lineLimit(1)
         }
         .padding(.horizontal, 14).padding(.vertical, 9)
-        .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeL))
+        .background(KSSTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeL))
         .overlay(
             RoundedRectangle(cornerRadius: KSSTheme.shapeL)
                 .strokeBorder(KSSTheme.signColor(idx.pct).opacity(0.18), lineWidth: 1)

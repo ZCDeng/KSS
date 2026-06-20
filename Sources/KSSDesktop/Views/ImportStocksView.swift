@@ -60,7 +60,7 @@ struct ImportStocksView: View {
                     .scrollContentBackground(.hidden)
                     .padding(8)
                     .frame(height: 110)
-                    .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
+                    .background(KSSTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
                     .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeS).stroke(KSSTheme.hairline))
                 if text.isEmpty {
                     Text("例：贵州茅台  600519  平安银行  000001.SZ … 或把截图拖进来")
@@ -172,7 +172,7 @@ struct ImportStocksView: View {
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
+        .background(KSSTheme.surfaceContainer, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
     }
 
     private func kindTag(_ kind: String?) -> (String, Color)? {

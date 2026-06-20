@@ -132,7 +132,7 @@ struct RecommendationsView: View {
                     .padding(.vertical, 3)
                 }
                 .buttonStyle(.plain)
-                .listRowBackground(KSSTheme.surface)
+                .listRowBackground(KSSTheme.surfaceContainer)
             }
             .scrollContentBackground(.hidden)
             .background(KSSTheme.canvas)
@@ -234,7 +234,7 @@ struct TrackingDayCard: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(KSSTheme.surface)
+        .background(KSSTheme.surfaceContainer)
         .clipShape(RoundedRectangle(cornerRadius: KSSTheme.shapeM))
         .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeM).stroke(KSSTheme.hairline))
     }
