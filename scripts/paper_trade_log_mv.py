@@ -112,23 +112,72 @@ def load_long_panel(min_days: int = 60) -> pd.DataFrame:
 # ---------------------------------------------------------------------- #
 
 
+def _record_ledger_entry(
+    in_top: pd.DataFrame,
+    target_date: pd.Timestamp,
+    use_execution: bool,
+    regime_label: str | None,
+    force: bool,
+) -> None:
+    """把当日预测同步入预测生命周期账本 (U2, 保持现有 JSON 写入不变).
+
+    账本是下游 IC / 复盘 / 管道 alpha 的统一取数源; 写入失败只 warn,
+    不阻塞既有 JSON 落盘 (fail loud 但不连坐).
+    """
+    try:
+        from kss.prediction.ledger import PredictionLedger, PredictionRecord
+
+        ledger = PredictionLedger()
+        snapshot = {
+            "factor_col": "log_mv",
+            "top_n": TOP_N,
+            "top_pct": TOP_PCT,
+            "use_execution": use_execution,
+            "freshness_days": FRESHNESS_DAYS,
+        }
+        date_str = str(target_date.date())
+        for _, row in in_top.iterrows():
+            symbol = str(row["symbol"])
+            ledger.record_prediction(
+                PredictionRecord(
+                    prediction_id=f"{date_str}_{symbol}",
+                    prediction_date=date_str,
+                    symbol=symbol,
+                    strategy="log_mv_reverse",
+                    pipeline_snapshot=snapshot,
+                    regime_label=regime_label,
+                    factor_value=float(row["factor_value"]),
+                    rank_pct=float(row["rank_pct"]),
+                    rank_position=int(row["rank_position"]),
+                    planned_weight=float(row["planned_weight"]),
+                ),
+                force=force,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("预测账本写入失败 (JSON 日志不受影响): %s", exc)
+
+
 def save_log_entry(
     picks: pd.DataFrame,
     target_date: pd.Timestamp,
     use_execution: bool,
     force: bool = False,
+    regime_label: str | None = None,
 ) -> Path:
     """保存当日预测到 JSON 日志（供事后对比）.
 
     日志是周报对账的审计底稿: 已存在的文件默认不覆盖 (回放旧日期会
     无声改写历史预测, 同 daily_review dry-run 教训), ``force=True`` 强制.
+
+    同时把每条预测入预测生命周期账本 (``status="open"``); JSON 写入逻辑不变.
     """
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+    in_top = picks[picks["in_top"]] if "in_top" in picks.columns else picks
     existing = LOG_DIR / f"{target_date.date()}.json"
     if existing.exists() and not force:
         logger.warning("日志已存在, 跳过覆盖 (--force-save 强制): %s", existing)
+        _record_ledger_entry(in_top, target_date, use_execution, regime_label, force=False)
         return existing
-    in_top = picks[picks["in_top"]] if "in_top" in picks.columns else picks
     entry = {
         "prediction_date": str(target_date.date()),
         "generated_at": datetime.now().isoformat(),
@@ -149,6 +198,7 @@ def save_log_entry(
     }
     out = LOG_DIR / f"{target_date.date()}.json"
     out.write_text(json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8")
+    _record_ledger_entry(in_top, target_date, use_execution, regime_label, force=force)
     return out
 
 

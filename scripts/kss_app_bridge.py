@@ -1397,7 +1397,65 @@ def _horizon_return(symbol: str, prediction_date: str, hold: int) -> float | Non
 _HORIZONS = (("ret1d", 1), ("ret5d", 5), ("ret20d", 20))
 
 
+def _ledger_tracking(names: dict[str, dict[str, str]]) -> list[dict[str, Any]] | None:
+    """从预测生命周期账本读复盘跟踪 (U2).
+
+    已结算记录直接取账本 ``realized_ret`` (= ret1d, 不重扫 csv); 未结算记录
+    (``status="open"``) 回退到 ``_horizon_return`` 临时重算. 账本不可用 / 为空时
+    返回 None, 调用方回退旧 JSON 逻辑 (退役过渡期的回放来源).
+    """
+    try:
+        from kss.prediction.ledger import PredictionLedger, STATUS_SETTLED
+    except Exception:
+        return None
+    try:
+        ledger = PredictionLedger()
+        records = ledger.query()
+    except Exception:
+        return None
+    if not records:
+        return None
+
+    by_date: dict[str, list[dict[str, Any]]] = {}
+    for rec in records:
+        by_date.setdefault(rec.get("prediction_date", ""), []).append(rec)
+
+    out: list[dict[str, Any]] = []
+    for date in sorted(by_date, reverse=True):
+        if not date:
+            continue
+        picks_out: list[dict[str, Any]] = []
+        buckets: dict[str, list[float]] = {key: [] for key, _ in _HORIZONS}
+        for rec in by_date[date]:
+            symbol = rec.get("symbol", "")
+            meta = names.get(symbol, {})
+            pick_row: dict[str, Any] = {"symbol": symbol, "name": meta.get("name", "")}
+            settled = rec.get("status") == STATUS_SETTLED and rec.get("realized_ret") is not None
+            for key, hold in _HORIZONS:
+                if key == "ret1d" and settled:
+                    ret = _safe_float(rec.get("realized_ret"))  # 账本真值, 不重扫 csv
+                else:
+                    ret = _horizon_return(symbol, date, hold)
+                pick_row[key] = ret
+                if ret is not None:
+                    buckets[key].append(ret)
+            pick_row["status"] = rec.get("status")
+            pick_row["outcome"] = rec.get("outcome")
+            pick_row["attribution"] = rec.get("attribution_category")
+            picks_out.append(pick_row)
+        row: dict[str, Any] = {"date": date, "nPicks": len(picks_out), "picks": picks_out}
+        for key, _ in _HORIZONS:
+            values = buckets[key]
+            row[key] = (sum(values) / len(values)) if values else None
+        out.append(row)
+    return out
+
+
 def _recommendation_tracking(names: dict[str, dict[str, str]]) -> list[dict[str, Any]]:
+    ledger_rows = _ledger_tracking(names)
+    if ledger_rows is not None:
+        return ledger_rows
+    # 回退: 账本不可用时读旧 JSON (退役过渡期的回放来源)
     out: list[dict[str, Any]] = []
     for path in sorted(PAPER_DIR.glob("*.json"), reverse=True):
         try:
