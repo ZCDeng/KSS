@@ -65,3 +65,4 @@ scan_*_rank.csv
 
 # SwiftPM 桌面 app 构建产物
 /dist/
+storage/trends/
