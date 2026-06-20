@@ -649,22 +649,24 @@ struct IndexMarquee: View {
     }
 
     var body: some View {
-        TimelineView(.animation) { timeline in
-            let period = rowWidth + gap        // 一个循环周期 = 单份宽 + 拼接缝
-            let elapsed = timeline.date.timeIntervalSinceReferenceDate
-            let offset = period > 0
-                ? -CGFloat((elapsed * speed).truncatingRemainder(dividingBy: Double(period)))
-                : 0
-            HStack(spacing: gap) {
-                row(measured: true)
-                row(measured: false)           // 第二份用于无缝衔接
+        // GeometryReader 取内容列实际宽，把滚动行钉在该宽度内（leading 对齐 + clip），
+        // 避免溢出内容列右边距冲到窗口边缘。
+        GeometryReader { geo in
+            TimelineView(.animation) { timeline in
+                let period = rowWidth + gap    // 一个循环周期 = 单份宽 + 拼接缝
+                let elapsed = timeline.date.timeIntervalSinceReferenceDate
+                let offset = period > 0
+                    ? -CGFloat((elapsed * speed).truncatingRemainder(dividingBy: Double(period)))
+                    : 0
+                HStack(spacing: gap) {
+                    row(measured: true)
+                    row(measured: false)       // 第二份用于无缝衔接
+                }
+                .offset(x: offset)
+                .frame(width: geo.size.width, alignment: .leading)
             }
-            .offset(x: offset)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .fixedSize(horizontal: true, vertical: false)
         }
         .frame(height: 46)
-        .frame(maxWidth: .infinity, alignment: .leading)
         .clipped()
         .mask(edgeFade)                        // M3 carousel 两端淡出
         .onPreferenceChange(MarqueeWidthKey.self) { rowWidth = $0 }
