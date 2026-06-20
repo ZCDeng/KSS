@@ -2074,6 +2074,7 @@ LABEL_TITLES = {
     "sector_review_daily": "板块复盘",
     "update_data_daily": "股票池日线更新",
     "hotspot_rotation_daily": "板块热点轮动归档",
+    "trends_archive_daily": "趋势归档",
     "selfcheck": "开机自检补跑",
 }
 
@@ -2085,6 +2086,7 @@ LABEL_CATEGORY = {
     "scan_bj50_daily": "扫描选股",
     "sector_review_daily": "板块复盘",
     "hotspot_rotation_daily": "板块复盘",
+    "trends_archive_daily": "数据更新",
     "paper_trade_daily": "纸交易",
     "paper_trade_weekly": "纸交易",
     "prediction_validation_weekly": "校验回测",
