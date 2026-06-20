@@ -22,7 +22,8 @@ let package = Package(
                 .copy("Resources/architecture.html"),
                 .copy("Resources/logo.png"),
                 .copy("Resources/kmark.png"),
-                .copy("Resources/wordmark.png")
+                .copy("Resources/wordmark.png"),
+                .copy("Resources/HarmonyOS_Sans_SC_Bold.ttf")
             ]
         )
     ]

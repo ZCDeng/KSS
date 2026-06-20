@@ -826,7 +826,7 @@ struct MarketIndexRow: View {
                     }
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(String(format: "%.2f", idx.close))
-                            .font(.system(size: 22, weight: .heavy).monospacedDigit())
+                            .font(KSSFont.harmonyNumber(22))
                             .foregroundStyle(KSSTheme.signColor(idx.pct))
                             .lineLimit(1)
                         Text(String(format: "%+.2f%%", idx.pct))

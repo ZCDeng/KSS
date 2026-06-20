@@ -82,6 +82,12 @@ enum KSSFont {
     static func serif(_ size: CGFloat, _ weight: Font.Weight = .semibold) -> Font {
         .system(size: size, weight: weight, design: .serif)
     }
+
+    /// HarmonyOS Sans SC Bold（打包进 app，AppDelegate 启动时注册）。
+    /// 用 PostScript 名以确保解析到 Bold 字面；未注册成功时 Font.custom 回退系统字体。
+    static func harmonyNumber(_ size: CGFloat) -> Font {
+        .custom("HarmonyOS_Sans_SC_Bold", size: size)
+    }
 }
 
 extension Color {
