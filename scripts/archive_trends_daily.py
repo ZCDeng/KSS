@@ -63,15 +63,67 @@ def _north_for_date(compact_date: str) -> dict[str, Any] | None:
     return {"money": yi, "unit": "亿", "dir": "in" if yi > 0 else ("out" if yi < 0 else "flat")}
 
 
+_ETFS = (("563360.SH", "A500ETF"), ("159361.SZ", "A500ETF"))
+_ETF_HISTORY: dict[str, dict[str, float]] | None = None  # {code: {compact_date: pct}}
+
+
+def _ensure_tushare_token() -> None:
+    """token 不在 env 则从 .env 读（backfill/daily 都能自动拿到，无需手动 export）。"""
+    if os.environ.get("TUSHARE_TOKEN"):
+        return
+    env = ROOT / ".env"
+    if not env.exists():
+        return
+    for line in env.read_text(encoding="utf-8", errors="ignore").splitlines():
+        if line.startswith("TUSHARE_TOKEN="):
+            os.environ["TUSHARE_TOKEN"] = line.split("=", 1)[1].strip().strip('"')
+            break
+
+
+def _etf_history() -> dict[str, dict[str, float]]:
+    """懒加载并缓存两只 A500ETF 的 fund_daily 历史 {code: {YYYYMMDD: pct}}。
+    失败（无 token / 网络 / tushare 缺失）→ 返回空 dict，ETF 段优雅置 null。仅 2 次 API 调用。"""
+    global _ETF_HISTORY
+    if _ETF_HISTORY is not None:
+        return _ETF_HISTORY
+    _ETF_HISTORY = {}
+    _ensure_tushare_token()
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT))
+        from kss.data.tushare_client import TushareClient, _fetch_with_retry
+        pro = TushareClient().get_pro()
+    except Exception as exc:  # noqa: BLE001
+        _log(f"ETF 历史不可用（tushare/token?）: {exc}")
+        return _ETF_HISTORY
+    for code, _name in _ETFS:
+        try:
+            df = _fetch_with_retry(
+                lambda c=code: pro.fund_daily(ts_code=c, start_date="20250101", end_date="20261231"),
+                f"fund_daily {code}",
+            )
+            if df is None or df.empty:
+                continue
+            _ETF_HISTORY[code] = {
+                str(r["trade_date"]): round(float(r["pct_chg"]), 2)
+                for _, r in df.iterrows()
+                if r.get("pct_chg") is not None
+            }
+        except Exception as exc:  # noqa: BLE001
+            _log(f"取 {code} fund_daily 失败: {exc}")
+    return _ETF_HISTORY
+
+
 def _etfs_for_date(date: str) -> list[dict[str, Any]] | None:
-    """A500ETF best-effort：仅当当天 market_strip.json 命中该日时取（历史 fund_daily 回填见 U2/Deferred）。"""
-    strip = kb._market_strip()
-    if not strip or strip.get("etfDate") and _compact(date) != str(strip.get("etfDate")):
-        return None
-    etfs = strip.get("etfs") if strip else None
-    if not etfs:
-        return None
-    return [{"code": e.get("code", ""), "name": e.get("name", ""), "pct": e.get("pct")} for e in etfs]
+    """A500ETF 当日涨跌幅：从 fund_daily 历史缓存取（回填+going-forward 统一口径）。"""
+    cd = _compact(date)
+    hist = _etf_history()
+    out = [
+        {"code": code, "name": name, "pct": hist[code][cd]}
+        for code, name in _ETFS
+        if code in hist and cd in hist[code]
+    ]
+    return out or None
 
 
 def _sector_for_date(compact_date: str) -> tuple[list[dict[str, Any]], int, float | None]:
