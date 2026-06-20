@@ -85,7 +85,7 @@ struct TrendsView: View {
             }
             .buttonStyle(.bordered)
             Text(currentMonth)
-                .font(.system(size: 18, weight: .heavy, design: .rounded).monospacedDigit())
+                .font(KSSFont.harmonyNumber(18))
                 .foregroundStyle(KSSTheme.textPrimary)
                 .frame(minWidth: 92)
             Button { shiftMonth(1) } label: {
@@ -367,7 +367,7 @@ struct TrendsView: View {
     private func statTile(_ label: String, _ value: String, _ tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label).font(.system(size: 11)).foregroundStyle(KSSTheme.textSecondary)
-            Text(value).font(.system(size: 18, weight: .heavy).monospacedDigit()).foregroundStyle(tint)
+            Text(value).font(KSSFont.harmonyNumber(18)).foregroundStyle(tint)
         }
         .frame(minWidth: 96, alignment: .leading)
         .padding(10)
