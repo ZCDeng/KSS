@@ -1979,6 +1979,349 @@ def _perilla_picks(top_n: int = 12, min_score: float = 0.4) -> list[dict[str, An
     return picks
 
 
+# ===================================================================== #
+# U6 截 1 —— 统一发现管道合并 + 去重 + 共识溢价（相关性预检门控）
+#
+# 四发现管道已在本 bridge 汇聚（_build_logmv_picks / _bj_scan / 板块热点 /
+# _perilla_picks），单一消费者，故合并逻辑做在 bridge 内私有函数 `_discovery_merge`，
+# 不新建 kss/discovery/ 模块（推迟到出现第二个消费者再抽）。
+#
+# 设计不变量：
+#   - 各管道 adapter 内部 min-max 归一化到 [0,1]（量纲隔离，避免跨管道 look-ahead，
+#     见 brainstorm Key Decisions：全局归一化引入跨管道联动）。
+#   - 共识溢价 consensus_multiplier 默认 1.2，仅在 hit_count >= 2 时生效。
+#   - 相关性预检（关键护栏）：合并前先算管道两两候选集 Jaccard；任意对 >= 阈值
+#     视为高相关，对**该对涉及的 ts_code** 取消共识溢价——A 股横截面高相关下，
+#     相关管道的「共识」是放大共同偏差，不是独立确认。门控在已证独立性上。
+#   - pipeline_weights 从 storage/pipeline_weights.json 读取（缺失→等权），运行时不改。
+#   - 金融数字代码渲染：score/raw_score 全部代码算，无 LLM 介入。
+# ===================================================================== #
+
+PIPELINE_WEIGHTS_PATH = PROJECT_ROOT / "storage" / "pipeline_weights.json"
+PIPELINE_IDS = ("log_mv", "bj50_scan", "sector_hotspot", "supply_chain")
+CONSENSUS_MULTIPLIER = 1.2
+MIN_HIT_COUNT_FOR_BONUS = 2
+CORRELATION_JACCARD_THRESHOLD = 0.6
+
+
+def _minmax(values: list[float]) -> list[float]:
+    """min-max 归一化到 [0,1]；常数序列 → 全 0.5（中性，不引入虚假排序）。"""
+    if not values:
+        return []
+    lo, hi = min(values), max(values)
+    if hi == lo:
+        return [0.5 for _ in values]
+    span = hi - lo
+    return [(v - lo) / span for v in values]
+
+
+def _adapt_logmv(date: str | None = None) -> dict[str, Any] | None:
+    """log_mv 反向管道 → PipelineResult。score = 反转后的归一化 log_mv 因子值。
+
+    log_mv 反向逻辑：市值越小（factor_value 越低）越优 → score 越高。故对
+    factor_value 归一化后取 1 - x（小市值得高分），与管道选股方向一致。
+    """
+    try:
+        target_date, picks = _build_logmv_picks(date)
+    except Exception:
+        return None
+    if not picks:
+        return {"pipeline_id": "log_mv", "date": target_date, "candidates": []}
+    fvals = [float(p["factor_value"]) for p in picks]
+    norm = _minmax(fvals)
+    candidates = []
+    for p, nx in zip(picks, norm):
+        candidates.append({
+            "ts_code": p["symbol"],
+            "name": p.get("name", ""),
+            "score": round(1.0 - nx, 6),  # 反向：小市值 → 高分
+            "raw_score": round(float(p["factor_value"]), 6),
+            "metadata": {"rank_position": p.get("rank_position"), "rank_pct": p.get("rank_pct")},
+        })
+    candidates.sort(key=lambda c: c["score"], reverse=True)
+    return {"pipeline_id": "log_mv", "date": str(target_date), "candidates": candidates}
+
+
+def _adapt_bj50() -> dict[str, Any] | None:
+    """北证扫描管道 → PipelineResult。score = total_score 归一化。"""
+    date, rows = _latest_bj_scan()
+    if not rows:
+        return None
+    scored = [(r.get("ts_code", ""), _safe_float(r.get("total_score")), r.get("name", "")) for r in rows]
+    scored = [(c, s, n) for c, s, n in scored if c and s is not None]
+    if not scored:
+        return {"pipeline_id": "bj50_scan", "date": date or "", "candidates": []}
+    norm = _minmax([s for _, s, _ in scored])
+    candidates = []
+    for (code, raw, name), nx in zip(scored, norm):
+        candidates.append({
+            "ts_code": code,
+            "name": name,
+            "score": round(nx, 6),
+            "raw_score": round(float(raw), 6),
+            "metadata": {"universe": "bj50"},
+        })
+    candidates.sort(key=lambda c: c["score"], reverse=True)
+    return {"pipeline_id": "bj50_scan", "date": date or "", "candidates": candidates}
+
+
+def _expand_sector_leaders(snap: dict[str, Any]) -> list[dict[str, Any]]:
+    """板块热点 → 成分股展开（板块无直接 ts_code，须从 leaderStocks 取代码）。
+
+    成分股 score 从板块 heatScore 继承（等分继承：同板块龙头共享板块热度）。
+    展开来源优先级：leaderBoards.leaderStocks > industries/concepts[].leaderStocks。
+    **降级**：归档快照若全程无 leaderStocks（实测当前归档即如此），返回空列表——
+    板块管道当日不贡献候选（fail loud：不编造 ts_code）。
+    """
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _emit(code: str, name: str, heat: float | None, board: str) -> None:
+        code = (code or "").strip()
+        if not code or code in seen:
+            return
+        seen.add(code)
+        out.append({"ts_code": code, "name": name or "", "heat": heat, "board": board})
+
+    # 1) 顶层 leaderBoards（含 board heatScore 时继承，否则后续归一化兜底）
+    for b in snap.get("leaderBoards") or []:
+        bname = b.get("name", "")
+        bheat = _safe_float(b.get("heatScore"))
+        for s in b.get("leaderStocks") or []:
+            _emit(s.get("code", ""), s.get("name", ""), bheat, bname)
+    # 2) industries / concepts 各板块内的 leaderStocks（board heatScore 继承）
+    for key in ("industries", "concepts"):
+        for b in snap.get(key) or []:
+            bheat = _safe_float(b.get("heatScore"))
+            bname = b.get("name", "")
+            for s in b.get("leaderStocks") or []:
+                _emit(s.get("code", ""), s.get("name", ""), bheat, bname)
+    return out
+
+
+def _adapt_sector_hotspot() -> dict[str, Any] | None:
+    """板块热点管道 → PipelineResult（成分股展开后归一化 heatScore）。"""
+    if not SECTOR_ROTATION_DIR.exists():
+        return None
+    files = sorted(SECTOR_ROTATION_DIR.glob("*.json"), reverse=True)
+    if not files:
+        return None
+    snap = _sector_rotation_snapshot(files[0])
+    if snap is None:
+        return None
+    date = str(snap.get("tradeDate") or files[0].stem)
+    expanded = _expand_sector_leaders(snap)
+    if not expanded:
+        # 降级：归档无 leaderStocks → 板块管道当日空候选（不编造 ts_code）
+        return {"pipeline_id": "sector_hotspot", "date": date, "candidates": [], "degraded": "no_leader_stocks"}
+    heats = [e["heat"] if e["heat"] is not None else 0.0 for e in expanded]
+    norm = _minmax(heats)
+    candidates = []
+    for e, nx in zip(expanded, norm):
+        candidates.append({
+            "ts_code": e["ts_code"],
+            "name": e["name"],
+            "score": round(nx, 6),
+            "raw_score": round(float(e["heat"]), 6) if e["heat"] is not None else None,
+            "metadata": {"board": e["board"]},
+        })
+    candidates.sort(key=lambda c: c["score"], reverse=True)
+    return {"pipeline_id": "sector_hotspot", "date": date, "candidates": candidates}
+
+
+def _adapt_supply_chain(top_n: int = 30, min_score: float = 0.4) -> dict[str, Any] | None:
+    """紫苏叶产业链管道 → PipelineResult。perilla_score 已是 [0,1]，直接用。"""
+    picks = _perilla_picks(top_n=top_n, min_score=min_score)
+    if not picks:
+        return None
+    candidates = []
+    for p in picks:
+        sc = p.get("score")
+        if sc is None:
+            continue
+        candidates.append({
+            "ts_code": p["symbol"],
+            "name": p.get("name", ""),
+            "score": round(float(sc), 6),  # 已 0-1，无需再归一化
+            "raw_score": round(float(sc), 6),
+            "metadata": {"layer": p.get("layer"), "role": p.get("role")},
+        })
+    candidates.sort(key=lambda c: c["score"], reverse=True)
+    today = datetime.now().strftime("%Y%m%d")
+    return {"pipeline_id": "supply_chain", "date": today, "candidates": candidates}
+
+
+def _load_pipeline_weights() -> dict[str, float]:
+    """读 storage/pipeline_weights.json；缺失 / 损坏 → 四管道等权（各 0.25）。
+
+    合并层每次读取，运行时不修改（权重更新走离线 compute_pipeline_alpha.py + 人工确认）。
+    """
+    equal = {pid: 0.25 for pid in PIPELINE_IDS}
+    if not PIPELINE_WEIGHTS_PATH.exists():
+        return equal
+    try:
+        raw = json.loads(PIPELINE_WEIGHTS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return equal
+    if not isinstance(raw, dict):
+        return equal
+    out = dict(equal)
+    for pid in PIPELINE_IDS:
+        v = raw.get(pid)
+        if isinstance(v, (int, float)) and v >= 0:
+            out[pid] = float(v)
+    return out
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    inter = len(a & b)
+    union = len(a | b)
+    return inter / union if union else 0.0
+
+
+def _correlation_precheck(
+    results: list[dict[str, Any]],
+    threshold: float = CORRELATION_JACCARD_THRESHOLD,
+) -> tuple[list[list[str]], set[str]]:
+    """管道两两命中相关性预检（共识加权前置护栏）。
+
+    A 股横截面高相关：相关管道的「共识」放大共同偏差，伪装独立确认。故先算
+    任意两管道候选集 Jaccard；任意对 >= threshold 视为高相关 →
+
+      1. 该对管道名记入 warnings（前端提示「共识溢价可信度降低」）；
+      2. 该对涉及的**所有 ts_code** 标记为「suppressed」——这些票的共识溢价被取消
+         （门控在已证独立性：只有低相关管道间的共识才享受溢价）。
+
+    Returns:
+        (warnings, suppressed_codes)
+        warnings: 高相关管道对名称列表（如 [["sector_hotspot","bj50_scan"]]）。
+        suppressed_codes: 共识溢价被抑制的 ts_code 集合。
+    """
+    sets: dict[str, set[str]] = {
+        r["pipeline_id"]: {c["ts_code"] for c in r.get("candidates", [])}
+        for r in results
+    }
+    ids = list(sets.keys())
+    warnings: list[list[str]] = []
+    suppressed: set[str] = set()
+    for i in range(len(ids)):
+        for j in range(i + 1, len(ids)):
+            pa, pb = ids[i], ids[j]
+            jac = _jaccard(sets[pa], sets[pb])
+            if jac >= threshold:
+                warnings.append([pa, pb])
+                # 高相关对的**交集**票享受不到独立确认 → 抑制其溢价
+                suppressed |= (sets[pa] & sets[pb])
+    return warnings, suppressed
+
+
+def _discovery_merge(
+    results: list[dict[str, Any]] | None = None,
+    *,
+    pipeline_weights: dict[str, float] | None = None,
+    consensus_multiplier: float = CONSENSUS_MULTIPLIER,
+    min_hit_count_for_bonus: int = MIN_HIT_COUNT_FOR_BONUS,
+    correlation_threshold: float = CORRELATION_JACCARD_THRESHOLD,
+) -> dict[str, Any]:
+    """四发现管道合并 + 去重 + 共识溢价（相关性门控）。
+
+    Args:
+        results: PipelineResult dict 列表；None → 触发四管道 adapter 实时取数。
+        pipeline_weights: 管道权重 dict；None → 读 storage/pipeline_weights.json（缺失等权）。
+        consensus_multiplier: hit_count>=门槛 时的共识溢价（默认 1.2）。
+        min_hit_count_for_bonus: 触发共识溢价的最小命中管道数（默认 2）。
+        correlation_threshold: Jaccard 高相关阈值（默认 0.6，触发溢价抑制）。
+
+    Returns:
+        MergedCandidateList dict：candidates（按 final_score 降序、ts_code 唯一）
+        + warnings（高相关管道对）+ pipelineWeights + 各管道命中数 meta。
+
+    合并语义：
+        final_score = (Σ w_i × score_i over hit pipelines)
+                      × (consensus_multiplier if hit_count>=门槛 且 该票未被相关性抑制 else 1.0)
+        分母只计入 score 非 None 的管道（None 管道不当 0 分，见 Acceptance Example C）。
+    """
+    if results is None:
+        results = [
+            r for r in (
+                _adapt_logmv(),
+                _adapt_bj50(),
+                _adapt_sector_hotspot(),
+                _adapt_supply_chain(),
+            ) if r is not None
+        ]
+    weights = pipeline_weights if pipeline_weights is not None else _load_pipeline_weights()
+
+    warnings, suppressed = _correlation_precheck(results, threshold=correlation_threshold)
+
+    # 按 ts_code 聚合
+    agg: dict[str, dict[str, Any]] = {}
+    for r in results:
+        pid = r["pipeline_id"]
+        for c in r.get("candidates", []):
+            code = c.get("ts_code")
+            if not code:
+                continue
+            sc = c.get("score")
+            if sc is None:  # None score 管道不参与加权 / 不计入分母（Example C）
+                continue
+            slot = agg.setdefault(code, {
+                "ts_code": code,
+                "name": c.get("name", ""),
+                "sources": [],
+                "pipeline_scores": {},
+                "weighted_sum": 0.0,
+            })
+            if not slot["name"] and c.get("name"):
+                slot["name"] = c.get("name")
+            slot["sources"].append(pid)
+            slot["pipeline_scores"][pid] = sc
+            slot["weighted_sum"] += float(weights.get(pid, 0.0)) * float(sc)
+
+    merged: list[dict[str, Any]] = []
+    for code, slot in agg.items():
+        hit_count = len(slot["sources"])
+        base = slot["weighted_sum"]
+        bonus = 1.0
+        consensus_applied = False
+        if hit_count >= min_hit_count_for_bonus and code not in suppressed:
+            bonus = consensus_multiplier
+            consensus_applied = True
+        merged.append({
+            "ts_code": code,
+            "name": slot["name"],
+            "final_score": round(base * bonus, 6),
+            "base_score": round(base, 6),
+            "hit_count": hit_count,
+            "sources": sorted(slot["sources"]),
+            "pipeline_scores": {k: round(float(v), 6) for k, v in slot["pipeline_scores"].items()},
+            "consensus_applied": consensus_applied,
+            "consensus_suppressed": (hit_count >= min_hit_count_for_bonus and code in suppressed),
+        })
+    merged.sort(key=lambda x: (x["final_score"], x["ts_code"]), reverse=True)
+
+    pipeline_meta = [
+        {
+            "pipeline_id": r["pipeline_id"],
+            "date": r.get("date", ""),
+            "nCandidates": len(r.get("candidates", [])),
+            "degraded": r.get("degraded"),
+        }
+        for r in results
+    ]
+    return {
+        "candidates": merged,
+        "warnings": warnings,
+        "pipelineWeights": weights,
+        "pipelines": pipeline_meta,
+        "consensusMultiplier": consensus_multiplier,
+        "correlationThreshold": correlation_threshold,
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def snapshot() -> dict[str, Any]:
     names = _load_names()
     stocks = _load_stock_summaries(names)
@@ -2708,6 +3051,9 @@ def main(argv: list[str]) -> int:
         return 0
     if command == "theme-leaders":
         _json_dump(_theme_leaders())
+        return 0
+    if command == "get-discovery-candidates":
+        _json_dump(_discovery_merge())
         return 0
     if command == "cron-list":
         _json_dump(_scheduled_jobs())

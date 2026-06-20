@@ -1,0 +1,8 @@
+{
+  "log_mv": 0.25,
+  "bj50_scan": 0.25,
+  "sector_hotspot": 0.25,
+  "supply_chain": 0.25,
+  "_updated": "20260621",
+  "_note": "等权初始值。更新走 scripts/compute_pipeline_alpha.py 算 alpha + 人工确认后手动改，合并层运行时不修改本文件。"
+}
