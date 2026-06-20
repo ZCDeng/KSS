@@ -20,6 +20,10 @@ final class KSSStore: ObservableObject {
     @Published var scheduledBatchBusy = false         // 批量补跑/重跑进行中
     @Published var scheduledBatchNote: String?        // 批量操作结果提示（一次性 toast 文案）
     @Published var themeLeaders: [ThemeLeaders] = []
+    @Published var trendMonth: TrendMonth?            // 当前月月度格子
+    @Published var trendDayDetail: TrendDayDetail?    // 选中日明细
+    @Published var trendsLoading = false
+    @Published var selectedTrendDate: String?         // 选中日（YYYY-MM-DD）
     @Published var importingSymbol: String?   // 点击导入进行中的代码（行级/全局指示）
     @Published var errorMessage: String?
 
@@ -182,6 +186,27 @@ final class KSSStore: ObservableObject {
         guard let bridge else { return }
         let jobs = (try? await Task.detached { try bridge.scheduledJobs() }.value) ?? []
         self.scheduledJobs = jobs
+    }
+
+    /// 趋势页：加载某月月度格子（YYYY-MM）。
+    func loadTrendsMonth(_ month: String) async {
+        guard let bridge else { return }
+        trendsLoading = true
+        defer { trendsLoading = false }
+        let m = (try? await Task.detached { try bridge.trendsMonth(month) }.value)
+        self.trendMonth = m
+        // 默认选中本月最后一个有数据日，方便首屏看到明细。
+        if selectedTrendDate == nil, let last = m?.days.last(where: { $0.hasData })?.date {
+            await loadTrendsDay(last)
+        }
+    }
+
+    /// 趋势页：加载某日明细并记为选中日。
+    func loadTrendsDay(_ date: String) async {
+        guard let bridge else { return }
+        selectedTrendDate = date
+        let d = (try? await Task.detached { try bridge.trendsDay(date) }.value)
+        self.trendDayDetail = d
     }
 
     /// 拉取十五五科技主题 → 板块龙头/第二梯队。

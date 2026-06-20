@@ -92,6 +92,16 @@ struct BridgeClient {
         try run(["cron-rerun-many", labels.joined(separator: ",")], as: CronBatchResult.self)
     }
 
+    /// 趋势页：某月月度格子。
+    func trendsMonth(_ month: String) throws -> TrendMonth {
+        try run(["trends-month", month], as: TrendMonth.self)
+    }
+
+    /// 趋势页：某日完整明细。
+    func trendsDay(_ date: String) throws -> TrendDayDetail {
+        try run(["trends-day", date], as: TrendDayDetail.self)
+    }
+
     private func run<T: Decodable>(_ args: [String], as type: T.Type) throws -> T {
         let bridge = projectRoot.appending(path: "scripts/kss_app_bridge.py")
         let process = Process()

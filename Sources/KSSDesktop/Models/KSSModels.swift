@@ -184,6 +184,89 @@ struct IndexQuote: Codable, Hashable, Identifiable {
     var date: String?
 }
 
+// MARK: - 趋势页（日历）模型（bridge trends-month / trends-day 输出）
+
+/// 北向净额（亿元，方向）。
+struct TrendNorth: Codable, Hashable {
+    var money: Double
+    var unit: String
+    var dir: String          // in / out / flat
+}
+
+/// 推荐后续 T+N 表现（百分比；缺/停牌为 nil）。
+struct TrendFwd: Codable, Hashable {
+    var t1: Double?
+    var t5: Double?
+    var t20: Double?
+    var asof: String?        // 实际落点 trade_date，防按行偏移张冠李戴
+}
+
+/// 各类是否有数据，驱动热力格三态/标记。
+struct TrendFlags: Codable, Hashable {
+    var north: Bool = false
+    var etf: Bool = false
+    var sector: Bool = false
+    var recs: Bool = false
+}
+
+struct TrendEtf: Codable, Hashable, Identifiable {
+    var id: String { code }
+    var code: String
+    var name: String
+    var pct: Double?
+}
+
+struct TrendSectorTheme: Codable, Hashable, Identifiable {
+    var id: String { name }
+    var name: String
+    var grade: String
+    var past5Ret: Double?
+}
+
+struct TrendRec: Codable, Hashable, Identifiable {
+    var id: String { symbol }
+    var symbol: String
+    var name: String
+    var fwd: TrendFwd
+}
+
+/// 月度格子（驱动热力格底色 + 板块点 + 推荐微条）。
+struct TrendDayCell: Codable, Hashable, Identifiable {
+    var id: String { date }
+    var date: String
+    var isTrading: Bool = true
+    var heat: Double?
+    var sectorHeat: Double?
+    var recAvgFwd: Double?
+    var north: TrendNorth?
+    var sectorCount: Int = 0
+    var recCount: Int = 0
+    var flags: TrendFlags = TrendFlags()
+    var hasData: Bool = false
+}
+
+struct TrendMonth: Codable, Hashable {
+    var month: String
+    var days: [TrendDayCell]
+}
+
+/// 单日完整明细。
+struct TrendDayDetail: Codable, Hashable {
+    var date: String
+    var found: Bool = false
+    var isTrading: Bool = true
+    var north: TrendNorth?
+    var etfs: [TrendEtf]?
+    var sectorTop: [TrendSectorTheme] = []
+    var sectorCount: Int = 0
+    var recs: [TrendRec] = []
+    var recCount: Int = 0
+    var recAvgFwd: Double?
+    var heat: Double?
+    var sectorHeat: Double?
+    var flags: TrendFlags = TrendFlags()
+}
+
 /// 板块脉冲（每日一份）：etf_radar 切片，资金申赎 + 强势确认分级。
 struct SectorPulse: Codable, Hashable, Identifiable {
     var id: String { tradeDate }
