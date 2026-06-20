@@ -42,7 +42,9 @@ struct DashboardView: View {
                         SectorPulseStrip(pulse: pulse)
                     }
 
-                    if let rotation = snapshot.latestSectorRotation {
+                    // 妖板情绪卡：仅当今日有妖板异动时展示（无料不占版面，
+                    // 也避免和资金面「板块强势」抢话语权——强势看趋势页/复盘）。
+                    if let rotation = snapshot.latestSectorRotation, !rotation.demonBoard.isEmpty {
                         HotspotRotationCard(rotation: rotation) {
                             onOpenSection(.reviews)
                         }
@@ -463,9 +465,14 @@ struct HotspotRotationCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 2).fill(KSSTheme.accent).frame(width: 4, height: 18)
-                Text("板块热点轮动")
+                Text("妖板情绪")
                     .font(KSSFont.serif(18, .semibold))
                     .foregroundStyle(KSSTheme.textPrimary)
+                Text("价格面")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(KSSTheme.textSecondary)
+                    .padding(.horizontal, 6).padding(.vertical, 1.5)
+                    .background(KSSTheme.surfaceRaised, in: Capsule())
                 Spacer()
                 if let date = rotation.tradeDate, date.count == 8 {
                     Text("\(date.prefix(4))-\(date.dropFirst(4).prefix(2))-\(date.suffix(2))")
@@ -475,8 +482,8 @@ struct HotspotRotationCard: View {
             }
 
             HStack(spacing: 12) {
-                classificationTile("真主线", rotation.mainline.count, KSSTheme.up)
                 classificationTile("妖板", rotation.demonBoard.count, KSSTheme.accent)
+                classificationTile("主线", rotation.mainline.count, KSSTheme.up)
                 classificationTile("退潮", rotation.oldHotspotFading.count, KSSTheme.textSecondary)
             }
 

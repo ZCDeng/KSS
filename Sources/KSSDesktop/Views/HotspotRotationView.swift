@@ -18,7 +18,7 @@ struct HotspotRotationView: View {
             let contentW = min(geo.size.width - margin * 2, 1080)
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    PageTitle("板块热点", subtitle: "今日板块热点与轮动判断 · 基于热点轮动模型")
+                    PageTitle("妖板情绪", subtitle: "价格面情绪雷达 · 涨幅排名+持续频次 · 不代表资金面强势（强势看趋势/复盘）")
 
                     if let r = rotation {
                         headerStrip(r)
@@ -59,7 +59,8 @@ struct HotspotRotationView: View {
             }
             HStack(spacing: gutter) {
                 coverageMeter("历史覆盖", r.historyCoverage, KSSTheme.ma20)
-                coverageMeter("龙头覆盖", r.leaderCoverage, KSSTheme.accent)
+                // 龙头映射仅供妖王榜展示，不参与象限分类（命名空间对不齐，结构性偏低）。
+                coverageMeter("龙头映射", r.leaderCoverage, KSSTheme.accent)
             }
         }
         .padding(16)
@@ -109,8 +110,8 @@ struct HotspotRotationView: View {
             columns: Array(repeating: GridItem(.flexible(), spacing: gutter), count: cols),
             spacing: gutter
         ) {
-            quadrantCard("真主线", "今日爆发 × 持续性强", r.mainline, KSSTheme.up, "flame.fill")
-            quadrantCard("妖板", "高位异动 / 题材接力", r.demonBoard, KSSTheme.accent, "bolt.fill")
+            quadrantCard("妖板", "高位异动 / 题材接力（本页主信号）", r.demonBoard, KSSTheme.accent, "bolt.fill")
+            quadrantCard("主线", "今日爆发 × 持续在前（较少见）", r.mainline, KSSTheme.up, "flame.fill")
             quadrantCard("退潮", "曾强势但今日走弱", r.oldHotspotFading, KSSTheme.textSecondary, "arrow.down.right")
         }
     }

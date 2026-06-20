@@ -9,7 +9,7 @@ enum DateRange: String, CaseIterable, Identifiable {
 
 enum ReviewMode: String, CaseIterable, Identifiable {
     case sector = "板块复盘"
-    case hotspotRotation = "热点轮动"
+    case hotspotRotation = "妖板情绪"
     case stock = "个股复盘"
     var id: String { rawValue }
 }
@@ -529,7 +529,7 @@ struct HotspotRotationHistoryRow: View {
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundStyle(KSSTheme.textSecondary)
             }
-            Text("热点轮动")
+            Text("妖板情绪")
                 .font(.system(size: 15, weight: .bold))
                 .foregroundStyle(KSSTheme.textPrimary)
             Text(summary)

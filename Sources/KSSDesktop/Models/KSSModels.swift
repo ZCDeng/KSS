@@ -650,7 +650,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .dashboard: return "今日总览"
         case .recommendations: return "推荐"
         case .watchlist: return "自选"
-        case .hotspot: return "热点"
+        case .hotspot: return "妖板情绪"
         case .themes: return "主题"
         case .trends: return "趋势观察"
         case .runbook: return "任务"
