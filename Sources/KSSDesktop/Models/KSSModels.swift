@@ -647,12 +647,12 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .dashboard: return "总览"
+        case .dashboard: return "今日总览"
         case .recommendations: return "推荐"
         case .watchlist: return "自选"
         case .hotspot: return "热点"
         case .themes: return "主题"
-        case .trends: return "趋势"
+        case .trends: return "趋势观察"
         case .runbook: return "任务"
         case .reviews: return "复盘"
         case .backtests: return "回测"

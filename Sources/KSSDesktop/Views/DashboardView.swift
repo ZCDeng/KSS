@@ -17,7 +17,7 @@ struct DashboardView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: sectionSpacing) {
                     HStack(alignment: .top) {
-                        PageTitle("总览", subtitle: "本地量化研究工作台 · log_mv 选股 / 紫苏叶供应链 / 北证扫描")
+                        PageTitle("今日总览", subtitle: "本地量化研究工作台 · log_mv 选股 / 紫苏叶供应链 / 北证扫描")
                         Spacer(minLength: 16)
                         EditorialDateView()
                     }

@@ -22,7 +22,7 @@ struct TrendsView: View {
             let w = min(geo.size.width - 48, 1080)
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    PageTitle("趋势", subtitle: "主力资金 / 板块 / 推荐 · 按天看本周本月变化")
+                    PageTitle("趋势观察", subtitle: "主力资金 / 板块 / 推荐 · 按天看本周本月变化")
 
                     monthHeader
 
