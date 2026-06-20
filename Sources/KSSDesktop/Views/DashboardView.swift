@@ -137,8 +137,8 @@ struct TodayPicksList: View {
         let asc = ascending
         switch sortKey {
         case .rank:
-            // 默认：排名升序（#1 在前），与现有视觉顺序一致
-            return items.sorted { asc ? $0.rank < $1.rank : $0.rank > $1.rank }
+            // 默认（asc=false）即 #1→#5，与原视觉一致；排名列无可点列头，asc 不会再切
+            return items.sorted { asc ? $0.rank > $1.rank : $0.rank < $1.rank }
         case .name:
             return items.sorted {
                 let r = $0.name.localizedCompare($1.name)
