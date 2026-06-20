@@ -2421,6 +2421,63 @@ def _cron_rerun_many(labels: list[str]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# 趋势页（U4）：只读 storage/trends/*.json 归档，聚合月度格子 + 单日明细。
+# 归档由 .venv-desktop 脚本产出（archive_trends_daily/backfill_trends）；
+# 本命令纯 stdlib，日期参数走正则白名单防注入/路径穿越。
+# ---------------------------------------------------------------------------
+
+_TRENDS_DIR = PROJECT_ROOT / "storage" / "trends"
+_MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
+_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _read_trend_file(path: Path) -> dict[str, Any] | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _trends_month(month: str) -> dict[str, Any]:
+    """某月所有归档 → 月度格子（驱动热力格底色 + 板块点 + 推荐微条）。"""
+    if not _MONTH_RE.match(month or ""):
+        return {"month": month, "days": [], "error": "bad month (want YYYY-MM)"}
+    days: list[dict[str, Any]] = []
+    for path in sorted(_TRENDS_DIR.glob(f"{month}-*.json")):
+        d = _read_trend_file(path)
+        if not d:
+            continue
+        flags = d.get("flags") or {}
+        days.append({
+            "date": d.get("date"),
+            "isTrading": d.get("isTrading", True),
+            "heat": d.get("heat"),
+            "sectorHeat": d.get("sectorHeat"),
+            "recAvgFwd": d.get("recAvgFwd"),
+            "north": d.get("north"),
+            "sectorCount": d.get("sectorCount", 0),
+            "recCount": d.get("recCount", 0),
+            "flags": flags,
+            "hasData": any(flags.values()) if flags else False,
+        })
+    return {"month": month, "days": days}
+
+
+def _trends_day(date: str) -> dict[str, Any]:
+    """单日完整明细；无归档返回明确空态。"""
+    if not _DAY_RE.match(date or ""):
+        return {"date": date, "found": False, "error": "bad date (want YYYY-MM-DD)"}
+    path = _TRENDS_DIR / f"{date}.json"
+    if not path.exists():
+        return {"date": date, "found": False}
+    d = _read_trend_file(path)
+    if not d:
+        return {"date": date, "found": False, "error": "unreadable archive"}
+    d["found"] = True
+    return d
+
+
+# ---------------------------------------------------------------------------
 # 概念主题龙头 / 第二梯队（十五五科技主题）
 #
 # 数据 = storage/themes_15th_5y.yaml（主题 → 行业/概念板块名）
@@ -2606,6 +2663,18 @@ def main(argv: list[str]) -> int:
         # 逗号分隔 label 列表，空则重跑全部启用项；每个 label 仍走白名单校验。
         labels = [s for s in (argv[2].split(",") if len(argv) >= 3 else []) if s]
         _json_dump(_cron_rerun_many(labels))
+        return 0
+    if command == "trends-month":
+        if len(argv) < 3:
+            print("trends-month requires YYYY-MM", file=sys.stderr)
+            return 2
+        _json_dump(_trends_month(argv[2]))
+        return 0
+    if command == "trends-day":
+        if len(argv) < 3:
+            print("trends-day requires YYYY-MM-DD", file=sys.stderr)
+            return 2
+        _json_dump(_trends_day(argv[2]))
         return 0
     print(f"unknown command: {command}", file=sys.stderr)
     return 2
