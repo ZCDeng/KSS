@@ -191,7 +191,7 @@ struct ReviewsView: View {
             } else if let snap = sectorRotationDetail {
                 HotspotRotationPanel(snap: snap)
             } else {
-                placeholder("选择日期查看热点轮动")
+                placeholder("选择日期查看妖板情绪")
             }
         case .stock:
             if let review = selectedReview {
@@ -559,21 +559,21 @@ struct HotspotRotationPanel: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .firstTextBaseline) {
-                    PageTitle("热点轮动")
+                    PageTitle("妖板情绪")
                     Spacer()
                     StatusBadge(icon: "calendar", text: dateLabel, tint: KSSTheme.accent)
                 }
 
                 HStack(spacing: 12) {
-                    classificationTile("真主线", snap.crossSourceSignals.mainline.count, KSSTheme.up)
+                    classificationTile("主线", snap.crossSourceSignals.mainline.count, KSSTheme.up)
                     classificationTile("妖板", snap.crossSourceSignals.demonBoard.count, KSSTheme.accent)
                     classificationTile("退潮", snap.crossSourceSignals.oldHotspotFading.count, KSSTheme.textSecondary)
                     classificationTile("卫星", snap.crossSourceSignals.satellite.count, KSSTheme.textBody)
                 }
 
                 HStack(spacing: 10) {
-                    coverageBadge("leaderCoverage", snap.leaderCoverage)
-                    coverageBadge("historyCoverage", snap.historyCoverage)
+                    coverageBadge("龙头映射", snap.leaderCoverage)
+                    coverageBadge("历史覆盖", snap.historyCoverage)
                 }
 
                 if !snap.leaderBoards.isEmpty {
@@ -713,7 +713,7 @@ struct HotspotBoardTable: View {
 
     private func classificationLabel(_ cls: String) -> String {
         switch cls {
-        case "mainline": return "真主线"
+        case "mainline": return "主线"
         case "demonBoard": return "妖板"
         case "oldHotspotFading": return "退潮"
         default: return "卫星"
