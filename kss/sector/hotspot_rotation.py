@@ -5,13 +5,22 @@ Phase 3 扩展：
 - 计算龙头跨天频次（妖王榜）并写入各板块 ``leaderStocks``.
 - 输出 ``leaderBoards`` 与 ``leaderCoverage``.
 
+定位（重要）：
+- 本模型是**价格面情绪雷达**（涨幅排名 + 持续频次），**不产「板块强势」真值**。
+  「板块强势 / 资金面」的唯一真值源 = ``storage/etf_radar/*.json``（ETF 申赎，
+  见 ``kss/sector/etf_radar.py``），趋势页 ``topSector`` 走它。本模型只回答
+  「今天哪些板块价格异动 / 是不是妖板」，不要拿来覆盖资金面结论。
+  实证：16 天对账中本模型对 59% 的复盘有观点主题无信号、机器人 16/16 天漏判，
+  故收窄为「妖板情绪」专用，不与复盘抢「强势」话语权。
+
 设计纪律：
 
 - 数据层失败 → 返回 ``None`` + warning，不外抛.
 - 输出 schema 与 ``docs/plans/2026-06-19-001-feat-sector-hotspot-rotation-plan.md``
   保持一致.
 - 板块名称空间不一致：Tushare 行业/概念名与 KAIPAN/THS 名不一定一一对应，
-  仅当名字能匹配时才写入 ``leaderStocks``；覆盖率不足时 leader 信号不用于分类.
+  仅当名字能匹配时才写入 ``leaderStocks``（妖王榜纯展示）；leader **不参与四象限分类**
+  （命名空间对不齐导致覆盖率结构性 <0.5，曾经的覆盖率门控是死信号，已移除）.
 """
 
 from __future__ import annotations
@@ -44,7 +53,10 @@ DEFAULT_LOOKBACK_DAYS = 5
 DEFAULT_CLASSIFICATION_TOP_N = 10
 DEFAULT_LEADERS_TOP_N_BOARDS = 15
 DEFAULT_LEADERS_TOP_N_STOCKS = 5
-LEADER_COVERAGE_THRESHOLD = 0.5
+# 持续性（sustained）判定：历史窗口内进入 top_n 的天数门槛。
+# 旧逻辑只认 top3Appearances>=2（4 日历史里太严，mainline 16 天塌空 11 天），
+# 放宽为「也认 topNAppearances>=2」——持续在 top_n 内即算强势接力。
+SUSTAINED_TOPN_MIN_APPEARANCES = 2
 
 
 @dataclass
@@ -60,6 +72,7 @@ class HotspotBoard:
     previousRank: int | None = None
     rankJump: int | None = None
     top3Appearances: int = 0
+    topNAppearances: int = 0
     streakDays: int = 0
     strengthDelta: float | None = None
     kaipanStrengthScore: int | None = None
@@ -176,12 +189,14 @@ def _load_historical_boards(
 def _aggregate_historical_metrics(
     boards: list[HotspotBoard],
     history: list[tuple[str, list[HotspotBoard]]],
+    top_n: int = DEFAULT_CLASSIFICATION_TOP_N,
 ) -> None:
     """就地填充板块的历史聚合指标.
 
     Args:
         boards: 当日板块列表.
         history: ``[(date, boards_that_day), ...]``，newest first，不含当日.
+        top_n: 计 ``topNAppearances`` 用的名次门槛（与四象类分类阈值一致）.
     """
     hist_by_name: dict[str, list[tuple[str, HotspotBoard]]] = {}
     for date, hist_boards in history:
@@ -196,6 +211,7 @@ def _aggregate_historical_metrics(
         board.previousRank = series[0][1].todayRank
         board.rankJump = (board.previousRank or 0) - board.todayRank
         board.top3Appearances = sum(1 for _, b in series if b.todayRank <= 3)
+        board.topNAppearances = sum(1 for _, b in series if 0 < b.todayRank <= top_n)
 
         streak = 0
         for _, b in series:
@@ -333,20 +349,6 @@ def _fetch_leaders_for_boards(
     return boards_with_leaders, missing
 
 
-def _attach_leader_signal(
-    boards: list[HotspotBoard],
-    coverage: float,
-) -> None:
-    """在覆盖率达标时，为有 persistent leader 的板块追加证据源."""
-    if coverage < LEADER_COVERAGE_THRESHOLD:
-        return
-    for board in boards:
-        leaders = board.leaderStocks or []
-        if any(leader.get("count", 0) >= 2 for leader in leaders):
-            if "leader" not in board.evidenceSources:
-                board.evidenceSources.append("leader")
-
-
 def _classify_board(
     board: HotspotBoard,
     top_n: int,
@@ -356,7 +358,8 @@ def _classify_board(
     burst = board.todayRank <= top_n
 
     sustained_sources = 0
-    if board.top3Appearances >= 2:
+    # 强持续：历史多次冲进 top3。弱持续：历史多次在 top_n 内（接力但不一定登顶）。
+    if board.top3Appearances >= 2 or board.topNAppearances >= SUSTAINED_TOPN_MIN_APPEARANCES:
         sustained_sources += 1
     if kaipan_available and board.kaipanRank is not None and board.kaipanRank <= top_n:
         sustained_sources += 1
@@ -471,7 +474,7 @@ def build_hotspot_rotation_snapshot(
         weights=config.get("industry_heat_weights", {"pct_change": 1.0}),
         top_n=top_n_industry,
     )
-    _aggregate_historical_metrics(snap.industries, history)
+    _aggregate_historical_metrics(snap.industries, history, top_n=classification_top_n)
     snap.missing.extend(ind_missing)
 
     snap.concepts, cnt_missing = _build_boards(
@@ -482,7 +485,7 @@ def build_hotspot_rotation_snapshot(
         weights=config.get("concept_heat_weights", {"pct_change": 1.0}),
         top_n=top_n_concept,
     )
-    _aggregate_historical_metrics(snap.concepts, history)
+    _aggregate_historical_metrics(snap.concepts, history, top_n=classification_top_n)
     snap.missing.extend(cnt_missing)
 
     kaipan_data: dict | None = None
@@ -542,8 +545,8 @@ def build_hotspot_rotation_snapshot(
         attempted = len(unique_candidates)
         snap.leaderCoverage = len(boards_with_leaders) / attempted if attempted > 0 else 0.0
         snap.missing.extend(leader_missing)
-
-        _attach_leader_signal(snap.industries + snap.concepts + snap.kaipanBoards, snap.leaderCoverage)
+        # 注意：leaderStocks/leaderBoards/妖王榜纯展示，leader 不参与四象限分类
+        # （命名空间对不齐 → 覆盖率结构性偏低，旧的覆盖率门控是死信号，已移除）。
 
     kaipan_available = enable_kaipan and not any("disabled" in m for m in kaipan_missing)
     _apply_classification(snap.industries, classification_top_n, kaipan_available, snap.crossSourceSignals)

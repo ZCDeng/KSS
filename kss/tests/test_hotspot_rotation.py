@@ -14,7 +14,6 @@ from kss.sector.hotspot_rotation import (
     HotspotRotationSnapshot,
     _aggregate_historical_metrics,
     _apply_classification,
-    _attach_leader_signal,
     _build_boards,
     _build_name_to_code_map,
     _classify_board,
@@ -167,7 +166,22 @@ def test_aggregate_historical_metrics() -> None:
     assert b.previousRank == 1
     assert b.rankJump == 0
     assert b.top3Appearances == 3
+    assert b.topNAppearances == 3  # 三天历史名次 1/1/3 全在 top_n(10) 内
     assert b.streakDays == 2
+
+
+def test_aggregate_historical_metrics_topn_distinct_from_top3() -> None:
+    """持续在 top_n 但很少进 top3：topNAppearances 高、top3Appearances 低."""
+    today = [HotspotBoard(name="材料", source="industry", todayRank=4)]
+    history = [
+        ("20260617", [HotspotBoard(name="材料", source="industry", todayRank=6)]),
+        ("20260616", [HotspotBoard(name="材料", source="industry", todayRank=8)]),
+        ("20260613", [HotspotBoard(name="材料", source="industry", todayRank=2)]),
+    ]
+    _aggregate_historical_metrics(today, history, top_n=10)
+    b = today[0]
+    assert b.top3Appearances == 1   # 只有名次 2 进了 top3
+    assert b.topNAppearances == 3   # 6/8/2 都在 top_n 内
 
 
 def test_classify_board_mainline() -> None:
@@ -175,6 +189,26 @@ def test_classify_board_mainline() -> None:
     cls, conf = _classify_board(b, top_n=10, kaipan_available=False)
     assert cls == "mainline"
     assert conf == "medium"
+
+
+def test_classify_board_mainline_via_topn() -> None:
+    """重标定：持续在 top_n（topNAppearances>=2）也算 sustained → mainline."""
+    b = HotspotBoard(
+        name="半导体材料", source="industry", todayRank=5,
+        top3Appearances=1, topNAppearances=3,
+    )
+    cls, conf = _classify_board(b, top_n=10, kaipan_available=False)
+    assert cls == "mainline"
+
+
+def test_classify_board_topn_once_not_sustained() -> None:
+    """只在 top_n 出现 1 次 → 未达门槛，爆发但不持续 = 妖板而非主线."""
+    b = HotspotBoard(
+        name="次新", source="concept", todayRank=3,
+        top3Appearances=0, topNAppearances=1, rankJump=2,
+    )
+    cls, _conf = _classify_board(b, top_n=10, kaipan_available=False)
+    assert cls == "demonBoard"
 
 
 def test_classify_board_demon_board() -> None:
@@ -340,32 +374,6 @@ def test_fetch_leaders_for_boards() -> None:
     assert boards[0].leaderStocks is not None
     assert boards[0].leaderStocks[0]["code"] == "600353"
     assert boards[0].leaderStocks[0]["count"] == 2
-
-
-def test_attach_leader_signal_with_coverage() -> None:
-    boards = [
-        HotspotBoard(
-            name="芯片",
-            source="kaipan",
-            leaderStocks=[{"code": "600353", "count": 3, "name": "旭光电子", "positions": []}],
-        ),
-        HotspotBoard(name="通信", source="kaipan", leaderStocks=[]),
-    ]
-    _attach_leader_signal(boards, coverage=1.0)
-    assert "leader" in boards[0].evidenceSources
-    assert "leader" not in boards[1].evidenceSources
-
-
-def test_attach_leader_signal_below_threshold() -> None:
-    boards = [
-        HotspotBoard(
-            name="芯片",
-            source="kaipan",
-            leaderStocks=[{"code": "600353", "count": 3, "name": "旭光电子", "positions": []}],
-        ),
-    ]
-    _attach_leader_signal(boards, coverage=0.2)
-    assert "leader" not in boards[0].evidenceSources
 
 
 def test_build_hotspot_rotation_snapshot_with_leaders(tmp_path: Path) -> None:
