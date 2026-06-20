@@ -169,6 +169,16 @@ struct ContentView: View {
                     onLoad: { Task { await store.loadThemeLeaders() } },
                     onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } }
                 )
+            case .trends:
+                TrendsView(
+                    month: store.trendMonth,
+                    detail: store.trendDayDetail,
+                    selectedDate: store.selectedTrendDate,
+                    loading: store.trendsLoading,
+                    onLoadMonth: { m in Task { await store.loadTrendsMonth(m) } },
+                    onSelectDay: { d in Task { await store.loadTrendsDay(d) } },
+                    onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } }
+                )
             case .reviews:
                 ReviewsView(
                     reviews: snapshot.reviews,
