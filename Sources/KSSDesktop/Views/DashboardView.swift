@@ -33,6 +33,11 @@ struct DashboardView: View {
                         MarketIndexRow(indices: indices)
                     }
 
+                    // 指数跑马灯：紧贴指数行下方，无标题，13 指数按涨跌幅排序滚动
+                    if let board = snapshot.marketStrip?.indexBoard, !board.isEmpty {
+                        IndexMarquee(indices: board)
+                    }
+
                     if let pulse = snapshot.sectorReviews?.first, !pulse.themes.isEmpty {
                         SectorPulseStrip(pulse: pulse)
                     }
@@ -55,10 +60,8 @@ struct DashboardView: View {
                         BJScanSection(scan: scan, onSelect: onSelectSymbol)
                     }
 
-                    // 底部：指数跑马灯（按涨跌幅排序滚动）+ 指数一览
+                    // 底部：指数一览
                     if let board = snapshot.marketStrip?.indexBoard, !board.isEmpty {
-                        SectionHeader("指数跑马灯", caption: "13 指数按涨跌幅排序 · 持续滚动")
-                        IndexMarquee(indices: board)
                         SectionHeader("指数一览", caption: "常用宽基 / 主题指数当日表现")
                         IndexBoardGrid(indices: board)
                     }
