@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KSS 回测闭环补强 · Ideation 2026-06-21</title>
+<style>
+  :root{
+    --bg:#141413; --surf:#1d1b19; --surf2:#2c2926; --line:#3d3d3a;
+    --ink:#faf9f5; --body:#d1cfc5; --muted:#8a8980;
+    --clay:#e48a6e; --olive:#9db07c; --gold:#d4b36f; --blue:#7fa3bc;
+    --up:#f6465d; --down:#2ebd85;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--body);
+    font:15px/1.6 -apple-system,"SF Pro Text","PingFang SC",sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:960px;margin:0 auto;padding:40px 24px 80px}
+  h1{font:600 30px/1.25 ui-serif,Georgia,"Songti SC",serif;color:var(--ink);margin:0 0 6px;letter-spacing:-.01em}
+  .sub{color:var(--muted);font-size:13.5px;margin-bottom:4px}
+  .meta{color:var(--muted);font-size:12px;font-family:ui-monospace,monospace;margin-bottom:28px}
+  h2{font:600 19px/1.3 ui-serif,Georgia,serif;color:var(--ink);margin:34px 0 12px;
+    padding-left:11px;border-left:4px solid var(--clay)}
+  h3{font-size:15px;color:var(--ink);margin:0}
+  p{margin:.5em 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:680px){.grid2{grid-template-columns:1fr}}
+  .panel{background:var(--surf);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .axes li{margin:3px 0}
+  .axes b{color:var(--ink)}
+  .card{background:var(--surf);border:1px solid var(--line);border-radius:14px;
+    padding:18px 18px 16px;margin:14px 0;box-shadow:0 1px 3px rgba(0,0,0,.18)}
+  .card .top{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+  .rank{font:800 20px/1 ui-monospace,monospace;color:var(--clay);min-width:30px}
+  .tags{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+  .tag{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;
+    background:var(--surf2);color:var(--body);white-space:nowrap}
+  .tag.axis{color:var(--blue)}
+  .tag.hi{color:var(--down)} .tag.med{color:var(--gold)}
+  .lab{font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--muted);text-transform:uppercase;margin:11px 0 2px}
+  .basis{font-size:13px}
+  .basis code{background:var(--surf2);color:var(--clay);padding:1px 5px;border-radius:4px;font-size:12px}
+  .down{color:var(--muted);font-size:13px}
+  .pill{display:inline-block;font-size:11px;font-weight:700;color:var(--bg);background:var(--clay);
+    padding:1px 7px;border-radius:4px;margin-right:6px}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.4px}
+  td.r{color:var(--muted)}
+  .kept{color:var(--down)} .cut{color:var(--muted)}
+  .note{font-size:12.5px;color:var(--muted);font-style:italic}
+  a{color:var(--blue)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>KSS 回测闭环补强</h1>
+  <div class="sub">用持续回测加强复盘与预测准确性 · 服务「跟踪自选」+「发现潜力股」</div>
+  <div class="meta">ce-ideate · 2026-06-21 · repo-grounded · 7 survivors / 19 raw · 5 axes</div>
+
+  <h2>立项判断</h2>
+  <div class="panel">
+    <p>KSS 的回测地基<strong>已经很硬</strong>：walk-forward 引擎、purge gap、Deflated Sharpe、8 层 bias 逐层剥离、<code>log_mv 反向</code>是唯一通过 DSR 门槛的实盘策略（Sharpe 1.74，DSR 0.754），每日纸交易 + 每周 <code>validate_predictions</code> 校准。</p>
+    <p>真正的缺口不在「能不能回测」，而在 <strong>回测/校验的结论没有形成闭环</strong>——它们是手工一次性分析，不会自动回流去改进模型、阈值与发现逻辑。下面 7 条都围绕「把已有的诊断能力接成一个会自我纠偏的环」。</p>
+  </div>
+
+  <h2>Grounding 要点</h2>
+  <div class="grid2">
+    <div class="panel">
+      <div class="lab">已有的强项</div>
+      <ul style="margin:0;padding-left:18px;font-size:13.5px">
+        <li>walk-forward + purge + DSR + bootstrap CI（<code>significance.py</code>）</li>
+        <li>对抗偏差测试 18 pass / 3 xfail（<code>test_adversarial.py</code>）</li>
+        <li>每周预测校验：Brier / 覆盖率 / 方向命中（<code>validate_predictions.py</code>）</li>
+        <li>每日纸交易 T+N 跟踪 + Sharpe 衰减告警</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <div class="lab">已证实的痛点</div>
+      <ul style="margin:0;padding-left:18px;font-size:13.5px">
+        <li>无 IC/ICIR/Rank-IC 的<strong>跨时间滑轨</strong>，看不到因子衰减</li>
+        <li>回测结论<strong>不自动回流</strong>改模型/阈值（8 轮全手工）</li>
+        <li>daily_review 次日预测 <strong>≈ 随机</strong>（Brier 0.828、方向 43% 系统性反向、80% 区间只覆盖 53%）</li>
+        <li>Feature-level look-ahead gap <strong>未堵</strong>（派生未来特征会泄漏，seed 全部 Sharpe≥5）</li>
+        <li>4 条发现管道（log_mv / 北证扫描 / 板块热度 / 紫苏叶）<strong>互不合并</strong>，多处阈值硬编码无回测支撑</li>
+        <li>Kronos K线基模型<strong>孤儿化</strong>（.pyc vendored、predictions.sqlite 悬空、零 .py 集成）</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>主题轴（surface）</h2>
+  <ol class="axes" style="font-size:13.5px">
+    <li><b>回测引擎与策略评估</b> — 如何更可信地验证、防偏差</li>
+    <li><b>预测/选股模型</b> — log_mv / kronos / 因子如何选股、如何监控衰减</li>
+    <li><b>复盘与归因反馈</b> — 复盘结论如何结构化喂回</li>
+    <li><b>自选跟踪</b> — 推荐/自选的 T+N 跟踪与失败归因</li>
+    <li><b>潜力股发现</b> — 多管道筛选、合并、有效性验证</li>
+  </ol>
+
+  <h2>排名建议（7 条）</h2>
+
+  <div class="card">
+    <div class="top"><span class="rank">1</span><h3>因子健康度闭环：滚动 IC/ICIR + 衰减告警 + 崩盘登记库</h3>
+      <div class="tags"><span class="tag axis">模型/回测</span><span class="tag hi">信心 高</span><span class="tag">复杂度 M</span></div></div>
+    <p>把每条因子/信号的 <strong>Rank-IC、ICIR 按滚动窗口逐期算</strong>并落库，配 1d/5d/20d 的 IC 衰减半衰期。当 60 日滚动 ICIR 跌破基线阈值 → 自动告警、标记待复核、可触发剔除；每次回测把「哪个因子在哪个窗口崩、崩成什么样」写进<strong>因子崩盘登记库</strong>，加速以后新因子评估。</p>
+    <div class="lab">basis</div><div class="basis"><code>direct:</code> 多个 scout 指出「无 IC/ICIR 滑轨」「无自动反馈环」「无系统记录哪些因子在哪窗口崩盘」；<code>external:</code> alphalens-reloaded（IC/IC-decay/turnover）、AlphaAgent 用 ICIR 退化做换因子门。</div>
+    <div class="lab">为什么重要</div><p class="basis">这是「用回测加强预测」最直接的形态——把一次性的 8 轮人工剥离，变成天天在跑的因子体检。一旦建好，后面所有新因子/新管道都免费接入同一套体检，是<strong>复利层</strong>。</p>
+    <div class="lab">下行风险</div><p class="down">A 股横截面单位高相关→ t 检验有效 n 是去重日期数（etf_flow 教训）；阈值本身要先 walk-forward 标定，别又造一个硬编码门。</p>
+  </div>
+
+  <div class="card">
+    <div class="top"><span class="rank">2</span><h3>预测生命周期账本：一条预测从发出→实盘→结算→归因全链路</h3>
+      <div class="tags"><span class="tag axis">复盘/跟踪</span><span class="tag hi">信心 高</span><span class="tag">复杂度 M</span></div></div>
+    <p>现在预测在 paper_trade JSON、validate_predictions 报告、复盘 markdown 里<strong>各存一段</strong>，对不上。建一个单一事件账本：每条预测带稳定 id，记录入选理由（因子值/管道/regime）、T+N 实际收益、对错，并强制补一段<strong>结构化归因</strong>（为什么对/错：是因子失效、regime 切换、还是执行摩擦）。下游复盘/回测/IC 都从这张账本取数。</p>
+    <div class="lab">basis</div><div class="basis"><code>direct:</code> review scout：「validation 结果从不回流」「失败原因不持久化」；watchlist scout：「缺失败归因」。<code>reasoned:</code> 没有共享账本，复盘/校验/回测就会各算各的、永远对不齐。</div>
+    <div class="lab">为什么重要</div><p class="basis">归因是闭环的「学习」环节——没有结构化的「为什么错」，模型永远改不动。账本也是第 1、3 条的共同数据底座。</p>
+    <div class="lab">下行风险</div><p class="down">归因若交给 LLM 自由写会产幻觉数字（龙虎榜事故先例）——真值代码渲染、LLM 只给定性标签；外部快照数据严禁回流账本做回测（PIT 红线）。</p>
+  </div>
+
+  <div class="card">
+    <div class="top"><span class="rank">3</span><h3>修复 daily_review 次日预测（校准优先，而非加复杂度）</h3>
+      <div class="tags"><span class="tag axis">复盘</span><span class="tag hi">信心 高</span><span class="tag">复杂度 S</span></div></div>
+    <p>次日情形分布实测 ≈ 随机且已定停用判据。按已知四个根因修：① 区间以无条件波动分位为底加宽；② 加 regime 开关（均值回归先验在动量 regime 下关掉）；③ 删常量「5–10 日仍看涨」这种无区分度输出；④ 止损改为仓位语义、与中期观点解耦。用 Brier 的<strong>校准 vs 分辨</strong>分解定位（很可能分辨尚可、校准崩）。</p>
+    <div class="lab">basis</div><div class="basis"><code>direct:</code> <code>daily_review_prediction_validation.md</code>：Brier 0.828、方向 43% 反向、80% 覆盖 53%、四根因已列、停用判据已定。<code>external:</code> 超预测/气象用 Brier 拆校准+分辨、isotonic 后验校准。</div>
+    <div class="lab">为什么重要</div><p class="basis">这是一个<strong>正在触发停用线的已上线功能</strong>——要么修复要么撤掉。根因已诊断清楚，是 ROI 最高的「修死功能」。</p>
+    <div class="lab">下行风险</div><p class="down">修不好就按判据果断撤段，别让随机预测占版面误导。</p>
+  </div>
+
+  <div class="card">
+    <div class="top"><span class="rank">4</span><h3>堵 feature-level look-ahead + 对抗测试进 CI（信任地基）</h3>
+      <div class="tags"><span class="tag axis">回测</span><span class="tag hi">信心 高</span><span class="tag">复杂度 S</span></div></div>
+    <p>当前 <code>purge_gap</code> 只防 label 泄漏；若把含未来信息的派生特征塞进 <code>feature_cols</code>，test 阶段照样作弊（seed 0/1/2 全部 Sharpe≥5）。加 walk-forward 入口校验：任一特征与未来收益 IC&gt;0.95 直接拒绝；并把 <code>test_adversarial.py</code> 设为 CI 必跑。</p>
+    <div class="lab">basis</div><div class="basis"><code>direct:</code> <code>known_bias_gaps.md</code> Gap #1 仍 open、<code>test_adversarial.py</code> 未入 CI。</div>
+    <div class="lab">为什么重要</div><p class="basis">前三条都依赖回测可信。这道门没堵，任何新模型都可能在 test 上偷看未来而不自知——<strong>是其余补强的前提</strong>。低成本高杠杆。</p>
+    <div class="lab">下行风险</div><p class="down">IC 阈值过严会误杀强短周期特征；阈值给逃生口 + 人工复核名单。</p>
+  </div>
+
+  <div class="card">
+    <div class="top"><span class="rank">5</span><h3>统一发现管道合并层 + 管道级 alpha 评分</h3>
+      <div class="tags"><span class="tag axis">发现</span><span class="tag med">信心 中</span><span class="tag">复杂度 M</span></div></div>
+    <p>log_mv / 北证扫描 / 板块热度 / 紫苏叶四条管道各打各的分、互不合并、去重过简。建合并层：跨管道<strong>共识加权</strong>（多管道同时命中→升权）+ 统一去重；并给<strong>每条管道单独算回测 alpha/IC</strong>，按有效性排管道权重，替掉硬编码阈值（北证六维权重、轮动 rank_jump=50 等）。</p>
+    <div class="lab">basis</div><div class="basis"><code>direct:</code> discovery scout：4 管道独立无合并、阈值硬编码无回测支撑、OOS 窗口过短（min_n=5）。<code>reasoned:</code> 「哪个管道更准」只能用回测 IC 回答，倒逼出管道级 alpha。</div>
+    <div class="lab">为什么重要</div><p class="basis">直接服务「发现潜力股」——把四条各自为政的管道变成一个按实证有效性自动配比的发现器。</p>
+    <div class="lab">下行风险</div><p class="down">紫苏叶手工标注覆盖不足、样本小；管道相关性高时共识加权会放大共同偏差，需先测管道间相关。</p>
+  </div>
+
+  <div class="card">
+    <div class="top"><span class="rank">6</span><h3>CPCV 组合净化交叉验证：从「一个幸运窗口」到 OOS 分布</h3>
+      <div class="tags"><span class="tag axis">回测</span><span class="tag med">信心 中</span><span class="tag">复杂度 L</span></div></div>
+    <p>当前 walk-forward 给的是<strong>点估计</strong>，而 KSS 的核心风险恰恰是「Sharpe 在不同窗口塌掉」。引入 Combinatorial Purged CV（10 折取 4 测 = 210 条 OOS 路径），得到 Sharpe/IC 的<strong>分布</strong>而非单值，直接喂进已有的 DSR / PBO 门槛。</p>
+    <div class="lab">basis</div><div class="basis"><code>external:</code> López de Prado CPCV、skfolio <code>CombinatorialPurgedCV</code>（purge/embargo 参数）、Numerai 实测 210 条 OOS 路径；<code>direct:</code> lookahead 教训里 Sharpe 跨窗口从 1.93 塌到 -0.53 的衰减史。</div>
+    <div class="lab">为什么重要</div><p class="basis">把「这条策略到底稳不稳」从一次抽样升级成分布判断，是回测可信度的天花板提升。</p>
+    <div class="lab">下行风险</div><p class="down">算力成本上升（210 路径 vs 1）；对单用户本地工具要控规模、可缓存折叠。复杂度最高，建议排在 1–4 之后。</p>
+  </div>
+
+  <div class="card">
+    <div class="top"><span class="rank">7</span><h3>Kronos 从孤儿转「影子裁判」：regime/不确定性弃权门，而非选股器</h3>
+      <div class="tags"><span class="tag axis">模型</span><span class="tag med">信心 中</span><span class="tag">复杂度 L</span></div></div>
+    <p>Kronos 直接选股没通过（基模型 PIT 无法证清白，TimesFM 先例已否决「外部模型直接选股」）。换个用法：让它当<strong>影子裁判</strong>——输出每日不确定性/regime 信号，给 log_mv 的选股加一道「弃权门」（不确定性高→当日降仓或弃权），而不参与选谁。先影子运行、用账本对比，不进实盘直到证明有边际。</p>
+    <div class="lab">basis</div><div class="basis"><code>direct:</code> prediction scout：Kronos vendored 但零集成、predictions.sqlite 悬空；<code>external:</code>「When Alpha Breaks」regime-trust gate G(t)（弃权而非预测）。</div>
+    <div class="lab">为什么重要</div><p class="basis">盘活一个已 vendored 的资产，且绕开它最致命的弱点（PIT 不可证）——只用它做门控不做选股，举证负担小得多。</p>
+    <div class="lab">下行风险</div><p class="down">仍需证 PIT 清白（基模型 cutoff 未披露的老问题）；先纯影子、用第 2 条账本量化是否真有边际，无边际就果断弃。复杂度高，列为 potential。</p>
+  </div>
+
+  <h2>被否决的想法（择要）</h2>
+  <table>
+    <tr><th>想法</th><th>处置</th><th>原因</th></tr>
+    <tr><td>全市场全因子每日重算 IC 滑轨</td><td class="cut">否</td><td>单用户本地工具算力不划算；滚动窗口抽样即够（已并入 #1）</td></tr>
+    <tr><td>CLV/Elo 式「决策时 edge」作为独立指标</td><td class="cut">并入 #1</td><td>本质就是决策时 IC，重复</td></tr>
+    <tr><td>ML 特征漂移 PSI 早警（独立功能）</td><td class="cut">并入 #1</td><td>作为健康度闭环的一个组件更合理，单列不过门槛</td></tr>
+    <tr><td>把「高 Sharpe 九问清单」做成上线门禁</td><td class="cut">并入 #4</td><td>属于验收门的一部分，已被 #4 覆盖</td></tr>
+    <tr><td>Brier 校准/分辨分解（独立）</td><td class="cut">并入 #3</td><td>修 daily_review 本身就是校准工作</td></tr>
+    <tr><td>把 log_mv 设为唯一基线、新因子须证边际 IC&gt;基线</td><td class="cut">已有/并入</td><td>现有 DSR 门 + #4 验收门已隐含，是策略纪律非新功能</td></tr>
+    <tr><td>给纸交易告警阈值做成自适应</td><td class="cut">弱</td><td>低杠杆，等 #1 的滚动基线就绪后顺带；单列不够分量</td></tr>
+  </table>
+  <p class="note">轴覆盖：回测(#4,#6)、模型(#1,#7)、复盘(#2,#3)、发现(#5)均有 survivor；自选跟踪轴由 #2 账本覆盖（T+N 跟踪并入生命周期账本），未单列。</p>
+
+  <p class="meta" style="margin-top:30px">下一步：可对任一条 <code>ce-brainstorm</code> 细化成 requirements，或继续 iterate。推荐从 <strong>#4（信任地基，低成本）</strong> 或 <strong>#1（最高杠杆）</strong> 起步。</p>
+
+</div>
+</body>
+</html>
