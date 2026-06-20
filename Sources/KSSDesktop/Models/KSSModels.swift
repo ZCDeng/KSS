@@ -434,6 +434,7 @@ struct Recommendation: Codable, Identifiable, Hashable {
     var rank: Int
     var weight: Double
     var factorValue: Double?
+    var latestOpen: Double?
     var latestClose: Double?
     var trackingReturn: Double?
     var status: String

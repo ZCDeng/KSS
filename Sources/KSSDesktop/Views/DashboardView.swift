@@ -115,7 +115,7 @@ struct DashboardView: View {
 /// 列宽全部固定，表头与每一行共用，保证网格逐列对齐；代码与行业拆成独立列填满版面，
 /// 消除名称与右侧之间的大片留白。
 enum TodayPickSort: Hashable {
-    case rank, name, symbol, industry, status, weight
+    case rank, name, symbol, industry, status, weight, open, close
 }
 
 struct TodayPicksList: View {
@@ -125,12 +125,14 @@ struct TodayPicksList: View {
     @State private var sortKey: TodayPickSort = .rank
     @State private var ascending = false
 
-    private let wRank: CGFloat = 38
-    private let wName: CGFloat = 128
-    private let wSymbol: CGFloat = 116
-    private let wStatus: CGFloat = 92
-    private let wWeight: CGFloat = 80
-    private let colSpacing: CGFloat = 14
+    private let wRank: CGFloat = 36
+    private let wName: CGFloat = 104
+    private let wSymbol: CGFloat = 88
+    private let wStatus: CGFloat = 76
+    private let wOpen: CGFloat = 60
+    private let wClose: CGFloat = 60
+    private let wWeight: CGFloat = 68
+    private let colSpacing: CGFloat = 12
     private let rowPadH: CGFloat = 14
 
     private var sortedItems: [Recommendation] {
@@ -161,6 +163,26 @@ struct TodayPicksList: View {
             }
         case .weight:
             return items.sorted { asc ? $0.weight < $1.weight : $0.weight > $1.weight }
+        case .open:
+            return items.sorted { byNumber($0.latestOpen, $1.latestOpen, asc: asc) }
+        case .close:
+            return items.sorted { byNumber($0.latestClose, $1.latestClose, asc: asc) }
+        }
+    }
+
+    /// 价格显示：两位小数，缺失显示「—」。
+    private func priceText(_ v: Double?) -> String {
+        guard let v else { return "—" }
+        return String(format: "%.2f", v)
+    }
+
+    /// 数值列比较：降序大在前、升序小在前，nil 恒排末尾。
+    private func byNumber(_ a: Double?, _ b: Double?, asc: Bool) -> Bool {
+        switch (a, b) {
+        case let (x?, y?): return asc ? x < y : x > y
+        case (nil, _?): return false
+        case (_?, nil): return true
+        case (nil, nil): return false
         }
     }
 
@@ -193,6 +215,10 @@ struct TodayPicksList: View {
                            alignment: .leading)
             SortHeaderCell(title: "状态", key: TodayPickSort.status, selection: $sortKey, ascending: $ascending,
                            alignment: .leading, width: wStatus)
+            SortHeaderCell(title: "开盘", key: TodayPickSort.open, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: wOpen)
+            SortHeaderCell(title: "收盘", key: TodayPickSort.close, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: wClose)
             SortHeaderCell(title: "权重", key: TodayPickSort.weight, selection: $sortKey, ascending: $ascending,
                            alignment: .trailing, width: wWeight)
         }
@@ -226,6 +252,16 @@ struct TodayPicksList: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             StatusBadge.tracking(item.status)
                 .frame(width: wStatus, alignment: .leading)
+            Text(priceText(item.latestOpen))
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .foregroundStyle(KSSTheme.textBody)
+                .lineLimit(1)
+                .frame(width: wOpen, alignment: .trailing)
+            Text(priceText(item.latestClose))
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .foregroundStyle(KSSTheme.textPrimary)
+                .lineLimit(1)
+                .frame(width: wClose, alignment: .trailing)
             Text(KSSFormat.percent(item.weight))
                 .font(.system(size: 13, weight: .semibold, design: .monospaced))
                 .foregroundStyle(KSSTheme.textSecondary)
