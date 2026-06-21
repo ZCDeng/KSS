@@ -221,7 +221,8 @@ struct TrackingDayCard: View {
                                     Text(pick.symbol)
                                         .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(theme.textSecondary)
                                 }
-                                .frame(width: 158, alignment: .leading)
+                                .frame(width: 150, alignment: .leading)
+                                Color.clear.frame(width: 50)   // 对齐表头的「数量」列，保持三个收益列与摘要行同位
                                 horizonCell(pick.ret1d, bold: false)
                                 horizonCell(pick.ret5d, bold: false)
                                 horizonCell(pick.ret20d, bold: false)
