@@ -25,6 +25,7 @@ enum StockOCR {
 
 /// 股票池导入：手工输入（名称/代码）+ 图片 OCR 识别 → 解析为 ts_code → 导入并同步日线。
 struct ImportStocksView: View {
+    @Environment(\.kssTheme) private var theme
     @EnvironmentObject private var store: KSSStore
     var onClose: () -> Void
 
@@ -42,10 +43,10 @@ struct ImportStocksView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("导入股票")
                         .font(KSSFont.serif(22, .bold))
-                        .foregroundStyle(KSSTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                     Text("手工输入名称/代码，或图片识别导入 · 识别后拉取日线进入股票池")
                         .font(.system(size: 12))
-                        .foregroundStyle(KSSTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
                 Spacer()
                 Button { onClose() } label: { Label("关闭", systemImage: "xmark").font(.system(size: 13, weight: .semibold)) }
@@ -60,12 +61,12 @@ struct ImportStocksView: View {
                     .scrollContentBackground(.hidden)
                     .padding(8)
                     .frame(height: 110)
-                    .background(KSSTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
-                    .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeS).stroke(KSSTheme.hairline))
+                    .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
+                    .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeS).stroke(theme.hairline))
                 if text.isEmpty {
                     Text("例：贵州茅台  600519  平安银行  000001.SZ … 或把截图拖进来")
                         .font(.system(size: 12.5))
-                        .foregroundStyle(KSSTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .padding(.horizontal, 14).padding(.vertical, 14)
                         .allowsHitTesting(false)
                 }
@@ -87,14 +88,14 @@ struct ImportStocksView: View {
                         .font(.system(size: 13, weight: .semibold))
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(KSSTheme.accent)
+                .tint(theme.accent)
                 .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || resolving)
 
                 Spacer()
             }
 
             if !resolved.isEmpty {
-                Divider().overlay(KSSTheme.hairline)
+                Divider().overlay(theme.hairline)
                 ScrollView {
                     VStack(spacing: 4) {
                         ForEach(resolved) { row($0) }
@@ -105,7 +106,7 @@ struct ImportStocksView: View {
                 HStack {
                     Text("可导入 \(importable.count) 只 · 已识别 \(resolved.filter{ $0.ok }.count)/\(resolved.count)")
                         .font(.system(size: 12.5))
-                        .foregroundStyle(KSSTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                     Spacer()
                     Button {
                         Task {
@@ -119,7 +120,7 @@ struct ImportStocksView: View {
                             .font(.system(size: 13, weight: .semibold))
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(KSSTheme.accent)
+                    .tint(theme.accent)
                     .disabled(importable.isEmpty || importing)
                 }
             } else {
@@ -128,27 +129,27 @@ struct ImportStocksView: View {
         }
         .padding(20)
         .frame(width: 580, height: 600)
-        .background(KSSTheme.canvas)
+        .background(theme.canvas)
     }
 
     private func row(_ item: ResolvedStock) -> some View {
         HStack(spacing: 10) {
             Image(systemName: item.ok ? (item.inPool ? "checkmark.circle" : "checkmark.circle.fill") : "questionmark.circle")
-                .foregroundStyle(item.ok ? (item.inPool ? KSSTheme.textSecondary : KSSTheme.down) : KSSTheme.up)
+                .foregroundStyle(item.ok ? (item.inPool ? theme.textSecondary : theme.down) : theme.up)
                 .font(.system(size: 14))
             Text(item.query)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(KSSTheme.textBody)
+                .foregroundStyle(theme.textBody)
                 .frame(width: 120, alignment: .leading)
                 .lineLimit(1)
             if item.ok {
                 Text(item.name)
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(KSSTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
                 Text(item.code)
                     .font(.system(size: 11.5, design: .monospaced))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                 if let tag = kindTag(item.kind) {
                     Text(tag.0)
                         .font(.system(size: 9.5, weight: .bold))
@@ -159,26 +160,26 @@ struct ImportStocksView: View {
             } else {
                 Text("未匹配")
                     .font(.system(size: 12))
-                    .foregroundStyle(KSSTheme.up)
+                    .foregroundStyle(theme.up)
             }
             Spacer()
             if item.inPool {
                 Text("已在池")
                     .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(KSSTheme.textSecondary.opacity(0.15), in: Capsule())
+                    .background(theme.textSecondary.opacity(0.15), in: Capsule())
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(KSSTheme.surfaceContainer, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
+        .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
     }
 
     private func kindTag(_ kind: String?) -> (String, Color)? {
         switch kind {
-        case "fund": return ("ETF", KSSTheme.ma20)
-        case "index": return ("指数", KSSTheme.ma5)
+        case "fund": return ("ETF", theme.ma20)
+        case "index": return ("指数", theme.ma5)
         default: return nil
         }
     }

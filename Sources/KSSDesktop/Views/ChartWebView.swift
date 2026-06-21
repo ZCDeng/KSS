@@ -2,11 +2,12 @@ import SwiftUI
 import WebKit
 
 /// Hosts the bundled TradingView lightweight-charts candlestick chart inside a
-/// WKWebView. Swift owns the data; the web layer only renders. OHLC + volume +
-/// MA5/MA20 are pushed in as JSON whenever `points` changes.
+/// WKWebView. Swift owns the data; the web layer only renders. 主题与数据分离：
+/// `kssSetTheme` 更新配色并从缓存 bars 重绘，`kssSetData` 只更新数据。
 struct ChartWebView: NSViewRepresentable {
     var points: [PricePoint]
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.kssTheme) private var theme
+    @Environment(\.kssWebTheme) private var webTheme
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -14,6 +15,7 @@ struct ChartWebView: NSViewRepresentable {
         let config = WKWebViewConfiguration()
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
+        context.coordinator.attach(webView)
         webView.setValue(false, forKey: "drawsBackground") // transparent until chart paints
 
         if let html = Bundle.module.url(forResource: "chart", withExtension: "html") {
@@ -23,14 +25,15 @@ struct ChartWebView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        context.coordinator.latestJSON = Self.encode(points)
-        context.coordinator.isDark = colorScheme == .dark
-        webView.underPageBackgroundColor = colorScheme == .dark
-            ? NSColor(srgbRed: 0x1F/255, green: 0x1F/255, blue: 0x1D/255, alpha: 1)
-            : NSColor.white
-        if context.coordinator.isLoaded {
-            context.coordinator.push(into: webView)
+        let coord = context.coordinator
+        coord.latestTheme = webTheme
+        let json = Self.encode(points)
+        if json != coord.latestJSON {
+            coord.latestJSON = json
+            coord.bumpContent()
         }
+        webView.underPageBackgroundColor = theme.chartSurfaceNS
+        coord.requestSync()
     }
 
     private static func encode(_ points: [PricePoint]) -> String {
@@ -41,18 +44,11 @@ struct ChartWebView: NSViewRepresentable {
         return string
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
-        var isLoaded = false
+    final class Coordinator: BridgedWebCoordinator {
         var latestJSON = "[]"
-        var isDark = true
 
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            isLoaded = true
-            push(into: webView)
-        }
-
-        func push(into webView: WKWebView) {
-            webView.evaluateJavaScript("window.kssSetData(\(latestJSON), \(isDark));", completionHandler: nil)
+        override func contentScript() -> String? {
+            "window.kssSetData(\(latestJSON));"
         }
     }
 }

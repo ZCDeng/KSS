@@ -2,8 +2,9 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var store: KSSStore
+    @EnvironmentObject private var themeController: ThemeController
+    @Environment(\.kssTheme) private var theme
     @AppStorage("watchlistSymbols") private var watchlistSymbols = "688017.SH,688322.SH"
-    @AppStorage("appearanceMode") private var appearanceMode = "dark"
     @AppStorage("sidebarCollapsed") private var sidebarCollapsed = false
     @AppStorage("sidebarOrder") private var sidebarOrder = ""
     @State private var searchText = ""
@@ -53,9 +54,9 @@ struct ContentView: View {
             )
             .frame(width: sidebarCollapsed ? 64 : 224)
             .frame(maxHeight: .infinity)
-            .background(KSSTheme.canvas)
+            .background(theme.canvas)
 
-            Divider().overlay(KSSTheme.hairline)
+            Divider().overlay(theme.hairline)
 
             NavigationStack {
                 ZStack {
@@ -66,19 +67,14 @@ struct ContentView: View {
                 }
                 .animation(KSSTheme.motionStandard, value: store.selectedSection)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(KSSTheme.canvas)
+                .background(theme.canvas)
                 .toolbar {
                         ToolbarItemGroup {
                             if store.isLoading {
                                 ProgressView()
                                     .controlSize(.small)
                             }
-                            Button {
-                                appearanceMode = (appearanceMode == "dark") ? "light" : "dark"
-                            } label: {
-                                Label("主题", systemImage: appearanceMode == "dark" ? "sun.max" : "moon")
-                            }
-                            .help(appearanceMode == "dark" ? "切换到亮色" : "切换到暗色")
+                            themeMenu
                             Button {
                                 Task { await store.loadSnapshot() }
                             } label: {
@@ -95,11 +91,11 @@ struct ContentView: View {
                     ProgressView().controlSize(.small)
                     Text("正在导入 \(sym) … 拉取日线并加入股票池")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(KSSTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                 }
                 .padding(.horizontal, 16).padding(.vertical, 11)
-                .background(KSSTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeL))
-                .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeL).stroke(KSSTheme.hairline))
+                .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeL))
+                .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeL).stroke(theme.hairline))
                 .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
                 .padding(.bottom, 24)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -114,6 +110,41 @@ struct ContentView: View {
         } message: {
             Text(store.errorMessage ?? "")
         }
+    }
+
+    /// 工具栏「主题」入口：只读当前摘要 + 设计系统区 + 外观区，全部带勾选状态。
+    /// 选中状态由文本/勾选表达，不依赖颜色；明确的亮/暗条目取代了原二元切换按钮。
+    private var themeMenu: some View {
+        Menu {
+            Section("当前：\(themeController.summary)") {
+                EmptyView()
+            }
+            Section("设计系统") {
+                ForEach(KSSDesignSystem.allCases) { system in
+                    Button {
+                        themeController.select(system: system)
+                    } label: {
+                        Label(system.displayName,
+                              systemImage: themeController.designSystem == system ? "checkmark" : "")
+                    }
+                }
+            }
+            Section("外观") {
+                ForEach(KSSAppearance.allCases) { appearance in
+                    Button {
+                        themeController.select(appearance: appearance)
+                    } label: {
+                        Label(appearance.displayName,
+                              systemImage: themeController.appearance == appearance ? "checkmark" : "")
+                    }
+                }
+            }
+        } label: {
+            Label("主题", systemImage: "paintpalette")
+        }
+        .help("设计系统与外观：\(themeController.summary)")
+        .accessibilityLabel("主题")
+        .accessibilityValue(themeController.summary)
     }
 
     @ViewBuilder

@@ -1,18 +1,20 @@
 import SwiftUI
 import WebKit
 
-/// Renders a Markdown report into readable styled HTML (Discord theme) via the
-/// bundled `marked` parser inside a WKWebView. Tables, headings, code, and
-/// blockquotes all render properly instead of raw monospace text.
+/// Renders a Markdown report into readable styled HTML via the bundled `marked`
+/// parser inside a WKWebView. 主题与内容分离：`kssSetTheme` 覆盖配色，`kssSetMarkdown`
+/// 只更新正文（切换主题不必重解析 Markdown）。
 struct MarkdownWebView: NSViewRepresentable {
     var text: String
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.kssTheme) private var theme
+    @Environment(\.kssWebTheme) private var webTheme
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> WKWebView {
         let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
         webView.navigationDelegate = context.coordinator
+        context.coordinator.attach(webView)
         webView.setValue(false, forKey: "drawsBackground")
         if let html = Bundle.module.url(forResource: "markdown", withExtension: "html") {
             webView.loadFileURL(html, allowingReadAccessTo: html.deletingLastPathComponent())
@@ -21,29 +23,22 @@ struct MarkdownWebView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        context.coordinator.latestText = text
-        context.coordinator.isDark = colorScheme == .dark
-        webView.underPageBackgroundColor = colorScheme == .dark
-            ? NSColor(srgbRed: 0x1F/255, green: 0x1F/255, blue: 0x1D/255, alpha: 1)
-            : NSColor.white
-        if context.coordinator.isLoaded {
-            context.coordinator.push(into: webView)
+        let coord = context.coordinator
+        coord.latestTheme = webTheme
+        if text != coord.latestText {
+            coord.latestText = text
+            coord.bumpContent()
         }
+        webView.underPageBackgroundColor = theme.canvasNS
+        coord.requestSync()
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
-        var isLoaded = false
+    final class Coordinator: BridgedWebCoordinator {
         var latestText = ""
-        var isDark = true
 
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            isLoaded = true
-            push(into: webView)
-        }
-
-        func push(into webView: WKWebView) {
+        override func contentScript() -> String? {
             let json = (try? JSONEncoder().encode(latestText)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
-            webView.evaluateJavaScript("window.kssSetMarkdown(\(json), \(isDark));", completionHandler: nil)
+            return "window.kssSetMarkdown(\(json));"
         }
     }
 }

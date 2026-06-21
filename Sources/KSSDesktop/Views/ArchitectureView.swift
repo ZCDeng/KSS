@@ -4,6 +4,7 @@ import WebKit
 /// Shows the project's interactive architecture diagram (the self-contained
 /// docs/kss_architecture_interactive.html, bundled into the app) in a WKWebView.
 struct ArchitectureView: View {
+    @Environment(\.kssTheme) private var theme
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
@@ -14,30 +15,32 @@ struct ArchitectureView: View {
                         Label("GitHub", systemImage: "arrow.up.forward.square")
                             .font(.system(size: 13, weight: .semibold))
                     }
-                    .tint(KSSTheme.accent)
+                    .tint(theme.accent)
                 }
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 18)
 
             LocalHTMLView(resource: "architecture")
-                .background(KSSTheme.canvas)
+                .background(theme.canvas)
         }
-        .background(KSSTheme.canvas)
+        .background(theme.canvas)
     }
 }
 
-/// Loads a bundled, self-contained HTML resource into a WKWebView and syncs its
-/// `html.dark` class to the app's color scheme.
+/// Loads a bundled, self-contained HTML resource into a WKWebView and pushes the
+/// app's full palette payload via `window.kssSetTheme`（不再只 toggle `.dark` class）。
 struct LocalHTMLView: NSViewRepresentable {
     var resource: String
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.kssTheme) private var theme
+    @Environment(\.kssWebTheme) private var webTheme
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> WKWebView {
         let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
         webView.navigationDelegate = context.coordinator
+        context.coordinator.attach(webView)
         if let html = Bundle.module.url(forResource: resource, withExtension: "html") {
             webView.loadFileURL(html, allowingReadAccessTo: html.deletingLastPathComponent())
         }
@@ -45,21 +48,11 @@ struct LocalHTMLView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        context.coordinator.isDark = colorScheme == .dark
-        if context.coordinator.isLoaded { context.coordinator.applyTheme(webView) }
+        context.coordinator.latestTheme = webTheme
+        webView.underPageBackgroundColor = theme.canvasNS
+        context.coordinator.requestSync()
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
-        var isLoaded = false
-        var isDark = true
-
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            isLoaded = true
-            applyTheme(webView)
-        }
-
-        func applyTheme(_ webView: WKWebView) {
-            webView.evaluateJavaScript("document.documentElement.classList.toggle('dark', \(isDark));", completionHandler: nil)
-        }
-    }
+    /// 架构图无独立内容表面：只推主题（contentScript 继承默认 nil）。
+    final class Coordinator: BridgedWebCoordinator {}
 }

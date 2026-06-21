@@ -7,6 +7,7 @@ enum BacktestSort: String, CaseIterable, Identifiable {
 }
 
 struct BacktestsView: View {
+    @Environment(\.kssTheme) private var theme
     var reports: [BacktestReport]
     var tracking: TrackingSummary
     var selectedPath: String?
@@ -61,21 +62,21 @@ struct BacktestsView: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .listRowBackground(isOn ? KSSTheme.accent.opacity(0.16) : Color.clear)
+                    .listRowBackground(isOn ? theme.accent.opacity(0.16) : Color.clear)
                 }
                 .scrollContentBackground(.hidden)
-                .background(KSSTheme.canvas)
+                .background(theme.canvas)
             }
             .frame(width: 300)
 
-            Divider().overlay(KSSTheme.hairline)
+            Divider().overlay(theme.hairline)
 
             VStack(alignment: .leading, spacing: 12) {
                 PageTitle("回测", subtitle: selectedReport?.title)
                 HStack(spacing: 10) {
                     StatTile(title: "日志天数", value: "\(tracking.nDaysLogged)")
                     StatTile(title: "可评估天数", value: "\(tracking.nDaysWithReturns)")
-                    StatTile(title: "Sharpe", value: KSSFormat.number(tracking.sharpe), tint: KSSTheme.signColor(tracking.sharpe))
+                    StatTile(title: "Sharpe", value: KSSFormat.number(tracking.sharpe), tint: theme.signColor(tracking.sharpe))
                     StatTile(title: "胜率", value: KSSFormat.percent(tracking.winRate))
                 }
 
@@ -85,30 +86,30 @@ struct BacktestsView: View {
                         ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else if detail?.path == selectedReport.path, let detail {
                         MarkdownWebView(text: detail.text)
-                            .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
-                            .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
+                            .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
+                            .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
                     } else {
                         MarkdownWebView(text: selectedReport.excerpt)
-                            .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
-                            .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
+                            .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
+                            .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
                     }
                 } else {
                     VStack(spacing: 10) {
                         Image(systemName: "chart.xyaxis.line")
                             .font(.largeTitle)
-                            .foregroundStyle(KSSTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                         Text("选择一份回测/分析报告")
                             .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(KSSTheme.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .padding(16)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .background(KSSTheme.canvas)
+            .background(theme.canvas)
         }
-        .background(KSSTheme.canvas)
+        .background(theme.canvas)
         .onAppear {
             if selectedReport == nil {
                 selectedReport = sortedReports.first
@@ -126,26 +127,27 @@ struct BacktestsView: View {
 }
 
 struct BacktestReportRow: View {
+    @Environment(\.kssTheme) private var theme
     var report: BacktestReport
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(report.title)
                 .font(.system(size: 14.5, weight: .bold))
-                .foregroundStyle(KSSTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .lineLimit(2)
             HStack(spacing: 6) {
                 Image(systemName: "clock")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                 Text(report.updatedAt)
                     .font(.system(size: 11.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
             if let firstMetric = report.metrics.first {
                 Text("\(firstMetric.name): \(firstMetric.value)")
                     .font(.system(size: 11.5))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .lineLimit(1)
             }
         }
@@ -154,31 +156,32 @@ struct BacktestReportRow: View {
 }
 
 struct BacktestCard: View {
+    @Environment(\.kssTheme) private var theme
     var report: BacktestReport
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(report.title)
                 .font(.system(size: 15.5, weight: .bold))
-                .foregroundStyle(KSSTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .lineLimit(2)
             Text(report.updatedAt)
                 .font(.system(size: 11.5, weight: .medium, design: .monospaced))
-                .foregroundStyle(KSSTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
             ForEach(report.metrics.prefix(4), id: \.self) { metric in
                 HStack {
                     Text(metric.name)
                         .font(.system(size: 13))
-                        .foregroundStyle(KSSTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                     Spacer()
                     Text(metric.value)
                         .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(KSSTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                 }
             }
             Text(report.excerpt)
                 .font(.system(size: 12))
-                .foregroundStyle(KSSTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .lineLimit(3)
             Spacer(minLength: 0)
         }
@@ -188,13 +191,14 @@ struct BacktestCard: View {
 }
 
 struct BacktestDetailHeader: View {
+    @Environment(\.kssTheme) private var theme
     var report: BacktestReport
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(report.title)
                 .font(.system(size: 21, weight: .bold))
-                .foregroundStyle(KSSTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .textSelection(.enabled)
             if !report.metrics.isEmpty {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 10)], spacing: 10) {
