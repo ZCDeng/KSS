@@ -214,8 +214,12 @@ def test_sign_divergence_logs_registry(tracker, registry) -> None:
         tracker, registry,
         backtest_ic_source=lambda fid: (-0.05, 0.4),  # 回测先验反号
     )
+    # 同口径才比符号：realized 与 backtest 都用 sign_proxy（否则 method_mismatch）
+    hook.backtest_ic_method = "sign_proxy"
     strong = _ic_series([0.15] * 25 + [0.18] * 25)
-    out = hook.on_backtest_end("rsi_14", "2026-01-01", "2026-03-10", strong)
+    out = hook.on_backtest_end(
+        "rsi_14", "2026-01-01", "2026-03-10", strong, method="sign_proxy"
+    )
     assert out["verdict"].verdict == VERDICT_DIVERGENCE
     divs = registry.query(crash_type=CRASH_IC_SOURCE_DIVERGENCE)
     assert len(divs) == 1
@@ -223,10 +227,14 @@ def test_sign_divergence_logs_registry(tracker, registry) -> None:
 
 
 def test_promote_path_with_consistent_prior(tracker, registry) -> None:
-    """实盘强 + 回测先验同号 → promote，置 ACTIVE."""
+    """实盘强 + 回测先验同号同口径 → promote，置 ACTIVE."""
     hook = _hook(tracker, registry, backtest_ic_source=lambda fid: (0.05, 0.4))
+    # 同口径才可比：realized 与 backtest 都用 sign_proxy（否则 method_mismatch）
+    hook.backtest_ic_method = "sign_proxy"
     strong = _ic_series([0.15] * 25 + [0.18] * 25)
-    out = hook.on_backtest_end("mom_5d", "2026-01-01", "2026-03-10", strong)
+    out = hook.on_backtest_end(
+        "mom_5d", "2026-01-01", "2026-03-10", strong, method="sign_proxy"
+    )
     assert out["verdict"].verdict == VERDICT_PROMOTE
     assert out["state"] == STATE_ACTIVE
 

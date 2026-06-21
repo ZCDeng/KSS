@@ -151,6 +151,9 @@ def _per_factor_ic(
     单股票时序：一日一条 (因子, 次日收益)，无截面 Spearman。用 ``因子去均值符号 × 收益符号``
     的逐日一致性作为日级 IC 代理（与 WFC.health_hook 同口径），ic_mean=代理均值，
     icir = ic_mean / ic_std。样本不足（<10）→ (nan, nan)。
+
+    口径 = ``sign_proxy``：经 ``CPCVBacktestICSource`` 喂 #8 时是回测先验，
+    ``FactorHealthHook.backtest_ic_method`` 默认即 ``sign_proxy``，与此一致。
     """
     out: dict[str, tuple[float, float]] = {}
     for f in factors:

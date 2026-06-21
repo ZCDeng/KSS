@@ -195,8 +195,12 @@ class PredictionLedger:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.db_path)
+        # 单机双写（cron 结算 + app 读写）会 database is locked：connect timeout +
+        # busy_timeout 让写锁竞争等待而非立刻抛错；WAL 让读写不互斥（fail loud 保留）。
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("PRAGMA journal_mode=WAL")
         try:
             yield conn
             conn.commit()
@@ -234,9 +238,37 @@ class PredictionLedger:
             if existing is not None and not force:
                 logger.warning("账本已存在记录, 跳过 (force=True 强制): %s", record.prediction_id)
                 return False
+            if existing is not None:
+                # force=True：只改 F1 入账列，绝不整行 REPLACE（否则抹掉
+                # t1_open/t2_open/realized_ret/outcome/status 等 settlement 列）。
+                conn.execute(
+                    """
+                    UPDATE predictions SET
+                        prediction_date = ?, symbol = ?, strategy = ?,
+                        pipeline_snapshot = ?, regime_label = ?, factor_value = ?,
+                        rank_pct = ?, rank_position = ?, planned_weight = ?,
+                        updated_at = ?
+                    WHERE prediction_id = ?
+                    """,
+                    (
+                        record.prediction_date,
+                        record.symbol,
+                        record.strategy,
+                        json.dumps(record.pipeline_snapshot, ensure_ascii=False),
+                        record.regime_label,
+                        record.factor_value,
+                        record.rank_pct,
+                        record.rank_position,
+                        record.planned_weight,
+                        now,
+                        record.prediction_id,
+                    ),
+                )
+                return True
+            # 新行：INSERT OR IGNORE（existing 检查已处理 force 语义，主键冲突即跳过）。
             conn.execute(
                 """
-                INSERT OR REPLACE INTO predictions (
+                INSERT OR IGNORE INTO predictions (
                     prediction_id, prediction_date, symbol, strategy,
                     pipeline_snapshot, regime_label, factor_value, rank_pct,
                     rank_position, planned_weight, status, created_at, updated_at
@@ -272,6 +304,7 @@ class PredictionLedger:
         t2_open: float | None,
         attribution_ctx_overrides: dict[str, Any] | None = None,
         attribution_note: str | None = None,
+        force: bool = False,
     ) -> dict[str, Any]:
         """F2 结算（真实开盘价 → realized_ret / outcome）+ F3 归因.
 
@@ -284,6 +317,8 @@ class PredictionLedger:
             attribution_ctx_overrides: 注入 ``rolling_ic`` / ``settle_regime_label``
                 等 F3 hook 上下文（缺失时对应类别不触发）.
             attribution_note: LLM 生成的自然语言说明（不含价格数字）；None 不阻塞.
+            force: 已结算记录默认短路返回现有行（防 cs_data 价覆盖 PIT 快照漂移）；
+                ``True`` 才允许用新价覆盖（修订 / 回放修复用）.
 
         Returns:
             结算后该记录的完整 dict.
@@ -293,6 +328,14 @@ class PredictionLedger:
         row = self.get(prediction_id)
         if row is None:
             raise KeyError(f"账本无此记录: {prediction_id}")
+
+        # 重结算守卫：已 SETTLED 且非 force → 短路返回现有行，不让新价覆盖 PIT 快照。
+        if row.get("status") == STATUS_SETTLED and not force:
+            logger.warning(
+                "记录已结算, 拒绝重结算覆盖 PIT 快照 (force=True 强制): %s",
+                prediction_id,
+            )
+            return row
 
         has_prices = (
             t1_open is not None and t2_open is not None and t1_open != 0
@@ -352,8 +395,20 @@ class PredictionLedger:
         return self.get(prediction_id)  # type: ignore[return-value]
 
     def mark_data_missing(self, prediction_id: str) -> dict[str, Any]:
-        """F2 兜底：超期仍缺数据 → 升级 data_missing（不回溯改 realized_ret）."""
+        """F2 兜底：超期仍缺数据 → 升级 data_missing（不回溯改 realized_ret）.
+
+        已 SETTLED 行拒绝降级（防把已带 realized_ret 的有效结算 clobber 成 missing）。
+        """
         from datetime import datetime, timezone
+
+        row = self.get(prediction_id)
+        if row is None:
+            raise KeyError(f"账本无此记录: {prediction_id}")
+        if row.get("status") == STATUS_SETTLED:
+            logger.warning(
+                "记录已结算, 拒绝降级为 data_missing: %s", prediction_id
+            )
+            return row
 
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:

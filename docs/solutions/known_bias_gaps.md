@@ -97,3 +97,34 @@ source: kss/tests/test_adversarial.py
 - 把 `test_adversarial.py` 加入 CI 必跑，未来若 xfail 转 pass = 工具升级；
   若新增 pass 变 fail = 回归（如有人改了 DSR 公式）。
 - 可周期性扩充：添加"行业暴露泄漏"、"高换手 vs 低成本错位"等场景。
+
+---
+
+## 回测闭环补强(feat/backtest-loop-closure)— 诚实状态(2026-06-21)
+
+code-review(4 角色)确认的**生产现状**,记此防止「测试覆盖被误读成闭环已活」:
+
+1. **#8 仲裁闭环目前是 demote-only / 升权半休眠**。无任何生产代码把 `CPCVBacktestICSource`
+   接进 `FactorHealthHook`、也无 cron 驱动 `arbitrate()`——promote 路径需回测先验,生产里
+   `backtest_ic_source=None` → 只会降权(PENDING_REVIEW)、不会自动升权恢复。**当初的「板块分歧」
+   在度量层是被「等接线 U5 driver」推迟,不是已解决**。被降权的因子需人工恢复。
+   **下一步(未做)**:加一个调度任务,在生产 panel 跑 CPCV → 产 per-pipeline **rank_ic** 先验
+   → 注入真 `FactorHealthHook` caller,让 promote/divergence 在生产可达。
+
+2. **IC 口径不可混比(已加守卫)**。三种 IC 喂 `arbitrate()`:CPCV/WFC 的 `sign_proxy`、
+   cross_section/pipeline 的 `rank_ic`。已加 `method` 字段 + `VERDICT_METHOD_MISMATCH`,
+   跨口径直接拒比(不再把符号代理与 Rank-IC 当同轴)。**pipeline 级 #8 要求注入方供同口径
+   rank_ic 先验**(CPCV 的逐因子 sign_proxy 粒度/口径都不匹配 pipeline,不可直接喂)。
+
+3. **U2 账本仍是只写影子,dual-write 在**。`paper_trade/*.json` 仍是读路径的真值源,
+   `ledger` 写入但下游读者(summarize_log_dir/_adapt_logmv/weekly_summary)尚未切到账本。
+   退役收口的「冻结 JSON 只读 + 读者切账本」**未完成**。settle()/replay 目前只有测试驱动,
+   无生产 cron——`realized_ret/归因` 在真实记录上仍为 NULL 直到加结算 driver。
+
+4. **U6 共识/相关性预检在生产是恒等变换**。四管道当前 universe 近乎不相交→0 跨命中,
+   `consensus_multiplier` 与 Jaccard 抑制都不触发。逻辑由合成测试验证,生产首次跨命中前未经真实校验。
+
+**已修的真 bug**(本轮 remediation):SQLite busy_timeout+WAL(并发锁)、settle 重结算守卫
+(防漂移 cs_data 价覆盖 PIT 快照)、INSERT OR IGNORE(防抹结算列)、U1 小样本跳过时序检查时
+告警+`temporal_check_skipped` 标记(不静默)、ledger 写失败 send_to_channels 告警、
+pipeline IC 命名空间(source=pipeline 防撞单因子 IC)。

@@ -155,6 +155,19 @@ def _record_ledger_entry(
             )
     except Exception as exc:  # noqa: BLE001
         logger.warning("预测账本写入失败 (JSON 日志不受影响): %s", exc)
+        # 账本是下游 IC / 复盘 / 管道 alpha 的取数源；写失败若只 warning 会静默
+        # 漂掉一整天预测，下游悄悄缺数据。经通道出一条告警让人察觉（fail loud）。
+        try:
+            from kss.notifications.manager import send_to_channels
+
+            send_to_channels(
+                f"预测账本写入失败 ({target_date.date()}): {exc}（JSON 日志已落盘，"
+                f"但账本缺当日记录，下游 IC/复盘/管道 alpha 会少数据，需手动回放补录）",
+                channel="all",
+                title="预测账本写入失败",
+            )
+        except Exception as alert_exc:  # noqa: BLE001 —— 告警失败不再连坐
+            logger.error("账本写入失败告警发送也失败: %s", alert_exc)
 
 
 def save_log_entry(

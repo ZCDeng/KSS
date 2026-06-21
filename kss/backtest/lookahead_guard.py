@@ -120,7 +120,7 @@ class FeatureLookaheadGuard:
         temporal_min_samples: int | None = None,
         symbol_col: str = "symbol",
         date_col: str = "trade_date",
-    ) -> None:
+    ) -> dict[str, list[str]]:
         """对 ``feature_cols`` 跑粗检 + 时序检查；命中泄漏抛 :class:`LookaheadFeatureError`.
 
         Args:
@@ -137,6 +137,11 @@ class FeatureLookaheadGuard:
             temporal_min_samples: 时序检查配对样本数下限，低于此跳过（小样本 Spearman
                 是噪声，避免误杀）；``None`` 用配置/默认 100.
             symbol_col / date_col: 时序检查按 symbol 排序、date 内平移所需列名.
+
+        Returns:
+            ``{"temporal_check_skipped": [被跳过时序检查的特征列名]}``。时序检查因
+            样本不足（``n_now < temporal_min_samples``）跳过时，该列入列表 + ``logger.warning``
+            —— 别让薄面板被读成"干净通过"（粗检过 + 时序未真正跑）。
 
         Raises:
             LookaheadFeatureError: 非白名单特征命中粗检或时序检查时.
@@ -156,10 +161,11 @@ class FeatureLookaheadGuard:
                 _SETTINGS.get("temporal_min_samples", _DEFAULT_TEMPORAL_MIN_SAMPLES)
             )
         wl = set(whitelist or [])
+        temporal_skipped: list[str] = []
 
         if label_col not in factor_df.columns:
             # label 列缺失：walk_forward 后续会自行报错；Guard 不越权，静默放行.
-            return
+            return {"temporal_check_skipped": temporal_skipped}
 
         label = factor_df[label_col]
 
@@ -196,7 +202,16 @@ class FeatureLookaheadGuard:
             if not (np.isfinite(ic_now) and np.isfinite(ic)):
                 continue
             if n_now < temporal_min_samples:
-                continue  # 小样本 Spearman 不可信，跳过（粗检已先行）
+                # 小样本 Spearman 不可信，跳过时序检查（粗检已先行）。但不能静默——
+                # 否则薄面板被读成"干净通过"。warning + 标记，让调用方/审计可见。
+                temporal_skipped.append(col)
+                logger.warning(
+                    "[LookaheadGuard] 特征 %s 时序检查跳过：配对样本 n=%d < "
+                    "temporal_min_samples=%d（薄面板，时序泄漏未被真正检验，"
+                    "不等于干净通过）",
+                    col, n_now, temporal_min_samples,
+                )
+                continue
             # 当期 IC 非平凡 且 显著超过预测 IC → 特征在吃同期/已实现信息.
             if (
                 ic_now >= temporal_min_ic
@@ -209,6 +224,8 @@ class FeatureLookaheadGuard:
                     f"显著超过对预测 label {label_col} 的 |IC|={ic:.4f} "
                     f"（吃同期/已实现信息，预测 IC 中等也会虚高 Sharpe）",
                 )
+
+        return {"temporal_check_skipped": temporal_skipped}
 
     @staticmethod
     def _flag(col: str, whitelist: set[str], message: str) -> None:

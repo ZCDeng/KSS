@@ -71,6 +71,11 @@ VERDICT_HOLD = "hold"               # 维持现状
 VERDICT_DEMOTE = "demote"           # 降权 / 置 PENDING_REVIEW（实盘单源即可）
 VERDICT_DIVERGENCE = "divergence"   # 符号分歧 → 人工复核
 VERDICT_INSUFFICIENT_N = "insufficient_n"  # 有效 n 不足 → 仅供参考，不翻转
+VERDICT_METHOD_MISMATCH = "method_mismatch"  # 两源 IC 口径不同 → 拒绝跨口径比较
+
+# IC 计量口径（防把符号代理与 Rank-IC 当同轴比；写入点须显式标注）
+IC_METHOD_RANK_IC = "rank_ic"        # 截面 Spearman Rank-IC（cross_section / pipeline）
+IC_METHOD_SIGN_PROXY = "sign_proxy"  # 单股时序符号一致性代理（cpcv / wfc）
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +128,7 @@ class ICSnapshot:
     half_life_5d: float | None = None
     half_life_20d: float | None = None
     source: str = "realized"  # realized=实盘账本（U3 后验）/ backtest=回测（U5 先验）
+    method: str = IC_METHOD_RANK_IC  # IC 口径：rank_ic / sign_proxy（防跨口径比较）
 
 
 def _dedup_daily_ic(ic_series: pd.Series) -> pd.Series:
@@ -171,6 +177,7 @@ def compute_ic_snapshot(
     *,
     thresholds: dict[str, Any],
     source: str = "realized",
+    method: str = IC_METHOD_RANK_IC,
 ) -> ICSnapshot:
     """从逐日 Rank-IC 序列算一条快照（纯函数，代码确定性渲染所有数字）.
 
@@ -180,6 +187,7 @@ def compute_ic_snapshot(
         ic_series: index = 交易日、值 = 当日截面 Rank-IC 的序列.
         thresholds: ``load_thresholds()`` 的结果（半衰期 min_periods 等）.
         source: ``realized``（实盘账本）/ ``backtest``（回测先验）.
+        method: IC 口径 ``rank_ic`` / ``sign_proxy``（防仲裁跨口径比较）.
 
     Returns:
         :class:`ICSnapshot`；有效 n = 去重交易日数，t_stat 用该 n。
@@ -189,7 +197,8 @@ def compute_ic_snapshot(
     if n == 0:
         return ICSnapshot(
             factor_id=factor_id, window_end=window_end, ic_mean=0.0, ic_std=0.0,
-            icir=0.0, ic_positive_rate=0.0, n_periods=0, ic_t_stat=0.0, source=source,
+            icir=0.0, ic_positive_rate=0.0, n_periods=0, ic_t_stat=0.0,
+            source=source, method=method,
         )
     ic_mean = float(daily.mean())
     ic_std = float(daily.std(ddof=1)) if n >= 2 else 0.0
@@ -213,6 +222,7 @@ def compute_ic_snapshot(
         half_life_5d=_half_life(daily, smooth_window=5, min_periods=hl_min),
         half_life_20d=_half_life(daily, smooth_window=20, min_periods=hl_min),
         source=source,
+        method=method,
     )
 
 
@@ -234,6 +244,8 @@ class ArbitrationInput:
     realized_n: int                       # 实盘有效 n（去重交易日数）
     backtest_ic_mean: float | None = None  # 回测先验 IC 均值（U5）；None=先验缺失
     backtest_icir: float | None = None
+    realized_method: str = IC_METHOD_RANK_IC   # 实盘 IC 口径
+    backtest_method: str = IC_METHOD_RANK_IC   # 回测 IC 口径（须与实盘同口径才可比）
 
 
 @dataclass
@@ -251,13 +263,18 @@ def arbitrate(inp: ArbitrationInput, thresholds: dict[str, Any]) -> ArbitrationR
       2. 实盘 ICIR 跌破降权门 → ``demote``（fail-safe，单源即可置 PENDING_REVIEW）；
       3. 实盘想升权（ICIR ≥ 升权门）：
          - 回测先验缺失（U5 未就绪）→ 不放行升权，``hold``（保守）；
-         - 回测先验在但**符号分歧** → ``divergence``（记 IC_SOURCE_DIVERGENCE，人工复核）；
+         - 两源 IC 口径不同（rank_ic vs sign_proxy）→ ``method_mismatch``（不跨口径比）；
+         - 回测先验在但**符号分歧**（两侧 |ic| 均超 epsilon 且符号相反）→ ``divergence``；
          - 双源符号一致 → ``promote``；
       4. 其余 → ``hold``。
+
+    divergence 幅度 epsilon（``ic_divergence_min_abs``）：两侧 |ic| 都须超此下限才判
+    分歧，避免零附近噪声把"两个接近 0 的反号小数"误判成真分歧。
     """
     min_n = int(thresholds["realized_ic_min_n"])
     promote_th = float(thresholds["realized_icir_promote"])
     demote_th = float(thresholds["realized_icir_demote"])
+    div_eps = float(thresholds.get("ic_divergence_min_abs", 0.0))
 
     # 1) 有效 n 不足 → 仅供参考，不翻转状态（回退先验）
     if inp.realized_n < min_n:
@@ -280,18 +297,38 @@ def arbitrate(inp: ArbitrationInput, thresholds: dict[str, Any]) -> ArbitrationR
                 VERDICT_HOLD,
                 "回测 IC 先验缺失（U5 未就绪），升权路径不放行（保守）",
             )
-        # 符号分歧检测：两者均非零且符号相反
-        same_sign = (
-            np.sign(inp.realized_ic_mean) == np.sign(inp.backtest_ic_mean)
+        # 跨口径守卫：rank_ic 与 sign_proxy 不在同一坐标轴，符号/量级不可直接比。
+        if inp.realized_method != inp.backtest_method:
+            return ArbitrationResult(
+                VERDICT_METHOD_MISMATCH,
+                f"实盘 IC 口径={inp.realized_method} 与回测口径={inp.backtest_method} "
+                f"不同（rank_ic vs sign_proxy 不同轴），拒绝跨口径比较，不放行升权",
+            )
+        # 符号分歧检测：两侧 |ic| 均超 epsilon（避免零附近噪声）且符号相反
+        both_material = (
+            abs(inp.realized_ic_mean) > div_eps
+            and abs(inp.backtest_ic_mean) > div_eps
+        )
+        opposite_sign = (
+            np.sign(inp.realized_ic_mean) != np.sign(inp.backtest_ic_mean)
             and inp.realized_ic_mean != 0
             and inp.backtest_ic_mean != 0
         )
-        if not same_sign:
+        if both_material and opposite_sign:
             return ArbitrationResult(
                 VERDICT_DIVERGENCE,
                 f"实盘 IC={inp.realized_ic_mean:.4f} 与回测 IC="
-                f"{inp.backtest_ic_mean:.4f} 符号分歧，记 IC_SOURCE_DIVERGENCE 人工复核",
+                f"{inp.backtest_ic_mean:.4f} 符号分歧（均超 epsilon {div_eps}），"
+                f"记 IC_SOURCE_DIVERGENCE 人工复核",
                 divergence=True,
+            )
+        # 一侧或两侧接近 0（量级低于 epsilon）→ 非真分歧，但也无一致先验支撑升权 → hold
+        if not both_material:
+            return ArbitrationResult(
+                VERDICT_HOLD,
+                f"实盘 IC={inp.realized_ic_mean:.4f} 或回测 IC="
+                f"{inp.backtest_ic_mean:.4f} 量级低于 epsilon {div_eps}（零附近噪声），"
+                f"不判分歧也不放行升权（保守）",
             )
         return ArbitrationResult(
             VERDICT_PROMOTE,
@@ -326,6 +363,7 @@ class FactorHealthTracker:
         half_life_1d     REAL,
         half_life_5d     REAL,
         half_life_20d    REAL,
+        method           TEXT,
         created_at       TEXT,
         updated_at       TEXT,
         PRIMARY KEY (factor_id, window_end, source)
@@ -352,8 +390,12 @@ class FactorHealthTracker:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.db_path)
+        # 单机双写（cron 回测 hook + app 读）会 database is locked：connect timeout +
+        # busy_timeout 让写锁竞争等待而非立刻抛错；WAL 让读写不互斥。
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("PRAGMA journal_mode=WAL")
         try:
             yield conn
             conn.commit()
@@ -365,6 +407,10 @@ class FactorHealthTracker:
             conn.execute(self.SCHEMA)
             for idx in self.INDEXES:
                 conn.execute(idx)
+            # 旧库迁移：method 列后加（CREATE IF NOT EXISTS 不会补列），缺则补。
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(ic_snapshots)")}
+            if "method" not in cols:
+                conn.execute("ALTER TABLE ic_snapshots ADD COLUMN method TEXT")
 
     def record_ic_snapshot(
         self,
@@ -373,6 +419,7 @@ class FactorHealthTracker:
         ic_series: pd.Series,
         *,
         source: str = "realized",
+        method: str = IC_METHOD_RANK_IC,
         force: bool = False,
     ) -> ICSnapshot:
         """算一条 IC 快照并落库（幂等；已存在且未 force → 直接返回旧值，不重算）.
@@ -382,6 +429,7 @@ class FactorHealthTracker:
             window_end: 窗口结束日.
             ic_series: index=交易日、值=当日截面 Rank-IC.
             source: ``realized``（实盘）/ ``backtest``（回测先验）.
+            method: IC 口径 ``rank_ic`` / ``sign_proxy``（防仲裁跨口径比较）.
             force: True 时覆盖重算（``--force-recompute`` 语义）.
 
         Returns:
@@ -394,7 +442,7 @@ class FactorHealthTracker:
 
         snap = compute_ic_snapshot(
             factor_id, window_end, ic_series,
-            thresholds=self.thresholds, source=source,
+            thresholds=self.thresholds, source=source, method=method,
         )
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
@@ -403,15 +451,16 @@ class FactorHealthTracker:
                 INSERT OR REPLACE INTO ic_snapshots (
                     factor_id, window_end, source, ic_mean, ic_std, icir,
                     ic_positive_rate, n_periods, ic_t_stat,
-                    half_life_1d, half_life_5d, half_life_20d, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    half_life_1d, half_life_5d, half_life_20d, method,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     snap.factor_id, snap.window_end, snap.source,
                     snap.ic_mean, snap.ic_std, snap.icir, snap.ic_positive_rate,
                     snap.n_periods, snap.ic_t_stat,
                     snap.half_life_1d, snap.half_life_5d, snap.half_life_20d,
-                    now, now,
+                    snap.method, now, now,
                 ),
             )
         return snap
@@ -471,6 +520,7 @@ class FactorHealthTracker:
             half_life_5d=row["half_life_5d"],
             half_life_20d=row["half_life_20d"],
             source=row["source"],
+            method=(row["method"] if row["method"] else IC_METHOD_RANK_IC),
         )
 
 
@@ -531,8 +581,12 @@ class FactorCrashRegistry:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.db_path)
+        # 单机双写（cron 回测 hook + app 读）会 database is locked：connect timeout +
+        # busy_timeout 让写锁竞争等待而非立刻抛错；WAL 让读写不互斥。
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("PRAGMA journal_mode=WAL")
         try:
             yield conn
             conn.commit()
@@ -717,6 +771,9 @@ class FactorHealthHook:
     tracker: FactorHealthTracker
     registry: FactorCrashRegistry
     backtest_ic_source: BacktestICSource | None = None
+    # 回测先验的 IC 口径（CPCV/WFC = sign_proxy；rank_ic 来源须显式覆盖）。
+    # 仲裁据此与实盘口径比对，不同则 method_mismatch 不跨口径比。
+    backtest_ic_method: str = IC_METHOD_SIGN_PROXY
     notify_channel: str = "console"
     notify: bool = True
     thresholds: dict[str, Any] = field(default_factory=dict)
@@ -733,15 +790,19 @@ class FactorHealthHook:
         ic_series: pd.Series,
         *,
         source: str = "realized",
+        method: str = IC_METHOD_RANK_IC,
     ) -> dict[str, Any]:
         """回测/结算结束时调用：落库 → 崩盘判定 → #8 仲裁 → 告警.
 
         返回摘要 dict（snapshot / verdict / crashes / state），供调用方/测试断言。
         实盘 IC（``source="realized"``）走 #8 仲裁；回测 IC（``source="backtest"``）
         只落库不驱动状态机（它是先验，由 U5 自己产生）。
+
+        ``method``：该 ic_series 的口径（cross_section=rank_ic / wfc=sign_proxy）；
+        仲裁拿它与回测先验 ``backtest_ic_method`` 比，不同则 method_mismatch 不跨口径比。
         """
         snap = self.tracker.record_ic_snapshot(
-            factor_id, window_end, ic_series, source=source
+            factor_id, window_end, ic_series, source=source, method=method
         )
         out: dict[str, Any] = {"snapshot": snap, "crashes": [], "verdict": None}
 
@@ -775,6 +836,8 @@ class FactorHealthHook:
                 realized_n=snap.n_periods,
                 backtest_ic_mean=bt_ic_mean,
                 backtest_icir=bt_icir,
+                realized_method=snap.method,
+                backtest_method=self.backtest_ic_method,
             ),
             th,
         )

@@ -295,3 +295,28 @@ def test_query_by_status_and_due_for_settle(ledger: PredictionLedger) -> None:
     assert due == []  # 唯一 open 记录 date=2026-06-18 > cutoff
     due2 = ledger.open_due_for_settle("2026-06-18")
     assert len(due2) == 1
+
+
+def test_settle_rejects_resettle_protects_pit_snapshot(ledger: PredictionLedger) -> None:
+    """已结算记录二次 settle 用不同价 → 拒绝覆盖 PIT 快照(C2 修复)."""
+    ledger.record_prediction(_rec())
+    pid = "2026-06-18_688114.SH"
+    first = ledger.settle(pid, t1_open=10.0, t2_open=11.0)
+    assert first["status"] == STATUS_SETTLED
+    assert abs(first["realized_ret"] - 0.1) < 1e-9
+    # cs_data 价漂移后重结算 → 必须拒绝、保留原快照
+    again = ledger.settle(pid, t1_open=10.0, t2_open=9.0)
+    assert abs(again["realized_ret"] - 0.1) < 1e-9   # 仍是 0.1，未被 -0.1 覆盖
+    assert again["t2_open"] == 11.0
+    # force=True 才允许改
+    forced = ledger.settle(pid, t1_open=10.0, t2_open=9.0, force=True)
+    assert abs(forced["realized_ret"] - (-0.1)) < 1e-9
+
+
+def test_mark_data_missing_rejects_clobber_of_settled(ledger: PredictionLedger) -> None:
+    """已结算记录不可被降级为 data_missing(C2 修复)."""
+    ledger.record_prediction(_rec())
+    pid = "2026-06-18_688114.SH"
+    ledger.settle(pid, t1_open=10.0, t2_open=11.0)
+    out = ledger.mark_data_missing(pid)
+    assert out["status"] == STATUS_SETTLED   # 未被降级

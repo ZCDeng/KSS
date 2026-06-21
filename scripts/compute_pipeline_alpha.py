@@ -42,6 +42,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from kss.backtest.factor_health import (  # noqa: E402
+    IC_METHOD_RANK_IC,
     ArbitrationInput,
     arbitrate,
     compute_ic_snapshot,
@@ -228,9 +229,12 @@ def compute_pipeline_alpha(
             "reason": "无足够前向收益对齐样本（cs_data 缺失或归档过薄）",
             "sample_n": 0,
         }
+    # 命名空间隔离：管道级 IC 用 ``pipeline:`` 前缀 factor_id，避免与单因子 IC 撞键
+    # （否则 FactorHealthTracker.rolling_icir 会把管道 IC 混进单因子滚动序列污染）。
+    # method=rank_ic：本脚本算的是截面 Spearman Rank-IC（_daily_rank_ic）。
     snap = compute_ic_snapshot(
-        pipeline_id, ic_series.index.max(), ic_series,
-        thresholds=thresholds, source="realized",
+        f"pipeline:{pipeline_id}", ic_series.index.max(), ic_series,
+        thresholds=thresholds, source="pipeline", method=IC_METHOD_RANK_IC,
     )
     top_q_alpha = (
         float(pd.Series(top_q).mean() - pd.Series(all_q).mean())
@@ -241,6 +245,10 @@ def compute_pipeline_alpha(
     prior = cpcv_prior.get(pipeline_id) if cpcv_prior else None
     bt_ic_mean = float(prior[0]) if prior is not None else None
     bt_icir = float(prior[1]) if prior is not None else None
+    # 实盘后验 = rank_ic（本脚本截面 Spearman）。pipeline 级回测先验**必须同口径 rank_ic**：
+    # CPCV 的 _per_factor_ic 是「逐因子 sign_proxy」，粒度与口径都不匹配 pipeline，
+    # 不可直接喂这里（喂了仲裁会判 method_mismatch 拒比）。注入 --cpcv-prior 时应供
+    # pipeline 级 rank_ic 约定的先验；故此处声明 backtest_method=rank_ic，由注入方负责同口径。
     verdict = arbitrate(
         ArbitrationInput(
             realized_icir=snap.icir,
@@ -248,6 +256,8 @@ def compute_pipeline_alpha(
             realized_n=snap.n_periods,
             backtest_ic_mean=bt_ic_mean,
             backtest_icir=bt_icir,
+            realized_method=IC_METHOD_RANK_IC,
+            backtest_method=IC_METHOD_RANK_IC,
         ),
         thresholds,
     )

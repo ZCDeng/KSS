@@ -26,3 +26,6 @@ factor_health:
   realized_icir_promote: 0.30
   # 实盘 IC 降权门：实盘 ICIR 跌破此值 → 单独即可置 PENDING_REVIEW（fail-safe）。
   realized_icir_demote: 0.25
+  # 双源符号分歧幅度下限：两侧 |ic_mean| 都须超此值才判 IC_SOURCE_DIVERGENCE，
+  # 避免零附近（两个接近 0 的反号小数）噪声误判分歧（#8 仲裁）。
+  ic_divergence_min_abs: 0.01

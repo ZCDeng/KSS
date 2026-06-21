@@ -39,6 +39,9 @@ def _daily_sign_ic(
     单股票一日仅一条 (因子, 收益)，无法逐日做截面 Spearman；用符号一致性作为日级
     方向信号的代理，正向均值≈方向命中率正偏。index = trade_date 供 health hook 折
     成去重日 IC（有效 n = 去重交易日数）。PIT 清白：只用已观测的训练窗口数据。
+
+    口径 = ``sign_proxy``（非 Rank-IC）：绑定到 ``FactorHealthHook.on_backtest_end``
+    时须传 ``method=IC_METHOD_SIGN_PROXY``，否则 #8 仲裁会把符号代理与 rank_ic 当同轴比。
     """
     f = factor.astype(float)
     r = ret.astype(float)
