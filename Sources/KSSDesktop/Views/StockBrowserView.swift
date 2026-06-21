@@ -10,6 +10,7 @@ enum StockSort: String, CaseIterable, Identifiable {
 }
 
 struct StockBrowserView: View {
+    @Environment(\.kssTheme) private var theme
     var title: String
     var stocks: [StockSummary]
     var selectedSymbol: String?
@@ -52,14 +53,14 @@ struct StockBrowserView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 12))
-                        .foregroundStyle(KSSTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                     TextField("搜索代码 / 名称 / 行业", text: $searchText)
                         .textFieldStyle(.plain)
                         .font(.system(size: 13))
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
-                .background(KSSTheme.surfaceRaised)
+                .background(theme.surfaceRaised)
                 .clipShape(RoundedRectangle(cornerRadius: KSSTheme.shapeS))
                 .padding(.horizontal, 12)
                 .padding(.top, 12)
@@ -76,10 +77,10 @@ struct StockBrowserView: View {
                             .font(.system(size: 12, weight: .semibold))
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(KSSTheme.accent)
+                    .foregroundStyle(theme.accent)
                     Text("\(filteredStocks.count)")
                         .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(KSSTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -101,35 +102,35 @@ struct StockBrowserView: View {
                             HStack(spacing: 6) {
                                 Text(stock.name.isEmpty ? stock.symbol : stock.name)
                                     .font(.system(size: 15, weight: .bold))
-                                    .foregroundStyle(isOn ? KSSTheme.accent : KSSTheme.textPrimary)
+                                    .foregroundStyle(isOn ? theme.accent : theme.textPrimary)
                                     .lineLimit(1)
                                 if watchlist.contains(stock.symbol) {
                                     Image(systemName: "star.fill")
                                         .font(.system(size: 10))
-                                        .foregroundStyle(KSSTheme.ma5)
+                                        .foregroundStyle(theme.ma5)
                                 }
                                 Spacer()
                                 Text(KSSFormat.pctPoints(stock.pctChange))
                                     .font(.system(size: 12.5, weight: .bold, design: .monospaced))
-                                    .foregroundStyle(KSSTheme.signColor(stock.pctChange))
+                                    .foregroundStyle(theme.signColor(stock.pctChange))
                             }
                             Text("\(stock.symbol) · \(stock.industry)")
                                 .font(.system(size: 11.5, design: .monospaced))
-                                .foregroundStyle(KSSTheme.textSecondary)
+                                .foregroundStyle(theme.textSecondary)
                         }
                         .padding(.vertical, 2)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .listRowBackground(isOn ? KSSTheme.accent.opacity(0.16) : Color.clear)
+                    .listRowBackground(isOn ? theme.accent.opacity(0.16) : Color.clear)
                 }
                 .scrollContentBackground(.hidden)
-                .background(KSSTheme.canvas)
+                .background(theme.canvas)
             }
             .frame(width: 300)
 
-            Divider().overlay(KSSTheme.hairline)
+            Divider().overlay(theme.hairline)
 
             Group {
                 if let detail {
@@ -142,14 +143,14 @@ struct StockBrowserView: View {
                 } else {
                     Text("选择一只股票查看详情")
                         .font(.system(size: 14))
-                        .foregroundStyle(KSSTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(KSSTheme.canvas)
+            .background(theme.canvas)
         }
-        .background(KSSTheme.canvas)
+        .background(theme.canvas)
         .sheet(isPresented: $showImport) {
             ImportStocksView { showImport = false }
         }
@@ -158,7 +159,7 @@ struct StockBrowserView: View {
             if showChartFullscreen, let detail {
                 ChartFullscreenView(detail: detail) { showChartFullscreen = false }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(KSSTheme.canvas)
+                    .background(theme.canvas)
                     .transition(.opacity)
             }
         }
@@ -166,6 +167,7 @@ struct StockBrowserView: View {
 }
 
 struct StockDetailView: View {
+    @Environment(\.kssTheme) private var theme
     var detail: StockDetail
     var isWatched: Bool
     var onToggleWatchlist: () -> Void
@@ -182,23 +184,23 @@ struct StockDetailView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(detail.name.isEmpty ? detail.symbol : detail.name)
                             .font(KSSFont.serif(30, .bold))
-                            .foregroundStyle(KSSTheme.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                         Text("\(detail.symbol) · \(detail.industry)")
                             .font(.system(size: 14, weight: .medium, design: .monospaced))
-                            .foregroundStyle(KSSTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                     }
                     Spacer()
                     Button(action: onToggleWatchlist) {
                         Label(isWatched ? "取消自选" : "加自选", systemImage: isWatched ? "star.fill" : "star")
                             .font(.system(size: 13, weight: .semibold))
                     }
-                    .tint(KSSTheme.accent)
+                    .tint(theme.accent)
                 }
 
                 if let latest = detail.latest {
                     HStack(spacing: 10) {
                         StatTile(title: "收盘", value: KSSFormat.number(latest.close))
-                        StatTile(title: "涨跌", value: KSSFormat.pctPoints(latest.pctChange), tint: KSSTheme.signColor(latest.pctChange))
+                        StatTile(title: "涨跌", value: KSSFormat.pctPoints(latest.pctChange), tint: theme.signColor(latest.pctChange))
                         StatTile(title: "MA5 / MA20", value: "\(KSSFormat.number(latest.ma5)) / \(KSSFormat.number(latest.ma20))")
                         StatTile(title: "成交额", value: KSSFormat.compactMoney(latest.amount))
                     }
@@ -210,12 +212,12 @@ struct StockDetailView: View {
 
                 SectionHeader("分析指标")
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 10)], spacing: 10) {
-                    StatTile(title: "20日收益", value: KSSFormat.percent(analysis.return20), tint: KSSTheme.signColor(analysis.return20))
-                    StatTile(title: "60日收益", value: KSSFormat.percent(analysis.return60), tint: KSSTheme.signColor(analysis.return60))
+                    StatTile(title: "20日收益", value: KSSFormat.percent(analysis.return20), tint: theme.signColor(analysis.return20))
+                    StatTile(title: "60日收益", value: KSSFormat.percent(analysis.return60), tint: theme.signColor(analysis.return60))
                     StatTile(title: "20日波动", value: KSSFormat.percent(analysis.volatility20))
-                    StatTile(title: "60日回撤", value: KSSFormat.percent(analysis.maxDrawdown60), tint: KSSTheme.signColor(analysis.maxDrawdown60))
-                    StatTile(title: "距20日高点", value: KSSFormat.percent(analysis.distanceToHigh20), tint: KSSTheme.signColor(analysis.distanceToHigh20))
-                    StatTile(title: "MA20偏离", value: KSSFormat.percent(analysis.ma20Distance), tint: KSSTheme.signColor(analysis.ma20Distance))
+                    StatTile(title: "60日回撤", value: KSSFormat.percent(analysis.maxDrawdown60), tint: theme.signColor(analysis.maxDrawdown60))
+                    StatTile(title: "距20日高点", value: KSSFormat.percent(analysis.distanceToHigh20), tint: theme.signColor(analysis.distanceToHigh20))
+                    StatTile(title: "MA20偏离", value: KSSFormat.percent(analysis.ma20Distance), tint: theme.signColor(analysis.ma20Distance))
                 }
 
                 HStack {
@@ -228,7 +230,7 @@ struct StockDetailView: View {
                             .font(.system(size: 12.5, weight: .semibold))
                     }
                     .buttonStyle(.bordered)
-                    .tint(KSSTheme.accent)
+                    .tint(theme.accent)
                 }
                 VStack(alignment: .leading, spacing: 0) {
                     ChartLegend()
@@ -236,24 +238,24 @@ struct StockDetailView: View {
                         .frame(minHeight: 640)
                 }
                 .frame(height: 680)
-                .background(KSSTheme.chartSurface)
-                .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
+                .background(theme.chartSurface)
+                .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
                 .overlay(
-                    RoundedRectangle(cornerRadius: KSSTheme.cardRadius)
-                        .stroke(KSSTheme.hairline)
+                    RoundedRectangle(cornerRadius: theme.cardRadius)
+                        .stroke(theme.hairline)
                 )
 
                 if !detail.concept.isEmpty {
                     Text(detail.concept)
                         .font(.system(size: 13.5))
-                        .foregroundStyle(KSSTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollContentBackground(.hidden)
-        .background(KSSTheme.canvas)
+        .background(theme.canvas)
     }
 }
 
@@ -261,6 +263,7 @@ struct StockDetailView: View {
 /// without the surrounding ScrollView intercepting the wheel.
 /// 个股复盘结论卡：来自每日复盘的 标题 / 预期区间 / 建议。
 struct StockReviewCard: View {
+    @Environment(\.kssTheme) private var theme
     var review: StockReview
 
     var body: some View {
@@ -268,21 +271,21 @@ struct StockReviewCard: View {
             HStack(spacing: 8) {
                 Image(systemName: "doc.text.magnifyingglass")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(KSSTheme.accent)
+                    .foregroundStyle(theme.accent)
                 Text("复盘结论")
                     .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(KSSTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                 if !review.headline.isEmpty {
                     Text(review.headline)
                         .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(theme.onAccent)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
-                        .background(KSSTheme.accent, in: Capsule())
+                        .background(theme.accent, in: Capsule())
                         .lineLimit(1)
                 }
                 Spacer()
-                StatusBadge(icon: "calendar", text: review.date, tint: KSSTheme.accent)
+                StatusBadge(icon: "calendar", text: review.date, tint: theme.accent)
             }
 
             if !review.snapshot.isEmpty || !review.expectation.isEmpty {
@@ -290,12 +293,12 @@ struct StockReviewCard: View {
                     if !review.snapshot.isEmpty {
                         Text(review.snapshot)
                             .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(KSSTheme.textBody)
+                            .foregroundStyle(theme.textBody)
                     }
                     if !review.expectation.isEmpty {
                         Text("预期区间 · " + review.expectation)
                             .font(.system(size: 12.5))
-                            .foregroundStyle(KSSTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -305,10 +308,10 @@ struct StockReviewCard: View {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(Array(review.suggestions.enumerated()), id: \.offset) { _, s in
                         HStack(alignment: .top, spacing: 7) {
-                            Circle().fill(KSSTheme.accent).frame(width: 5, height: 5).padding(.top, 6)
+                            Circle().fill(theme.accent).frame(width: 5, height: 5).padding(.top, 6)
                             Text(s)
                                 .font(.system(size: 13))
-                                .foregroundStyle(KSSTheme.textBody)
+                                .foregroundStyle(theme.textBody)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -321,6 +324,7 @@ struct StockReviewCard: View {
 }
 
 struct ChartFullscreenView: View {
+    @Environment(\.kssTheme) private var theme
     var detail: StockDetail
     var onClose: () -> Void
 
@@ -330,10 +334,10 @@ struct ChartFullscreenView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(detail.name.isEmpty ? detail.symbol : detail.name)
                         .font(.system(size: 20, weight: .heavy))
-                        .foregroundStyle(KSSTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                     Text("\(detail.symbol) · 滚轮缩放 · 拖动平移")
                         .font(.system(size: 12, design: .monospaced))
-                        .foregroundStyle(KSSTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
                 Spacer()
                 Button {
@@ -351,7 +355,7 @@ struct ChartFullscreenView: View {
         }
         // 作为浏览区上的覆盖层铺满：随 app 窗口尺寸动态最大化。
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(KSSTheme.chartSurface)
+        .background(theme.chartSurface)
     }
 }
 
@@ -414,12 +418,13 @@ struct StockAnalysis {
 /// Color key for the K-line overlays; the candlestick/volume drawing lives in
 /// the bundled lightweight-charts web layer (ChartWebView).
 struct ChartLegend: View {
+    @Environment(\.kssTheme) private var theme
     var body: some View {
         HStack(spacing: 16) {
-            legendDot(KSSTheme.up, "涨")
-            legendDot(KSSTheme.down, "跌")
-            legendDot(KSSTheme.ma5, "MA5")
-            legendDot(KSSTheme.ma20, "MA20")
+            legendDot(theme.up, "涨")
+            legendDot(theme.down, "跌")
+            legendDot(theme.ma5, "MA5")
+            legendDot(theme.ma20, "MA20")
             Spacer()
         }
         .font(.caption2)
@@ -430,7 +435,7 @@ struct ChartLegend: View {
     private func legendDot(_ color: Color, _ label: String) -> some View {
         HStack(spacing: 5) {
             Circle().fill(color).frame(width: 7, height: 7)
-            Text(label).foregroundStyle(KSSTheme.textSecondary)
+            Text(label).foregroundStyle(theme.textSecondary)
         }
     }
 }

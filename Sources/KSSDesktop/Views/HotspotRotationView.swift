@@ -3,6 +3,7 @@ import SwiftUI
 /// 板块热点信息图：把 hotspot-rotation 模型的当日快照做成一眼读懂的轮动判断图。
 /// 数据源 = snapshot.latestSectorRotation（Phase 4 已解码的 HotspotRotationSummary）。
 struct HotspotRotationView: View {
+    @Environment(\.kssTheme) private var theme
     var rotation: HotspotRotationSummary?
     /// 点击板块名跳概念主题页（可选）。
     var onOpenThemes: () -> Void
@@ -37,9 +38,9 @@ struct HotspotRotationView: View {
                 .padding(.vertical, margin)
             }
             .scrollContentBackground(.hidden)
-            .background(KSSTheme.canvas)
+            .background(theme.canvas)
         }
-        .background(KSSTheme.canvas)
+        .background(theme.canvas)
     }
 
     // MARK: 顶部：日期 + 板块数 + 回看 + 覆盖率
@@ -54,13 +55,13 @@ struct HotspotRotationView: View {
                 if let date = r.tradeDate, date.count == 8 {
                     Text("\(date.prefix(4)).\(date.dropFirst(4).prefix(2)).\(date.suffix(2))")
                         .font(KSSFont.serif(20, .bold))
-                        .foregroundStyle(KSSTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                 }
             }
             HStack(spacing: gutter) {
-                coverageMeter("历史覆盖", r.historyCoverage, KSSTheme.ma20)
+                coverageMeter("历史覆盖", r.historyCoverage, theme.ma20)
                 // 龙头映射仅供妖王榜展示，不参与象限分类（命名空间对不齐，结构性偏低）。
-                coverageMeter("龙头映射", r.leaderCoverage, KSSTheme.accent)
+                coverageMeter("龙头映射", r.leaderCoverage, theme.accent)
             }
         }
         .padding(16)
@@ -71,10 +72,10 @@ struct HotspotRotationView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(value)
                 .font(KSSFont.harmonyNumber(22))
-                .foregroundStyle(KSSTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
             Text(label)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(KSSTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
         }
         .frame(minWidth: 72, alignment: .leading)
     }
@@ -85,7 +86,7 @@ struct HotspotRotationView: View {
             HStack {
                 Text(label)
                     .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                 Spacer()
                 Text("\(Int((value ?? 0) * 100))%")
                     .font(.system(size: 11.5, weight: .bold, design: .monospaced))
@@ -93,7 +94,7 @@ struct HotspotRotationView: View {
             }
             GeometryReader { g in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(KSSTheme.surfaceContainerHighest)
+                    Capsule().fill(theme.surfaceContainerHighest)
                     Capsule().fill(tint).frame(width: max(4, g.size.width * v))
                 }
             }
@@ -110,9 +111,9 @@ struct HotspotRotationView: View {
             columns: Array(repeating: GridItem(.flexible(), spacing: gutter), count: cols),
             spacing: gutter
         ) {
-            quadrantCard("妖板", "高位异动 / 题材接力（本页主信号）", r.demonBoard, KSSTheme.accent, "bolt.fill")
-            quadrantCard("主线", "今日爆发 × 持续在前（较少见）", r.mainline, KSSTheme.up, "flame.fill")
-            quadrantCard("退潮", "曾强势但今日走弱", r.oldHotspotFading, KSSTheme.textSecondary, "arrow.down.right")
+            quadrantCard("妖板", "高位异动 / 题材接力（本页主信号）", r.demonBoard, theme.accent, "bolt.fill")
+            quadrantCard("主线", "今日爆发 × 持续在前（较少见）", r.mainline, theme.up, "flame.fill")
+            quadrantCard("退潮", "曾强势但今日走弱", r.oldHotspotFading, theme.textSecondary, "arrow.down.right")
         }
     }
 
@@ -120,7 +121,7 @@ struct HotspotRotationView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: icon).font(.system(size: 13, weight: .bold)).foregroundStyle(tint)
-                Text(title).font(.system(size: 15, weight: .bold)).foregroundStyle(KSSTheme.textPrimary)
+                Text(title).font(.system(size: 15, weight: .bold)).foregroundStyle(theme.textPrimary)
                 Spacer()
                 Text("\(boards.count)")
                     .font(.system(size: 16, weight: .heavy).monospacedDigit())
@@ -128,11 +129,11 @@ struct HotspotRotationView: View {
             }
             Text(caption)
                 .font(.system(size: 11))
-                .foregroundStyle(KSSTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
             if boards.isEmpty {
                 Text("今日无")
                     .font(.system(size: 12))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .padding(.top, 2)
             } else {
                 FlowChips(items: boards, tint: tint)
@@ -140,9 +141,9 @@ struct HotspotRotationView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
-        .background(KSSTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
+        .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: theme.cardRadius))
         .overlay(
-            RoundedRectangle(cornerRadius: KSSTheme.cardRadius)
+            RoundedRectangle(cornerRadius: theme.cardRadius)
                 .stroke(tint.opacity(0.25), lineWidth: 1)
         )
     }
@@ -166,26 +167,26 @@ struct HotspotRotationView: View {
             HStack(spacing: 12) {
                 Text("\(rank)")
                     .font(.system(size: 14, weight: .heavy).monospacedDigit())
-                    .foregroundStyle(rank <= 3 ? KSSTheme.accent : KSSTheme.textSecondary)
+                    .foregroundStyle(rank <= 3 ? theme.accent : theme.textSecondary)
                     .frame(width: 22)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
                         Text(leader.name)
                             .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(KSSTheme.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                         Text(leader.symbol)
                             .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(KSSTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                         Text("霸榜 \(leader.appearances) 次")
                             .font(.system(size: 10.5, weight: .bold))
-                            .foregroundStyle(KSSTheme.up)
+                            .foregroundStyle(theme.up)
                             .padding(.horizontal, 6).padding(.vertical, 1.5)
-                            .background(KSSTheme.up.opacity(0.12), in: Capsule())
+                            .background(theme.up.opacity(0.12), in: Capsule())
                     }
                     if let positions = leader.positions, !positions.isEmpty {
                         Text(positions.prefix(4).map(Self.shortPosition).joined(separator: "  "))
                             .font(.system(size: 10.5, design: .monospaced))
-                            .foregroundStyle(KSSTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                             .lineLimit(1)
                     }
                 }
@@ -193,7 +194,7 @@ struct HotspotRotationView: View {
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(KSSTheme.surfaceContainer, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+            .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -213,10 +214,10 @@ struct HotspotRotationView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("暂无热点轮动数据")
                 .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(KSSTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
             Text("运行「任务 · 定时任务 · 板块热点轮动归档」或等当日收盘后任务自动归档后查看。")
                 .font(.system(size: 13))
-                .foregroundStyle(KSSTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
@@ -226,6 +227,7 @@ struct HotspotRotationView: View {
 
 /// 简易流式标签（板块名长度不一，比 LazyVGrid 自适应更紧凑）。
 struct FlowChips: View {
+    @Environment(\.kssTheme) private var theme
     var items: [String]
     var tint: Color
 
@@ -234,7 +236,7 @@ struct FlowChips: View {
             ForEach(items, id: \.self) { name in
                 Text(name)
                     .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(KSSTheme.textBody)
+                    .foregroundStyle(theme.textBody)
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(tint.opacity(0.10), in: Capsule())
                     .overlay(Capsule().stroke(tint.opacity(0.22), lineWidth: 0.5))

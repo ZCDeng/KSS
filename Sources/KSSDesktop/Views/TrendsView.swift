@@ -11,6 +11,7 @@ enum TrendRecSort: Hashable {
 }
 
 struct TrendsView: View {
+    @Environment(\.kssTheme) private var theme
     var month: TrendMonth?
     var detail: TrendDayDetail?
     var selectedDate: String?
@@ -57,7 +58,7 @@ struct TrendsView: View {
                     } else if selectedDate != nil {
                         Text("该日暂无归档数据")
                             .font(.system(size: 13))
-                            .foregroundStyle(KSSTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                     }
                 }
                 .frame(width: w, alignment: .leading)
@@ -65,9 +66,9 @@ struct TrendsView: View {
                 .padding(.vertical, 24)
             }
             .scrollContentBackground(.hidden)
-            .background(KSSTheme.canvas)
+            .background(theme.canvas)
         }
-        .background(KSSTheme.canvas)
+        .background(theme.canvas)
         .task {
             if currentMonth.isEmpty {
                 currentMonth = month?.month ?? Self.monthString(Date())
@@ -86,7 +87,7 @@ struct TrendsView: View {
             .buttonStyle(.bordered)
             Text(currentMonth)
                 .font(KSSFont.harmonyNumber(18))
-                .foregroundStyle(KSSTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .frame(minWidth: 92)
             Button { shiftMonth(1) } label: {
                 Image(systemName: "chevron.right").font(.system(size: 14, weight: .bold))
@@ -114,7 +115,7 @@ struct TrendsView: View {
             }
         }
         .padding(12)
-        .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+        .background(theme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
     }
 
     @ViewBuilder
@@ -135,7 +136,7 @@ struct TrendsView: View {
             .frame(height: 26)
             .overlay(
                 RoundedRectangle(cornerRadius: KSSTheme.shapeS)
-                    .strokeBorder(isSelected ? KSSTheme.accent : .clear, lineWidth: 2)
+                    .strokeBorder(isSelected ? theme.accent : .clear, lineWidth: 2)
             )
             .clipShape(RoundedRectangle(cornerRadius: KSSTheme.shapeS))
         }
@@ -147,21 +148,21 @@ struct TrendsView: View {
     private func inflowBackground(_ cell: TrendDayCell?, weekend: Bool) -> some View {
         Group {
             if let c = cell, let s = c.inflowScore {
-                let base = (c.inflowDir == "out") ? KSSTheme.down : KSSTheme.up
+                let base = (c.inflowDir == "out") ? theme.down : theme.up
                 base.opacity(0.12 + 0.65 * min(abs(s), 1))
             } else if weekend {
                 Color.clear
             } else {
-                KSSTheme.textSecondary.opacity(0.07)
+                theme.textSecondary.opacity(0.07)
             }
         }
     }
 
     private var inflowLegend: some View {
         HStack(spacing: 14) {
-            legendSwatch(KSSTheme.up, "流入", icon: "arrowtriangle.up.fill")
-            legendSwatch(KSSTheme.down, "流出", icon: "arrowtriangle.down.fill")
-            Text("色深 = 强度").font(.system(size: 11)).foregroundStyle(KSSTheme.textSecondary)
+            legendSwatch(theme.up, "流入", icon: "arrowtriangle.up.fill")
+            legendSwatch(theme.down, "流出", icon: "arrowtriangle.down.fill")
+            Text("色深 = 强度").font(.system(size: 11)).foregroundStyle(theme.textSecondary)
             Spacer()
         }
     }
@@ -170,7 +171,7 @@ struct TrendsView: View {
         HStack(spacing: 5) {
             Image(systemName: icon).font(.system(size: 8, weight: .bold)).foregroundStyle(color)
             RoundedRectangle(cornerRadius: 3).fill(color.opacity(0.55)).frame(width: 12, height: 12)
-            Text(label).font(.system(size: 11)).foregroundStyle(KSSTheme.textSecondary)
+            Text(label).font(.system(size: 11)).foregroundStyle(theme.textSecondary)
         }
     }
 
@@ -180,22 +181,22 @@ struct TrendsView: View {
         return HStack(spacing: 12) {
             Text(String(d.date.suffix(5)))
                 .font(.system(size: 13, weight: .bold, design: .monospaced))
-                .foregroundStyle(KSSTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
             if let n = d.north {
-                statTile("北向资金", String(format: "%+.1f 亿", n.money), n.dir == "out" ? KSSTheme.down : KSSTheme.up)
+                statTile("北向资金", String(format: "%+.1f 亿", n.money), n.dir == "out" ? theme.down : theme.up)
             }
             ForEach(d.etfs ?? []) { e in
                 statTile(e.name, e.pct.map { String(format: "%+.2f%%", $0) } ?? "—",
-                         (e.pct ?? 0) >= 0 ? KSSTheme.up : KSSTheme.down)
+                         (e.pct ?? 0) >= 0 ? theme.up : theme.down)
             }
             if let s = cell?.inflowScore {
-                statTile("增量资金", String(format: "%+.2f", s), s >= 0 ? KSSTheme.up : KSSTheme.down)
+                statTile("增量资金", String(format: "%+.2f", s), s >= 0 ? theme.up : theme.down)
             }
             Spacer()
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+        .background(theme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
     }
 
     // MARK: ② 日历（格子显示强势板块名）
@@ -212,7 +213,7 @@ struct TrendsView: View {
             }
         }
         .padding(12)
-        .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+        .background(theme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
     }
 
     @ViewBuilder
@@ -225,22 +226,22 @@ struct TrendsView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(day)
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(cell != nil ? KSSTheme.textPrimary : KSSTheme.textSecondary.opacity(0.5))
+                    .foregroundStyle(cell != nil ? theme.textPrimary : theme.textSecondary.opacity(0.5))
                 Spacer(minLength: 0)
                 // 强势板块名（直观，替掉小圆点）
                 if let c = cell, let top = c.topSector {
                     Text(top)
                         .font(.system(size: 10.5, weight: .bold))
-                        .foregroundStyle(KSSTheme.accent)
+                        .foregroundStyle(theme.accent)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                     if c.sectorCount > 1 {
                         Text("+\(c.sectorCount - 1)")
                             .font(.system(size: 8.5))
-                            .foregroundStyle(KSSTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                     }
                 } else if cell != nil {
-                    Text("—").font(.system(size: 10)).foregroundStyle(KSSTheme.textSecondary.opacity(0.5))
+                    Text("—").font(.system(size: 10)).foregroundStyle(theme.textSecondary.opacity(0.5))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -249,7 +250,7 @@ struct TrendsView: View {
             .background(calendarCellBg(cell, weekend: weekend))
             .overlay(
                 RoundedRectangle(cornerRadius: KSSTheme.shapeS)
-                    .strokeBorder(isSelected ? KSSTheme.accent : (cell?.flags.sector == true ? KSSTheme.accent.opacity(0.25) : .clear), lineWidth: isSelected ? 2 : 1)
+                    .strokeBorder(isSelected ? theme.accent : (cell?.flags.sector == true ? theme.accent.opacity(0.25) : .clear), lineWidth: isSelected ? 2 : 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: KSSTheme.shapeS))
         }
@@ -261,11 +262,11 @@ struct TrendsView: View {
     private func calendarCellBg(_ cell: TrendDayCell?, weekend: Bool) -> some View {
         Group {
             if let c = cell {
-                c.flags.sector ? KSSTheme.accent.opacity(0.06) : KSSTheme.canvas.opacity(0.5)
+                c.flags.sector ? theme.accent.opacity(0.06) : theme.canvas.opacity(0.5)
             } else if weekend {
                 Color.clear
             } else {
-                KSSTheme.textSecondary.opacity(0.05)
+                theme.textSecondary.opacity(0.05)
             }
         }
     }
@@ -274,7 +275,7 @@ struct TrendsView: View {
         HStack(spacing: 6) {
             ForEach(["一", "二", "三", "四", "五", "六", "日"], id: \.self) { wd in
                 Text(wd).font(.system(size: size, weight: .semibold))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .frame(maxWidth: .infinity)
             }
         }
@@ -287,7 +288,7 @@ struct TrendsView: View {
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
                 if recent.isEmpty {
-                    Text("本月暂无交易日数据").font(.system(size: 12)).foregroundStyle(KSSTheme.textSecondary)
+                    Text("本月暂无交易日数据").font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                 }
                 ForEach(recent) { c in weekCard(c) }
             }
@@ -300,30 +301,30 @@ struct TrendsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(String(c.date.suffix(5)))   // MM-DD
                     .font(.system(size: 12, weight: .bold, design: .monospaced))
-                    .foregroundStyle(KSSTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                 if let n = c.north {
                     Text(String(format: "北向 %+.1f亿", n.money))
                         .font(.system(size: 12, weight: .heavy))
-                        .foregroundStyle(n.dir == "out" ? KSSTheme.down : KSSTheme.up)
+                        .foregroundStyle(n.dir == "out" ? theme.down : theme.up)
                 }
-                if c.flags.sector { Text("板块 \(c.sectorCount)").font(.system(size: 10.5)).foregroundStyle(KSSTheme.textSecondary) }
+                if c.flags.sector { Text("板块 \(c.sectorCount)").font(.system(size: 10.5)).foregroundStyle(theme.textSecondary) }
                 if c.recCount > 0 {
                     HStack(spacing: 4) {
-                        Text("推荐 \(c.recCount)").font(.system(size: 10.5)).foregroundStyle(KSSTheme.textSecondary)
+                        Text("推荐 \(c.recCount)").font(.system(size: 10.5)).foregroundStyle(theme.textSecondary)
                         if let avg = c.recAvgFwd {
                             Text(String(format: "T+5 %+.1f%%", avg))
                                 .font(.system(size: 10.5, weight: .semibold))
-                                .foregroundStyle(avg >= 0 ? KSSTheme.up : KSSTheme.down)
+                                .foregroundStyle(avg >= 0 ? theme.up : theme.down)
                         }
                     }
                 }
             }
             .frame(width: 124, alignment: .leading)
             .padding(11)
-            .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+            .background(theme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
             .overlay(
                 RoundedRectangle(cornerRadius: KSSTheme.shapeM)
-                    .strokeBorder(isSel ? KSSTheme.accent : KSSTheme.textSecondary.opacity(0.12), lineWidth: isSel ? 2 : 1)
+                    .strokeBorder(isSel ? theme.accent : theme.textSecondary.opacity(0.12), lineWidth: isSel ? 2 : 1)
             )
         }
         .buttonStyle(.plain)
@@ -337,22 +338,22 @@ struct TrendsView: View {
             // 主力资金
             HStack(spacing: 14) {
                 if let n = d.north {
-                    statTile("北向资金", String(format: "%+.1f 亿", n.money), n.dir == "out" ? KSSTheme.down : KSSTheme.up)
+                    statTile("北向资金", String(format: "%+.1f 亿", n.money), n.dir == "out" ? theme.down : theme.up)
                 }
                 ForEach(d.etfs ?? []) { e in
                     statTile(e.name, e.pct.map { String(format: "%+.2f%%", $0) } ?? "—",
-                             (e.pct ?? 0) >= 0 ? KSSTheme.up : KSSTheme.down)
+                             (e.pct ?? 0) >= 0 ? theme.up : theme.down)
                 }
                 Spacer()
             }
             // 板块
             if !d.sectorTop.isEmpty {
-                Text("板块强势主题").font(.system(size: 12, weight: .bold)).foregroundStyle(KSSTheme.textSecondary)
+                Text("板块强势主题").font(.system(size: 12, weight: .bold)).foregroundStyle(theme.textSecondary)
                 FlowChipsTrends(themes: d.sectorTop)
             }
             // 推荐 T+N
             if !d.recs.isEmpty {
-                Text("当日推荐 · 后续表现").font(.system(size: 12, weight: .bold)).foregroundStyle(KSSTheme.textSecondary)
+                Text("当日推荐 · 后续表现").font(.system(size: 12, weight: .bold)).foregroundStyle(theme.textSecondary)
                 VStack(spacing: 6) {
                     recHeaderRow
                     ForEach(sortedRecs(d.recs)) { r in recRow(r) }
@@ -361,17 +362,17 @@ struct TrendsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .background(KSSTheme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+        .background(theme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
     }
 
     private func statTile(_ label: String, _ value: String, _ tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.system(size: 11)).foregroundStyle(KSSTheme.textSecondary)
+            Text(label).font(.system(size: 11)).foregroundStyle(theme.textSecondary)
             Text(value).font(KSSFont.harmonyNumber(18)).foregroundStyle(tint)
         }
         .frame(minWidth: 96, alignment: .leading)
         .padding(10)
-        .background(KSSTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
+        .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
     }
 
     private var recHeaderRow: some View {
@@ -419,8 +420,8 @@ struct TrendsView: View {
         Button { onSelectSymbol(r.symbol) } label: {
             HStack(spacing: 8) {
                 HStack(spacing: 6) {
-                    Text(r.name).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(KSSTheme.textPrimary).lineLimit(1)
-                    Text(r.symbol).font(.system(size: 10, design: .monospaced)).foregroundStyle(KSSTheme.textSecondary)
+                    Text(r.name).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(theme.textPrimary).lineLimit(1)
+                    Text(r.symbol).font(.system(size: 10, design: .monospaced)).foregroundStyle(theme.textSecondary)
                 }
                 .frame(width: 150, alignment: .leading)
                 fwdCell(r.fwd.t1)
@@ -428,11 +429,11 @@ struct TrendsView: View {
                 fwdCell(r.fwd.t20)
                 Spacer()
                 if let asof = r.fwd.asof {
-                    Text("@\(String(asof.suffix(5)))").font(.system(size: 9.5, design: .monospaced)).foregroundStyle(KSSTheme.textSecondary)
+                    Text("@\(String(asof.suffix(5)))").font(.system(size: 9.5, design: .monospaced)).foregroundStyle(theme.textSecondary)
                 }
             }
             .padding(.vertical, 5).padding(.horizontal, 8)
-            .background(KSSTheme.surfaceContainer, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
+            .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
         }
         .buttonStyle(.plain)
     }
@@ -440,7 +441,7 @@ struct TrendsView: View {
     private func fwdCell(_ v: Double?) -> some View {
         Text(v.map { String(format: "%+.1f", $0) } ?? "—")
             .font(.system(size: 12, weight: .semibold, design: .monospaced))
-            .foregroundStyle(v == nil ? KSSTheme.textSecondary : ((v ?? 0) >= 0 ? KSSTheme.up : KSSTheme.down))
+            .foregroundStyle(v == nil ? theme.textSecondary : ((v ?? 0) >= 0 ? theme.up : theme.down))
             .frame(width: 56, alignment: .trailing)
     }
 
@@ -485,20 +486,21 @@ struct TrendsView: View {
 
 /// 板块主题 chips（grade + past5Ret）。
 struct FlowChipsTrends: View {
+    @Environment(\.kssTheme) private var theme
     var themes: [TrendSectorTheme]
     var body: some View {
         FlexWrap(spacing: 8, lineSpacing: 8) {
             ForEach(themes) { t in
                 HStack(spacing: 5) {
-                    Text(t.name).font(.system(size: 12, weight: .bold)).foregroundStyle(KSSTheme.textPrimary)
+                    Text(t.name).font(.system(size: 12, weight: .bold)).foregroundStyle(theme.textPrimary)
                     if let r = t.past5Ret {
                         Text(String(format: "%+.1f%%", r))
                             .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(r >= 0 ? KSSTheme.up : KSSTheme.down)
+                            .foregroundStyle(r >= 0 ? theme.up : theme.down)
                     }
                 }
                 .padding(.horizontal, 10).padding(.vertical, 5)
-                .background(KSSTheme.accent.opacity(0.10), in: Capsule())
+                .background(theme.accent.opacity(0.10), in: Capsule())
             }
         }
     }

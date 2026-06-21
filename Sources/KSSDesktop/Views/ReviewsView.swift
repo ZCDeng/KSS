@@ -14,6 +14,7 @@ enum ReviewMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 struct ReviewsView: View {
+    @Environment(\.kssTheme) private var theme
     var reviews: [DailyReview]
     var sectorReviews: [SectorPulse]
     var sectorRotationHistory: [HotspotRotationHistoryItem]
@@ -68,12 +69,12 @@ struct ReviewsView: View {
             }
             .frame(width: 300)
 
-            Divider().overlay(KSSTheme.hairline)
+            Divider().overlay(theme.hairline)
 
             detailPane
-                .background(KSSTheme.canvas)
+                .background(theme.canvas)
         }
-        .background(KSSTheme.canvas)
+        .background(theme.canvas)
         .onAppear {
             if sectorReviews.isEmpty && !sectorRotationHistory.isEmpty {
                 mode = .hotspotRotation
@@ -126,7 +127,7 @@ struct ReviewsView: View {
                 }
                 .buttonStyle(.plain)
             }
-            .foregroundStyle(KSSTheme.textSecondary)
+            .foregroundStyle(theme.textSecondary)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
 
@@ -138,10 +139,10 @@ struct ReviewsView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .listRowBackground(isOn ? KSSTheme.accent.opacity(0.16) : Color.clear)
+                .listRowBackground(isOn ? theme.accent.opacity(0.16) : Color.clear)
             }
             .scrollContentBackground(.hidden)
-            .background(KSSTheme.canvas)
+            .background(theme.canvas)
         }
     }
 
@@ -154,10 +155,10 @@ struct ReviewsView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .listRowBackground(isOn ? KSSTheme.accent.opacity(0.16) : Color.clear)
+            .listRowBackground(isOn ? theme.accent.opacity(0.16) : Color.clear)
         }
         .scrollContentBackground(.hidden)
-        .background(KSSTheme.canvas)
+        .background(theme.canvas)
     }
 
     private var hotspotRotationList: some View {
@@ -169,10 +170,10 @@ struct ReviewsView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .listRowBackground(isOn ? KSSTheme.accent.opacity(0.16) : Color.clear)
+            .listRowBackground(isOn ? theme.accent.opacity(0.16) : Color.clear)
         }
         .scrollContentBackground(.hidden)
-        .background(KSSTheme.canvas)
+        .background(theme.canvas)
     }
 
     // MARK: 详情
@@ -207,24 +208,24 @@ struct ReviewsView: View {
             HStack(alignment: .firstTextBaseline) {
                 PageTitle(review.title)
                 Spacer()
-                StatusBadge(icon: "calendar", text: review.date, tint: KSSTheme.accent)
+                StatusBadge(icon: "calendar", text: review.date, tint: theme.accent)
             }
             if !review.focusSymbols.isEmpty {
                 Text("关注 " + review.focusSymbols.joined(separator: "  "))
                     .font(.system(size: 12.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .lineLimit(2)
             }
             if isLoadingDetail && selectedPath == review.path {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if detail?.path == review.path, let detail {
                 MarkdownWebView(text: detail.text)
-                    .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
-                    .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
+                    .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
+                    .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
             } else {
                 MarkdownWebView(text: review.excerpt)
-                    .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
-                    .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
+                    .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
+                    .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
             }
         }
         .padding(16)
@@ -234,7 +235,7 @@ struct ReviewsView: View {
     private func placeholder(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 14))
-            .foregroundStyle(KSSTheme.textSecondary)
+            .foregroundStyle(theme.textSecondary)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -251,6 +252,7 @@ struct ReviewsView: View {
 
 /// 板块复盘列表行：日期 + 强势确认数 + 头部板块。
 struct SectorReviewRow: View {
+    @Environment(\.kssTheme) private var theme
     var pulse: SectorPulse
 
     var body: some View {
@@ -258,17 +260,17 @@ struct SectorReviewRow: View {
             HStack(spacing: 6) {
                 Image(systemName: "square.grid.2x2.fill")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(KSSTheme.accent)
+                    .foregroundStyle(theme.accent)
                 Text(dateLabel)
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
             Text("板块复盘")
                 .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(KSSTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
             Text(summary)
                 .font(.system(size: 12.5))
-                .foregroundStyle(KSSTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .lineLimit(2)
         }
         .padding(.vertical, 3)
@@ -289,6 +291,7 @@ struct SectorReviewRow: View {
 
 /// 今日板块复盘：资金申赎 + 强势确认分级，含明细表与一年回测语义说明。
 struct SectorReviewPanel: View {
+    @Environment(\.kssTheme) private var theme
     var pulse: SectorPulse
 
     var body: some View {
@@ -297,12 +300,12 @@ struct SectorReviewPanel: View {
                 HStack(alignment: .firstTextBaseline) {
                     PageTitle("板块复盘")
                     Spacer()
-                    StatusBadge(icon: "calendar", text: dateLabel, tint: KSSTheme.accent)
+                    StatusBadge(icon: "calendar", text: dateLabel, tint: theme.accent)
                 }
                 if let regime = regimeLine {
                     Text(regime)
                         .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(KSSTheme.textBody)
+                        .foregroundStyle(theme.textBody)
                 }
 
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 152), spacing: 12)], spacing: 12) {
@@ -315,10 +318,10 @@ struct SectorReviewPanel: View {
                 if let commentary = pulse.commentary, !commentary.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
-                            RoundedRectangle(cornerRadius: 2).fill(KSSTheme.accent).frame(width: 4, height: 16)
+                            RoundedRectangle(cornerRadius: 2).fill(theme.accent).frame(width: 4, height: 16)
                             Text("投顾点评")
                                 .font(KSSFont.serif(16, .semibold))
-                                .foregroundStyle(KSSTheme.textPrimary)
+                                .foregroundStyle(theme.textPrimary)
                         }
                         CommentaryView(markdown: commentary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -330,10 +333,10 @@ struct SectorReviewPanel: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("一年回测语义")
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(KSSTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                         Text(pulse.note)
                             .font(.system(size: 12))
-                            .foregroundStyle(KSSTheme.textBody)
+                            .foregroundStyle(theme.textBody)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -343,7 +346,7 @@ struct SectorReviewPanel: View {
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(KSSTheme.canvas)
+        .background(theme.canvas)
     }
 
     private var dateLabel: String {
@@ -362,6 +365,7 @@ struct SectorReviewPanel: View {
 
 /// 投顾点评：把 `## 段标题` + `**强调**` 的 Markdown 原生渲染（避免 ScrollView 内嵌 WebView 测高问题）。
 struct CommentaryView: View {
+    @Environment(\.kssTheme) private var theme
     var markdown: String
 
     private struct Block: Identifiable {
@@ -390,12 +394,12 @@ struct CommentaryView: View {
                 if block.isHeader {
                     Text(block.text)
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(KSSTheme.accent)
+                        .foregroundStyle(theme.accent)
                         .padding(.top, 2)
                 } else {
                     Text(attributed(block.text))
                         .font(.system(size: 13))
-                        .foregroundStyle(KSSTheme.textBody)
+                        .foregroundStyle(theme.textBody)
                         .lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -414,6 +418,7 @@ struct CommentaryView: View {
 
 /// 板块明细表：板块 / 近5日 / 资金1日 / 资金5日 / 基金数 / 5日排名 / 分级。
 struct SectorReviewTable: View {
+    @Environment(\.kssTheme) private var theme
     var themes: [SectorTheme]
 
     enum SectorSort: Hashable { case name, past5Ret, flow1d, flow5d, nFunds, rank5d }
@@ -447,17 +452,17 @@ struct SectorReviewTable: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(KSSTheme.hairline)
+            Divider().overlay(theme.hairline)
             ForEach(Array(sortedThemes.enumerated()), id: \.element.id) { index, t in
                 row(t)
                 if index < themes.count - 1 {
-                    Divider().overlay(KSSTheme.hairline)
+                    Divider().overlay(theme.hairline)
                 }
             }
         }
-        .background(KSSTheme.surfaceRaised)
-        .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
-        .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
+        .background(theme.surfaceRaised)
+        .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
     }
 
     private var header: some View {
@@ -478,7 +483,7 @@ struct SectorReviewTable: View {
             Text("分级").frame(width: 84, alignment: .trailing)
         }
         .font(.system(size: 10.5, weight: .medium))
-        .foregroundStyle(KSSTheme.textSecondary)
+        .foregroundStyle(theme.textSecondary)
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
     }
@@ -487,17 +492,17 @@ struct SectorReviewTable: View {
         HStack(spacing: 10) {
             Text(t.name)
                 .font(.system(size: 13.5, weight: .bold))
-                .foregroundStyle(KSSTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .frame(width: 96, alignment: .leading)
-            num(t.past5Ret.map { KSSFormat.percent($0 / 100) }, tint: KSSTheme.signColor(t.past5Ret ?? 0))
+            num(t.past5Ret.map { KSSFormat.percent($0 / 100) }, tint: theme.signColor(t.past5Ret ?? 0))
                 .frame(width: 72, alignment: .trailing)
-            num(t.flow1d.map { String(format: "%+.1f", $0) }, tint: KSSTheme.textBody)
+            num(t.flow1d.map { String(format: "%+.1f", $0) }, tint: theme.textBody)
                 .frame(width: 72, alignment: .trailing)
-            num(t.flow5d.map { String(format: "%+.1f", $0) }, tint: KSSTheme.textBody)
+            num(t.flow5d.map { String(format: "%+.1f", $0) }, tint: theme.textBody)
                 .frame(width: 72, alignment: .trailing)
-            num(t.nFunds.map(String.init), tint: KSSTheme.textSecondary)
+            num(t.nFunds.map(String.init), tint: theme.textSecondary)
                 .frame(width: 48, alignment: .trailing)
-            num(t.rank5d.map { "#\($0)" }, tint: KSSTheme.textSecondary)
+            num(t.rank5d.map { "#\($0)" }, tint: theme.textSecondary)
                 .frame(width: 64, alignment: .trailing)
             Spacer(minLength: 8)
             Text(t.divergence ? "见顶预警" : t.grade)
@@ -517,13 +522,14 @@ struct SectorReviewTable: View {
     }
 
     private func gradeColor(_ t: SectorTheme) -> Color {
-        if t.divergence || t.grade.contains("预警") || t.grade.contains("见顶") { return KSSTheme.up }
-        if t.grade.contains("强势") { return KSSTheme.accent }
-        return KSSTheme.textBody
+        if t.divergence || t.grade.contains("预警") || t.grade.contains("见顶") { return theme.up }
+        if t.grade.contains("强势") { return theme.accent }
+        return theme.textBody
     }
 }
 
 struct ReviewRow: View {
+    @Environment(\.kssTheme) private var theme
     var review: DailyReview
 
     var body: some View {
@@ -531,18 +537,18 @@ struct ReviewRow: View {
             HStack(spacing: 6) {
                 Image(systemName: "calendar")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(KSSTheme.accent)
+                    .foregroundStyle(theme.accent)
                 Text(review.date)
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
             Text(review.title)
                 .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(KSSTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .lineLimit(1)
             Text(review.excerpt)
                 .font(.system(size: 12.5))
-                .foregroundStyle(KSSTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .lineLimit(2)
         }
         .padding(.vertical, 3)
@@ -551,6 +557,7 @@ struct ReviewRow: View {
 
 /// 热点轮动日期列表行.
 struct HotspotRotationHistoryRow: View {
+    @Environment(\.kssTheme) private var theme
     var item: HotspotRotationHistoryItem
 
     var body: some View {
@@ -558,17 +565,17 @@ struct HotspotRotationHistoryRow: View {
             HStack(spacing: 6) {
                 Image(systemName: "flame.fill")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(KSSTheme.accent)
+                    .foregroundStyle(theme.accent)
                 Text(dateLabel)
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
             Text("妖板情绪")
                 .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(KSSTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
             Text(summary)
                 .font(.system(size: 12.5))
-                .foregroundStyle(KSSTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .lineLimit(2)
         }
         .padding(.vertical, 3)
@@ -587,6 +594,7 @@ struct HotspotRotationHistoryRow: View {
 
 /// 热点轮动详情面板：四象限统计 + 板块表 + 妖王榜.
 struct HotspotRotationPanel: View {
+    @Environment(\.kssTheme) private var theme
     var snap: HotspotRotationSnapshot
 
     var body: some View {
@@ -595,14 +603,14 @@ struct HotspotRotationPanel: View {
                 HStack(alignment: .firstTextBaseline) {
                     PageTitle("妖板情绪")
                     Spacer()
-                    StatusBadge(icon: "calendar", text: dateLabel, tint: KSSTheme.accent)
+                    StatusBadge(icon: "calendar", text: dateLabel, tint: theme.accent)
                 }
 
                 HStack(spacing: 12) {
-                    classificationTile("主线", snap.crossSourceSignals.mainline.count, KSSTheme.up)
-                    classificationTile("妖板", snap.crossSourceSignals.demonBoard.count, KSSTheme.accent)
-                    classificationTile("退潮", snap.crossSourceSignals.oldHotspotFading.count, KSSTheme.textSecondary)
-                    classificationTile("卫星", snap.crossSourceSignals.satellite.count, KSSTheme.textBody)
+                    classificationTile("主线", snap.crossSourceSignals.mainline.count, theme.up)
+                    classificationTile("妖板", snap.crossSourceSignals.demonBoard.count, theme.accent)
+                    classificationTile("退潮", snap.crossSourceSignals.oldHotspotFading.count, theme.textSecondary)
+                    classificationTile("卫星", snap.crossSourceSignals.satellite.count, theme.textBody)
                 }
 
                 HStack(spacing: 10) {
@@ -613,10 +621,10 @@ struct HotspotRotationPanel: View {
                 if !snap.leaderBoards.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
-                            RoundedRectangle(cornerRadius: 2).fill(KSSTheme.accent).frame(width: 4, height: 16)
+                            RoundedRectangle(cornerRadius: 2).fill(theme.accent).frame(width: 4, height: 16)
                             Text("妖王榜")
                                 .font(KSSFont.serif(16, .semibold))
-                                .foregroundStyle(KSSTheme.textPrimary)
+                                .foregroundStyle(theme.textPrimary)
                         }
                         HotspotLeaderTable(boards: snap.leaderBoards)
                     }
@@ -624,20 +632,20 @@ struct HotspotRotationPanel: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
-                        RoundedRectangle(cornerRadius: 2).fill(KSSTheme.accent).frame(width: 4, height: 16)
+                        RoundedRectangle(cornerRadius: 2).fill(theme.accent).frame(width: 4, height: 16)
                         Text("行业")
                             .font(KSSFont.serif(16, .semibold))
-                            .foregroundStyle(KSSTheme.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                     }
                     HotspotBoardTable(boards: snap.industries)
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
-                        RoundedRectangle(cornerRadius: 2).fill(KSSTheme.accent).frame(width: 4, height: 16)
+                        RoundedRectangle(cornerRadius: 2).fill(theme.accent).frame(width: 4, height: 16)
                         Text("概念")
                             .font(KSSFont.serif(16, .semibold))
-                            .foregroundStyle(KSSTheme.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                     }
                     HotspotBoardTable(boards: snap.concepts)
                 }
@@ -645,7 +653,7 @@ struct HotspotRotationPanel: View {
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(KSSTheme.canvas)
+        .background(theme.canvas)
     }
 
     private var dateLabel: String {
@@ -661,7 +669,7 @@ struct HotspotRotationPanel: View {
                 .foregroundStyle(tint)
             Text("\(count)")
                 .font(KSSFont.harmonyNumber(20))
-                .foregroundStyle(KSSTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
         }
         .frame(maxWidth: .infinity)
         .kssCard(padding: 10)
@@ -670,16 +678,17 @@ struct HotspotRotationPanel: View {
     private func coverageBadge(_ name: String, _ value: Double) -> some View {
         Text("\(name) \(String(format: "%.0f%%", value * 100))")
             .font(.system(size: 11, weight: .semibold, design: .monospaced))
-            .foregroundStyle(KSSTheme.textSecondary)
+            .foregroundStyle(theme.textSecondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(KSSTheme.surfaceRaised, in: Capsule())
-            .overlay(Capsule().stroke(KSSTheme.hairline))
+            .background(theme.surfaceRaised, in: Capsule())
+            .overlay(Capsule().stroke(theme.hairline))
     }
 }
 
 /// 热点轮动板块明细表.
 struct HotspotBoardTable: View {
+    @Environment(\.kssTheme) private var theme
     var boards: [HotspotBoard]
 
     enum BoardSort: Hashable { case name, pctChange, rank, classification }
@@ -713,17 +722,17 @@ struct HotspotBoardTable: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(KSSTheme.hairline)
+            Divider().overlay(theme.hairline)
             ForEach(Array(sortedBoards.enumerated()), id: \.element.id) { index, b in
                 row(b)
                 if index < boards.count - 1 {
-                    Divider().overlay(KSSTheme.hairline)
+                    Divider().overlay(theme.hairline)
                 }
             }
         }
-        .background(KSSTheme.surfaceRaised)
-        .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
-        .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
+        .background(theme.surfaceRaised)
+        .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
     }
 
     private var header: some View {
@@ -740,7 +749,7 @@ struct HotspotBoardTable: View {
             Text("龙头").frame(width: 120, alignment: .leading)
         }
         .font(.system(size: 10.5, weight: .medium))
-        .foregroundStyle(KSSTheme.textSecondary)
+        .foregroundStyle(theme.textSecondary)
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
     }
@@ -749,11 +758,11 @@ struct HotspotBoardTable: View {
         HStack(spacing: 10) {
             Text(b.name)
                 .font(.system(size: 13.5, weight: .bold))
-                .foregroundStyle(KSSTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .frame(width: 96, alignment: .leading)
-            num(b.pctChange.map { KSSFormat.percent($0 / 100) }, tint: KSSTheme.signColor(b.pctChange ?? 0))
+            num(b.pctChange.map { KSSFormat.percent($0 / 100) }, tint: theme.signColor(b.pctChange ?? 0))
                 .frame(width: 64, alignment: .trailing)
-            num("#\(b.todayRank)", tint: KSSTheme.textSecondary)
+            num("#\(b.todayRank)", tint: theme.textSecondary)
                 .frame(width: 48, alignment: .trailing)
             Text(classificationLabel(b.classification))
                 .font(.system(size: 10.5, weight: .bold))
@@ -762,7 +771,7 @@ struct HotspotBoardTable: View {
             Spacer(minLength: 8)
             Text(topLeadersText(b.leaderStocks))
                 .font(.system(size: 11))
-                .foregroundStyle(KSSTheme.textBody)
+                .foregroundStyle(theme.textBody)
                 .frame(width: 120, alignment: .leading)
                 .lineLimit(1)
         }
@@ -788,10 +797,10 @@ struct HotspotBoardTable: View {
 
     private func classificationColor(_ cls: String) -> Color {
         switch cls {
-        case "mainline": return KSSTheme.up
-        case "demonBoard": return KSSTheme.accent
-        case "oldHotspotFading": return KSSTheme.textSecondary
-        default: return KSSTheme.textBody
+        case "mainline": return theme.up
+        case "demonBoard": return theme.accent
+        case "oldHotspotFading": return theme.textSecondary
+        default: return theme.textBody
         }
     }
 
@@ -803,6 +812,7 @@ struct HotspotBoardTable: View {
 
 /// 妖王榜：按龙头跨天频次排序.
 struct HotspotLeaderTable: View {
+    @Environment(\.kssTheme) private var theme
     var boards: [HotspotBoard]
 
     private struct LeaderRow: Identifiable, Hashable {
@@ -816,18 +826,18 @@ struct HotspotLeaderTable: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(KSSTheme.hairline)
+            Divider().overlay(theme.hairline)
             let rows = allLeaders()
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, leader in
                 row(leader)
                 if index < rows.count - 1 {
-                    Divider().overlay(KSSTheme.hairline)
+                    Divider().overlay(theme.hairline)
                 }
             }
         }
-        .background(KSSTheme.surfaceRaised)
-        .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
-        .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
+        .background(theme.surfaceRaised)
+        .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
     }
 
     private var header: some View {
@@ -839,7 +849,7 @@ struct HotspotLeaderTable: View {
             Spacer(minLength: 8)
         }
         .font(.system(size: 10.5, weight: .medium))
-        .foregroundStyle(KSSTheme.textSecondary)
+        .foregroundStyle(theme.textSecondary)
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
     }
@@ -848,21 +858,21 @@ struct HotspotLeaderTable: View {
         HStack(spacing: 10) {
             Text(leader.boardName)
                 .font(.system(size: 13.5, weight: .bold))
-                .foregroundStyle(KSSTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .frame(width: 96, alignment: .leading)
             Text(leader.symbol)
                 .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
-                .foregroundStyle(KSSTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .frame(width: 72, alignment: .leading)
                 .lineLimit(1)
             Text(leader.name)
                 .font(.system(size: 12.5))
-                .foregroundStyle(KSSTheme.textBody)
+                .foregroundStyle(theme.textBody)
                 .frame(width: 96, alignment: .leading)
                 .lineLimit(1)
             Text("\(leader.appearances)")
                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundStyle(KSSTheme.accent)
+                .foregroundStyle(theme.accent)
                 .frame(width: 56, alignment: .trailing)
             Spacer(minLength: 8)
         }

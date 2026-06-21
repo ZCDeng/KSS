@@ -14,6 +14,7 @@ enum RecTab: String, CaseIterable, Identifiable {
 }
 
 struct RecommendationsView: View {
+    @Environment(\.kssTheme) private var theme
     var snapshot: AppSnapshot
     var onSelectSymbol: (String) -> Void
 
@@ -58,9 +59,9 @@ struct RecommendationsView: View {
             }
             .frame(width: w)
             .frame(maxWidth: .infinity, alignment: .center)
-            .background(KSSTheme.canvas)
+            .background(theme.canvas)
         }
-        .background(KSSTheme.canvas)
+        .background(theme.canvas)
     }
 
     // MARK: - 当日推荐 (aligned table)
@@ -76,7 +77,7 @@ struct RecommendationsView: View {
                 Spacer()
                 Text("\(sortedRecs.count) 只")
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
@@ -94,7 +95,7 @@ struct RecommendationsView: View {
                                alignment: .trailing, width: 84)
             }
             .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(KSSTheme.textSecondary)
+            .foregroundStyle(theme.textSecondary)
             .padding(.horizontal, 16)
             .padding(.bottom, 6)
 
@@ -103,39 +104,39 @@ struct RecommendationsView: View {
                     HStack(spacing: 12) {
                         Text("#\(item.rank)")
                             .font(.system(size: 16, weight: .heavy, design: .monospaced))
-                            .foregroundStyle(KSSTheme.accent)
+                            .foregroundStyle(theme.accent)
                             .frame(width: 44, alignment: .leading)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(item.name.isEmpty ? item.symbol : item.name)
                                 .font(.system(size: 15.5, weight: .bold))
-                                .foregroundStyle(KSSTheme.textPrimary)
+                                .foregroundStyle(theme.textPrimary)
                             Text("\(item.symbol) · \(item.industry)")
                                 .font(.system(size: 11.5, design: .monospaced))
-                                .foregroundStyle(KSSTheme.textSecondary)
+                                .foregroundStyle(theme.textSecondary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         StatusBadge.tracking(item.status).frame(width: 96, alignment: .center)
                         Text(KSSFormat.number(item.factorValue, digits: 3))
                             .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(KSSTheme.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                             .frame(width: 86, alignment: .trailing)
                         Text(KSSFormat.percent(item.weight))
                             .font(.system(size: 13, design: .monospaced))
-                            .foregroundStyle(KSSTheme.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                             .frame(width: 64, alignment: .trailing)
                         Text(KSSFormat.percent(item.trackingReturn))
                             .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(KSSTheme.signColor(item.trackingReturn))
+                            .foregroundStyle(theme.signColor(item.trackingReturn))
                             .frame(width: 84, alignment: .trailing)
                     }
                     .contentShape(Rectangle())
                     .padding(.vertical, 3)
                 }
                 .buttonStyle(.plain)
-                .listRowBackground(KSSTheme.surfaceContainer)
+                .listRowBackground(theme.surfaceContainer)
             }
             .scrollContentBackground(.hidden)
-            .background(KSSTheme.canvas)
+            .background(theme.canvas)
         }
     }
 
@@ -147,7 +148,7 @@ struct RecommendationsView: View {
             if days.isEmpty {
                 Text("暂无往期推荐记录")
                     .font(.system(size: 13))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
@@ -161,7 +162,7 @@ struct RecommendationsView: View {
                             Spacer().frame(width: 20)
                         }
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(KSSTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .padding(.horizontal, 14)
 
                         ForEach(days) { day in
@@ -171,7 +172,7 @@ struct RecommendationsView: View {
                     .padding(16)
                 }
                 .scrollContentBackground(.hidden)
-                .background(KSSTheme.canvas)
+                .background(theme.canvas)
             }
         }
     }
@@ -179,6 +180,7 @@ struct RecommendationsView: View {
 
 /// 一个预测日的跟踪卡：摘要行 + 点击展开当日逐只选股的 1d/5d/20d 收益。
 struct TrackingDayCard: View {
+    @Environment(\.kssTheme) private var theme
     var day: RecTrackingDay
     var onSelectSymbol: (String) -> Void
     @State private var expanded = false
@@ -189,13 +191,13 @@ struct TrackingDayCard: View {
                 HStack(spacing: 12) {
                     HStack(spacing: 6) {
                         Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 10, weight: .bold)).foregroundStyle(KSSTheme.textSecondary)
-                        Image(systemName: "calendar").font(.system(size: 11, weight: .semibold)).foregroundStyle(KSSTheme.accent)
-                        Text(day.date).font(.system(size: 14, weight: .bold, design: .monospaced)).foregroundStyle(KSSTheme.textPrimary).lineLimit(1).fixedSize()
+                            .font(.system(size: 10, weight: .bold)).foregroundStyle(theme.textSecondary)
+                        Image(systemName: "calendar").font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.accent)
+                        Text(day.date).font(.system(size: 14, weight: .bold, design: .monospaced)).foregroundStyle(theme.textPrimary).lineLimit(1).fixedSize()
                     }
                     .frame(width: 150, alignment: .leading)
                     Text("\(day.nPicks)")
-                        .font(.system(size: 13, design: .monospaced)).foregroundStyle(KSSTheme.textSecondary)
+                        .font(.system(size: 13, design: .monospaced)).foregroundStyle(theme.textSecondary)
                         .frame(width: 50, alignment: .trailing)
                     horizonCell(day.ret1d, bold: true)
                     horizonCell(day.ret5d, bold: true)
@@ -208,16 +210,16 @@ struct TrackingDayCard: View {
             .buttonStyle(.plain)
 
             if expanded {
-                Divider().overlay(KSSTheme.hairline).padding(.vertical, 6)
+                Divider().overlay(theme.hairline).padding(.vertical, 6)
                 VStack(spacing: 6) {
                     ForEach(day.picks) { pick in
                         Button { onSelectSymbol(pick.symbol) } label: {
                             HStack(spacing: 12) {
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(pick.name.isEmpty ? pick.symbol : pick.name)
-                                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(KSSTheme.textPrimary)
+                                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
                                     Text(pick.symbol)
-                                        .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(KSSTheme.textSecondary)
+                                        .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(theme.textSecondary)
                                 }
                                 .frame(width: 158, alignment: .leading)
                                 horizonCell(pick.ret1d, bold: false)
@@ -234,15 +236,15 @@ struct TrackingDayCard: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(KSSTheme.surfaceContainer)
+        .background(theme.surfaceContainer)
         .clipShape(RoundedRectangle(cornerRadius: KSSTheme.shapeM))
-        .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeM).stroke(KSSTheme.hairline))
+        .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeM).stroke(theme.hairline))
     }
 
     private func horizonCell(_ value: Double?, bold: Bool) -> some View {
         Text(value == nil ? "待结算" : KSSFormat.percent(value))
             .font(.system(size: bold ? 13.5 : 12.5, weight: bold ? .bold : .medium, design: .monospaced))
-            .foregroundStyle(value == nil ? KSSTheme.textSecondary : KSSTheme.signColor(value))
+            .foregroundStyle(value == nil ? theme.textSecondary : theme.signColor(value))
             .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }

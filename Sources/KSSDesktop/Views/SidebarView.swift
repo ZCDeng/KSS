@@ -2,6 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct SidebarView: View {
+    @Environment(\.kssTheme) private var theme
     @Binding var selection: WorkspaceSection
     var collapsed: Bool
     /// 用户自定义顺序（总览置顶）。由 ContentView 持有 @AppStorage 并解析后传入。
@@ -31,7 +32,7 @@ struct SidebarView: View {
                 .padding(.bottom, 10)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(KSSTheme.canvas)   // 实色暖纸底，覆盖窗口 vibrancy
+        .background(theme.canvas)   // 实色暖纸底，覆盖窗口 vibrancy
     }
 
     /// 展开态：图标 + 文字，选中态铺 clay、图标统一 clay。
@@ -70,16 +71,16 @@ struct SidebarView: View {
                 Image(systemName: section.symbol)
                     .font(.system(size: 15, weight: .semibold))
                     .frame(width: 22)
-                    .foregroundStyle(isOn ? Color.white : KSSTheme.accent)
+                    .foregroundStyle(isOn ? theme.onAccent : theme.accent)
                 Text(section.displayName)
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(isOn ? Color.white : KSSTheme.textBody)
+                    .foregroundStyle(isOn ? theme.onAccent : theme.textBody)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 9)
             .background(
-                isOn ? KSSTheme.accent : Color.clear,
+                isOn ? theme.accent : Color.clear,
                 in: RoundedRectangle(cornerRadius: KSSTheme.shapeS)
             )
             .contentShape(Rectangle())
@@ -96,9 +97,9 @@ struct SidebarView: View {
                     Image(systemName: section.symbol)
                         .font(.system(size: 17, weight: .semibold))
                         .frame(width: 46, height: 38)
-                        .foregroundStyle(isOn ? Color.white : KSSTheme.accent)
+                        .foregroundStyle(isOn ? theme.onAccent : theme.accent)
                         .background(
-                            isOn ? KSSTheme.accent : Color.clear,
+                            isOn ? theme.accent : Color.clear,
                             in: RoundedRectangle(cornerRadius: KSSTheme.shapeS)
                         )
                 }
@@ -141,6 +142,7 @@ extension View {
 
 /// 边栏顶部：KSSDeck 锁定式标志 + 折叠/展开按钮。折叠态只留 K 标。
 struct AppHeader: View {
+    @Environment(\.kssTheme) private var theme
     var collapsed: Bool
     var onToggleCollapse: () -> Void
 
@@ -167,7 +169,7 @@ struct AppHeader: View {
         Button(action: onToggleCollapse) {
             Image(systemName: "sidebar.leading")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(KSSTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .frame(width: 26, height: 26)
         }
         .buttonStyle(.plain)
@@ -180,11 +182,11 @@ struct AppHeader: View {
                 .resizable()
                 .renderingMode(.template)
                 .scaledToFit()
-                .foregroundStyle(KSSTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
         } else {
             Text("KSSDeck")
                 .font(.system(size: 18, weight: .heavy))
-                .foregroundStyle(KSSTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
         }
     }
 
@@ -192,7 +194,7 @@ struct AppHeader: View {
         if let img = bundledImage("kmark") ?? bundledImage("logo") {
             Image(nsImage: img).resizable().scaledToFit()
         } else {
-            Image(systemName: "k.square.fill").resizable().scaledToFit().foregroundStyle(KSSTheme.up)
+            Image(systemName: "k.square.fill").resizable().scaledToFit().foregroundStyle(theme.up)
         }
     }
 
@@ -204,6 +206,7 @@ struct AppHeader: View {
 
 /// 边栏底部：只保留 GitHub 跳转（折叠态仅图标）。
 struct SidebarFooter: View {
+    @Environment(\.kssTheme) private var theme
     var collapsed: Bool
 
     var body: some View {
@@ -212,21 +215,21 @@ struct SidebarFooter: View {
                 if collapsed {
                     Image(systemName: "chevron.left.forwardslash.chevron.right")
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(KSSTheme.accent)
+                        .foregroundStyle(theme.accent)
                         .frame(maxWidth: .infinity, minHeight: 28)
                 } else {
                     HStack(spacing: 8) {
                         Image(systemName: "chevron.left.forwardslash.chevron.right")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(KSSTheme.accent)
+                            .foregroundStyle(theme.accent)
                             .frame(width: 15)
                         Text("GitHub · ZCDeng/KSS")
                             .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(KSSTheme.textBody)
+                            .foregroundStyle(theme.textBody)
                         Spacer()
                         Image(systemName: "arrow.up.forward")
                             .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(KSSTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                     }
                     .padding(.horizontal, 6)
                 }

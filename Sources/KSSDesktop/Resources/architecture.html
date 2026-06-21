@@ -4,13 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>KSS — 架构全景</title>
-<script>
-  (function () {
-    const saved = localStorage.getItem('kss-theme');
-    const dark = saved ? saved === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
-    document.documentElement.classList.toggle('dark', dark);
-  })();
-</script>
 <style>
   :root {
     --bg: #FAF9F5; --surface: #FFFFFF; --surface2: #F0EEE6;
@@ -139,7 +132,6 @@
     <button class="chip" data-flow="numbers">数字归代码</button>
     <button class="chip" data-flow="feed">横向支撑注入</button>
   </div>
-  <button id="themeToggle">主题</button>
 </div>
 
 <div class="stage" id="stage">
@@ -305,11 +297,29 @@ nodes.forEach(n => n.addEventListener('click', () => {
   document.getElementById('d-body').innerHTML = d.b;
 }));
 
-document.getElementById('themeToggle').addEventListener('click', () => {
-  const dark = !document.documentElement.classList.contains('dark');
-  document.documentElement.classList.toggle('dark', dark);
-  localStorage.setItem('kss-theme', dark ? 'dark' : 'light');
-});
+// 主题 API：原生 palette payload → 覆盖全部语义 CSS 变量（含 SVG 节点/边/选中态依赖的 token）。
+window.kssSetTheme = function (payload) {
+  try {
+    const p = typeof payload === 'string' ? JSON.parse(payload) : payload;
+    const c = (p && p.colors) || {};
+    const r = document.documentElement.style;
+    const map = {
+      bg:'--bg', surface:'--surface', surface2:'--surface2',
+      ink:'--ink', body:'--body', muted:'--muted',
+      line:'--line', lineSoft:'--line-soft',
+      accent:'--clay', accentSoft:'--clay-soft',
+      olive:'--olive', oliveSoft:'--olive-soft',
+      gold:'--gold', blue:'--blue', blueSoft:'--blue-soft',
+      zone:'--zone', zoneLine:'--zone-line'
+    };
+    Object.keys(map).forEach(k => { if (c[k] != null) r.setProperty(map[k], c[k]); });
+    if (p && p.typography) {
+      r.setProperty('--serif', p.typography.serif);
+      r.setProperty('--sans', p.typography.sans);
+      r.setProperty('--mono', p.typography.mono);
+    }
+  } catch (e) { /* 主题失败不破坏交互图 */ }
+};
 </script>
 </body>
 </html>

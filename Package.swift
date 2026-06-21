@@ -25,6 +25,11 @@ let package = Package(
                 .copy("Resources/wordmark.png"),
                 .copy("Resources/HarmonyOS_Sans_SC_Bold.ttf")
             ]
+        ),
+        .testTarget(
+            name: "KSSDesktopTests",
+            dependencies: ["KSSDesktop"],
+            path: "Tests/KSSDesktopTests"
         )
     ]
 )

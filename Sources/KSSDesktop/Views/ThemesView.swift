@@ -4,6 +4,7 @@ import SwiftUI
 /// 数据源 = themes_15th_5y.yaml（主题→板块）+ 热点轮动归档（板块龙头）。
 /// 数据驱动：yaml 里几个主题就显示几个，覆盖度随每日归档累积提升。
 struct ThemesView: View {
+    @Environment(\.kssTheme) private var theme
     var themes: [ThemeLeaders]
     var onLoad: () -> Void
     var onSelectSymbol: (String) -> Void
@@ -23,7 +24,7 @@ struct ThemesView: View {
                         let withLeaders = themes.reduce(0) { $0 + $1.leaderBoardCount }
                         Text("共 \(themes.count) 个主题 · \(withLeaders) 个板块已有龙头数据。龙头数据来自热点轮动归档，随每日任务累积逐步补全。")
                             .font(.system(size: 12))
-                            .foregroundStyle(KSSTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                         ForEach(themes) { theme in
                             ThemeCard(theme: theme, onSelectSymbol: onSelectSymbol)
                         }
@@ -34,9 +35,9 @@ struct ThemesView: View {
                 .padding(.vertical, margin)
             }
             .scrollContentBackground(.hidden)
-            .background(KSSTheme.canvas)
+            .background(theme.canvas)
         }
-        .background(KSSTheme.canvas)
+        .background(theme.canvas)
         .task { onLoad() }
     }
 
@@ -44,10 +45,10 @@ struct ThemesView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("暂无主题数据")
                 .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(KSSTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
             Text("检查 storage/themes_15th_5y.yaml 是否存在，并运行「板块热点轮动归档」任务累积龙头数据。")
                 .font(.system(size: 13))
-                .foregroundStyle(KSSTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
@@ -56,27 +57,28 @@ struct ThemesView: View {
 }
 
 private struct ThemeCard: View {
+    @Environment(\.kssTheme) private var tokens
     var theme: ThemeLeaders
     var onSelectSymbol: (String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 2).fill(KSSTheme.accent).frame(width: 4, height: 18)
+                RoundedRectangle(cornerRadius: 2).fill(tokens.accent).frame(width: 4, height: 18)
                 Text(theme.name)
                     .font(KSSFont.serif(18, .semibold))
-                    .foregroundStyle(KSSTheme.textPrimary)
+                    .foregroundStyle(tokens.textPrimary)
                 Spacer()
                 Text("\(theme.boardCount) 板块 · \(theme.leaderBoardCount) 有龙头")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(tokens.textSecondary)
             }
 
             if theme.boards.isEmpty {
                 Text("该主题板块龙头数据待归档积累")
                     .font(.system(size: 12))
-                    .foregroundStyle(KSSTheme.textSecondary)
-                FlowChips(items: theme.boardNames, tint: KSSTheme.textSecondary)
+                    .foregroundStyle(tokens.textSecondary)
+                FlowChips(items: theme.boardNames, tint: tokens.textSecondary)
             } else {
                 ForEach(theme.boards) { board in
                     boardBlock(board)
@@ -93,18 +95,18 @@ private struct ThemeCard: View {
             HStack(spacing: 8) {
                 Text(board.board)
                     .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(KSSTheme.textPrimary)
+                    .foregroundStyle(tokens.textPrimary)
                 if let cls = board.classification {
                     classificationBadge(cls)
                 }
                 Spacer(minLength: 0)
             }
-            tierRow("龙头", board.leaders, KSSTheme.up)
-            tierRow("第二梯队", board.secondTier, KSSTheme.ma20)
+            tierRow("龙头", board.leaders, tokens.up)
+            tierRow("第二梯队", board.secondTier, tokens.ma20)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(KSSTheme.surfaceContainerHighest, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
+        .background(tokens.surfaceContainerHighest, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
     }
 
     @ViewBuilder
@@ -112,7 +114,7 @@ private struct ThemeCard: View {
         if stocks.isEmpty {
             HStack(spacing: 8) {
                 tierLabel(label, tint)
-                Text("—").font(.system(size: 12)).foregroundStyle(KSSTheme.textSecondary)
+                Text("—").font(.system(size: 12)).foregroundStyle(tokens.textSecondary)
             }
         } else {
             HStack(alignment: .top, spacing: 8) {
@@ -139,7 +141,7 @@ private struct ThemeCard: View {
             HStack(spacing: 5) {
                 Text(s.name)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(KSSTheme.textBody)
+                    .foregroundStyle(tokens.textBody)
                 Text("\(s.appearances)")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundStyle(tint)
@@ -156,11 +158,11 @@ private struct ThemeCard: View {
     private func classificationBadge(_ cls: String) -> some View {
         let (text, tint): (String, Color) = {
             switch cls {
-            case "mainline": return ("真主线", KSSTheme.up)
-            case "demonBoard": return ("妖板", KSSTheme.accent)
-            case "oldHotspotFading": return ("退潮", KSSTheme.textSecondary)
-            case "satellite": return ("卫星", KSSTheme.ma20)
-            default: return (cls, KSSTheme.textSecondary)
+            case "mainline": return ("真主线", tokens.up)
+            case "demonBoard": return ("妖板", tokens.accent)
+            case "oldHotspotFading": return ("退潮", tokens.textSecondary)
+            case "satellite": return ("卫星", tokens.ma20)
+            default: return (cls, tokens.textSecondary)
             }
         }()
         return Text(text)
@@ -173,6 +175,7 @@ private struct ThemeCard: View {
 
 /// FlowChips 的 ViewBuilder 版（容纳 Button 等异构子视图）。
 struct FlowChips2<Content: View>: View {
+    @Environment(\.kssTheme) private var theme
     @ViewBuilder var content: Content
     var body: some View {
         FlowLayout(spacing: 6, lineSpacing: 6) { content }

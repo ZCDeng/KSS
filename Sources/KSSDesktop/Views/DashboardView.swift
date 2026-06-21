@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct DashboardView: View {
+    @Environment(\.kssTheme) private var theme
     var snapshot: AppSnapshot
     var onSelectSymbol: (String) -> Void
     var onOpenSection: (WorkspaceSection) -> Void
@@ -65,7 +66,7 @@ struct DashboardView: View {
                 .padding(.vertical, margin)
             }
             .scrollContentBackground(.hidden)
-            .background(KSSTheme.canvas)
+            .background(theme.canvas)
         }
     }
 
@@ -119,6 +120,7 @@ enum TodayPickSort: Hashable {
 }
 
 struct TodayPicksList: View {
+    @Environment(\.kssTheme) private var theme
     var items: [Recommendation]
     var onSelect: (String) -> Void
 
@@ -189,19 +191,19 @@ struct TodayPicksList: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(KSSTheme.hairline)
+            Divider().overlay(theme.hairline)
             let rows = sortedItems
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in
                 Button { onSelect(item.symbol) } label: { row(item) }
                     .buttonStyle(.plain)
                 if index < rows.count - 1 {
-                    Divider().overlay(KSSTheme.hairline)
+                    Divider().overlay(theme.hairline)
                 }
             }
         }
-        .background(KSSTheme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
-        .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
+        .background(theme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
     }
 
     private var header: some View {
@@ -224,7 +226,7 @@ struct TodayPicksList: View {
         }
         .font(.system(size: 10.5, weight: .medium))
         .tracking(0.5)
-        .foregroundStyle(KSSTheme.textSecondary)
+        .foregroundStyle(theme.textSecondary)
         .padding(.horizontal, rowPadH)
         .padding(.vertical, 9)
     }
@@ -233,38 +235,38 @@ struct TodayPicksList: View {
         HStack(spacing: colSpacing) {
             Text("#\(item.rank)")
                 .font(.system(size: 15, weight: .heavy, design: .monospaced))
-                .foregroundStyle(KSSTheme.accent)
+                .foregroundStyle(theme.accent)
                 .frame(width: wRank, alignment: .leading)
             Text(item.name.isEmpty ? item.symbol : item.name)
                 .font(.system(size: 14.5, weight: .bold))
-                .foregroundStyle(KSSTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .lineLimit(1)
                 .frame(width: wName, alignment: .leading)
             Text(item.symbol)
                 .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(KSSTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .lineLimit(1)
                 .frame(width: wSymbol, alignment: .leading)
             Text(item.industry.isEmpty ? "—" : item.industry)
                 .font(.system(size: 12.5))
-                .foregroundStyle(KSSTheme.textBody)
+                .foregroundStyle(theme.textBody)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
             StatusBadge.tracking(item.status)
                 .frame(width: wStatus, alignment: .leading)
             Text(priceText(item.latestOpen))
                 .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                .foregroundStyle(KSSTheme.textBody)
+                .foregroundStyle(theme.textBody)
                 .lineLimit(1)
                 .frame(width: wOpen, alignment: .trailing)
             Text(priceText(item.latestClose))
                 .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                .foregroundStyle(KSSTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .lineLimit(1)
                 .frame(width: wClose, alignment: .trailing)
             Text(KSSFormat.percent(item.weight))
                 .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                .foregroundStyle(KSSTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .lineLimit(1)
                 .frame(width: wWeight, alignment: .trailing)
         }
@@ -281,6 +283,7 @@ enum PerillaSort: Hashable {
 }
 
 struct PerillaPicksTable: View {
+    @Environment(\.kssTheme) private var theme
     var items: [PerillaPick]
     var onSelect: (String) -> Void
 
@@ -336,19 +339,19 @@ struct PerillaPicksTable: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(KSSTheme.hairline)
+            Divider().overlay(theme.hairline)
             let rows = sortedItems
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in
                 Button { onSelect(item.symbol) } label: { row(item) }
                     .buttonStyle(.plain)
                 if index < rows.count - 1 {
-                    Divider().overlay(KSSTheme.hairline)
+                    Divider().overlay(theme.hairline)
                 }
             }
         }
-        .background(KSSTheme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: KSSTheme.cardRadius))
-        .overlay(RoundedRectangle(cornerRadius: KSSTheme.cardRadius).stroke(KSSTheme.hairline))
+        .background(theme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
     }
 
     private var header: some View {
@@ -376,7 +379,7 @@ struct PerillaPicksTable: View {
         }
         .font(.system(size: 10.5, weight: .medium))
         .tracking(0.3)
-        .foregroundStyle(KSSTheme.textSecondary)
+        .foregroundStyle(theme.textSecondary)
         .padding(.horizontal, rowPadH)
         .padding(.vertical, 9)
     }
@@ -387,11 +390,11 @@ struct PerillaPicksTable: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name)
                     .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(KSSTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
                 Text(item.symbol)
                     .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .lineLimit(1)
             }
             .frame(width: wName, alignment: .leading)
@@ -400,17 +403,17 @@ struct PerillaPicksTable: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.chains.isEmpty ? "—" : item.chains)
                     .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(KSSTheme.textBody)
+                    .foregroundStyle(theme.textBody)
                     .lineLimit(1)
                 HStack(spacing: 5) {
                     Text("\(layerLabel(item)) · \(item.moat)")
                         .font(.system(size: 10.5))
-                        .foregroundStyle(KSSTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                     if item.locked {
                         Image(systemName: "lock.fill")
                             .font(.system(size: 8))
-                            .foregroundStyle(KSSTheme.accent)
+                            .foregroundStyle(theme.accent)
                     }
                 }
             }
@@ -423,23 +426,23 @@ struct PerillaPicksTable: View {
 
             Text(numText(item.pe))
                 .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(KSSTheme.textBody)
+                .foregroundStyle(theme.textBody)
                 .lineLimit(1)
                 .frame(width: wPe, alignment: .trailing)
             Text(numText(item.pb))
                 .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(KSSTheme.textBody)
+                .foregroundStyle(theme.textBody)
                 .lineLimit(1)
                 .frame(width: wPb, alignment: .trailing)
             Text(mvText(item.circMvYi))
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(KSSTheme.textBody)
+                .foregroundStyle(theme.textBody)
                 .lineLimit(1)
                 .frame(width: wMv, alignment: .trailing)
 
             Text(String(format: "%.2f", item.score))
                 .font(.system(size: 13, weight: .heavy, design: .monospaced))
-                .foregroundStyle(KSSTheme.accent)
+                .foregroundStyle(theme.accent)
                 .lineLimit(1)
                 .frame(width: wScore, alignment: .trailing)
         }
@@ -451,7 +454,7 @@ struct PerillaPicksTable: View {
     private func retCell(_ value: Double?) -> some View {
         Text(value.map { KSSFormat.percent($0) } ?? "—")
             .font(.system(size: 12, weight: .semibold, design: .monospaced))
-            .foregroundStyle(value == nil ? KSSTheme.textSecondary : KSSTheme.signColor(value!))
+            .foregroundStyle(value == nil ? theme.textSecondary : theme.signColor(value!))
             .lineLimit(1)
             .frame(width: wRet, alignment: .trailing)
     }
@@ -482,22 +485,23 @@ struct PerillaPicksTable: View {
 
 /// 今日板块信息图：6 个主题卡片，资金申赎 + 近 5 日涨幅 + 强势确认分级。
 struct SectorPulseStrip: View {
+    @Environment(\.kssTheme) private var theme
     var pulse: SectorPulse
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 2).fill(KSSTheme.accent).frame(width: 4, height: 18)
+                RoundedRectangle(cornerRadius: 2).fill(theme.accent).frame(width: 4, height: 18)
                 Text("今日板块")
                     .font(KSSFont.serif(18, .semibold))
-                    .foregroundStyle(KSSTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                 Text(regimeText)
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(pulse.regimeInRegime == true ? KSSTheme.up : KSSTheme.textSecondary)
+                    .foregroundStyle(pulse.regimeInRegime == true ? theme.up : theme.textSecondary)
                 Spacer()
                 Text("资金正=申购/负=赎回 · 5日赎回≥2%=强势确认")
                     .font(.system(size: 11))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .lineLimit(1)
             }
             .padding(.top, 6)
@@ -518,6 +522,7 @@ struct SectorPulseStrip: View {
 }
 
 struct SectorChip: View {
+    @Environment(\.kssTheme) private var tokens
     var theme: SectorTheme
 
     var body: some View {
@@ -525,12 +530,12 @@ struct SectorChip: View {
             HStack(spacing: 5) {
                 Text(theme.name)
                     .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(KSSTheme.textPrimary)
+                    .foregroundStyle(tokens.textPrimary)
                     .lineLimit(1)
                 if theme.accel {
                     Image(systemName: "bolt.fill")
                         .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(KSSTheme.accent)
+                        .foregroundStyle(tokens.accent)
                         .help("资金加速")
                 }
                 Spacer(minLength: 4)
@@ -539,10 +544,10 @@ struct SectorChip: View {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text("近5日")
                     .font(.system(size: 10))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(tokens.textSecondary)
                 Text(theme.past5Ret.map { KSSFormat.percent($0 / 100) } ?? "—")
                     .font(KSSFont.harmonyNumber(18))
-                    .foregroundStyle(KSSTheme.signColor(theme.past5Ret ?? 0))
+                    .foregroundStyle(tokens.signColor(theme.past5Ret ?? 0))
             }
             HStack(spacing: 10) {
                 flowItem("1日", theme.flow1d)
@@ -557,8 +562,9 @@ struct SectorChip: View {
     private var gradeBadge: some View {
         let warn = theme.divergence || theme.grade.contains("预警") || theme.grade.contains("见顶")
         let strong = theme.grade.contains("强势")
-        let bg = warn ? KSSTheme.up : (strong ? KSSTheme.accent : KSSTheme.textSecondary.opacity(0.18))
-        let fg = (warn || strong) ? Color.white : KSSTheme.textBody
+        let bg = warn ? tokens.up : (strong ? tokens.accent : tokens.textSecondary.opacity(0.18))
+        // warn 底=up(饱和红，白字为不随主题变化的 invariant)；strong 底=accent，须用 onAccent。
+        let fg = warn ? Color.white : (strong ? tokens.onAccent : tokens.textBody)
         return Text(theme.divergence ? "见顶预警" : theme.grade)
             .font(.system(size: 10, weight: .bold))
             .foregroundStyle(fg)
@@ -573,10 +579,10 @@ struct SectorChip: View {
         HStack(spacing: 3) {
             Text(label)
                 .font(.system(size: 10))
-                .foregroundStyle(KSSTheme.textSecondary)
+                .foregroundStyle(tokens.textSecondary)
             Text(flow.map { String(format: "%+.1f", $0) } ?? "—")
                 .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
-                .foregroundStyle(KSSTheme.textBody)
+                .foregroundStyle(tokens.textBody)
         }
         .lineLimit(1)
         .fixedSize()
@@ -585,19 +591,20 @@ struct SectorChip: View {
 
 /// 编辑风日期戳：大号衬线 MM.DD + 小号 年/星期 右侧堆叠（复刻杂志日期设计）。
 struct EditorialDateView: View {
+    @Environment(\.kssTheme) private var theme
     var date = Date()
 
     var body: some View {
         HStack(alignment: .top, spacing: 7) {
             Text(monthDay)
                 .font(.system(size: 34, weight: .bold, design: .serif))
-                .foregroundStyle(KSSTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .monospacedDigit()
             VStack(alignment: .leading, spacing: 1) {
                 Text(year)
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                 Text(weekday)
-                    .foregroundStyle(KSSTheme.accent)
+                    .foregroundStyle(theme.accent)
             }
             .font(.system(size: 12, weight: .semibold, design: .serif))
             .padding(.top, 3)
@@ -620,6 +627,7 @@ struct EditorialDateView: View {
 
 /// 总览第一行市场速览：A500ETF(563360/159361) 当日 + 北向资金净流入。
 struct MarketStripRow: View {
+    @Environment(\.kssTheme) private var theme
     var strip: MarketStrip
 
     var body: some View {
@@ -652,22 +660,22 @@ struct MarketStripRow: View {
             HStack(spacing: 6) {
                 Text(title)
                     .font(.system(size: 13.5, weight: .bold))
-                    .foregroundStyle(KSSTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 Text(sub)
                     .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
                     .lineLimit(1)
             }
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(value)
                     .font(KSSFont.harmonyNumber(22))
-                    .foregroundStyle(KSSTheme.signColor(delta))
+                    .foregroundStyle(theme.signColor(delta))
                     .lineLimit(1)
                 Text(deltaText)
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(KSSTheme.signColor(delta))
+                    .foregroundStyle(theme.signColor(delta))
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
@@ -679,6 +687,7 @@ struct MarketStripRow: View {
 
 /// 指数一览：13 个常用指数自适应网格（名称 / 收盘 / 涨跌%，红涨绿跌）。
 struct IndexBoardGrid: View {
+    @Environment(\.kssTheme) private var theme
     var indices: [IndexQuote]
 
     var body: some View {
@@ -687,17 +696,17 @@ struct IndexBoardGrid: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(idx.name)
                         .font(.system(size: 12.5, weight: .bold))
-                        .foregroundStyle(KSSTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                         .lineLimit(1)
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text(String(format: "%.2f", idx.close))
                             .font(KSSFont.harmonyNumber(16))
-                            .foregroundStyle(KSSTheme.signColor(idx.pct))
+                            .foregroundStyle(theme.signColor(idx.pct))
                             .lineLimit(1)
                         Spacer(minLength: 0)
                         Text(String(format: "%+.2f%%", idx.pct))
                             .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(KSSTheme.signColor(idx.pct))
+                            .foregroundStyle(theme.signColor(idx.pct))
                             .lineLimit(1)
                     }
                 }
@@ -711,6 +720,7 @@ struct IndexBoardGrid: View {
 /// 指数跑马灯：13 指数按涨跌幅降序，TimelineView 驱动无缝循环横向滚动。
 /// 参照 M3 carousel —— 圆角容器(shapeL) + 两端淡出遮罩 + 一致项高，展示型不可点。
 struct IndexMarquee: View {
+    @Environment(\.kssTheme) private var theme
     var indices: [IndexQuote]
 
     private let gap: CGFloat = 10
@@ -762,25 +772,25 @@ struct IndexMarquee: View {
         HStack(spacing: 6) {
             Image(systemName: idx.pct >= 0 ? "arrowtriangle.up.fill" : "arrowtriangle.down.fill")
                 .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(KSSTheme.signColor(idx.pct))
+                .foregroundStyle(theme.signColor(idx.pct))
             Text(idx.name)
                 .font(.system(size: 12.5, weight: .bold))
-                .foregroundStyle(KSSTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .lineLimit(1)
             Text(String(format: "%.2f", idx.close))
                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundStyle(KSSTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
                 .lineLimit(1)
             Text(String(format: "%+.2f%%", idx.pct))
                 .font(.system(size: 12, weight: .heavy, design: .monospaced))
-                .foregroundStyle(KSSTheme.signColor(idx.pct))
+                .foregroundStyle(theme.signColor(idx.pct))
                 .lineLimit(1)
         }
         .padding(.horizontal, 14).padding(.vertical, 9)
-        .background(KSSTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeL))
+        .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeL))
         .overlay(
             RoundedRectangle(cornerRadius: KSSTheme.shapeL)
-                .strokeBorder(KSSTheme.signColor(idx.pct).opacity(0.18), lineWidth: 1)
+                .strokeBorder(theme.signColor(idx.pct).opacity(0.18), lineWidth: 1)
         )
         .fixedSize()
     }
@@ -807,6 +817,7 @@ private struct MarqueeWidthKey: PreferenceKey {
 
 /// 总览第二行：上证 / 纳斯达克 / 恒生 指数当日。
 struct MarketIndexRow: View {
+    @Environment(\.kssTheme) private var theme
     var indices: [IndexQuote]
 
     var body: some View {
@@ -816,22 +827,22 @@ struct MarketIndexRow: View {
                     HStack(spacing: 6) {
                         Text(idx.name)
                             .font(.system(size: 13.5, weight: .bold))
-                            .foregroundStyle(KSSTheme.textPrimary)
+                            .foregroundStyle(theme.textPrimary)
                             .lineLimit(1)
                         Spacer(minLength: 4)
                         Text(dateLabel(idx.date))
                             .font(.system(size: 10.5, design: .monospaced))
-                            .foregroundStyle(KSSTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                             .lineLimit(1)
                     }
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(String(format: "%.2f", idx.close))
                             .font(KSSFont.harmonyNumber(22))
-                            .foregroundStyle(KSSTheme.signColor(idx.pct))
+                            .foregroundStyle(theme.signColor(idx.pct))
                             .lineLimit(1)
                         Text(String(format: "%+.2f%%", idx.pct))
                             .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(KSSTheme.signColor(idx.pct))
+                            .foregroundStyle(theme.signColor(idx.pct))
                             .lineLimit(1)
                         Spacer(minLength: 0)
                     }
@@ -850,6 +861,7 @@ struct MarketIndexRow: View {
 
 /// 计数卡：复盘 / 回测这类「只看数量、点击跳转」的内容，不占大版面。
 struct CountCard: View {
+    @Environment(\.kssTheme) private var theme
     var icon: String
     var count: Int
     var unit: String
@@ -862,23 +874,23 @@ struct CountCard: View {
                 HStack {
                     Image(systemName: icon)
                         .font(.system(size: 14))
-                        .foregroundStyle(KSSTheme.accent)
+                        .foregroundStyle(theme.accent)
                     Spacer()
                     Image(systemName: "chevron.right")
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(KSSTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
                     Text("\(count)")
                         .font(KSSFont.harmonyNumber(24))
-                        .foregroundStyle(KSSTheme.textPrimary)
+                        .foregroundStyle(theme.textPrimary)
                     Text(unit)
                         .font(.system(size: 12))
-                        .foregroundStyle(KSSTheme.textSecondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
                 Text(label)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .kssCard(padding: 12)
@@ -889,29 +901,30 @@ struct CountCard: View {
 
 /// 纸交易跟踪汇总卡：年化 / Sharpe / 回撤 / 胜率 / 样本。
 struct TrackingSummaryCard: View {
+    @Environment(\.kssTheme) private var theme
     var tracking: TrackingSummary
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                metric("年化", KSSFormat.percent(tracking.annualized), KSSTheme.signColor(tracking.annualized))
-                metric("Sharpe", KSSFormat.number(tracking.sharpe), KSSTheme.signColor(tracking.sharpe))
-                metric("最大回撤", KSSFormat.percent(tracking.maxDrawdown), KSSTheme.signColor(tracking.maxDrawdown))
-                metric("胜率", KSSFormat.percent(tracking.winRate), KSSTheme.textPrimary)
+                metric("年化", KSSFormat.percent(tracking.annualized), theme.signColor(tracking.annualized))
+                metric("Sharpe", KSSFormat.number(tracking.sharpe), theme.signColor(tracking.sharpe))
+                metric("最大回撤", KSSFormat.percent(tracking.maxDrawdown), theme.signColor(tracking.maxDrawdown))
+                metric("胜率", KSSFormat.percent(tracking.winRate), theme.textPrimary)
             }
-            Divider().overlay(KSSTheme.hairline)
+            Divider().overlay(theme.hairline)
             HStack {
                 Text("样本天数")
-                    .font(.system(size: 12)).foregroundStyle(KSSTheme.textSecondary)
+                    .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                 Spacer()
                 Text("\(tracking.nDaysWithReturns) / \(tracking.nDaysLogged)")
                     .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(KSSTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
             }
             if let message = tracking.message {
                 Text(message)
                     .font(.system(size: 11.5))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -922,7 +935,7 @@ struct TrackingSummaryCard: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label.uppercased())
                 .font(.system(size: 10, weight: .medium)).tracking(0.5)
-                .foregroundStyle(KSSTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
             Text(value)
                 .font(KSSFont.harmonyNumber(19))
                 .foregroundStyle(tint)
@@ -933,6 +946,7 @@ struct TrackingSummaryCard: View {
 }
 
 struct SectionHeader: View {
+    @Environment(\.kssTheme) private var theme
     var title: String
     var caption: String?
 
@@ -946,16 +960,16 @@ struct SectionHeader: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(KSSTheme.accent)
+                    .fill(theme.accent)
                     .frame(width: 4, height: 18)
                 Text(title)
                     .font(KSSFont.serif(18, .semibold))
-                    .foregroundStyle(KSSTheme.textPrimary)
+                    .foregroundStyle(theme.textPrimary)
             }
             if let caption {
                 Text(caption)
                     .font(.system(size: 11.5))
-                    .foregroundStyle(KSSTheme.textSecondary)
+                    .foregroundStyle(theme.textSecondary)
             }
         }
         .padding(.top, 6)
@@ -963,9 +977,10 @@ struct SectionHeader: View {
 }
 
 struct StatTile: View {
+    @Environment(\.kssTheme) private var theme
     var title: String
     var value: String
-    var tint: Color = KSSTheme.textPrimary
+    var tint: Color? = nil
 
     var body: some View {
         // Discord KPI tile: uppercase tracked muted label, display value, optional delta tint.
@@ -973,10 +988,10 @@ struct StatTile: View {
             Text(title.uppercased())
                 .font(.system(size: 10.5, weight: .medium))
                 .tracking(0.6)
-                .foregroundStyle(KSSTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
             Text(value)
                 .font(KSSFont.harmonyNumber(20))
-                .foregroundStyle(tint)
+                .foregroundStyle(tint ?? theme.textPrimary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
         }
@@ -986,6 +1001,7 @@ struct StatTile: View {
 }
 
 struct RecommendationCard: View {
+    @Environment(\.kssTheme) private var theme
     var item: Recommendation
 
     var body: some View {
@@ -993,23 +1009,23 @@ struct RecommendationCard: View {
             HStack {
                 Text("#\(item.rank)")
                     .font(.system(size: 13, weight: .bold).monospacedDigit())
-                    .foregroundStyle(KSSTheme.accent)
+                    .foregroundStyle(theme.accent)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background(KSSTheme.accent.opacity(0.15), in: Capsule())
+                    .background(theme.accent.opacity(0.15), in: Capsule())
                 Spacer()
                 StatusBadge.tracking(item.status)
             }
             Text(item.name.isEmpty ? item.symbol : item.name)
                 .font(.system(size: 17, weight: .bold))
-                .foregroundStyle(KSSTheme.textPrimary)
+                .foregroundStyle(theme.textPrimary)
                 .lineLimit(1)
             Text(item.symbol)
                 .font(.system(size: 13, weight: .medium, design: .monospaced))
-                .foregroundStyle(KSSTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
             HStack {
                 LabeledMetric("权重", KSSFormat.percent(item.weight))
-                LabeledMetric("跟踪", KSSFormat.percent(item.trackingReturn), tint: KSSTheme.signColor(item.trackingReturn))
+                LabeledMetric("跟踪", KSSFormat.percent(item.trackingReturn), tint: theme.signColor(item.trackingReturn))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1018,6 +1034,7 @@ struct RecommendationCard: View {
 }
 
 struct BJScanSection: View {
+    @Environment(\.kssTheme) private var theme
     var scan: BJScan
     var onSelect: (String) -> Void
 
@@ -1026,7 +1043,7 @@ struct BJScanSection: View {
             HStack(spacing: 10) {
                 StatTile(title: "扫描日", value: bjDate(scan.scanDate))
                 StatTile(title: "标的数", value: "\(scan.total)")
-                StatTile(title: "通过筛选", value: "\(scan.passed)", tint: KSSTheme.accent)
+                StatTile(title: "通过筛选", value: "\(scan.passed)", tint: theme.accent)
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 10)], spacing: 10) {
                 ForEach(scan.top) { item in
@@ -1034,26 +1051,26 @@ struct BJScanSection: View {
                         HStack {
                             Text(item.name.isEmpty ? item.symbol : item.name)
                                 .font(.system(size: 14.5, weight: .bold))
-                                .foregroundStyle(KSSTheme.textPrimary)
+                                .foregroundStyle(theme.textPrimary)
                                 .lineLimit(1)
                             Spacer()
                             Text(KSSFormat.number(item.score, digits: 2))
                                 .font(.system(size: 13, weight: .heavy, design: .monospaced))
-                                .foregroundStyle(KSSTheme.accent)
+                                .foregroundStyle(theme.accent)
                         }
                         Text("\(item.symbol) · \(item.industry)")
                             .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(KSSTheme.textSecondary)
+                            .foregroundStyle(theme.textSecondary)
                             .lineLimit(1)
                         HStack {
                             Text(item.tag)
                                 .font(.system(size: 10.5))
-                                .foregroundStyle(KSSTheme.textSecondary)
+                                .foregroundStyle(theme.textSecondary)
                                 .lineLimit(1)
                             Spacer()
                             Text("20日 " + KSSFormat.percent(item.ret20d))
                                 .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(KSSTheme.signColor(item.ret20d))
+                                .foregroundStyle(theme.signColor(item.ret20d))
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1071,11 +1088,12 @@ struct BJScanSection: View {
 }
 
 struct LabeledMetric: View {
+    @Environment(\.kssTheme) private var theme
     var label: String
     var value: String
-    var tint: Color
+    var tint: Color?
 
-    init(_ label: String, _ value: String, tint: Color = KSSTheme.textPrimary) {
+    init(_ label: String, _ value: String, tint: Color? = nil) {
         self.label = label
         self.value = value
         self.tint = tint
@@ -1085,10 +1103,10 @@ struct LabeledMetric: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
                 .font(.caption2)
-                .foregroundStyle(KSSTheme.textSecondary)
+                .foregroundStyle(theme.textSecondary)
             Text(value)
                 .font(.callout.monospacedDigit())
-                .foregroundStyle(tint)
+                .foregroundStyle(tint ?? theme.textPrimary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

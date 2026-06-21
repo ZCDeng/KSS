@@ -373,13 +373,33 @@
       chart.timeScale().fitContent();
     }
 
-    function applyTheme(isDark) {
-      const want = isDark ? "dark" : "light";
-      document.documentElement.classList.toggle("dark", isDark);
-      if (want === currentTheme) return;
-      currentTheme = want;
-      COLORS = PALETTES[want];
-      if (chart) { chart.remove(); chart = null; }  // 用新配色重建
+    // 从原生 palette payload 应用主题：覆盖 COLORS + CSS 变量，并从缓存 rawBars 重建图表
+    // （保留 currentTF 与 indState）。主题 API 与数据 API 分离，不依赖后续 kssSetData。
+    function applyThemePayload(p) {
+      const c = (p && p.colors) || {};
+      COLORS = {
+        up: c.up, down: c.down, ma5: c.ma5, ma20: c.ma20,
+        grid: c.grid, text: c.text, bg: c.chartBg || c.bg, cross: c.cross,
+        upFill: c.upFill, downFill: c.downFill,
+        dif: c.dif, dea: c.dea, obv: c.obv, bbi: c.bbi, boll: c.boll,
+      };
+      currentTheme = (p && p.mode) || currentTheme;
+      const r = document.documentElement.style;
+      r.setProperty("--bg", COLORS.bg);
+      r.setProperty("--text", c.ink || c.text);
+      r.setProperty("--muted", c.muted);
+      r.setProperty("--ma5", c.ma5); r.setProperty("--ma20", c.ma20);
+      r.setProperty("--bbi", c.bbi); r.setProperty("--boll", c.boll);
+      r.setProperty("--chip", c.chip); r.setProperty("--chipText", c.chipText);
+      r.setProperty("--chipOn", c.chipOn); r.setProperty("--hair", c.hair);
+      if (p && p.typography) document.body.style.fontFamily = p.typography.sans;
+      if (p && p.shape) {
+        document.querySelectorAll("#tf button, #ind button")
+          .forEach(b => { b.style.borderRadius = p.shape.chip + "px"; });
+      }
+      // 用新配色重建（renderTF 从 rawBars 还原数据，applyIndVisibility 还原指标可见性）。
+      if (chart) { chart.remove(); chart = null; }
+      if (buildChart()) renderTF();
     }
 
     function wireTF() {
@@ -421,12 +441,20 @@
       });
     }
 
-    window.kssSetData = function (json, isDark) {
+    // 数据 API：只更新数据，不碰主题。
+    window.kssSetData = function (json) {
       try {
-        if (typeof isDark === "boolean") applyTheme(isDark);
         const payload = typeof json === "string" ? JSON.parse(json) : json;
         setData(payload);
       } catch (e) { document.getElementById("legend").textContent = "chart error: " + e; }
+    };
+
+    // 主题 API：只更新配色/字体并从缓存重绘，不需要新数据推送。
+    window.kssSetTheme = function (payload) {
+      try {
+        const p = typeof payload === "string" ? JSON.parse(payload) : payload;
+        applyThemePayload(p);
+      } catch (e) { document.getElementById("legend").textContent = "theme error: " + e; }
     };
 
     document.addEventListener("DOMContentLoaded", function () {
