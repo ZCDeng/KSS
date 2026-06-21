@@ -198,12 +198,6 @@ struct ContentView: View {
                     onRerunMany: { labels in Task { await store.rerunScheduledJobs(labels) } },
                     onDismissBatchNote: { store.scheduledBatchNote = nil }
                 )
-            case .hotspot:
-                HotspotRotationView(
-                    rotation: snapshot.latestSectorRotation,
-                    onOpenThemes: { store.selectedSection = .themes },
-                    onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } }
-                )
             case .themes:
                 ThemesView(
                     themes: store.themeLeaders,
