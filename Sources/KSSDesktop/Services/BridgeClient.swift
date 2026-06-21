@@ -152,9 +152,16 @@ struct BridgeClient {
         try run(["trends-day", date], as: TrendDayDetail.self)
     }
 
+    /// 长跑任务（run/import 拉数据、回测、回填）直接走 subprocess：sidecar 的 3s
+    /// socket 超时会误判不可用并回退，而 daemon 仍在跑同一任务 → 双跑（重复 Tushare
+    /// 调用 + 争抢同一归档）。这些命令不属于热路径读，无需暖 pandas。
+    private static let subprocessOnlyCommands: Set<String> = ["run", "import"]
+
     private func run<T: Decodable>(_ args: [String], as type: T.Type) throws -> T {
-        // U5：优先常驻 sidecar（pandas 暖、无 per-call python 启动）；socket 不可用回退 subprocess。
-        if let envelope = try sidecarRequest(args) {
+        // U5：热路径读优先常驻 sidecar（pandas 暖、无 per-call python 启动）；
+        // socket 不可用回退 subprocess。长跑任务跳过 sidecar 避免 3s 超时双跑。
+        if let cmd = args.first, !Self.subprocessOnlyCommands.contains(cmd),
+           let envelope = try sidecarRequest(args) {
             return try Self.decodeEnvelope(envelope)
         }
         return try runSubprocess(args)

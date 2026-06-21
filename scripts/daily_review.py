@@ -182,7 +182,9 @@ def _ensure_stock_data(sym: str, exch: str, target_date: str) -> tuple[pd.DataFr
 
     ``exch`` 为交易所后缀 (SH/SZ/BJ), 拼 tushare ts_code; cs_data 文件名仍只用 6 位 code。
     """
-    fp = PROJECT_ROOT / f'cs_data_{sym}.csv'
+    # cs_data 读自 state root —— 与 update_cs_data/ensure_history 写入同根
+    # (bundle-mode 下 PROJECT_ROOT 是只读 bundle, 回填写在 state root)。
+    fp = _KSS_STATE / f'cs_data_{sym}.csv'
     if not fp.exists():
         raise FileNotFoundError(f"{fp} 不存在")
     df = pd.read_csv(fp)
@@ -214,7 +216,7 @@ def _ensure_stock_data(sym: str, exch: str, target_date: str) -> tuple[pd.DataFr
 
 
 def _ensure_index_data(code: str, target_date: str) -> pd.DataFrame:
-    fp = PROJECT_ROOT / f'idx_{code.replace(".", "_")}.csv'
+    fp = _KSS_STATE / f'idx_{code.replace(".", "_")}.csv'
     if fp.exists():
         df = pd.read_csv(fp, dtype={'trade_date': str})
         df['trade_date'] = pd.to_datetime(df['trade_date'], format='%Y%m%d')
@@ -239,7 +241,7 @@ def _ensure_index_data(code: str, target_date: str) -> pd.DataFrame:
 
 
 def _ensure_moneyflow(sym: str, exch: str, target_date: str) -> pd.DataFrame:
-    fp = PROJECT_ROOT / f'mf_{sym}_{exch}.csv'
+    fp = _KSS_STATE / f'mf_{sym}_{exch}.csv'
     if fp.exists():
         df = pd.read_csv(fp, dtype={'trade_date': str})
         df['trade_date'] = pd.to_datetime(df['trade_date'], format='%Y%m%d')

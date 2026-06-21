@@ -135,11 +135,19 @@ def update_one(
     Returns:
         (新增行数, 最终最大日期 YYYY-MM-DD).
     """
-    ts_code = csv_path.stem.replace("cs_data_", "") + ".SH"
-    if "300" in ts_code.split(".")[0][:3] or "301" in ts_code.split(".")[0][:3]:
-        ts_code = csv_path.stem.replace("cs_data_", "") + ".SZ"
-
     existing = pd.read_csv(csv_path)
+
+    # 交易所后缀优先从 ts_code 列恢复（ensure_history 回填的 SZ/BJ 才不会被
+    # 增量误请求成 .SH）；列缺失时退化到文件名前缀推断（仅识别 300/301→SZ）。
+    code = csv_path.stem.replace("cs_data_", "")
+    ts_code = ""
+    if "ts_code" in existing.columns and len(existing):
+        ts_code = str(existing["ts_code"].iloc[-1]).strip()
+    if not ts_code or "." not in ts_code:
+        head = code[:3]
+        exch = "SZ" if head in ("300", "301") else "SH"
+        ts_code = f"{code}.{exch}"
+
     existing["trade_date"] = pd.to_datetime(existing["trade_date"])
     max_date = existing["trade_date"].max()
 

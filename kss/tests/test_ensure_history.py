@@ -117,6 +117,36 @@ def test_illegal_exchange_raises(state):
         uc.ensure_history("688322", "XX", client=_FakeClient())
 
 
+def test_update_one_recovers_exchange_from_ts_code_column(state):
+    # finding 3: ensure_history 回填的 BJ/SZ 股, update_one 增量须从 ts_code 列恢复后缀,
+    # 不能从文件名推成 .SH。
+    import pandas as pd
+    csv = state / "cs_data_920819.csv"
+    pd.DataFrame({
+        "ts_code": ["920819.BJ"], "trade_date": ["2021-01-04"],
+        "open": [1.0], "high": [1.1], "low": [0.9], "close": [1.05],
+        "pre_close": [1.0], "change": [0.05], "pct_chg": [5.0],
+        "vol": [100.0], "amount": [105.0], "turnover_rate": [1.0],
+        "volume_ratio": [1.0], "pe": [10.0], "pb": [2.0], "total_mv": [1e6],
+    }).to_csv(csv, index=False)
+    client = _FakeClient()
+    uc.update_one(csv, client, end_date="20210106")
+    assert client.daily_calls[0][0] == "920819.BJ"  # 非 920819.SH
+
+
+def test_update_one_fallback_when_ts_code_malformed(state):
+    import pandas as pd
+    csv = state / "cs_data_300750.csv"
+    # ts_code 列存在但值无后缀(畸形) → 走文件名前缀推断兜底
+    cols = {c: [1.0] for c in uc.EXPECTED_COLS}
+    cols["ts_code"] = ["300750"]  # 缺 .SZ
+    cols["trade_date"] = ["2021-01-04"]
+    pd.DataFrame(cols).to_csv(csv, index=False)
+    client = _FakeClient()
+    uc.update_one(csv, client, end_date="20210106")
+    assert client.daily_calls[0][0] == "300750.SZ"  # 文件名推断兜底 300→SZ
+
+
 def test_list_date_falls_back_when_basic_fails(state):
     class _NoBasic(_FakeClient):
         def fetch_stock_basic(self, exchange=None, **_):
