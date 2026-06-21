@@ -1,0 +1,121 @@
+# 数据目录语义 overlay —— 手维「含义」+ 日期列声明，与自动反射的 schema 合并。
+# 自动部分(列名/类型/freshness)永不漂移；本文件只补 code 无法反射的人类知识。
+# 失配检测：overlay 里写了但实际 parquet/csv 不存在的列，生成器会写进 overlayDrift + 告警(KTD-1)。
+# dateKind: column-max(取该列 max) | filename(目录数据集按文件名日期) | none(无日期概念)
+version: 1
+updated: '2026-06-22'
+
+datasets:
+  cs_data:
+    dateColumn: trade_date
+    dateKind: column-max
+    meanings:
+      ts_code: 股票代码(如 688114.SH)
+      trade_date: 交易日 YYYYMMDD
+      close: 收盘价
+      pct_chg: 当日涨跌幅(%)
+      vol: 成交量(手)
+      amount: 成交额(千元)
+      turnover_rate: 换手率(%)
+      volume_ratio: 量比
+      pe: 市盈率
+      pb: 市净率
+      total_mv: 总市值(万元)
+
+  margin_daily:
+    dateColumn: trade_date
+    dateKind: column-max
+    meanings:
+      exchange_id: 交易所(SSE/SZSE)
+      rzye: 融资余额(元)
+      rzmre: 融资买入额(元)
+      rzche: 融资偿还额(元)
+      rqye: 融券余额(元)
+      rqmcl: 融券卖出量(股)
+      rzrqye: 融资融券余额(元)
+      rqyl: 融券余量(股)
+
+  macro_daily:
+    dateColumn: trade_date
+    dateKind: column-max
+    meanings:
+      shibor_on: Shibor 隔夜
+      shibor_1y: Shibor 1年
+      yld_1y: 国债收益率 1年
+      yld_5y: 国债收益率 5年
+      yld_10y: 国债收益率 10年
+
+  macro_monthly:
+    dateColumn: month
+    dateKind: column-max
+    meanings:
+      month: 月份 YYYYMM
+      m2: M2 货币供应量
+      m2_yoy: M2 同比(%)
+      cpi_val: CPI 当月值
+      cpi_yoy: CPI 同比(%)
+
+  pmi_monthly:
+    dateColumn: MONTH
+    dateKind: column-max
+    meanings:
+      MONTH: 月份
+      PMI010600: 制造业 PMI(总指数)
+
+  fina_quarterly:
+    dateColumn: ann_date
+    dateKind: column-max
+    meanings:
+      ts_code: 股票代码
+      ann_date: 公告日
+      end_date: 报告期末
+      eps: 每股收益
+      profit_dedt: 扣非净利润
+
+  hsgt_daily:
+    dateColumn: trade_date
+    dateKind: column-max
+    meanings:
+      north_money: 北向资金净流入(百万元)
+      south_money: 南向资金净流入(百万元)
+      hgt: 沪股通
+      sgt: 深股通
+
+  regime_daily:
+    dateColumn: trade_date
+    dateKind: column-max
+    meanings:
+      stage: 周期阶段分类(I/II/III/IV)
+      stage_raw: 原始阶段判定
+      confidence: 阶段置信度
+      n_signals: 触发信号数
+
+  valuation_n_daily:
+    dateColumn: trade_date
+    dateKind: column-max
+    meanings:
+      pe: Bolton PE 估值
+      risk_free: 无风险利率
+      n_years: 估值年限
+
+  stock_basic:
+    dateKind: none
+    meanings:
+      ts_code: 股票代码
+      name: 名称
+      industry: 申万行业
+      list_date: 上市日
+
+  dailybasic_latest:
+    dateColumn: trade_date
+    dateKind: column-max
+    meanings:
+      circ_mv: 流通市值(万元)
+      pe_ttm: 市盈率 TTM
+
+  hs300_dailybasic:
+    dateColumn: trade_date
+    dateKind: column-max
+    meanings:
+      total_mv: 总市值
+      pe_ttm: 市盈率 TTM
