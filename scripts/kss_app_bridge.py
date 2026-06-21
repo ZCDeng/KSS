@@ -1200,9 +1200,12 @@ def _run_formal_daily_review(args: dict[str, str | bool]) -> dict[str, Any]:
         )
 
     archive_date = f"{target[:4]}-{target[4:6]}-{target[6:8]}"
+    # cron 批保留原 322/017 —— 显式传 --symbols (那两只的唯一存活处, 非脚本隐藏默认)。
     command = [
         str(python),
-        "scripts/daily_review_322_017.py",
+        "scripts/daily_review.py",
+        "--symbols",
+        "688322.SH,688017.SH",
         "--date",
         target,
         "--channel",
@@ -1214,7 +1217,10 @@ def _run_formal_daily_review(args: dict[str, str | bool]) -> dict[str, Any]:
         "Formal Daily Review",
         command,
         started,
-        artifacts=[f"storage/daily_review/{archive_date}.md"],
+        artifacts=[
+            f"storage/daily_review/{archive_date}_688322.SH.md",
+            f"storage/daily_review/{archive_date}_688017.SH.md",
+        ],
         timeout=300,
     )
 

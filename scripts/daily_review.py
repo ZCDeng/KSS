@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""688322 & 688017 每日复盘 + 次日预测 → Telegram
+"""个股每日复盘 + 次日预测 → Telegram / console
 
-每个交易日 19:00 cron 调用, 输出 4 段:
+标的由 ``--symbols`` 传入 (逗号分隔, 带交易所后缀), 不再写死。每个标的输出 4 段:
   1. 当日表现 (价 / 量 / MACD / 大单 / 形态触发)
   2. 大盘背景 (5 个核心指数, 异常项 alerted)
   3. 次日预测 (大盘条件 + 资金条件 双口径均值, 历史 IC 标注)
   4. 操作建议 (基于触发形态 + 历史样本)
 
+产物**按股归档** ``storage/daily_review/{date}_{ts_code}.md`` (每股一文件, 即时单只生成
+不互相覆盖)。情形分布段对**次新股 (历史 < SCENARIO_MIN_HISTORY 日) 跳过** (补历史也救不了
+样本不足的尾部低估, 给次新股看权威实则垃圾的分布是产品不诚信)。
+
 用法:
-  python3 scripts/daily_review_322_017.py                 # 今日, console 通道
-  python3 scripts/daily_review_322_017.py --channel telegram
-  python3 scripts/daily_review_322_017.py --channel all
-  python3 scripts/daily_review_322_017.py --dry-run       # 仅打印
-  python3 scripts/daily_review_322_017.py --date 20260522 # 指定日期
+  python3 scripts/daily_review.py --symbols 688322.SH,688017.SH            # console
+  python3 scripts/daily_review.py --symbols 300750.SZ --channel telegram
+  python3 scripts/daily_review.py --symbols 688322.SH --dry-run
+  python3 scripts/daily_review.py --symbols 688322.SH --date 20260522
+  (缺 --symbols → 大声报错, 无静默回退写死标的)
 
 数据获取顺序: tushare 增量 → 失败时退化到 cs_data_xxxx.csv 缓存 + 响亮告警 (不静默崩溃)
 """
@@ -39,14 +43,10 @@ from kss.notifications.manager import CHANNEL_CHOICES, send_to_channels  # noqa:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-# 每只股票的标签:
+# category 标签 (任意自选股默认 alpha; 大单流出判读语义见 _advice_block):
 #   alpha       - 板块龙头 alpha 主升, 大单流出常是主力换手 (反指)
 #   speculation - 博弈股, 跟板块低相关, 大单流出 = 真出货 (顺指)
-STOCKS = [
-    ('688322', '奥比中光', 'alpha'),
-    ('688017', '绿的谐波', 'alpha'),
-    # ('688268', '华特气体', 'speculation'),  # 2026-06-07 移除: 预测校验显示其 n=16 条件分布接近均匀, 无信息量
-]
+DEFAULT_CATEGORY = 'alpha'  # KTD2: 任意自选股缺 category 时保守默认 (反指, 不激进判出货)
 CATEGORY_LABEL = {
     'alpha': '🚀 板块龙头 (alpha 主升)',
     'speculation': '🎲 博弈股 (跟板块低相关)',
@@ -73,6 +73,65 @@ SCENARIO_ENABLED: bool = True
 REGIME_MOMENTUM = "momentum"
 REGIME_NEUTRAL = "neutral"
 COND_INTERVAL_MIN_N = 20  # 条件样本 < 此值 → 强制无条件分位 (不允许小样本收窄)
+
+# 次新股情形段门 (KTD5): 历史 (可算 fwd_1d 的总样本) < 此值 → 跳过情形分布段,
+# 只出关键位 + 3 口径均值 + 操作建议。复用指标 warmup 口径 (add_indicators 的
+# rolling 分位 min_periods=120): 低于此连指标分位都不可靠, 情形段必然是垃圾。
+SCENARIO_MIN_HISTORY = 120
+
+
+def parse_symbols(raw: str) -> list[tuple[str, str, str]]:
+    """``"688322.SH,300750.SZ"`` → ``[(code, exchange, category), ...]``.
+
+    code = 6 位数字, exchange ∈ {SH, SZ, BJ}; category 统一默认 ``DEFAULT_CATEGORY``
+    (per-symbol category 持久化是 follow-on)。缺后缀按 6 位首位推断 (科创/沪主 .SH /
+    创业/深主 .SZ / 北交 .BJ), 但**推荐显式带后缀**。空/非法 → ValueError (大声报错)。
+    """
+    out: list[tuple[str, str, str]] = []
+    for tok in (raw or '').split(','):
+        tok = tok.strip().upper()
+        if not tok:
+            continue
+        if '.' in tok:
+            code, exch = tok.split('.', 1)
+        else:
+            code, exch = tok, _infer_exchange(tok)
+        if not (code.isdigit() and len(code) == 6) or exch not in ('SH', 'SZ', 'BJ'):
+            raise ValueError(f"非法 symbol: {tok!r} (期望 6位数字.SH/SZ/BJ)")
+        out.append((code, exch, DEFAULT_CATEGORY))
+    if not out:
+        raise ValueError("--symbols 为空: 必须显式传标的, 无静默回退写死列表")
+    return out
+
+
+def _infer_exchange(code: str) -> str:
+    """6 位代码首段推断交易所 (仅缺后缀时兜底, 推荐显式传)。"""
+    head = code[:3]
+    if head in ('688', '605', '603', '601', '600', '600'):
+        return 'SH'
+    if head in ('920',) or code.startswith('8') or code.startswith('43'):
+        return 'BJ'
+    return 'SZ'  # 300/301/000/002 等
+
+
+_NAME_CACHE: dict[str, str] = {}
+
+
+def resolve_name(code: str, exch: str) -> str:
+    """``pro.stock_basic`` 取证券简称; 失败 → 回退 ``(code)`` (标题降级不阻断)。"""
+    ts_code = f'{code}.{exch}'
+    if ts_code in _NAME_CACHE:
+        return _NAME_CACHE[ts_code]
+    name = ''
+    try:
+        pro = _pro()
+        info = pro.stock_basic(ts_code=ts_code, fields='ts_code,name')
+        if len(info):
+            name = str(info.iloc[0]['name'])
+    except Exception as e:  # noqa: BLE001  名称取不到不阻断复盘
+        logger.warning("  stock_basic 取名失败 %s: %s", ts_code, e)
+    _NAME_CACHE[ts_code] = name
+    return name
 
 
 # ===== 数据加载 =====
@@ -103,12 +162,14 @@ def next_trade_date(today_yyyymmdd: str) -> str:
             return d.strftime('%Y%m%d')
 
 
-def _ensure_stock_data(sym: str, target_date: str) -> tuple[pd.DataFrame, bool]:
+def _ensure_stock_data(sym: str, exch: str, target_date: str) -> tuple[pd.DataFrame, bool]:
     """加载或增量更新 cs_data csv 到目标日期.
 
     返回 ``(df, fell_back)``：``fell_back=True`` 表示本想拉到 target 但 Tushare
     失败、退化到了缓存（用于在复盘正文标注数据截止日）。假期等"无新数据"场景
     不算退化（不抛异常），``fell_back`` 保持 False。
+
+    ``exch`` 为交易所后缀 (SH/SZ/BJ), 拼 tushare ts_code; cs_data 文件名仍只用 6 位 code。
     """
     fp = PROJECT_ROOT / f'cs_data_{sym}.csv'
     if not fp.exists():
@@ -121,8 +182,8 @@ def _ensure_stock_data(sym: str, target_date: str) -> tuple[pd.DataFrame, bool]:
     if last < target_date:
         try:
             pro = _pro()
-            new = pro.daily(ts_code=f'{sym}.SH', start_date=last, end_date=target_date)
-            basic = pro.daily_basic(ts_code=f'{sym}.SH', start_date=last, end_date=target_date)
+            new = pro.daily(ts_code=f'{sym}.{exch}', start_date=last, end_date=target_date)
+            basic = pro.daily_basic(ts_code=f'{sym}.{exch}', start_date=last, end_date=target_date)
             if len(new) and len(basic):
                 new['trade_date'] = pd.to_datetime(new['trade_date'], format='%Y%m%d')
                 basic['trade_date'] = pd.to_datetime(basic['trade_date'], format='%Y%m%d')
@@ -166,8 +227,8 @@ def _ensure_index_data(code: str, target_date: str) -> pd.DataFrame:
     return df
 
 
-def _ensure_moneyflow(sym: str, target_date: str) -> pd.DataFrame:
-    fp = PROJECT_ROOT / f'mf_{sym}_SH.csv'
+def _ensure_moneyflow(sym: str, exch: str, target_date: str) -> pd.DataFrame:
+    fp = PROJECT_ROOT / f'mf_{sym}_{exch}.csv'
     if fp.exists():
         df = pd.read_csv(fp, dtype={'trade_date': str})
         df['trade_date'] = pd.to_datetime(df['trade_date'], format='%Y%m%d')
@@ -178,7 +239,7 @@ def _ensure_moneyflow(sym: str, target_date: str) -> pd.DataFrame:
     if last < target_date:
         try:
             pro = _pro()
-            new = pro.moneyflow(ts_code=f'{sym}.SH', start_date=last, end_date=target_date)
+            new = pro.moneyflow(ts_code=f'{sym}.{exch}', start_date=last, end_date=target_date)
             if len(new):
                 new['trade_date'] = pd.to_datetime(new['trade_date'], format='%Y%m%d')
                 if len(df):
@@ -511,6 +572,8 @@ def stock_section(sym: str, name: str, df: pd.DataFrame, mf_today: dict | None,
     out['scenario_adj'], out['scenario_reasons'] = adjusted_scenarios(base_dist, out, regime)
     # 区间底线: 全历史无条件分位与条件分位取宽 (U4 / R1)
     out['scenario_band'] = widen_interval(base_dist, unconditional_interval(df))
+    # 次新股门 (KTD5): 可算 fwd_1d 的总样本数, 用于决定是否渲染情形段
+    out['history_len'] = int(df['fwd_1d'].notna().sum())
     # 关键位
     out['levels'] = key_levels(df, last)
     return out
@@ -814,9 +877,13 @@ def render(stocks: list[dict], idx_dfs: dict, today_str: str, t1_str: str,
                          f"次日 {kc100['mean']*100:+.2f}% (胜率 {kc100['win']*100:.0f}%)")
         lines.append("")
 
-        # 情形分布表 (撤段闸: SCENARIO_ENABLED=False 时该段不渲染, U4 / R5)
+        # 情形分布表: 撤段闸 (SCENARIO_ENABLED, U4/R5) + 次新股门 (KTD5)。
+        # 历史 < SCENARIO_MIN_HISTORY 日 → 跳过 (补历史救不了样本不足, 不给次新股看垃圾分布)。
         if SCENARIO_ENABLED:
-            lines.extend(_scenario_table(s))
+            if s.get('history_len', 0) >= SCENARIO_MIN_HISTORY:
+                lines.extend(_scenario_table(s))
+            else:
+                lines.append(f"  _情形分布: 历史仅 {s.get('history_len', 0)} 日 (< {SCENARIO_MIN_HISTORY}), 次新股样本不足, 略_")
             lines.append("")
 
         # 操作建议
@@ -829,10 +896,18 @@ def render(stocks: list[dict], idx_dfs: dict, today_str: str, t1_str: str,
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--symbols', required=True,
+                        help='逗号分隔的标的, 带交易所后缀, e.g. 688322.SH,300750.SZ (无静默回退)')
     parser.add_argument('--date', help='目标日期 YYYYMMDD, 默认今日')
     parser.add_argument('--channel', choices=CHANNEL_CHOICES, default='console')
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
+
+    try:
+        symbols = parse_symbols(args.symbols)
+    except ValueError as e:
+        logger.error("--symbols 解析失败: %s", e)
+        sys.exit(2)
 
     target = args.date or datetime.now().strftime('%Y%m%d')
     today_str = datetime.strptime(target, '%Y%m%d').strftime('%Y-%m-%d')
@@ -855,14 +930,16 @@ def main():
     logger.info(f"  动量 regime = {regime}")
 
     stocks_data = []
+    ts_codes: list[str] = []  # 与 stocks_data 同序, 用于按股归档命名
     stale_through: str | None = None  # 实时源失败退化到缓存时的最早数据截止日
-    for sym, name, category in STOCKS:
-        df, fell_back = _ensure_stock_data(sym, target)
+    for sym, exch, category in symbols:
+        name = resolve_name(sym, exch)
+        df, fell_back = _ensure_stock_data(sym, exch, target)
         if fell_back:
             last_date = df['trade_date'].max().strftime('%Y-%m-%d')
             stale_through = last_date if stale_through is None else min(stale_through, last_date)
         df = add_indicators(df)
-        mf = _ensure_moneyflow(sym, target)
+        mf = _ensure_moneyflow(sym, exch, target)
         mf_today = None
         if len(mf):
             mf_last = mf.iloc[-1]
@@ -875,22 +952,29 @@ def main():
         s['_df'] = df
         s['category'] = category
         stocks_data.append(s)
+        ts_codes.append(f'{sym}.{exch}')
 
     chunks = render(stocks_data, idx_dfs, today_str, t1_str, stale_through=stale_through)
+    # chunks 结构: [大盘背景, 个股1, 个股2, ..., footer]
+    market_chunk = chunks[0]
+    footer_chunk = chunks[-1]
+    stock_chunks = chunks[1:-1]
 
-    # 存档: 落盘到 storage/daily_review/YYYY-MM-DD.md
-    # dry-run 不覆盖已存在的档案——存档是预测校验 (validate_predictions.py) 的审计底稿,
-    # 回放旧日期重新生成 (STOCKS 变更 / 数据修订) 会静默改写历史预测记录
+    # 存档: **按股**落盘 storage/daily_review/{date}_{ts_code}.md (KTD3)。
+    # 每文件自含 [大盘背景 + 该股 + footer], 即时单只生成不覆盖其他股当日产物。
+    # dry-run 不覆盖已存在档案——存档是 validate_predictions.py 审计底稿,
+    # 回放旧日期重新生成 (数据修订) 会静默改写历史预测记录。
     archive_dir = _KSS_STATE / "storage" / 'daily_review'
     archive_dir.mkdir(parents=True, exist_ok=True)
-    archive_path = archive_dir / f'{today_str}.md'
     header = f"# KSS {today_str} 复盘 / {t1_str} 预测\n\n"
-    body = "\n\n---\n\n".join(chunks)
-    if args.dry_run and archive_path.exists():
-        logger.warning(f"  dry-run: 档案已存在, 跳过覆盖 {archive_path}")
-    else:
-        archive_path.write_text(header + body, encoding='utf-8')
-        logger.info(f"  存档: {archive_path}")
+    for ts_code, stock_chunk in zip(ts_codes, stock_chunks):
+        archive_path = archive_dir / f'{today_str}_{ts_code}.md'
+        body = "\n\n---\n\n".join([market_chunk, stock_chunk, footer_chunk])
+        if args.dry_run and archive_path.exists():
+            logger.warning(f"  dry-run: 档案已存在, 跳过覆盖 {archive_path}")
+        else:
+            archive_path.write_text(header + body, encoding='utf-8')
+            logger.info(f"  存档: {archive_path}")
 
     if args.dry_run:
         for i, c in enumerate(chunks):

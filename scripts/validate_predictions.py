@@ -303,7 +303,7 @@ def render_summary(s: dict, lookback_days: int) -> str:
     if s["brier"] > 0.8 or s["dir_rate"] < 0.45:
         lines += ["",
                   "⛔ 情形分布停用判据已触发 (本窗口 Brier>0.8 或方向<45%)。"
-                  "若连续两周触发, 建议将 daily_review_322_017.py 的 "
+                  "若连续两周触发, 建议将 daily_review.py 的 "
                   "SCENARIO_ENABLED = False 并重启 cron。"]
     else:
         lines += ["", "_历史 IC≈0 的先验如果连续两周 Brier>0.8 或方向<45%, 建议停用情形分布段_"]
