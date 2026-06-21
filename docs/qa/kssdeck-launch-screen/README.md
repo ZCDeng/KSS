@@ -46,6 +46,29 @@ XCTest 套件 `LaunchStateTests.swift` / `LaunchResourceTests.swift` 已就位�
 - `store.loadSnapshot()` 与动画并行、只在根 `.task` 调一次；进入即见已加载好的 dashboard。
 - 四符号为中性几何（无 PlayStation 名称/配色/logo/手柄轮廓）。
 
+## 追加：玻璃折射动态背景（feat/kssdeck-launch-glass-bg）
+
+在 `launch.html` 的 SVG timeline **之下**叠了一层裸 WebGL 玻璃折射背景（垂直玻璃肋 +
+RGB 色散 + bloom，参考 Ion Lucin《Vitrium Opus》的**技术语言**，非复制其渲染图）。
+**已实现的 SVG 动画一字未改** —— 背景是独立 IIFE，不触碰 SVG/reducer/消息边界。
+
+| 验证点 | 结果 | 证据 |
+| --- | --- | --- |
+| 暗色（Airbnb）：玻璃在 SVG 之后；fringe/glow 随当前 accent 着色（rose）；中心 scrim 压暗文字区，KSS/口号/按钮 AA 可读 | PASS | 暗色玻璃背景截图 |
+| 暗色：首轮 SVG timeline 完整播放并收束（△○×□→KSS→口号→按钮），与无背景版一致 | PASS | 首轮完成截图 |
+| **亮色（Material 3）：玻璃关闭，退回纯主题底** —— 避免亮底铺暗玻璃破 AA | PASS | 亮色纯底截图 |
+| 玻璃 rAF 运行时点「进入工作台」仍干净进入（teardown 不卡） | PASS | 进入后 dashboard 截图 |
+| 离线契约保持：launch.html 仍无 CDN/https/@import、无 `<text>`、gsap/kssLaunch/button 锚点都在 | PASS | grep 校验 |
+
+实现要点：
+- 单 shader、一个全屏三角形、裸 `WebGLRenderingContext`，**零新依赖**（不引入 three.js）。
+- 性能护栏：渲染 0.7x 分辨率 + DPR 封顶 1.5；`visibilitychange` 隐藏时暂停 rAF。
+- 主题策略：`payload.mode !== "dark"` 直接 return（亮色纯底）；`accent` 解析为 uniform 着色 fringe/glow。
+- reduced-motion：只 `draw(0)` 渲一帧，不进 rAF（沿用 SVG 层的同名契约）。
+- 原型留档：`docs/prototypes/glass-bg/index.html`（浏览器实测 60fps，含 spectral/accent/去饱和/scrim 实时开关）。
+
+未尽（玻璃部分）：浏览器实测 60fps，但 **WKWebView 内的帧率/功耗未用 Web Inspector + Instruments 量**（验收第 6 条的仪器读数）；亮色「去饱和弱玻璃」的折中方案未做（直接走关闭，最稳）。
+
 ## 未尽事项（诚实记录）
 
 - `swift test` 需完整 Xcode；本环境已用 `swiftc` 验证 reducer/router 全部分支，资源契约用 shell 等价校验，但 XCTest 套件本身未在本机执行。

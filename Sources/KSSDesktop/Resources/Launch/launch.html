@@ -11,12 +11,14 @@
   }
   *{margin:0;padding:0;box-sizing:border-box}
   html,body{height:100%;width:100%;overflow:hidden;background:var(--bg)}
+  /* 玻璃折射背景：仅暗色主题启用，位于 SVG timeline 之下；亮色保持隐藏露出纯主题底 */
+  #bg{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;opacity:0;transition:opacity .45s ease}
   #stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
-         background:var(--bg);color:var(--ink)}
+         color:var(--ink);z-index:1}
   #art{width:min(84vw,820px);height:auto;color:var(--ink);overflow:visible}
-  #status{position:fixed;left:0;right:0;bottom:8.5%;text-align:center;color:var(--muted);
+  #status{position:fixed;left:0;right:0;bottom:8.5%;text-align:center;color:var(--muted);z-index:2;
           font-family:var(--sans);font-size:12px;letter-spacing:.22em;text-transform:uppercase;opacity:0}
-  #enter{position:fixed;left:50%;bottom:12%;transform:translateX(-50%);appearance:none;border:0;
+  #enter{position:fixed;left:50%;bottom:12%;transform:translateX(-50%);appearance:none;border:0;z-index:2;
          cursor:pointer;opacity:0;pointer-events:none;background:var(--accent);color:var(--onAccent);
          font-family:var(--sans);font-size:15px;font-weight:600;letter-spacing:.04em;
          padding:12px 40px;border-radius:999px}
@@ -24,6 +26,7 @@
 </style>
 </head>
 <body>
+  <canvas id="bg" aria-hidden="true"></canvas>
   <div id="stage">
     <svg id="art" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600" fill="none" role="img" aria-labelledby="art-title art-desc">
   <title id="art-title">KSS 启动画面</title>
@@ -138,6 +141,141 @@
     loop.to(symbols,{opacity:0,y:26,duration:0.4,ease:'power1.in'},1.9);
     loop.to({},{duration:0.5}); // 呼吸间隔 → 单轮 ≈2.6s
   }
+})();
+</script>
+
+<!-- ── 玻璃折射背景层（独立 IIFE，不触碰上方 SVG timeline）────────────────────
+     仅暗色主题启用；亮色保持隐藏露出纯主题底（避免亮底铺暗玻璃破 AA）。
+     裸 WebGL 单 shader，无新依赖；reduced-motion 只渲一帧；窗口隐藏暂停。 -->
+<script id="glass-fragment" type="x-shader/x-fragment">
+precision highp float;
+#define PI 3.14159265
+uniform vec2  uRes;
+uniform float uTime;
+uniform vec3  uAccent;   // 主题 accent（fringe/glow 着色）
+uniform float uScrim;
+float hash(float x){ return fract(sin(x*127.1)*43758.5453123); }
+float vnoise(float x){ float i=floor(x), f=fract(x); return mix(hash(i),hash(i+1.0),smoothstep(0.,1.,f)); }
+// 光泽玻璃肋强度场
+float field(float x, float y, float t){
+  float warp = (vnoise(x*5.0 + 11.0) - 0.5)*0.05;
+  float xx = x + warp*sin(y*2.2 + t*0.25);
+  float ribs = 13.0;
+  float c = xx*ribs;
+  float idx = floor(c);
+  float within = fract(c);
+  float ph = hash(idx)*6.2831;
+  float w = 0.55 + 0.4*hash(idx*1.3);
+  float gloss = pow(max(sin(within*PI), 0.0), 2.2);
+  float move = 0.5 + 0.5*sin(ph + t*0.8);
+  gloss *= 0.6 + 0.6*pow(max(sin((within*0.7 + move*0.3)*PI),0.0), 3.0);
+  float center = 0.66 + 0.09*sin(t*0.3);
+  float env = exp(-pow((xx - center)/0.24, 2.0));
+  float sheen = 0.55 + 0.45*sin(y*1.7 + ph + t*0.5);
+  return gloss*env*sheen*w;
+}
+void main(){
+  vec2 uv = gl_FragCoord.xy/uRes;
+  float t = uTime;
+  float disp = 0.006;
+  float r = field(uv.x - disp,     uv.y, t);
+  float g = field(uv.x,            uv.y, t);
+  float b = field(uv.x + disp*1.4, uv.y, t);
+  vec3 cool = vec3(0.10,0.55,1.00);
+  float inten = g;
+  vec3 base = mix(vec3(0.0), cool, smoothstep(0.0,0.9,inten));
+  float fringe = clamp((r-b)*1.6, -1.0, 1.0);
+  base += uAccent*max(fringe,0.0)*1.0;                 // 暖向 fringe 用 accent
+  base += vec3(0.2,0.5,1.0)*max(-fringe,0.0)*0.5;
+  vec3 col = base;
+  float glow = g*g;
+  col += glow*mix(vec3(0.16,0.45,0.95), uAccent, 0.35)*1.1;
+  col = pow(max(col,0.0), vec3(1.15));
+  // 中心文字区 scrim：保 KSS/口号/按钮 AA（启动页文字居中、按钮在下方）
+  if(uScrim > 0.5){
+    float cx = abs(uv.x-0.5);
+    float center = 1.0 - 0.72*exp(-pow(cx/0.30,2.0))*exp(-pow((uv.y-0.46)/0.40,2.0));
+    float bottom = 1.0 - 0.45*exp(-pow((uv.y-0.14)/0.10,2.0)); // 按钮带
+    col *= center*bottom;
+  }
+  float vig = smoothstep(1.3,0.25,length(uv-0.5));
+  col *= mix(0.72,1.0,vig);
+  gl_FragColor = vec4(col, 1.0);
+}
+</script>
+<script>
+(function(){
+  "use strict";
+  var payload = window.__kssLaunchTheme || null;
+  var mode = (payload && payload.mode) || "dark";
+  // 仅暗色启用；亮色露出纯主题底。
+  if(mode !== "dark") return;
+
+  var cvs = document.getElementById('bg');
+  var gl = cvs.getContext('webgl', {antialias:false, alpha:false, powerPreference:'high-performance'})
+        || cvs.getContext('experimental-webgl');
+  if(!gl){ return; } // WebGL 不可用：静默退回纯底
+
+  function hexToRGB(h){
+    if(!h) return [0.10,0.55,1.0];
+    h = h.replace('#','');
+    if(h.length===3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+    var n = parseInt(h,16);
+    if(isNaN(n)) return [0.10,0.55,1.0];
+    return [((n>>16)&255)/255, ((n>>8)&255)/255, (n&255)/255];
+  }
+  var accent = hexToRGB(payload && payload.colors && payload.colors.accent);
+
+  var vsSrc = 'attribute vec2 p; void main(){ gl_Position = vec4(p,0.0,1.0); }';
+  var fsSrc = document.getElementById('glass-fragment').textContent;
+  function sh(type,src){ var s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+    if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){ return null; } return s; }
+  var vs = sh(gl.VERTEX_SHADER,vsSrc), fs = sh(gl.FRAGMENT_SHADER,fsSrc);
+  if(!vs || !fs){ return; }
+  var prog = gl.createProgram();
+  gl.attachShader(prog,vs); gl.attachShader(prog,fs); gl.linkProgram(prog);
+  if(!gl.getProgramParameter(prog,gl.LINK_STATUS)){ return; }
+  gl.useProgram(prog);
+  var buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+  var pLoc = gl.getAttribLocation(prog,'p'); gl.enableVertexAttribArray(pLoc);
+  gl.vertexAttribPointer(pLoc,2,gl.FLOAT,false,0,0);
+  var uRes=gl.getUniformLocation(prog,'uRes'), uTime=gl.getUniformLocation(prog,'uTime'),
+      uAccent=gl.getUniformLocation(prog,'uAccent'), uScrim=gl.getUniformLocation(prog,'uScrim');
+  gl.uniform3fv(uAccent, accent);
+  gl.uniform1f(uScrim, 1.0);
+
+  var SCALE = 0.7, DPR = Math.min(window.devicePixelRatio||1, 1.5);
+  function resize(){
+    var w = Math.max(2, Math.floor(window.innerWidth*DPR*SCALE));
+    var h = Math.max(2, Math.floor(window.innerHeight*DPR*SCALE));
+    cvs.width=w; cvs.height=h; gl.viewport(0,0,w,h);
+  }
+  window.addEventListener('resize', resize); resize();
+
+  function draw(t){
+    gl.uniform2f(uRes, cvs.width, cvs.height);
+    gl.uniform1f(uTime, t);
+    gl.drawArrays(gl.TRIANGLES,0,3);
+  }
+  cvs.style.opacity = '1';
+
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(reduce){ draw(0.0); return; } // 静止一帧，不进 rAF
+
+  var t0 = null, raf = 0, running = true;
+  function frame(now){
+    if(!running) return;
+    if(t0===null) t0=now;
+    draw((now - t0)/1000);
+    raf = requestAnimationFrame(frame);
+  }
+  function start(){ if(!running){ running=true; t0=null; raf=requestAnimationFrame(frame); } }
+  function stop(){ running=false; if(raf) cancelAnimationFrame(raf); }
+  document.addEventListener('visibilitychange', function(){
+    if(document.hidden) stop(); else start();
+  });
+  raf = requestAnimationFrame(frame);
 })();
 </script>
 </body>

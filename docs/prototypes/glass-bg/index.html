@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Glass BG Prototype</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;width:100%;overflow:hidden;background:#000;font-family:-apple-system,system-ui,sans-serif}
+  #gl{position:fixed;inset:0;width:100%;height:100%;display:block}
+  /* 前景：KSS / 口号 / 按钮，用于检验 scrim 后的 AA 对比度 */
+  #fg{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+      pointer-events:none}
+  #row{display:flex;gap:22px;margin-bottom:6px;color:#fff}
+  #row svg{width:34px;height:34px;overflow:visible}
+  #kss{font-size:104px;font-weight:800;letter-spacing:-2px;color:#fff;line-height:1}
+  #slogan{font-size:22px;font-weight:700;color:#cfd3da;margin-top:8px}
+  #enter{margin-top:42px;background:#2EBD85;color:#06281c;border:0;border-radius:999px;
+         font-size:15px;font-weight:700;padding:12px 40px}
+  /* HUD */
+  #hud{position:fixed;left:14px;bottom:12px;color:#7a8088;font-size:11px;font-family:ui-monospace,monospace;
+       letter-spacing:.04em;pointer-events:none;line-height:1.5}
+  #fps{color:#aeb4bd}
+  /* 主题切换条 */
+  #bar{position:fixed;top:12px;right:14px;display:flex;gap:6px;z-index:5}
+  #bar button{background:#1a1c20;color:#cfd3da;border:1px solid #2c2f36;border-radius:8px;
+       font-size:11px;padding:6px 10px;cursor:pointer}
+  #bar button.on{background:#2EBD85;color:#06281c;border-color:#2EBD85}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="fg">
+  <div id="row">
+    <svg viewBox="0 0 40 40"><path d="M20 4 L34.6 30 L5.4 30 Z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/></svg>
+    <svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="15" fill="none" stroke="currentColor" stroke-width="2.4"/></svg>
+    <svg viewBox="0 0 40 40"><path d="M6 6 L34 34 M34 6 L6 34" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+    <svg viewBox="0 0 40 40"><rect x="6" y="6" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.4"/></svg>
+  </div>
+  <div id="kss">KSS</div>
+  <div id="slogan">Let's join the war!</div>
+  <button id="enter">进入工作台</button>
+</div>
+<div id="bar">
+  <button data-mode="spectral" class="on">Spectral(暗)</button>
+  <button data-mode="accent">Accent 着色</button>
+  <button data-mode="mono">去饱和</button>
+  <button data-mode="scrim">Scrim on/off</button>
+</div>
+<div id="hud">WebGL glass-refraction prototype · <span id="fps">-- fps</span> · <span id="res">--</span></div>
+
+<script type="x-shader/x-fragment" id="frag">
+precision highp float;
+uniform vec2  uRes;
+uniform float uTime;
+uniform vec3  uTint;     // 主题 accent
+uniform float uSat;      // 1=全光谱  0=去饱和(用 accent)
+uniform float uScrim;    // 1=开中心暗化  0=关
+
+#define PI 3.14159265
+float hash(float x){ return fract(sin(x*127.1)*43758.5453123); }
+float vnoise(float x){ float i=floor(x), f=fract(x); return mix(hash(i),hash(i+1.0),smoothstep(0.,1.,f)); }
+
+// 单通道玻璃强度场（光泽肋）：少而宽的垂直玻璃肋，每肋一条平滑高光，
+// 受缓慢游走的镜面光源照亮；纵向有柔和 sheen 起伏。返回 0..~1.4。
+float field(float x, float y, float t){
+  // 折射：让肋的横向位置随 y/t 轻微弯折，像透过玻璃看
+  float warp = (vnoise(x*5.0 + 11.0) - 0.5)*0.05;
+  float xx = x + warp*sin(y*2.2 + t*0.25);
+
+  float ribs = 13.0;                 // 少而宽
+  float c = xx*ribs;
+  float idx = floor(c);
+  float within = fract(c);
+  float ph = hash(idx)*6.2831;
+  float w = 0.55 + 0.4*hash(idx*1.3); // 每肋宽窄不一
+
+  // 平滑光泽剖面：肋内一条柔和高光（非硬边）
+  float gloss = pow(max(sin(within*PI), 0.0), 2.2);
+  // 高光在肋内的位置随时间/相位漂移 → 玻璃反光流动
+  float move = 0.5 + 0.5*sin(ph + t*0.8);
+  gloss *= 0.6 + 0.6*pow(max(sin((within*0.7 + move*0.3)*PI),0.0), 3.0);
+
+  // 镜面带：集中在右侧并缓慢游走（贴近参考图）
+  float center = 0.66 + 0.09*sin(t*0.3);
+  float env = exp(-pow((xx - center)/0.24, 2.0));
+
+  // 纵向柔和 sheen，避免死板竖条
+  float sheen = 0.55 + 0.45*sin(y*1.7 + ph + t*0.5);
+
+  return gloss*env*sheen*w;
+}
+
+void main(){
+  vec2 uv = gl_FragCoord.xy/uRes;
+  float t = uTime;
+
+  // 色散：小位移 R/G/B 分采，仅在光泽梯度陡处自然显出暖/冷 fringe
+  float disp = 0.006;
+  float r = field(uv.x - disp, uv.y, t);
+  float g = field(uv.x,         uv.y, t);
+  float b = field(uv.x + disp*1.4, uv.y, t);
+
+  // 冷蓝青主调：把强度映射到偏蓝青的渐变，色散让边缘出红橙
+  vec3 cool = vec3(0.10,0.55,1.00);   // 蓝青
+  vec3 warm = vec3(1.00,0.42,0.18);   // 暖橙（边缘 fringe）
+  float inten = g;
+  vec3 base = mix(vec3(0.0), cool, smoothstep(0.0,0.9,inten));
+  // 用 R/B 差作为 fringe 量
+  float fringe = clamp((r-b)*1.6, -1.0, 1.0);
+  base += warm*max(fringe,0.0)*0.9;
+  base += vec3(0.2,0.5,1.0)*max(-fringe,0.0)*0.5;
+  vec3 col = base;
+
+  // bloom 近似：高光二次方做冷辉光外溢
+  float glow = g*g;
+  col += glow*vec3(0.16,0.45,0.95)*1.1;
+
+  // gamma / 压暗保证大部分是黑
+  col = pow(max(col,0.0), vec3(1.15));
+
+  // 去饱和 / accent 着色（主题适配演示）
+  float lum = dot(col, vec3(0.299,0.587,0.114));
+  vec3 accentCol = vec3(lum) * (uTint*2.4);
+  col = mix(accentCol, col, uSat);
+
+  // 文字区 scrim：左中压暗保 AA
+  if(uScrim > 0.5){
+    float leftDark = smoothstep(0.0, 0.5, uv.x);
+    float textBand = 1.0 - 0.6*exp(-pow((uv.x-0.42)/0.32,2.0))*exp(-pow((uv.y-0.5)/0.34,2.0));
+    col *= mix(0.18, 1.0, leftDark);
+    col *= textBand;
+  }
+
+  // 暗角
+  float vig = smoothstep(1.3,0.25,length(uv-0.5));
+  col *= mix(0.72,1.0,vig);
+  gl_FragColor = vec4(col, 1.0);
+}
+</script>
+
+<script>
+const cvs = document.getElementById('gl');
+const gl = cvs.getContext('webgl', {antialias:false, alpha:false, powerPreference:'high-performance'});
+if(!gl){ document.getElementById('hud').textContent = 'WebGL 不可用'; }
+
+const vsSrc = 'attribute vec2 p; void main(){ gl_Position = vec4(p,0.0,1.0); }';
+const fsSrc = document.getElementById('frag').textContent;
+function sh(type,src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s)); return s; }
+const prog = gl.createProgram();
+gl.attachShader(prog, sh(gl.VERTEX_SHADER,vsSrc));
+gl.attachShader(prog, sh(gl.FRAGMENT_SHADER,fsSrc));
+gl.linkProgram(prog); gl.useProgram(prog);
+const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+const pLoc = gl.getAttribLocation(prog,'p'); gl.enableVertexAttribArray(pLoc);
+gl.vertexAttribPointer(pLoc,2,gl.FLOAT,false,0,0);
+const U = n => gl.getUniformLocation(prog,n);
+const uRes=U('uRes'), uTime=U('uTime'), uTint=U('uTint'), uSat=U('uSat'), uScrim=U('uScrim');
+
+// 渲染分辨率封顶：0.7x，DPR 封顶 1.5，控功耗
+const SCALE = 0.7, DPR = Math.min(window.devicePixelRatio||1, 1.5);
+function resize(){
+  const w = Math.floor(window.innerWidth*DPR*SCALE);
+  const h = Math.floor(window.innerHeight*DPR*SCALE);
+  cvs.width=w; cvs.height=h; gl.viewport(0,0,w,h);
+  document.getElementById('res').textContent = w+'×'+h+' @'+SCALE+'x';
+}
+window.addEventListener('resize', resize); resize();
+
+let mode='spectral', scrim=1;
+const tints = { spectral:[0.18,0.74,0.52], accent:[0.18,0.74,0.52], mono:[0.18,0.74,0.52] };
+function setTint(){
+  let sat = mode==='mono'?0.0 : (mode==='accent'?0.35 : 1.0);
+  gl.uniform3fv(uTint, tints[mode]||tints.spectral);
+  gl.uniform1f(uSat, sat);
+  gl.uniform1f(uScrim, scrim);
+}
+document.querySelectorAll('#bar button').forEach(b=>b.addEventListener('click',()=>{
+  if(b.dataset.mode==='scrim'){ scrim = scrim>0.5?0:1; b.classList.toggle('on', scrim>0.5); setTint(); return; }
+  mode=b.dataset.mode;
+  document.querySelectorAll('#bar button[data-mode]').forEach(x=>{ if(x.dataset.mode!=='scrim') x.classList.remove('on'); });
+  b.classList.add('on'); setTint();
+}));
+setTint();
+
+let t0=performance.now(), frames=0, facc=0, last=t0;
+function frame(now){
+  const t=(now-t0)/1000;
+  gl.uniform2f(uRes, cvs.width, cvs.height);
+  gl.uniform1f(uTime, t);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+  frames++; facc += now-last; last=now;
+  if(facc>500){ document.getElementById('fps').textContent=(1000*frames/facc).toFixed(0)+' fps'; frames=0; facc=0; }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
