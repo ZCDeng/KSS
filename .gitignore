@@ -76,3 +76,6 @@ storage/pipeline_alpha/
 
 # U5 sidecar socket (dev: repo/run/)
 /run/
+
+# bundle-mode 双击便利：state-root venv 软链(本机 dev)
+/venv
