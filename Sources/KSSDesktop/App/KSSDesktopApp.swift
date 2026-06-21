@@ -35,7 +35,9 @@ struct KSSDesktopApp: App {
 
     var body: some Scene {
         WindowGroup("KSS Desktop", id: "main") {
-            ContentView()
+            LaunchGateView {
+                ContentView()
+            }
                 .environmentObject(store)
                 .environmentObject(theme)
                 .environment(\.kssTheme, theme.tokens)
