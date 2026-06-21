@@ -3,7 +3,7 @@ type: feat
 origin: docs/ideation/2026-06-21-kssdeck-standalone-packaging-ideation.html
 date: 2026-06-21
 reviewed: 2026-06-21 (ce-doc-review round 1：郭嘉补强 contradiction-finder focus；6 persona；首启 bootstrap + U6/U7 后置 已采纳)
-status: planned
+status: shipped (11 单元全合 main；U6a kss-mcp 注册 2026-06-22 重指新 server + 旧 datasette pilot 弃用)
 target: 仅作者自己 2-3 台 Mac 同步使用；Apple Developer ID 已有；三台机器均已装 uv
 ---
 
