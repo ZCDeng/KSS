@@ -48,8 +48,15 @@ REQUIRED_FULL_MODULES = ("pandas", "lightgbm", "tushare", "akshare")
 ETF_PARQUET_MODULES = ("pyarrow", "fastparquet")
 
 
+# 桥协议版本（KTD3）。Swift supportedSchemaVersion 必须同 commit 同步。
+# additive 改动不 bump；字段重命名/删除/语义变更才 bump。
+BRIDGE_SCHEMA_VERSION = 1
+
+
 def _json_dump(payload: Any) -> None:
-    print(json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")))
+    # 版本化信封：{schemaVersion, data}。Swift 两段解码，版本不匹配出可读横幅而非静默崩。
+    envelope = {"schemaVersion": BRIDGE_SCHEMA_VERSION, "data": payload}
+    print(json.dumps(envelope, ensure_ascii=False, allow_nan=False, separators=(",", ":")))
 
 
 def _shorten(text: str, limit: int = 12000) -> str:

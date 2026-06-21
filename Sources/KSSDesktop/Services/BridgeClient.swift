@@ -4,6 +4,8 @@ enum BridgeError: LocalizedError {
     case projectRootNotFound
     case processFailed(String)
     case invalidOutput
+    /// 桥协议版本与 app 支持版本不一致（KTD3）。
+    case schemaMismatch(bridge: Int, app: Int)
 
     var errorDescription: String? {
         switch self {
@@ -13,6 +15,12 @@ enum BridgeError: LocalizedError {
             return message
         case .invalidOutput:
             return "Bridge returned invalid JSON"
+        case .schemaMismatch(let bridge, let app):
+            if bridge > app {
+                return "桥协议版本过新（脚本 v\(bridge) > App v\(app)）——请重新编译 KSSDesktop。"
+            } else {
+                return "桥协议版本过旧（脚本 v\(bridge) < App v\(app)）——请更新 scripts/（git pull）。"
+            }
         }
     }
 }
@@ -143,8 +151,24 @@ struct BridgeClient {
             throw BridgeError.processFailed(message.trimmingCharacters(in: .whitespacesAndNewlines))
         }
 
+        return try Self.decodeEnvelope(data)
+    }
+
+    /// 桥协议版本（KTD3）；Python BRIDGE_SCHEMA_VERSION 必须同 commit 同步。
+    static let supportedSchemaVersion = 1
+    private struct SchemaProbe: Decodable { let schemaVersion: Int }
+    private struct Envelope<T: Decodable>: Decodable { let schemaVersion: Int; let data: T }
+
+    /// 版本化信封两段解码（KTD3，可测 seam）：先探 schemaVersion，不匹配 throw
+    /// `.schemaMismatch`（可读横幅）；缺字段视为 v0（旧/未包裹）；再解 `data` 为 T。
+    static func decodeEnvelope<T: Decodable>(_ data: Data) throws -> T {
+        let probe = try? JSONDecoder().decode(SchemaProbe.self, from: data)
+        let version = probe?.schemaVersion ?? 0
+        guard version == supportedSchemaVersion else {
+            throw BridgeError.schemaMismatch(bridge: version, app: supportedSchemaVersion)
+        }
         do {
-            return try JSONDecoder().decode(T.self, from: data)
+            return try JSONDecoder().decode(Envelope<T>.self, from: data).data
         } catch {
             throw BridgeError.invalidOutput
         }
