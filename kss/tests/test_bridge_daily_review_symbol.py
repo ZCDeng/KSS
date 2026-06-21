@@ -64,6 +64,14 @@ def test_artifacts_per_symbol(captured):
     assert "--date" in captured["command"]
 
 
+def test_missing_suffix_rejected(monkeypatch):
+    # merged_002: 缺后缀 → artifact 路径会与脚本实写不匹配 → 主动拒绝
+    monkeypatch.setattr(bridge, "_full_python", lambda: "/fake/python")
+    r = bridge.run_task("daily-review-symbol", ["--symbols", "688322"])
+    assert r["status"] == "failed" and r["exitCode"] == 2
+    assert "后缀" in r["summary"]
+
+
 def test_missing_full_python_reports_env(monkeypatch):
     monkeypatch.setattr(bridge, "_full_python", lambda: None)
     r = bridge.run_task("daily-review-symbol", ["--symbols", "688322.SH"])

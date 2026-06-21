@@ -107,7 +107,7 @@ def parse_symbols(raw: str) -> list[tuple[str, str, str]]:
 def _infer_exchange(code: str) -> str:
     """6 位代码首段推断交易所 (仅缺后缀时兜底, 推荐显式传)。"""
     head = code[:3]
-    if head in ('688', '605', '603', '601', '600', '600'):
+    if head in ('688', '605', '603', '601', '600'):
         return 'SH'
     if head in ('920',) or code.startswith('8') or code.startswith('43'):
         return 'BJ'

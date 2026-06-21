@@ -1412,6 +1412,16 @@ def _run_daily_review_symbol(args: dict[str, str | bool]) -> dict[str, Any]:
             "daily-review-symbol 需要 --symbols (逗号分隔, 带交易所后缀)",
             started, exit_code=2,
         )
+    # 强制带后缀: artifact 路径按 token 直拼, 缺后缀会与脚本(经 _infer_exchange 补全)
+    # 实写的 {date}_{code}.{exch}.md 不匹配 → 主动拒绝, 而非被动产出 404 artifact。
+    tokens = [t.strip().upper() for t in symbols_raw.split(",") if t.strip()]
+    missing_suffix = [t for t in tokens if "." not in t]
+    if missing_suffix:
+        return _task_result(
+            "daily-review-symbol", "个股即时复盘", "failed",
+            f"--symbols 须带交易所后缀 (.SH/.SZ/.BJ): {', '.join(missing_suffix)}",
+            started, exit_code=2,
+        )
 
     date_arg = args.get("date")
     target = _normalize_script_date(str(date_arg)) if isinstance(date_arg, str) else None
@@ -1424,11 +1434,8 @@ def _run_daily_review_symbol(args: dict[str, str | bool]) -> dict[str, Any]:
     if target:
         command += ["--date", target]
 
-    # 按股 artifacts (Swift 传的 symbol 含后缀; 缺后缀的 token 仅作信息不精确匹配)。
-    artifacts = [
-        f"storage/daily_review/{archive_date}_{tok.strip().upper()}.md"
-        for tok in symbols_raw.split(",") if tok.strip()
-    ]
+    # 按股 artifacts: token 已校验带后缀, 与脚本实写文件名一致。
+    artifacts = [f"storage/daily_review/{archive_date}_{tok}.md" for tok in tokens]
     return _run_process_task(
         "daily-review-symbol",
         "个股即时复盘",

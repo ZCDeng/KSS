@@ -13,7 +13,10 @@ final class KSSStore: ObservableObject {
 
     @Published var isLoading = false
     @Published var isLoadingReport = false
-    @Published var isRunningTask = false
+    // 引用计数：并发任务（U5 快速连加自选每次起独立 Task）下，单个完成不会把
+    // 「运行中」过早清零——只有全部完成才回到 idle。
+    @Published private(set) var runningTasks = 0
+    var isRunningTask: Bool { runningTasks > 0 }
     @Published var taskResults: [TaskRunResult] = []
     @Published var scheduledJobs: [ScheduledJob] = []
     @Published var scheduledBusy: Set<String> = []   // 正在操作的 label（行级 loading）
@@ -119,7 +122,7 @@ final class KSSStore: ObservableObject {
             errorMessage = "Cannot locate KSS project root"
             return
         }
-        isRunningTask = true
+        runningTasks += 1
         errorMessage = nil
         do {
             let result = try await Task.detached {
@@ -132,14 +135,14 @@ final class KSSStore: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
-        isRunningTask = false
+        runningTasks -= 1
     }
 
     /// U5: 加自选即时生成该股复盘，完成后刷新 snapshot 使个股复盘列表即时纳入。
     /// 失败仅置横幅、不抛——watchlist 已由 ContentView 持久化，复盘缺失不影响自选。
     func generateReview(for symbol: String) async {
         guard let bridge else { return }
-        isRunningTask = true
+        runningTasks += 1
         errorMessage = nil
         do {
             let result = try await Task.detached {
@@ -154,7 +157,7 @@ final class KSSStore: ObservableObject {
         } catch {
             errorMessage = "生成 \(symbol) 复盘失败：\(error.localizedDescription)"
         }
-        isRunningTask = false
+        runningTasks -= 1
     }
 
     func loadSectorRotation(date: String? = nil) async {
@@ -185,9 +188,9 @@ final class KSSStore: ObservableObject {
     @discardableResult
     func importStocks(_ codes: [String]) async -> TaskRunResult? {
         guard let bridge, !codes.isEmpty else { return nil }
-        isRunningTask = true
+        runningTasks += 1
         errorMessage = nil
-        defer { isRunningTask = false }
+        defer { runningTasks -= 1 }
         do {
             let result = try await Task.detached { try bridge.importStocks(codes) }.value
             taskResults.insert(result, at: 0)

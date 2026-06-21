@@ -119,17 +119,29 @@ def load_actual(code: str, date: str):
     return None
 
 
+# 按股归档 {date}_{tscode}.md (PR 后权威格式) vs 旧按日 {date}.md。
+_PERSYMBOL_FILE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{6}\.(?:SH|SZ|BJ)$")
+
+
 def collect(lookback_days: int):
     cutoff = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
-    rows = []
+    # 新旧产物可能同 date 共存 (合入当日 cron 半新半旧 / 操作员 --date 回放):
+    # 旧按日文件含全部股、新按股文件含单股, 对同 (fdate, code) 会双重计数 → n 翻倍、
+    # cov/Brier/dir_rate 失真、撤段判据吃假数。按 (fdate, code) 去重, 优先按股文件。
+    chosen: dict[tuple[str, str], tuple[bool, dict]] = {}
     for path in sorted(REVIEW_DIR.glob("2026-*.md")):
-        if path.stem < cutoff:
+        if path.stem[:10] < cutoff:   # 比较日期前缀 (按股 stem 带后缀)
             continue
+        is_persymbol = bool(_PERSYMBOL_FILE_RE.match(path.stem))
         review_date, forecast_date, stocks = parse_review(path)
         for s in stocks:
+            key = (forecast_date, s["code"])
+            if key in chosen and not (is_persymbol and not chosen[key][0]):
+                continue  # 已有且不需被按股覆盖
             act = load_actual(s["code"], forecast_date)
-            rows.append({**s, "review": review_date, "fdate": forecast_date, "act": act})
-    return rows
+            chosen[key] = (is_persymbol,
+                           {**s, "review": review_date, "fdate": forecast_date, "act": act})
+    return [row for _, row in chosen.values()]
 
 
 def score(verifiable: list[dict]) -> dict:
