@@ -34,7 +34,7 @@ def _load(name: str, rel: str):
     return mod
 
 
-dr = _load("daily_review_322_017", "scripts/daily_review_322_017.py")
+dr = _load("daily_review", "scripts/daily_review.py")
 vp = _load("validate_predictions", "scripts/validate_predictions.py")
 
 

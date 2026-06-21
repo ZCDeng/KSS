@@ -46,6 +46,84 @@ EXPECTED_COLS = [
 ]
 
 
+def _merge_to_expected(daily: pd.DataFrame, daily_basic: pd.DataFrame | None) -> pd.DataFrame:
+    """daily + daily_basic → EXPECTED_COLS 对齐的 df (trade_date 为 datetime)。
+
+    update_one 与 ensure_history 共用, 保证两条路径列结构一致。
+    """
+    daily = daily.copy()
+    daily["trade_date"] = pd.to_datetime(daily["trade_date"], format="%Y%m%d")
+    if daily_basic is not None and not daily_basic.empty:
+        daily_basic = daily_basic.copy()
+        daily_basic["trade_date"] = pd.to_datetime(daily_basic["trade_date"], format="%Y%m%d")
+        merged = daily.merge(
+            daily_basic[["trade_date", "turnover_rate", "volume_ratio", "pe", "pb", "total_mv"]],
+            on="trade_date", how="left",
+        )
+    else:
+        merged = daily
+    for col in EXPECTED_COLS:
+        if col not in merged.columns:
+            merged[col] = float("nan")
+    return merged[EXPECTED_COLS]
+
+
+def _list_date(client: TushareClient, ts_code: str, exch: str) -> str:
+    """证券上市日 YYYYMMDD; 取不到 → 回退固定早期日 (覆盖 STAR/ChiNext/BJ 全历史)。"""
+    exchange = {"SH": "SSE", "SZ": "SZSE", "BJ": "BSE"}.get(exch)
+    try:
+        basic = client.fetch_stock_basic(exchange=exchange)
+        if basic is not None and not basic.empty:
+            hit = basic[basic["ts_code"] == ts_code]
+            if len(hit) and pd.notna(hit.iloc[0].get("list_date")):
+                return str(hit.iloc[0]["list_date"])
+    except Exception as exc:  # noqa: BLE001  上市日取不到不阻断, 用早期日兜底
+        logger.warning("  list_date 取失败 %s: %s", ts_code, exc)
+    return "20180101"  # STAR(2019)/BJ(2021) 均晚于此; ChiNext 老股早于此则少拿早期段 (复盘只用近年)
+
+
+def ensure_history(
+    code: str,
+    exch: str,
+    client: TushareClient | None = None,
+    end_date: str | None = None,
+) -> tuple[int, str]:
+    """U2: 新股 cs_data 缺失时按上市日全量回填 (净新增, 非复用增量 update_one)。
+
+    cs_data 存在 → no-op (增量交给 update_one / daily_review 自身)。
+    缺失 → fetch_stock_basic 查上市日 → range-fetch daily+daily_basic → EXPECTED_COLS
+    → **原子写** (.tmp 后 os.replace, 防半截 csv 被后续误判"存在")。
+
+    Returns:
+        (写入行数, 状态)；状态 ∈ {"exists", "written", "empty"}。
+    """
+    if exch not in ("SH", "SZ", "BJ"):
+        raise ValueError(f"非法交易所后缀: {exch!r}")
+    csv_path = _KSS_STATE / f"cs_data_{code}.csv"
+    if csv_path.exists():
+        return 0, "exists"
+
+    client = client or TushareClient()
+    ts_code = f"{code}.{exch}"
+    start = _list_date(client, ts_code, exch)
+    end = (end_date or datetime.now().strftime("%Y%m%d")).replace("-", "")
+
+    daily = client.fetch_daily(ts_code, start, end)
+    if daily is None or daily.empty:
+        logger.warning("  ensure_history %s 无数据 (start=%s)", ts_code, start)
+        return 0, "empty"
+    daily_basic = client.fetch_daily_basic(ts_code, start, end)
+    merged = _merge_to_expected(daily, daily_basic).sort_values("trade_date").reset_index(drop=True)
+    merged["trade_date"] = merged["trade_date"].dt.strftime("%Y-%m-%d")
+
+    tmp = csv_path.with_suffix(".csv.tmp")
+    merged.to_csv(tmp, index=False)
+    import os as _os
+    _os.replace(tmp, csv_path)  # 原子: 半截写入不会留下被误判存在的 csv
+    logger.info("  ensure_history %s 回填 %d 行 → %s", ts_code, len(merged), csv_path.name)
+    return len(merged), "written"
+
+
 def update_one(
     csv_path: Path,
     client: TushareClient,
@@ -57,11 +135,19 @@ def update_one(
     Returns:
         (新增行数, 最终最大日期 YYYY-MM-DD).
     """
-    ts_code = csv_path.stem.replace("cs_data_", "") + ".SH"
-    if "300" in ts_code.split(".")[0][:3] or "301" in ts_code.split(".")[0][:3]:
-        ts_code = csv_path.stem.replace("cs_data_", "") + ".SZ"
-
     existing = pd.read_csv(csv_path)
+
+    # 交易所后缀优先从 ts_code 列恢复（ensure_history 回填的 SZ/BJ 才不会被
+    # 增量误请求成 .SH）；列缺失时退化到文件名前缀推断（仅识别 300/301→SZ）。
+    code = csv_path.stem.replace("cs_data_", "")
+    ts_code = ""
+    if "ts_code" in existing.columns and len(existing):
+        ts_code = str(existing["ts_code"].iloc[-1]).strip()
+    if not ts_code or "." not in ts_code:
+        head = code[:3]
+        exch = "SZ" if head in ("300", "301") else "SH"
+        ts_code = f"{code}.{exch}"
+
     existing["trade_date"] = pd.to_datetime(existing["trade_date"])
     max_date = existing["trade_date"].max()
 
@@ -81,25 +167,8 @@ def update_one(
     if daily is None or daily.empty:
         return 0, max_date.strftime("%Y-%m-%d")
 
-    # 合并 daily + daily_basic（按 trade_date 对齐）
-    daily["trade_date"] = pd.to_datetime(daily["trade_date"], format="%Y%m%d")
-    if daily_basic is not None and not daily_basic.empty:
-        daily_basic["trade_date"] = pd.to_datetime(daily_basic["trade_date"], format="%Y%m%d")
-        merged = daily.merge(
-            daily_basic[["trade_date", "turnover_rate", "volume_ratio", "pe", "pb", "total_mv"]],
-            on="trade_date", how="left",
-        )
-    else:
-        merged = daily.copy()
-        for col in ("turnover_rate", "volume_ratio", "pe", "pb", "total_mv"):
-            if col not in merged.columns:
-                merged[col] = float("nan")
-
-    # 对齐期望列
-    for col in EXPECTED_COLS:
-        if col not in merged.columns:
-            merged[col] = float("nan")
-    merged = merged[EXPECTED_COLS]
+    # 合并 daily + daily_basic + 对齐 EXPECTED_COLS（与 ensure_history 共用）
+    merged = _merge_to_expected(daily, daily_basic)
 
     # 合并到现有 CSV：drop 重复行（按 trade_date 去重，保留新数据）
     existing_out = existing[EXPECTED_COLS].copy()

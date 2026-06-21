@@ -275,21 +275,41 @@ def _recommendations(
     return date, items
 
 
+# U3: 按股归档文件名 {date}_{tscode}.md (新) vs {date}.md (旧, 兼容)。
+_REVIEW_PERSYMBOL_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})_(\d{6}\.(?:SH|SZ|BJ))$")
+# 个股段标题行 "📊 *奥比中光(688322) R...*" → 取 "奥比中光(688322)" 作可读标题。
+_REVIEW_STOCK_TITLE_RE = re.compile(r"\*([^*()]+\(\d{6}(?:\.\w+)?\))")
+
+
 def _reviews() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for path in sorted(REVIEW_DIR.glob("*.md"), reverse=True):
         text = path.read_text(encoding="utf-8", errors="ignore")
         lines = [line.rstrip() for line in text.splitlines()]
-        title = next((line.lstrip("# ").strip() for line in lines if line.startswith("#")), path.stem)
         body_lines = [line for line in lines if line.strip() and not line.startswith("#")]
         excerpt = "\n".join(body_lines[:16])
-        symbols = sorted(set(re.findall(r"\b(?:688|300|301|920)\d{3}(?:\.(?:SH|SZ|BJ))?\b", text)))
+
+        m = _REVIEW_PERSYMBOL_RE.match(path.stem)
+        if m:
+            # 按股产物: date / focusSymbols 由文件名确定 (非正则反解)。
+            date = m.group(1)
+            symbol = m.group(2)
+            focus = [symbol]
+            tm = _REVIEW_STOCK_TITLE_RE.search(text)
+            title = tm.group(1).strip() if tm else f"{symbol} 复盘"
+        else:
+            # 旧按日产物兼容: date=stem, 标题取首个 #, symbols 正则反解。
+            date = path.stem
+            title = next((line.lstrip("# ").strip() for line in lines if line.startswith("#")), path.stem)
+            symbols = sorted(set(re.findall(r"\b(?:688|300|301|920)\d{3}(?:\.(?:SH|SZ|BJ))?\b", text)))
+            focus = symbols[:12]
+
         out.append({
-            "date": path.stem,
+            "date": date,
             "title": title,
             "excerpt": excerpt,
             "path": str(path.relative_to(STATE_ROOT)),
-            "focusSymbols": symbols[:12],
+            "focusSymbols": focus,
         })
     return out
 
@@ -1200,9 +1220,12 @@ def _run_formal_daily_review(args: dict[str, str | bool]) -> dict[str, Any]:
         )
 
     archive_date = f"{target[:4]}-{target[4:6]}-{target[6:8]}"
+    # cron 批保留原 322/017 —— 显式传 --symbols (那两只的唯一存活处, 非脚本隐藏默认)。
     command = [
         str(python),
-        "scripts/daily_review_322_017.py",
+        "scripts/daily_review.py",
+        "--symbols",
+        "688322.SH,688017.SH",
         "--date",
         target,
         "--channel",
@@ -1214,7 +1237,10 @@ def _run_formal_daily_review(args: dict[str, str | bool]) -> dict[str, Any]:
         "Formal Daily Review",
         command,
         started,
-        artifacts=[f"storage/daily_review/{archive_date}.md"],
+        artifacts=[
+            f"storage/daily_review/{archive_date}_688322.SH.md",
+            f"storage/daily_review/{archive_date}_688017.SH.md",
+        ],
         timeout=300,
     )
 
@@ -1366,8 +1392,64 @@ def _run_refresh_sector_rotation() -> dict[str, Any]:
     )
 
 
+def _run_daily_review_symbol(args: dict[str, str | bool]) -> dict[str, Any]:
+    """U4: 加自选即时单只(或多只)复盘。
+
+    daily_review.py 内部已 `_ensure_history_for`(新股先全量回填) + 按股归档
+    `{date}_{tscode}.md`，故并发加**不同**股写**不同**文件、互不竞争(per-symbol
+    粒度已消解写竞争)；同股重复加幂等覆盖(内容一致)。`--channel console` 静音
+    Telegram；timeout 放大到 600s(新股全量回填 + tushare 限流可能数十秒)。
+    """
+    started = _now_iso()
+    python = _full_python()
+    if python is None:
+        return _missing_full_env_result("daily-review-symbol", "个股即时复盘", started)
+
+    symbols_raw = args.get("symbols")
+    if not isinstance(symbols_raw, str) or not symbols_raw.strip():
+        return _task_result(
+            "daily-review-symbol", "个股即时复盘", "failed",
+            "daily-review-symbol 需要 --symbols (逗号分隔, 带交易所后缀)",
+            started, exit_code=2,
+        )
+    # 强制带后缀: artifact 路径按 token 直拼, 缺后缀会与脚本(经 _infer_exchange 补全)
+    # 实写的 {date}_{code}.{exch}.md 不匹配 → 主动拒绝, 而非被动产出 404 artifact。
+    tokens = [t.strip().upper() for t in symbols_raw.split(",") if t.strip()]
+    missing_suffix = [t for t in tokens if "." not in t]
+    if missing_suffix:
+        return _task_result(
+            "daily-review-symbol", "个股即时复盘", "failed",
+            f"--symbols 须带交易所后缀 (.SH/.SZ/.BJ): {', '.join(missing_suffix)}",
+            started, exit_code=2,
+        )
+
+    date_arg = args.get("date")
+    target = _normalize_script_date(str(date_arg)) if isinstance(date_arg, str) else None
+    target_ymd = target or datetime.now().strftime("%Y%m%d")
+    archive_date = f"{target_ymd[:4]}-{target_ymd[4:6]}-{target_ymd[6:8]}"
+
+    # 非 dry-run: 总是覆盖归档(刷新), --channel console 不推 Telegram。
+    command = [str(python), "scripts/daily_review.py", "--symbols", symbols_raw,
+               "--channel", "console"]
+    if target:
+        command += ["--date", target]
+
+    # 按股 artifacts: token 已校验带后缀, 与脚本实写文件名一致。
+    artifacts = [f"storage/daily_review/{archive_date}_{tok}.md" for tok in tokens]
+    return _run_process_task(
+        "daily-review-symbol",
+        "个股即时复盘",
+        command,
+        started,
+        artifacts=artifacts,
+        timeout=600,
+    )
+
+
 def run_task(task_id: str, argv: list[str]) -> dict[str, Any]:
     args = _parse_args(argv)
+    if task_id == "daily-review-symbol":
+        return _run_daily_review_symbol(args)
     if task_id == "daily-picks":
         return _run_daily_picks(args)
     if task_id == "daily-picks-preview":
