@@ -114,6 +114,17 @@ def _infer_exchange(code: str) -> str:
     return 'SZ'  # 300/301/000/002 等
 
 
+def _ensure_history_for(code: str, exch: str) -> None:
+    """新股缺 cs_data 时全量回填 (U2 ensure_history); 已存在则 no-op。
+
+    懒导入 update_cs_data 避免顶层耦合。回填失败不在此处吞 ——
+    后续 _ensure_stock_data 仍会 FileNotFoundError 大声报错。
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from update_cs_data import ensure_history  # noqa: E402
+    ensure_history(code, exch)
+
+
 _NAME_CACHE: dict[str, str] = {}
 
 
@@ -933,6 +944,7 @@ def main():
     ts_codes: list[str] = []  # 与 stocks_data 同序, 用于按股归档命名
     stale_through: str | None = None  # 实时源失败退化到缓存时的最早数据截止日
     for sym, exch, category in symbols:
+        _ensure_history_for(sym, exch)  # U4: 新股缺 cs_data 时先全量回填 (no-op if 已存在)
         name = resolve_name(sym, exch)
         df, fell_back = _ensure_stock_data(sym, exch, target)
         if fell_back:

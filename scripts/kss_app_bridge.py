@@ -1392,8 +1392,57 @@ def _run_refresh_sector_rotation() -> dict[str, Any]:
     )
 
 
+def _run_daily_review_symbol(args: dict[str, str | bool]) -> dict[str, Any]:
+    """U4: 加自选即时单只(或多只)复盘。
+
+    daily_review.py 内部已 `_ensure_history_for`(新股先全量回填) + 按股归档
+    `{date}_{tscode}.md`，故并发加**不同**股写**不同**文件、互不竞争(per-symbol
+    粒度已消解写竞争)；同股重复加幂等覆盖(内容一致)。`--channel console` 静音
+    Telegram；timeout 放大到 600s(新股全量回填 + tushare 限流可能数十秒)。
+    """
+    started = _now_iso()
+    python = _full_python()
+    if python is None:
+        return _missing_full_env_result("daily-review-symbol", "个股即时复盘", started)
+
+    symbols_raw = args.get("symbols")
+    if not isinstance(symbols_raw, str) or not symbols_raw.strip():
+        return _task_result(
+            "daily-review-symbol", "个股即时复盘", "failed",
+            "daily-review-symbol 需要 --symbols (逗号分隔, 带交易所后缀)",
+            started, exit_code=2,
+        )
+
+    date_arg = args.get("date")
+    target = _normalize_script_date(str(date_arg)) if isinstance(date_arg, str) else None
+    target_ymd = target or datetime.now().strftime("%Y%m%d")
+    archive_date = f"{target_ymd[:4]}-{target_ymd[4:6]}-{target_ymd[6:8]}"
+
+    # 非 dry-run: 总是覆盖归档(刷新), --channel console 不推 Telegram。
+    command = [str(python), "scripts/daily_review.py", "--symbols", symbols_raw,
+               "--channel", "console"]
+    if target:
+        command += ["--date", target]
+
+    # 按股 artifacts (Swift 传的 symbol 含后缀; 缺后缀的 token 仅作信息不精确匹配)。
+    artifacts = [
+        f"storage/daily_review/{archive_date}_{tok.strip().upper()}.md"
+        for tok in symbols_raw.split(",") if tok.strip()
+    ]
+    return _run_process_task(
+        "daily-review-symbol",
+        "个股即时复盘",
+        command,
+        started,
+        artifacts=artifacts,
+        timeout=600,
+    )
+
+
 def run_task(task_id: str, argv: list[str]) -> dict[str, Any]:
     args = _parse_args(argv)
+    if task_id == "daily-review-symbol":
+        return _run_daily_review_symbol(args)
     if task_id == "daily-picks":
         return _run_daily_picks(args)
     if task_id == "daily-picks-preview":
