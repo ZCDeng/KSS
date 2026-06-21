@@ -45,7 +45,7 @@ final class ThemeCatalogTests: XCTestCase {
         XCTAssertEqual(dark.canvas, ThemeColor(0x141413))
         XCTAssertEqual(dark.ink, ThemeColor(0xFAF9F5))
         XCTAssertEqual(dark.surface, ThemeColor(0x1D1B19))
-        XCTAssertEqual(dark.surfaceContainerHighest, ThemeColor(0x363230))
+        XCTAssertEqual(dark.surfaceHighest, ThemeColor(0x363230))
 
         let light = ThemeCatalog.palette(for: .clayM3, appearance: .light)
         XCTAssertEqual(light.canvas, ThemeColor(0xFAF9F5))
