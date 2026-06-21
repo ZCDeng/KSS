@@ -168,6 +168,7 @@ def generate_commentary(
         )
 
     text = _sanitize_html(text)
+    text = _neutralize_fabricated_percentages(text)
     text = clip_to_max_len(text)
 
     # 龙虎榜 + 科创两融真值行由代码确定性追加（LLM 只在正文做定性叙述，不碰数字）.
@@ -869,6 +870,25 @@ def _fmt_pct(v: object) -> str:
 # ====================================================================== #
 # HTML 清洗 + 长度兜底
 # ====================================================================== #
+
+
+# U7：LLM 正文不应出现具体涨跌幅百分比 —— 真值由 render_dragon_tiger_line /
+# render_margin_line 代码确定性追加。系统 prompt 已禁止，本函数是**结构后盾**：
+# 把「prompt 要求 LLM 别写数字」升级为「代码验证 LLM 没写」。检出即中和，幻觉数字
+# 挡在用户之前并 fail-loud 记日志（龙虎榜实证：LLM 复述金融数字会编造）。
+# 注：代码渲染的真值行在 clip 之后才追加，不受此影响。
+_FABRICATED_PCT_RE = re.compile(r"[+\-]?\d+(?:\.\d+)?\s*%")
+
+
+def _neutralize_fabricated_percentages(text: str) -> str:
+    hits = _FABRICATED_PCT_RE.findall(text)
+    if not hits:
+        return text
+    logger.warning(
+        "[commentary] LLM 正文含 %d 处百分比，已中和为「相关幅度」（真值走代码渲染）: %s",
+        len(hits), hits[:5],
+    )
+    return _FABRICATED_PCT_RE.sub("相关幅度", text)
 
 
 def _sanitize_html(text: str) -> str:
