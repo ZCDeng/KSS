@@ -53,10 +53,14 @@ ETF_PARQUET_MODULES = ("pyarrow", "fastparquet")
 BRIDGE_SCHEMA_VERSION = 1
 
 
-def _json_dump(payload: Any) -> None:
-    # 版本化信封：{schemaVersion, data}。Swift 两段解码，版本不匹配出可读横幅而非静默崩。
+def _envelope_json(payload: Any) -> str:
+    """版本化信封 {schemaVersion, data} 的 JSON 行（U4/U5：subprocess 与 sidecar 共用）。"""
     envelope = {"schemaVersion": BRIDGE_SCHEMA_VERSION, "data": payload}
-    print(json.dumps(envelope, ensure_ascii=False, allow_nan=False, separators=(",", ":")))
+    return json.dumps(envelope, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+
+
+def _json_dump(payload: Any) -> None:
+    print(_envelope_json(payload))
 
 
 def _shorten(text: str, limit: int = 12000) -> str:
@@ -3018,6 +3022,77 @@ def _theme_leaders() -> list[dict[str, Any]]:
     return out
 
 
+# 写命令（产生副作用 / 修改状态）；U6 MCP 的 paper-only 闸据此分类。
+WRITE_COMMANDS = frozenset({
+    "run", "import", "resolve",
+    "cron-rerun", "cron-enable", "cron-disable", "cron-catchup", "cron-rerun-many",
+})
+
+
+def dispatch(command: str, args: list[str]) -> Any:
+    """命令 → payload（传给 _json_dump 的对象）。subprocess(main) 与 sidecar 共用。
+    参数错误 raise ValueError；下游可能 raise SystemExit（如 report 路径护栏）——
+    sidecar 须捕获，不可让 daemon 退出。"""
+    if command == "snapshot":
+        return snapshot()
+    if command == "stock":
+        if not args:
+            raise ValueError("stock command requires SYMBOL")
+        return stock_detail(args[0])
+    if command == "report":
+        if not args:
+            raise ValueError("report command requires PATH")
+        return report_detail(args[0])
+    if command == "paper-summary":
+        return _paper_summary()
+    if command == "resolve":
+        return resolve_stocks(args[0] if args else "")
+    if command == "import":
+        codes = [c.strip() for c in (args[0] if args else "").split(",") if c.strip()]
+        result = _run_import_stocks(codes)
+        _append_task_history(result)
+        return result
+    if command == "python-env":
+        return _python_env_status()
+    if command == "sector-rotation":
+        if not args:
+            return _latest_sector_rotation() or {}
+        return _sector_rotation_snapshot(SECTOR_ROTATION_DIR / f"{args[0]}.json") or {}
+    if command == "sector-rotation-history":
+        limit = int(args[0]) if args and args[0].isdigit() else 30
+        return _sector_rotation_history(limit=limit)
+    if command == "run":
+        if not args:
+            raise ValueError("run command requires TASK")
+        result = run_task(args[0], args[1:])
+        _append_task_history(result)
+        return result
+    if command == "theme-leaders":
+        return _theme_leaders()
+    if command == "get-discovery-candidates":
+        return _discovery_merge()
+    if command == "cron-list":
+        return _scheduled_jobs()
+    if command in {"cron-rerun", "cron-enable", "cron-disable"}:
+        if not args:
+            raise ValueError(f"{command} requires LABEL")
+        return _cron_action(args[0], command.split("-", 1)[1])
+    if command == "cron-catchup":
+        return _cron_catchup()
+    if command == "cron-rerun-many":
+        labels = [s for s in (args[0].split(",") if args else []) if s]
+        return _cron_rerun_many(labels)
+    if command == "trends-month":
+        if not args:
+            raise ValueError("trends-month requires YYYY-MM")
+        return _trends_month(args[0])
+    if command == "trends-day":
+        if not args:
+            raise ValueError("trends-day requires YYYY-MM-DD")
+        return _trends_day(args[0])
+    raise ValueError(f"unknown command: {command}")
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print(
@@ -3027,94 +3102,13 @@ def main(argv: list[str]) -> int:
             file=sys.stderr,
         )
         return 2
-    command = argv[1]
-    if command == "snapshot":
-        _json_dump(snapshot())
-        return 0
-    if command == "stock":
-        if len(argv) < 3:
-            print("stock command requires SYMBOL", file=sys.stderr)
-            return 2
-        _json_dump(stock_detail(argv[2]))
-        return 0
-    if command == "report":
-        if len(argv) < 3:
-            print("report command requires PATH", file=sys.stderr)
-            return 2
-        _json_dump(report_detail(argv[2]))
-        return 0
-    if command == "paper-summary":
-        _json_dump(_paper_summary())
-        return 0
-    if command == "resolve":
-        _json_dump(resolve_stocks(argv[2] if len(argv) > 2 else ""))
-        return 0
-    if command == "import":
-        codes = [c.strip() for c in (argv[2] if len(argv) > 2 else "").split(",") if c.strip()]
-        result = _run_import_stocks(codes)
-        _append_task_history(result)
-        _json_dump(result)
-        return 0
-    if command == "python-env":
-        _json_dump(_python_env_status())
-        return 0
-    if command == "sector-rotation":
-        if len(argv) < 3:
-            _json_dump(_latest_sector_rotation() or {})
-        else:
-            path = SECTOR_ROTATION_DIR / f"{argv[2]}.json"
-            _json_dump(_sector_rotation_snapshot(path) or {})
-        return 0
-    if command == "sector-rotation-history":
-        limit = int(argv[2]) if len(argv) > 2 and argv[2].isdigit() else 30
-        _json_dump(_sector_rotation_history(limit=limit))
-        return 0
-    if command == "run":
-        if len(argv) < 3:
-            print("run command requires TASK", file=sys.stderr)
-            return 2
-        result = run_task(argv[2], argv[3:])
-        _append_task_history(result)
-        _json_dump(result)
-        return 0
-    if command == "theme-leaders":
-        _json_dump(_theme_leaders())
-        return 0
-    if command == "get-discovery-candidates":
-        _json_dump(_discovery_merge())
-        return 0
-    if command == "cron-list":
-        _json_dump(_scheduled_jobs())
-        return 0
-    if command in {"cron-rerun", "cron-enable", "cron-disable"}:
-        if len(argv) < 3:
-            print(f"{command} requires LABEL", file=sys.stderr)
-            return 2
-        action = command.split("-", 1)[1]  # rerun / enable / disable
-        _json_dump(_cron_action(argv[2], action))
-        return 0
-    if command == "cron-catchup":
-        _json_dump(_cron_catchup())
-        return 0
-    if command == "cron-rerun-many":
-        # 逗号分隔 label 列表，空则重跑全部启用项；每个 label 仍走白名单校验。
-        labels = [s for s in (argv[2].split(",") if len(argv) >= 3 else []) if s]
-        _json_dump(_cron_rerun_many(labels))
-        return 0
-    if command == "trends-month":
-        if len(argv) < 3:
-            print("trends-month requires YYYY-MM", file=sys.stderr)
-            return 2
-        _json_dump(_trends_month(argv[2]))
-        return 0
-    if command == "trends-day":
-        if len(argv) < 3:
-            print("trends-day requires YYYY-MM-DD", file=sys.stderr)
-            return 2
-        _json_dump(_trends_day(argv[2]))
-        return 0
-    print(f"unknown command: {command}", file=sys.stderr)
-    return 2
+    try:
+        payload = dispatch(argv[1], argv[2:])
+    except (ValueError, SystemExit) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    _json_dump(payload)
+    return 0
 
 
 if __name__ == "__main__":

@@ -73,3 +73,6 @@ storage/prediction_ledger/
 storage/factor_health/
 storage/cpcv_cache/
 storage/pipeline_alpha/
+
+# U5 sidecar socket (dev: repo/run/)
+/run/

@@ -126,6 +126,14 @@ struct BridgeClient {
     }
 
     private func run<T: Decodable>(_ args: [String], as type: T.Type) throws -> T {
+        // U5：优先常驻 sidecar（pandas 暖、无 per-call python 启动）；socket 不可用回退 subprocess。
+        if let envelope = try sidecarRequest(args) {
+            return try Self.decodeEnvelope(envelope)
+        }
+        return try runSubprocess(args)
+    }
+
+    private func runSubprocess<T: Decodable>(_ args: [String]) throws -> T {
         let bridge = projectRoot.appending(path: "scripts/kss_app_bridge.py")
         let process = Process()
         process.executableURL = python
@@ -171,6 +179,104 @@ struct BridgeClient {
     static let supportedSchemaVersion = 1
     private struct SchemaProbe: Decodable { let schemaVersion: Int }
     private struct Envelope<T: Decodable>: Decodable { let schemaVersion: Int; let data: T }
+
+    // MARK: - U5 常驻 sidecar（Unix socket）
+
+    private var socketPath: String {
+        stateRoot.appending(path: "run/kss-sidecar.sock").path
+    }
+
+    private struct SidecarResponse: Decodable { let code: Int; let stdout: String?; let stderr: String? }
+
+    /// socket 缺失则 spawn sidecar daemon（detached，best-effort），等其就绪 ≤3s。
+    private func ensureSidecarRunning() {
+        if FileManager.default.fileExists(atPath: socketPath) { return }
+        let sidecar = projectRoot.appending(path: "scripts/kss_sidecar.py")
+        guard FileManager.default.fileExists(atPath: sidecar.path) else { return }
+        let p = Process()
+        p.executableURL = python
+        p.arguments = [sidecar.path]
+        var env = ProcessInfo.processInfo.environment
+        env["KSS_PROJECT_ROOT"] = projectRoot.path
+        env["KSS_STATE_ROOT"] = stateRoot.path
+        env["KSS_PYTHON"] = python.path
+        for (key, value) in KeychainStore.injectedEnvironment() { env[key] = value }
+        p.environment = env
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        try? p.run()   // detached daemon，不 wait
+        for _ in 0..<30 {
+            if FileManager.default.fileExists(atPath: socketPath) { return }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+    }
+
+    /// 经 sidecar 调度。返回 envelope Data（成功）；nil = socket 不可用（回退 subprocess）；
+    /// throw = 命令业务失败（code 1，不回退，与 subprocess 语义一致）。
+    private func sidecarRequest(_ args: [String]) throws -> Data? {
+        ensureSidecarRunning()
+        let cmd = args.first ?? ""
+        let rest = Array(args.dropFirst())
+        guard var request = try? JSONSerialization.data(
+            withJSONObject: ["cmd": cmd, "args": rest]) else { return nil }
+        request.append(0x0A)
+        guard let respData = Self.unixSocketRoundtrip(path: socketPath, request: request, timeout: 3.0),
+              let resp = try? JSONDecoder().decode(SidecarResponse.self, from: respData)
+        else { return nil }   // 连不上/超时/响应不可解 → 回退 subprocess
+        if resp.code == 0, let out = resp.stdout {
+            return Data(out.utf8)
+        }
+        throw BridgeError.processFailed(
+            (resp.stderr ?? "sidecar failed").trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// 一次 Unix domain socket 往返（连接→发请求→读到换行）。失败/超时返回 nil。
+    static func unixSocketRoundtrip(path: String, request: Data, timeout: TimeInterval) -> Data? {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        if fd < 0 { return nil }
+        defer { close(fd) }
+
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = Array(path.utf8)
+        let cap = MemoryLayout.size(ofValue: addr.sun_path) - 1
+        let n = min(pathBytes.count, cap)
+        withUnsafeMutableBytes(of: &addr.sun_path) { raw in
+            pathBytes.withUnsafeBytes { src in
+                raw.baseAddress!.copyMemory(from: src.baseAddress!, byteCount: n)
+            }
+        }
+        var tv = timeval(tv_sec: Int(timeout), tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+
+        let connected = withUnsafePointer(to: &addr) { ptr -> Int32 in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                connect(fd, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        if connected != 0 { return nil }
+
+        let reqBytes = [UInt8](request)
+        var sent = 0
+        while sent < reqBytes.count {
+            let w = reqBytes.withUnsafeBytes { raw in
+                send(fd, raw.baseAddress!.advanced(by: sent), reqBytes.count - sent, 0)
+            }
+            if w <= 0 { return nil }
+            sent += w
+        }
+
+        var out = Data()
+        var buf = [UInt8](repeating: 0, count: 65536)
+        while true {
+            let r = read(fd, &buf, buf.count)
+            if r <= 0 { break }
+            out.append(contentsOf: buf[0..<r])
+            if out.last == 0x0A { break }
+        }
+        return out.isEmpty ? nil : out
+    }
 
     /// 版本化信封两段解码（KTD3，可测 seam）：先探 schemaVersion，不匹配 throw
     /// `.schemaMismatch`（可读横幅）；缺字段视为 v0（旧/未包裹）；再解 `data` 为 T。
