@@ -451,7 +451,16 @@ def _check_python(path: Path) -> dict[str, Any]:
 
 def _python_env_status() -> dict[str, Any]:
     candidates = [_check_python(path) for path in _python_candidates()]
-    selected = next((item for item in candidates if item["usable"]), None)
+    usable = [item for item in candidates if item["usable"]]
+
+    # 优先选同时具备 parquet 支持（pyarrow/fastparquet 至少其一）的 python，
+    # 避免 ETF radar 正式回测因选中缺 pyarrow 的解释器而失败（另有候选有 pyarrow 时）。
+    def _has_parquet(item: dict[str, Any]) -> bool:
+        missing = item.get("missingOptionalModules", {}).get("etfRadarBacktest", [])
+        return len(missing) < len(ETF_PARQUET_MODULES)
+
+    selected = next((item for item in usable if _has_parquet(item)),
+                    usable[0] if usable else None)
     return {
         "selected": selected["path"] if selected else None,
         "usable": selected is not None,
