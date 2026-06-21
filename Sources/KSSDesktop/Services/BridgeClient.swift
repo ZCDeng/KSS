@@ -48,6 +48,28 @@ struct BridgeClient {
         // U2：bundle-mode 首启若 state-root venv 缺失，bootstrap provision（uv sync）。
         try Self.provisionRuntimeIfNeeded(projectRoot: roots.project, stateRoot: roots.state)
         self.python = Self.resolvePython(stateRoot: roots.state)
+        // U9：lock 变化则后台非阻塞 uv sync（不卡启动）。
+        Self.refreshRuntimeIfLockChanged(projectRoot: roots.project, stateRoot: roots.state)
+    }
+
+    /// U9：Python 层版本（scripts/VERSION），与 Swift 二进制版本独立。
+    var scriptsVersion: String {
+        let v = try? String(contentsOf: projectRoot.appending(path: "scripts/VERSION"), encoding: .utf8)
+        return (v?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 } ?? "—"
+    }
+
+    /// Swift 二进制版本（CFBundleShortVersionString）。
+    static var appVersion: String {
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "dev"
+    }
+
+    /// 无需实例即可读 Python 层版本（解析根 + scripts/VERSION）。
+    static func scriptsVersionOnDisk() -> String {
+        guard let roots = resolveRoots() else { return "—" }
+        let v = try? String(contentsOf: roots.project.appending(path: "scripts/VERSION"),
+                            encoding: .utf8)
+        let trimmed = v?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (trimmed?.isEmpty == false) ? trimmed! : "—"
     }
 
     func snapshot() throws -> AppSnapshot {
@@ -341,9 +363,14 @@ struct BridgeClient {
             fm.fileExists(atPath: url.appending(path: "scripts/kss_app_bridge.py").path)
         }
 
-        // ---- projectRoot ----
+        // ---- projectRoot（KTD7 三层：dev env > 同步代码 override > 面包屑/bundle baseline）----
+        let envScripts = ProcessInfo.processInfo.environment["KSS_SCRIPTS_ROOT"]
         var project: URL?
         if let envProject { project = URL(fileURLWithPath: envProject) }            // dev 硬分支
+        else if let envScripts,                                                      // 同步代码 override（iCloud/共享）
+                hasBridge(URL(fileURLWithPath: envScripts)) {
+            project = URL(fileURLWithPath: envScripts)
+        }
         else if let crumb { project = URL(fileURLWithPath: crumb.projectRoot) }     // bundle 面包屑
         else {
             // bundle baseline：scripts 随 .app 进 Resources。
@@ -436,6 +463,40 @@ struct BridgeClient {
         }
         guard fm.isExecutableFile(atPath: venvPy.path) else {
             throw BridgeError.runtimeBootstrapFailed("uv sync 完成但缺解释器：\(venvPy.path)")
+        }
+    }
+
+    /// U9：venv 已存在但 uv.lock 变化 → 后台非阻塞 uv sync，再 SIGHUP 重载 sidecar。
+    /// 永不阻塞启动；失败保留现有 venv（read-only 看数据不该被同步卡死）。
+    static func refreshRuntimeIfLockChanged(projectRoot: URL, stateRoot: URL) {
+        guard !isDevMode else { return }                 // dev 用 .venv-desktop
+        let fm = FileManager.default
+        let venvDir = stateRoot.appending(path: "venv")
+        guard fm.isExecutableFile(atPath: venvDir.appending(path: "bin/python3").path) else { return }
+        let lock = projectRoot.appending(path: "uv.lock")
+        let synced = venvDir.appending(path: ".synced-uv.lock")
+        guard let current = try? Data(contentsOf: lock) else { return }
+        if let prev = try? Data(contentsOf: synced), prev == current { return }   // 未变
+        guard let uv = findUV() else { return }
+        DispatchQueue.global(qos: .utility).async {
+            let p = Process()
+            p.executableURL = uv
+            p.arguments = ["sync", "--frozen", "--project", projectRoot.path]
+            var env = ProcessInfo.processInfo.environment
+            env["UV_PROJECT_ENVIRONMENT"] = venvDir.path
+            p.environment = env
+            p.standardOutput = FileHandle.nullDevice
+            p.standardError = FileHandle.nullDevice
+            guard (try? p.run()) != nil else { return }
+            p.waitUntilExit()
+            guard p.terminationStatus == 0 else { return }
+            try? current.write(to: synced)
+            // 依赖变了：SIGHUP 让 sidecar re-exec 重载（PID 文件由 daemon 写）。
+            let pidFile = stateRoot.appending(path: "run/kss-sidecar.pid")
+            if let pidStr = try? String(contentsOf: pidFile, encoding: .utf8),
+               let pid = Int32(pidStr.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                kill(pid, SIGHUP)
+            }
         }
     }
 }

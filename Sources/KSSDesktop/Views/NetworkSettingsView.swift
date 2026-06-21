@@ -33,6 +33,9 @@ struct NetworkSettingsView: View {
                         .foregroundStyle(theme.up)
                 }
                 Spacer()
+                Text("App v\(BridgeClient.appVersion) · Python 层 v\(BridgeClient.scriptsVersionOnDisk())")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary)
                 Button("关闭") { dismiss() }
                 Button {
                     save()

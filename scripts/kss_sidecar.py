@@ -65,6 +65,8 @@ async def _serve() -> None:
         SOCKET_PATH.unlink()
     server = await asyncio.start_unix_server(_on_connection, path=str(SOCKET_PATH))
     os.chmod(SOCKET_PATH, 0o700)
+    # PID 文件供 U9 运行时更新后 SIGHUP 重载。
+    (SOCKET_PATH.parent / "kss-sidecar.pid").write_text(str(os.getpid()))
 
     # SIGHUP → exec 自身：重载改动的 Python（保住「改 Python 不重编」DX）。
     loop = asyncio.get_running_loop()
