@@ -8,6 +8,7 @@ struct ContentView: View {
     @AppStorage("sidebarCollapsed") private var sidebarCollapsed = false
     @AppStorage("sidebarOrder") private var sidebarOrder = ""
     @State private var searchText = ""
+    @State private var showNetworkSettings = false
 
     private var watchlist: [String] {
         watchlistSymbols
@@ -76,6 +77,11 @@ struct ContentView: View {
                             }
                             themeMenu
                             Button {
+                                showNetworkSettings = true
+                            } label: {
+                                Label("网络与凭据", systemImage: "key.fill")
+                            }
+                            Button {
                                 Task { await store.loadSnapshot() }
                             } label: {
                                 Label("刷新", systemImage: "arrow.clockwise")
@@ -83,6 +89,9 @@ struct ContentView: View {
                         }
                     }
             }
+        }
+        .sheet(isPresented: $showNetworkSettings) {
+            NetworkSettingsView()
         }
         .frame(minWidth: 1080, minHeight: 720)
         .overlay(alignment: .bottom) {

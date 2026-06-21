@@ -136,6 +136,8 @@ struct BridgeClient {
         env["KSS_PROJECT_ROOT"] = projectRoot.path
         env["KSS_STATE_ROOT"] = stateRoot.path
         env["KSS_PYTHON"] = python.path
+        // U3：注入 Keychain 凭据（优先于 .env/network.env，见 bridge setdefault）。
+        for (key, value) in KeychainStore.injectedEnvironment() { env[key] = value }
         process.environment = env
 
         let output = Pipe()

@@ -605,7 +605,9 @@ def _run_process_task(
     # 显式下传，使派生子脚本（各自 parents[1] 算 root）的 storage 写入重定向到 state root。
     env["KSS_PROJECT_ROOT"] = str(PROJECT_ROOT)
     env["KSS_STATE_ROOT"] = str(STATE_ROOT)
-    env.update(_load_project_env())
+    # U3：Keychain 经 Swift 注入到 os.environ 的凭据优先；.env/network.env 仅填空缺。
+    for key, value in _load_project_env().items():
+        env.setdefault(key, value)
     proc = subprocess.run(
         command,
         cwd=PROJECT_ROOT,
@@ -636,21 +638,24 @@ def _load_project_env() -> dict[str, str]:
         "TELEGRAM_CHAT_ID",
         "TELEGRAM_API_URL",
     }
-    env_path = PROJECT_ROOT / ".env"
-    if not env_path.exists():
-        return {}
     loaded: dict[str, str] = {}
-    for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
+    # U3：dev .env（代码根）+ bundle-mode network.env（state root，非敏感，非 iCloud）。
+    # 敏感凭据正路是 Swift 经 Keychain 注入到 os.environ（见 _run_process_task setdefault 优先）；
+    # 这两个文件是 dev / 非敏感回落。
+    for env_path in (PROJECT_ROOT / ".env", STATE_ROOT / "network.env"):
+        if not env_path.exists():
             continue
-        key, value = stripped.split("=", 1)
-        key = key.strip()
-        if key not in allowed:
-            continue
-        value = value.strip().strip("\"'")
-        if value:
-            loaded[key] = value
+        for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, value = stripped.split("=", 1)
+            key = key.strip()
+            if key not in allowed:
+                continue
+            value = value.strip().strip("\"'")
+            if value:
+                loaded.setdefault(key, value)
     return loaded
 
 
