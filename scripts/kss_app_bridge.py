@@ -2601,6 +2601,7 @@ LABEL_TITLES = {
     "update_data_daily": "股票池日线更新",
     "hotspot_rotation_daily": "板块热点轮动归档",
     "trends_archive_daily": "趋势归档",
+    "data_catalog_daily": "数据目录刷新",
     "selfcheck": "开机自检补跑",
 }
 
@@ -2613,6 +2614,7 @@ LABEL_CATEGORY = {
     "sector_review_daily": "板块复盘",
     "hotspot_rotation_daily": "板块复盘",
     "trends_archive_daily": "数据更新",
+    "data_catalog_daily": "数据更新",
     "paper_trade_daily": "纸交易",
     "paper_trade_weekly": "纸交易",
     "prediction_validation_weekly": "校验回测",
