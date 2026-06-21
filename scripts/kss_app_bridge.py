@@ -41,6 +41,7 @@ TASK_LOG_PATH = APP_RUN_DIR / "kss_desktop_tasks.jsonl"
 NAMES_PATH = STATE_ROOT / "storage" / "stock_names.csv"
 SUPPLY_CHAIN_PATH = PROJECT_ROOT / "kss" / "config" / "supply_chain.yaml"  # config = 代码，随 bundle
 SECTOR_ROTATION_DIR = STATE_ROOT / "storage" / "sector_rotation"
+DATA_CATALOG_PATH = STATE_ROOT / "storage" / "data_catalog.json"  # 由 build_data_catalog.py 生成
 TOP_N = 5
 TOP_PCT = 0.2
 FRESHNESS_DAYS = 7
@@ -3121,6 +3122,101 @@ WRITE_COMMANDS = frozenset({
     "cron-rerun", "cron-enable", "cron-disable", "cron-catchup", "cron-rerun-many",
 })
 
+# ---------------------------------------------------------------------------
+# 数据目录 / 定向包（U4/U5）—— agent 公开地基。服务层纯 stdlib：只读预生成产物 + 组装。
+# ---------------------------------------------------------------------------
+
+# 命令元数据 registry —— orientation 从此读命令图。新增 dispatch 命令须在此登记
+# （test_bridge_orientation 的漂移守卫会断言 dispatch if-chain 命令 ⊆ COMMANDS）。
+COMMANDS = {
+    "snapshot": {"desc": "今日总览快照", "args": []},
+    "stock": {"desc": "单只股票明细", "args": ["SYMBOL"]},
+    "report": {"desc": "读 storage 下 markdown 报告", "args": ["PATH"]},
+    "paper-summary": {"desc": "模拟盘跟踪汇总", "args": []},
+    "resolve": {"desc": "文本/OCR → ts_code", "args": ["TEXT"]},
+    "import": {"desc": "导入个股历史", "args": ["CODES"]},
+    "python-env": {"desc": "python 环境状态", "args": []},
+    "sector-rotation": {"desc": "板块热点轮动快照", "args": ["[YYYYMMDD]"]},
+    "sector-rotation-history": {"desc": "板块轮动历史", "args": ["[LIMIT]"]},
+    "run": {"desc": "执行数据任务(白名单)", "args": ["TASK", "..."]},
+    "theme-leaders": {"desc": "主题龙头梯队", "args": []},
+    "get-discovery-candidates": {"desc": "潜力股发现候选", "args": []},
+    "cron-list": {"desc": "计划任务及状态", "args": []},
+    "cron-rerun": {"desc": "重跑计划任务", "args": ["LABEL"]},
+    "cron-enable": {"desc": "启用计划任务", "args": ["LABEL"]},
+    "cron-disable": {"desc": "停用计划任务", "args": ["LABEL"]},
+    "cron-catchup": {"desc": "补跑漏跑任务", "args": []},
+    "cron-rerun-many": {"desc": "批量重跑", "args": ["LABELS"]},
+    "trends-month": {"desc": "趋势页某月日历", "args": ["YYYY-MM"]},
+    "trends-day": {"desc": "趋势页某日明细", "args": ["YYYY-MM-DD"]},
+    "data-catalog": {"desc": "全量数据资产字典", "args": []},
+    "orientation": {"desc": "一次调用上手定向包", "args": []},
+}
+
+# run_task 白名单 —— orientation 报此清单。须与 run_task() if-chain 实际接受集合一致
+# （test_bridge_orientation 断言相等）。
+RUN_TASKS = (
+    "daily-review-symbol", "daily-picks", "daily-picks-preview", "logmv-backtest",
+    "radar-archive-analysis", "paper-summary", "formal-daily-picks", "formal-paper-summary",
+    "formal-daily-review", "formal-sector-review", "formal-etf-radar-backtest",
+    "refresh-bj-daily", "refresh-daily-basic", "refresh-market-strip",
+    "refresh-sector-rotation", "update-cs-data",
+)
+
+# agent 上手关键文档指针。
+_DOC_POINTERS = (
+    ("kss/AGENTS.md", "AI 编码规约"),
+    ("docs/solutions/ai_native_surface_assessment.md", "AI-native 现状盘点"),
+)
+
+_catalog_cache: dict[str, Any] = {"mtime": None, "data": None}
+
+
+def _data_catalog() -> dict:
+    """读预生成的 data_catalog.json，按 mtime 缓存解析结果（sidecar 长驻/面板多轮会反复调）。"""
+    if not DATA_CATALOG_PATH.exists():
+        return {"error": "catalog_not_built",
+                "hint": "运行 build_data_catalog.py 或等 data_catalog_daily"}
+    mtime = DATA_CATALOG_PATH.stat().st_mtime
+    if _catalog_cache["mtime"] != mtime:
+        _catalog_cache["data"] = json.loads(DATA_CATALOG_PATH.read_text(encoding="utf-8"))
+        _catalog_cache["mtime"] = mtime
+    return _catalog_cache["data"]
+
+
+def _doc_pointers() -> list[dict]:
+    return [{"path": p, "desc": d, "exists": (PROJECT_ROOT / p).exists()}
+            for p, d in _DOC_POINTERS]
+
+
+def _orientation() -> dict:
+    """一次调用上手：命令图 + run_task 白名单 + 数据目录摘要 + cron 新鲜度 + 文档指针。"""
+    cat = _data_catalog()
+    if "error" in cat:
+        catalog_summary: dict[str, Any] = {"error": cat["error"], "hint": cat.get("hint")}
+    else:
+        catalog_summary = {
+            "generatedAt": cat.get("generatedAt"),
+            "datasetsResolved": cat.get("datasetsResolved"),
+            "datasetsExpected": cat.get("datasetsExpected"),
+            "datasets": [
+                {"name": d.get("name"), "kind": d.get("kind"),
+                 "latestDate": d.get("latestDate"),
+                 "columnCount": len(d["columns"]) if "columns" in d else None,
+                 "overlayDrift": d.get("overlayDrift") or None}
+                for d in cat.get("datasets", [])
+            ],
+        }
+    commands = [{"command": k, "write": k in WRITE_COMMANDS, **v}
+                for k, v in COMMANDS.items()]
+    return {
+        "commands": commands,
+        "runTaskWhitelist": list(RUN_TASKS),
+        "dataCatalog": catalog_summary,
+        "cron": _scheduled_jobs(),
+        "docs": _doc_pointers(),
+    }
+
 
 def dispatch(command: str, args: list[str]) -> Any:
     """命令 → payload（传给 _json_dump 的对象）。subprocess(main) 与 sidecar 共用。
@@ -3183,6 +3279,10 @@ def dispatch(command: str, args: list[str]) -> Any:
         if not args:
             raise ValueError("trends-day requires YYYY-MM-DD")
         return _trends_day(args[0])
+    if command == "data-catalog":
+        return _data_catalog()
+    if command == "orientation":
+        return _orientation()
     raise ValueError(f"unknown command: {command}")
 
 
