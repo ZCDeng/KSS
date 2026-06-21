@@ -135,6 +135,28 @@ final class KSSStore: ObservableObject {
         isRunningTask = false
     }
 
+    /// U5: 加自选即时生成该股复盘，完成后刷新 snapshot 使个股复盘列表即时纳入。
+    /// 失败仅置横幅、不抛——watchlist 已由 ContentView 持久化，复盘缺失不影响自选。
+    func generateReview(for symbol: String) async {
+        guard let bridge else { return }
+        isRunningTask = true
+        errorMessage = nil
+        do {
+            let result = try await Task.detached {
+                try bridge.runDailyReviewSymbol(symbol)
+            }.value
+            taskResults.insert(result, at: 0)
+            if result.status == "failed" {
+                errorMessage = "生成 \(symbol) 复盘失败：\(result.summary)"
+            } else {
+                await loadSnapshot()
+            }
+        } catch {
+            errorMessage = "生成 \(symbol) 复盘失败：\(error.localizedDescription)"
+        }
+        isRunningTask = false
+    }
+
     func loadSectorRotation(date: String? = nil) async {
         guard let bridge else {
             errorMessage = "Cannot locate KSS project root"

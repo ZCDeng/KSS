@@ -92,6 +92,11 @@ struct BridgeClient {
         try run(["run", task.rawValue] + task.arguments, as: TaskRunResult.self)
     }
 
+    /// U5: 加自选即时复盘 —— 动态 symbol 不入 KSSTask 静态枚举, 直接走 run 白名单。
+    func runDailyReviewSymbol(_ symbol: String) throws -> TaskRunResult {
+        try run(["run", "daily-review-symbol", "--symbols", symbol], as: TaskRunResult.self)
+    }
+
     func resolveStocks(_ text: String) throws -> [ResolvedStock] {
         try run(["resolve", text], as: [ResolvedStock].self)
     }

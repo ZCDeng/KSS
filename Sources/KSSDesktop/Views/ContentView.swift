@@ -260,12 +260,25 @@ struct ContentView: View {
     }
 
     private func toggleWatchlist(_ symbol: String) {
-        var symbols = watchlist
+        let result = WatchlistToggle.apply(watchlist, toggling: symbol)
+        // watchlist 先持久化，生成失败不回滚自选。
+        watchlistSymbols = result.list.joined(separator: ",")
+        // U5: 仅「加入」分支触发即时复盘（取消不触发）。
+        if result.generate {
+            Task { await store.generateReview(for: symbol) }
+        }
+    }
+}
+
+/// 自选列表 toggle 的纯决策（可单测）：加入返回 generate=true，取消返回 false。
+enum WatchlistToggle {
+    static func apply(_ current: [String], toggling symbol: String) -> (list: [String], generate: Bool) {
+        var symbols = current
         if let index = symbols.firstIndex(of: symbol) {
             symbols.remove(at: index)
-        } else {
-            symbols.append(symbol)
+            return (symbols, false)   // 取消不触发生成
         }
-        watchlistSymbols = symbols.joined(separator: ",")
+        symbols.append(symbol)
+        return (symbols, true)        // 加入触发即时复盘
     }
 }
