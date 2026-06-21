@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ideation: KSSDeck → 可分发可进化的独立 AI-native app</title>
+<style>
+  :root{
+    --bg:#0f1115; --surface:#171a21; --raised:#1d212b; --line:#2a2f3a;
+    --text:#e6e9ef; --muted:#9aa3b0; --faint:#6f7888;
+    --accent:#5db1ff; --accent-soft:#15263a; --accent-text:#9fd0ff;
+    --warn:#e0a04a; --warn-soft:#2a2113; --warn-text:#e7bd7e;
+    --good:#54c08a; --good-soft:#12281e; --good-text:#86d8af;
+    --bad:#e3766f; --bad-soft:#2a1614;
+    --radius:12px; --radius-s:8px;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:15px/1.62 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,"PingFang SC","Hiragino Sans GB",sans-serif;}
+  .wrap{max-width:920px;margin-inline:auto;padding:48px 24px 80px}
+  p,li{max-width:74ch}
+  a{color:var(--accent-text);text-decoration:none;border-bottom:1px solid #2c4a6b}
+  a:hover{border-bottom-color:var(--accent)}
+  h1{font-size:27px;line-height:1.25;margin:0 0 6px;font-weight:700;letter-spacing:-.01em}
+  h2{font-size:19px;margin:46px 0 14px;font-weight:700;border-bottom:1px solid var(--line);padding-bottom:8px}
+  h3{font-size:16px;margin:0 0 4px;font-weight:650}
+  .eyebrow{font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--faint);font-weight:600}
+  .meta{color:var(--muted);font-size:13.5px;margin:10px 0 0}
+  .meta code{color:var(--accent-text)}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.86em;
+    background:#11141a;border:1px solid var(--line);border-radius:5px;padding:.5px 5px}
+  .stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+  .stat{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-s);
+    padding:10px 16px;min-width:104px}
+  .stat b{display:block;font-size:21px;font-weight:700}
+  .stat span{font-size:11.5px;color:var(--muted);letter-spacing:.04em}
+  section{margin-top:8px}
+  .lead{color:var(--muted)}
+  .axes{list-style:none;padding:0;margin:0;display:grid;gap:8px}
+  .axes li{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-s);
+    padding:9px 14px;font-size:14px}
+  .axes b{color:var(--accent-text);font-weight:650;font-variant-numeric:tabular-nums}
+  .jump{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 22px;padding:0;list-style:none}
+  .jump a{font-size:12.5px;background:var(--raised);border:1px solid var(--line);
+    border-radius:999px;padding:5px 12px;border-bottom:1px solid var(--line)}
+  .jump a:hover{border-color:var(--accent)}
+  article.idea{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:20px 22px;margin:16px 0}
+  .ihead{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+  .rank{font-size:13px;font-weight:700;color:var(--faint);font-variant-numeric:tabular-nums}
+  .chips{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+  .chip{font-size:11px;font-weight:600;border-radius:999px;padding:3px 10px;border:1px solid transparent;
+    letter-spacing:.02em;white-space:nowrap}
+  .chip.ax{background:var(--accent-soft);color:var(--accent-text);border-color:#23456b}
+  .chip.cf{background:var(--good-soft);color:var(--good-text);border-color:#1e4a36}
+  .chip.cf.med{background:var(--warn-soft);color:var(--warn-text);border-color:#4a3a1a}
+  .chip.cx{background:var(--raised);color:var(--muted);border-color:var(--line)}
+  dl.fields{margin:12px 0 0;display:grid;grid-template-columns:max-content 1fr;gap:6px 16px}
+  dl.fields dt{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);
+    font-weight:600;padding-top:2px}
+  dl.fields dd{margin:0;font-size:14px}
+  .basis-tag{font-family:ui-monospace,monospace;font-size:11.5px;font-weight:700;
+    padding:1px 6px;border-radius:5px;margin-right:6px}
+  .b-direct{background:var(--good-soft);color:var(--good-text)}
+  .b-external{background:var(--accent-soft);color:var(--accent-text)}
+  .b-reasoned{background:var(--warn-soft);color:var(--warn-text)}
+  .down{color:var(--muted)}
+  figure{margin:16px 0 4px;background:#0b0d12;border:1px solid var(--line);border-radius:var(--radius-s);
+    padding:14px}
+  figure svg{display:block;width:100%;height:auto}
+  figcaption{font-size:12px;color:var(--faint);margin-top:8px;text-align:center}
+  table{border-collapse:collapse;width:100%;margin-top:14px;font-size:13.5px}
+  th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}
+  td.rej{color:var(--muted)}
+  .callout{background:var(--accent-soft);border:1px solid #23456b;border-radius:var(--radius-s);
+    padding:14px 16px;margin:18px 0}
+  .callout .eyebrow{color:var(--accent-text)}
+  footer.composition-signal{margin-top:54px;padding-top:16px;border-top:1px solid var(--line);
+    font-size:12px;color:var(--faint)}
+  strong{color:inherit}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Ideation · Compound Engineering</div>
+  <h1>KSSDeck → 可分发、可进化的独立 AI-native app</h1>
+  <p class="meta">
+    <strong>Date</strong> 2026-06-21 ·
+    <strong>Topic</strong> <code>kssdeck-standalone-packaging</code> ·
+    <strong>Mode</strong> repo-grounded
+  </p>
+  <p class="meta"><strong>Focus</strong> 研究本仓库 infrastructure 设计，借鉴补强把 KSSDeck 打包成可分发可进化的独立 AI-native app（参照 <a href="https://github.com/brokermr810/QuantDinger">QuantDinger</a>）</p>
+  <div class="stats">
+    <div class="stat"><b>7</b><span>survivors</span></div>
+    <div class="stat"><b>38</b><span>raw ideas</span></div>
+    <div class="stat"><b>7</b><span>cut + merged</span></div>
+    <div class="stat"><b>5</b><span>axes covered</span></div>
+    <div class="stat"><b>5</b><span>ideation frames</span></div>
+  </div>
+</header>
+
+<section>
+  <h2>Grounding Context（Codebase Context）</h2>
+  <p class="lead">当前 KSSDeck 是一个<strong>只读的瘦 SwiftUI 前端</strong>，架在一个 Python 产物仓库之上 —— 它<strong>不是自包含的</strong>。这套设计在「开发者本机跑」的场景非常顺手，但要变成一个能发给别人、能持续演进的独立 app，缺口集中在两件事：Python 运行时与依赖不在 bundle 里、数据路径绑死在仓库根。</p>
+  <ul class="axes" style="margin-top:14px">
+    <li><strong>桥</strong>：<code>BridgeClient.swift:108</code> 每次调用都 <code>Process</code> 拉起 <code>/usr/bin/python3</code> 跑 <code>scripts/kss_app_bridge.py</code>，cwd=projectRoot，返回 JSON（AppSnapshot ~80KB，逼近 64KB pipe buffer，已用并发读绕开死锁）。</li>
+    <li><strong>路径</strong>：<code>findProjectRoot()</code> 向上爬 ≤8 层找脚本；storage / cs_data / kss/config 全是仓库相对 → app 必须活在 clone 里，进不了 /Applications。</li>
+    <li><strong>调度</strong>：crontab 8 个工作日 job + 一个<strong>未 bootstrap</strong> 的 launchd selfcheck 看门狗；in-app「N 个任务漏跑」横幅 + 一键 catchup 已存在。</li>
+    <li><strong>AI</strong>：板块 commentary 走 Claude API → 写死的静态 <code>.md</code> 进 storage，app 读 Markdown 渲染；LLM 数字必须代码渲染（幻觉防线，靠 prompt 不靠结构）。</li>
+    <li><strong>打包</strong>：<code>build_and_run.sh</code> 出 <code>dist/KSSDesktop.app</code>（~8MB，<strong>无 codesign</strong>）；Python 运行时假定本机存在。</li>
+  </ul>
+  <p style="margin-top:16px"><strong>核心张力</strong>：今天改 Python <em>不用重编译</em>（小时级快迭代）；天真打包会反转这个性质。「可进化 vs 可分发」直接冲突 —— 必须显式设计混合方案，而不是二选一。这条张力是下面多数 idea 的共同锚点。</p>
+  <p class="down" style="margin-top:10px"><strong>QuantDinger 参照核验</strong>：它是 Docker SaaS（Vue+Flask+PG+Redis），打包/分发层几乎不可借鉴。可借的只有三样 —— ① <strong>MCP server 包住 CLI</strong>（它在 PyPI 发了 <code>quantdinger-mcp</code>）；② <strong>paper-only-by-default 安全闸</strong>；③ research→backtest→paper→live <strong>晋升流</strong>心智模型。</p>
+</section>
+
+<section>
+  <h2>Topic Axes</h2>
+  <ul class="axes">
+    <li><b>1 · 运行时打包</b> — Python runtime + 依赖 vendoring、可重定位路径</li>
+    <li><b>2 · 桥接与进程模型</b> — subprocess-per-call → sidecar/daemon、snapshot schema 版本化</li>
+    <li><b>3 · 分发与签名</b> — codesign/notarize/Gatekeeper、Sparkle 自更新、CLT→full-Xcode CI</li>
+    <li><b>4 · 可进化回路</b> — feature flags、Swift/Python 层独立演进、保住「改 Python 不重编」</li>
+    <li><b>5 · AI-native 化</b> — MCP 包 CLI、commentary 实时化、local vs API LLM、内建 eval</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Ranked Ideas</h2>
+
+  <figure>
+    <svg viewBox="0 0 880 150" role="img" aria-label="依赖脊柱：1 可重定位地基 解锁其余全部">
+      <defs><marker id="ar" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 Z" fill="#5db1ff"/></marker></defs>
+      <rect x="8" y="52" width="150" height="46" rx="8" fill="#15263a" stroke="#23456b"/>
+      <text x="83" y="72" fill="#9fd0ff" font-size="12.5" font-weight="700" text-anchor="middle">①可重定位地基</text>
+      <text x="83" y="88" fill="#7f93a8" font-size="10.5" text-anchor="middle">运行时+state root</text>
+
+      <rect x="210" y="14" width="150" height="44" rx="8" fill="#171a21" stroke="#2a2f3a"/>
+      <text x="285" y="33" fill="#e6e9ef" font-size="12" font-weight="650" text-anchor="middle">②常驻 sidecar</text>
+      <text x="285" y="48" fill="#7f93a8" font-size="10.5" text-anchor="middle">Unix socket</text>
+      <rect x="210" y="92" width="150" height="44" rx="8" fill="#171a21" stroke="#2a2f3a"/>
+      <text x="285" y="111" fill="#e6e9ef" font-size="12" font-weight="650" text-anchor="middle">③版本化协议</text>
+      <text x="285" y="126" fill="#7f93a8" font-size="10.5" text-anchor="middle">schemaVersion</text>
+
+      <rect x="412" y="14" width="150" height="44" rx="8" fill="#12281e" stroke="#1e4a36"/>
+      <text x="487" y="33" fill="#86d8af" font-size="12" font-weight="650" text-anchor="middle">④kss-mcp 基石</text>
+      <text x="487" y="48" fill="#6f9d85" font-size="10.5" text-anchor="middle">paper-only 闸</text>
+      <rect x="412" y="92" width="150" height="44" rx="8" fill="#171a21" stroke="#2a2f3a"/>
+      <text x="487" y="111" fill="#e6e9ef" font-size="12" font-weight="650" text-anchor="middle">⑥双通道演进</text>
+      <text x="487" y="126" fill="#7f93a8" font-size="10.5" text-anchor="middle">Sparkle+Python层</text>
+
+      <rect x="614" y="53" width="150" height="44" rx="8" fill="#171a21" stroke="#2a2f3a"/>
+      <text x="689" y="72" fill="#e6e9ef" font-size="12" font-weight="650" text-anchor="middle">⑤签名+公证+CI</text>
+      <text x="689" y="87" fill="#7f93a8" font-size="10.5" text-anchor="middle">真·可分发闸</text>
+
+      <line x1="158" y1="75" x2="206" y2="36" stroke="#5db1ff" stroke-width="1.6" marker-end="url(#ar)"/>
+      <line x1="158" y1="75" x2="206" y2="114" stroke="#5db1ff" stroke-width="1.6" marker-end="url(#ar)"/>
+      <line x1="360" y1="36" x2="408" y2="36" stroke="#5db1ff" stroke-width="1.6" marker-end="url(#ar)"/>
+      <line x1="360" y1="114" x2="408" y2="114" stroke="#5db1ff" stroke-width="1.6" marker-end="url(#ar)"/>
+      <line x1="562" y1="36" x2="610" y2="68" stroke="#5db1ff" stroke-width="1.6" marker-end="url(#ar)"/>
+      <line x1="562" y1="114" x2="610" y2="82" stroke="#5db1ff" stroke-width="1.6" marker-end="url(#ar)"/>
+    </svg>
+    <figcaption>依赖脊柱：①可重定位地基是 P0，不做则其余全部落空；②③是进程/契约层；④⑥靠它解锁独立演进；⑤是真正的「可分发」闸门。（示意，非实现规格）</figcaption>
+  </figure>
+
+  <ul class="jump">
+    <li><a href="#i1">1 · 可重定位运行时 + state root</a></li>
+    <li><a href="#i2">2 · 常驻 Python sidecar</a></li>
+    <li><a href="#i3">3 · 版本化桥协议</a></li>
+    <li><a href="#i4">4 · kss-mcp 基石</a></li>
+    <li><a href="#i5">5 · 签名 + 公证 + CI</a></li>
+    <li><a href="#i6">6 · 双通道演进</a></li>
+    <li><a href="#i7">7 · AI-native commentary 深化</a></li>
+  </ul>
+
+  <article class="idea" id="i1">
+    <div class="ihead"><span class="rank">01</span><h3>可重定位运行时 + state root 分离</h3>
+      <span class="chips"><span class="chip ax">ax1 运行时打包</span><span class="chip cf">Conf 88%</span><span class="chip cx">Cx High</span></span></div>
+    <p><strong>P0 地基。</strong>用 <code>py-app-standalone</code>（uv 可重定位 env）把 Python 3.12 + 全部依赖 vendored 进 <code>Contents/Resources/python-env/</code>，<code>BridgeClient.swift:108</code> 的 <code>/usr/bin/python3</code> 改成 bundle 内路径（一行）；<code>requirements.lock</code> 锁死可复现性（解掉 pyarrow 手装问题）。同时把<strong>不可变 bundle 代码</strong>与<strong>可变状态</strong>拆开：<code>KSS_STATE_ROOT</code> 默认 <code>~/Library/Application Support/KSS/</code>，安装脚本写一个 breadcrumb，<code>findProjectRoot()</code> 8 层上爬退化成「脚本恒在 <code>Bundle.main.resourcePath</code>」。把网络依赖（Tushare key / <code>TELEGRAM_API_URL</code> / 代理）一并表面化为可见配置，缺数据时大声降级而非静默失败。</p>
+    <dl class="fields">
+      <dt>Basis</dt><dd><span class="basis-tag b-direct">direct</span><code>BridgeClient.swift:108</code> 硬编码 <code>/usr/bin/python3</code>、<code>:143-168</code> 8 层上爬；<code>kss_app_bridge.py:25</code> <code>PROJECT_ROOT=parents[1]</code>；<span class="basis-tag b-external">external</span> py-app-standalone = solo-dev 最佳；XDG state-root 惯例。<em>（verifier: sound，证据全部核实）</em></dd>
+      <dt>Rationale</dt><dd>这是「别人能装」的字面前提。不做这一条，签名、Sparkle、第二台机器安装全部无意义 —— 干净机器上 app 立刻 fail。bundle=不可变代码 / state root=可变数据这条不变量也让签名 bundle 可写状态成为可能。</dd>
+      <dt>Downsides</dt><dd class="down">最大工作量（vendoring + 路径重构 + 安装/迁移脚本）；一次性迁移已有 <code>storage/</code>；bundle 体积从 8MB 涨到数百 MB。</dd>
+    </dl>
+  </article>
+
+  <article class="idea" id="i2">
+    <div class="ihead"><span class="rank">02</span><h3>常驻 Python sidecar（Unix socket）</h3>
+      <span class="chips"><span class="chip ax">ax2 桥接进程</span><span class="chip cf">Conf 85%</span><span class="chip cx">Cx Medium</span></span></div>
+    <p>把「每次调用 fork 一个 python3、重 import pandas、~80KB 过管道」换成<strong>启动时拉起一次的常驻进程</strong>，Swift 用行分隔 JSON 走 <code>~/Library/Application Support/KSS/</code> 下的 Unix domain socket，SMAppService / LaunchAgent 托管生命周期。pandas/pyarrow 冷启动只付一次，热路径降到纯 I/O；64KB pipe buffer 死锁风险彻底消失。</p>
+    <figure>
+      <svg viewBox="0 0 760 140" role="img" aria-label="一个常驻 daemon 两个接口">
+        <rect x="40" y="20" width="150" height="44" rx="8" fill="#171a21" stroke="#2a2f3a"/>
+        <text x="115" y="40" fill="#e6e9ef" font-size="12.5" font-weight="650" text-anchor="middle">SwiftUI app</text>
+        <text x="115" y="55" fill="#7f93a8" font-size="10.5" text-anchor="middle">URLSession/socket</text>
+        <rect x="40" y="80" width="150" height="44" rx="8" fill="#12281e" stroke="#1e4a36"/>
+        <text x="115" y="100" fill="#86d8af" font-size="12.5" font-weight="650" text-anchor="middle">外部 agent</text>
+        <text x="115" y="115" fill="#6f9d85" font-size="10.5" text-anchor="middle">Claude Code · MCP</text>
+        <rect x="430" y="44" width="290" height="56" rx="10" fill="#15263a" stroke="#23456b"/>
+        <text x="575" y="67" fill="#9fd0ff" font-size="13" font-weight="700" text-anchor="middle">常驻 kss-bridge daemon</text>
+        <text x="575" y="85" fill="#7f93a8" font-size="10.5" text-anchor="middle">pandas 只 import 一次 · 同一套命令集</text>
+        <line x1="190" y1="42" x2="426" y2="60" stroke="#5db1ff" stroke-width="1.6"/>
+        <text x="305" y="40" fill="#9fd0ff" font-size="10.5" text-anchor="middle">socket（人）</text>
+        <line x1="190" y1="102" x2="426" y2="84" stroke="#54c08a" stroke-width="1.6"/>
+        <text x="305" y="118" fill="#86d8af" font-size="10.5" text-anchor="middle">MCP stdio（agent）</text>
+      </svg>
+      <figcaption>同一个常驻进程对外开两个接口 —— socket 给 Swift、MCP 给 agent（idea 4）。sidecar 是这俩共用的基座。（示意）</figcaption>
+    </figure>
+    <dl class="fields">
+      <dt>Basis</dt><dd><span class="basis-tag b-direct">direct</span><code>BridgeClient.swift:105-141</code> subprocess-per-call + <code>:119-122</code> 代码注释自述 80KB/64KB 管道死锁绕行；<span class="basis-tag b-external">external</span> Tauri sidecar / SMAppService 同构模式。<em>（sound）</em></dd>
+      <dt>Rationale</dt><dd>同时干掉冷启动延迟与脆弱的双管道补丁，并且这个 socket 接口正是 idea 4（MCP）的天然挂载点 —— 「快 app」和「可被 agent 调用」收敛到同一个面。</dd>
+      <dt>Downsides</dt><dd class="down">引入进程生命周期/崩溃重启/僵尸清理的复杂度；需要 socket 超时回退到 subprocess 的兜底。</dd>
+    </dl>
+  </article>
+
+  <article class="idea" id="i3">
+    <div class="ihead"><span class="rank">03</span><h3>版本化桥协议（schemaVersion 信封）</h3>
+      <span class="chips"><span class="chip ax">ax2 桥接进程</span><span class="chip cf">Conf 86%</span><span class="chip cx">Cx Small</span></span></div>
+    <p>每个 bridge 响应顶层加 <code>schemaVersion</code> 信封 + Swift 端 negotiator（版本不匹配时降级/迁移，而非崩）。退役 <code>HotspotLeaderStock</code> 那个手缝双 schema 兜底解码器；不匹配时给「请更新 app / 脚本」的可读横幅，取代静默的 <code>Bridge returned invalid JSON</code>。</p>
+    <dl class="fields">
+      <dt>Basis</dt><dd><span class="basis-tag b-direct">direct</span><code>KSSModels.swift:25-62</code> 双 schema fallback decoder，注释明写 "Bridge returned invalid JSON"；全仓库 grep 无 <code>schemaVersion</code>；<span class="basis-tag b-external">external</span> DB schema migration 的 versioned-envelope 模式。<em>（sound）</em></dd>
+      <dt>Rationale</dt><dd>一旦 Swift 与 Python 真正独立发版（idea 6），无版本号的 payload 必然产生更多静默解码崩溃。现有的双 decoder 是警告弹；版本信封是阻止你手写第三个 decoder 的系统。成本最低、收益清晰。</dd>
+      <dt>Downsides</dt><dd class="down">需要一次性给所有现存命令补字段；negotiator 的迁移分支需要测试覆盖。</dd>
+    </dl>
+  </article>
+
+  <article class="idea" id="i4">
+    <div class="ihead"><span class="rank">04</span><h3>kss-mcp：把桥包成 MCP server（AI-native 基石）</h3>
+      <span class="chips"><span class="chip ax">ax5 AI-native</span><span class="chip cf">Conf 84%</span><span class="chip cx">Cx Medium</span></span></div>
+    <p>把现有 bridge 命令集（snapshot / stock / sector-rotation / run / report / cron-*，~15-25 个）包成一个本地 MCP server（stdio），<strong>paper-only 默认</strong>（实盘/写操作需显式 flag）。同一套逻辑面同时服务 SwiftUI app 和外部 agent —— 常驻 sidecar（idea 2）一个进程开两个接口。这是把 commentary 从「AI 写死 .md，app 读」翻转成「agent 可以主动查实时数据、跑回测、生成提示」的关键一跃，也是全场<strong>最强收敛</strong>：5 个 frame 全部独立指向它。</p>
+    <dl class="fields">
+      <dt>Basis</dt><dd><span class="basis-tag b-external">external</span> QuantDinger <code>quantdinger-mcp</code>（PyPI，REST→agent tools）+ paper-only-by-default 闸，均标记 TRANSFERABLE；<span class="basis-tag b-direct">direct</span> bridge 命令集已是天然 tool surface。<em>（sound）</em></dd>
+      <dt>Rationale</dt><dd>每新增一个桥命令都<strong>零边际成本</strong>地同时成为 agent 能力。把 KSS 从「我看的工具」升级成「agent 可操作的工作站」，安全闸直接整套借用参照架构。CLAUDE.md「模型只做判断、确定性让代码答」与之同向。</dd>
+      <dt>Downsides</dt><dd class="down">写操作的权限边界必须严格（paper-only 闸是硬要求）；MCP SDK 依赖需进 vendored env。</dd>
+    </dl>
+    <div class="callout"><div class="eyebrow">最高杠杆的战略下注</div>
+      idea 2 + 4 合起来是「一个常驻 daemon、两个接口」—— 它既解决性能/死锁，又是 app「AI-native」的本体。若只能先做一件能改变路线的事之外的第二件，是这个。</div>
+  </article>
+
+  <article class="idea" id="i5">
+    <div class="ihead"><span class="rank">05</span><h3>签名 + 公证 + CI 流水线</h3>
+      <span class="chips"><span class="chip ax">ax3 分发签名</span><span class="chip cf med">Conf 72%</span><span class="chip cx">Cx Medium</span></span></div>
+    <p>Developer ID codesign + <code>xcrun notarytool</code> + GitHub Actions full-Xcode runner：push tag → 构建 → 签名 → 公证 → 生成 appcast。移除 Gatekeeper 首次启动那道「身份不明开发者」墙 —— 这是从「开发者工具」变成「可发给别人的产品」的唯一门票。</p>
+    <dl class="fields">
+      <dt>Basis</dt><dd><span class="basis-tag b-direct">direct</span><code>build_and_run.sh</code> 全文零 <code>codesign</code>；institutional memory：本机 CLT 无 XCTest，codesign/notarize 需 full Xcode；<span class="basis-tag b-external">external</span> Sparkle <code>generate_appcast</code> + GHA Release 配套。<em>（sound）</em></dd>
+      <dt>Rationale</dt><dd>手工发版 = 「懒得发就不发」。自动化 CI 把发版从「有空才做」变「改完就出」，也是 Sparkle 自更新能跑的前提。</dd>
+      <dt>Downsides</dt><dd class="down">需 $99/年 Developer ID 与 keychain 在 CI 的密钥管理（Fastlane match）；本机 CLT 跑不了，依赖 GHA full-Xcode runner。信心 72% 因为这两个外部前提不在代码控制内。</dd>
+    </dl>
+  </article>
+
+  <article class="idea" id="i6">
+    <div class="ihead"><span class="rank">06</span><h3>双通道演进：Sparkle + 独立 Python 层</h3>
+      <span class="chips"><span class="chip ax">ax4 可进化回路</span><span class="chip cf med">Conf 75%</span><span class="chip cx">Cx Medium</span></span></div>
+    <p>Swift 二进制走 Sparkle（appcast + BinaryDelta delta）；Python 层走独立通道 —— 启动时 <code>uv sync --frozen</code> 对比 lock，或 manifest 拉 <code>python-env.tar.gz</code> 两槽原子替换。两层版本号解耦：改一个桥命令不必重签整个 .app。这是<strong>消解「可进化 vs 可分发」张力</strong>的那一刀 —— 保住「改 Python 不重编」的核心 DX 资产。</p>
+    <dl class="fields">
+      <dt>Basis</dt><dd><span class="basis-tag b-external">external</span> Sparkle（indie macOS 自更新标配，appcast/BinaryDelta/SUFeedURL）；<span class="basis-tag b-direct">direct</span> grounding 明列的 TENSION + <code>kss-desktop-packaging-deferred</code> memory；<span class="basis-tag b-reasoned">reasoned</span> 签名 bundle 上 Resources-only 改动免重新公证。<em>（sound）</em></dd>
+      <dt>Rationale</dt><dd>Python 层迭代频率 ~10× 于 Swift UI。解耦让一个 schema 修复几分钟内经 manifest 出货，而非排队等完整 Xcode 构建 + 公证。</dd>
+      <dt>Downsides</dt><dd class="down">两层版本可能 desync 成坏组合 —— 需配合 idea 3 的版本协议 +（可选）两槽回滚；on-launch 网络更新要静默且可失败。</dd>
+    </dl>
+  </article>
+
+  <article class="idea" id="i7">
+    <div class="ihead"><span class="rank">07</span><h3>AI-native commentary 深化：结构化 + 决策账本</h3>
+      <span class="chips"><span class="chip ax">ax5 AI-native</span><span class="chip cf">Conf 82%</span><span class="chip cx">Cx Small-Med</span></span></div>
+    <p>三个互补动作：<strong>(a) 结构化 commentary</strong> —— LLM 只输出 <code>null</code>/定性标签，代码在 render 时从 parquet/CSV 填真值（JSON 而非静态 .md，幻觉防线从 prompt 自律变成<strong>类型系统约束</strong>）；<strong>(b)</strong> commentary 存为可查询的 sqlite 线程，支持追问；<strong>(c)</strong> append-only 决策账本（snapshot hash + commentary 引用 + 当日 prediction）喂 eval/feedback 回路。</p>
+    <dl class="fields">
+      <dt>Basis</dt><dd><span class="basis-tag b-direct">direct</span> commentary = 静态 .md（grounding）+ <code>llm-numbers-deterministic-rendering</code> memory（龙虎榜幻觉实证）；<span class="basis-tag b-external">external</span> QuantDinger append-only audit log。<em>（sound，机构 grounding 最强、改造成本最低）</em></dd>
+      <dt>Rationale</dt><dd>写死的 .md 是「AI-native」app 里最静态的东西 —— 答不了追问。把确定性数字（列）与 prose（列）分开，既保住已验证的幻觉防线，又解冻交互；账本给 eval 回路一个可回放的黑匣子（「那天 commentary 说对了吗」从无法回答变成一个 query）。</dd>
+      <dt>Downsides</dt><dd class="down">commentary 生成管线与 schema 都要改；(b)(c) 相对 (a) 是增量，可分期。</dd>
+    </dl>
+  </article>
+</section>
+
+<section>
+  <h2>Rejection Summary</h2>
+  <table>
+    <thead><tr><th>#</th><th>Idea</th><th>Reason</th></tr></thead>
+    <tbody>
+      <tr><td>R1</td><td>Offline-first 配置 UI（网络依赖表面化）</td><td class="rej">真实但属 UX feature 非 infra；已折进 idea 1（网络依赖作可见配置）</td></tr>
+      <tr><td>R2</td><td>dev-vs-distributed 模式传感器（weight-on-wheels）</td><td class="rej">是 idea 1 的实现机制，非独立单元</td></tr>
+      <tr><td>R3</td><td>运行时完整性探针（cold-chain 冒烟）</td><td class="rej">折进 idea 1/6 的 launch/post-update 健康检查</td></tr>
+      <tr><td>R4</td><td>app-owned scheduler（schedule.json）</td><td class="rej">相对已有 cron-list/cron-catchup 桥只是增量；价值小于宣称（job 现为 8 个）</td></tr>
+      <tr><td>R5</td><td>A/B 两槽 Python env + 回滚</td><td class="rej">单用户场景过早的复杂度；Sparkle delta + idea 6 已给更廉价回滚</td></tr>
+      <tr><td>R6</td><td>feature-flags + 晋升环（research→paper→live）</td><td class="rej">solo 场景过度工程（用户即开发者）；snapshot staging 子点更适合作 brainstorm 变体</td></tr>
+      <tr><td>R7</td><td>App-is-disposable-viewport（curl|bash 自重建 checkout）</td><td class="rej"><strong>refuted</strong>：把「已废弃的现状」当新想法，绕过真问题（Gatekeeper / 不可复现运行时）而非解决</td></tr>
+    </tbody>
+  </table>
+  <p class="down" style="margin-top:12px">5 条 axis 全部有 survivor（ax1×1、ax2×2、ax3×1、ax4×1、ax5×2），无空轴。</p>
+</section>
+
+<footer class="composition-signal">Composed 2026-06-21 by ce-ideate · repo-grounded · 5 frames × 38 raw → 7 survivors · fresh-context basis verifier 核验 · QuantDinger 作外部参照</footer>
+
+</div>
+</body>
+</html>
