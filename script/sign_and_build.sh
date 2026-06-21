@@ -80,7 +80,20 @@ PLIST
 
 # ---- 签名（KTD6：只签 .app + hardened runtime；运行时是子进程，无逐 dylib 循环）----
 # 先签内嵌资源 bundle（若有），再签顶层 .app。
+# SwiftPM 资源包是平铺目录（无 Info.plist）→ codesign 拒签；补最小 Info.plist 使其成合法 bundle。
 if [ -d "$APP_MACOS/$RESOURCE_BUNDLE" ]; then
+  cat >"$APP_MACOS/$RESOURCE_BUNDLE/Info.plist" <<RESPLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>${BUNDLE_ID}.resources</string>
+  <key>CFBundleName</key><string>${RESOURCE_BUNDLE%.bundle}</string>
+  <key>CFBundlePackageType</key><string>BNDL</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+</dict>
+</plist>
+RESPLIST
   codesign --force --options runtime --timestamp \
     --sign "$SIGN_IDENTITY" "$APP_MACOS/$RESOURCE_BUNDLE"
 fi
