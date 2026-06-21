@@ -72,7 +72,7 @@ struct BacktestsView: View {
             Divider().overlay(theme.hairline)
 
             VStack(alignment: .leading, spacing: 12) {
-                PageTitle("回测", subtitle: selectedReport?.title)
+                PageTitle("AI回测", subtitle: selectedReport?.title)
                 HStack(spacing: 10) {
                     StatTile(title: "日志天数", value: "\(tracking.nDaysLogged)")
                     StatTile(title: "可评估天数", value: "\(tracking.nDaysWithReturns)")
