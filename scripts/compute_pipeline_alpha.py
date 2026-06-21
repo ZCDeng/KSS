@@ -96,7 +96,41 @@ def _forward_return(symbol: str, prediction_date: str, hold: int) -> float | Non
 # 管道历史命中读取 → {prediction_date: [(ts_code, score), ...]}
 # --------------------------------------------------------------------------- #
 
+def _hits_log_mv_from_ledger() -> dict[str, list[tuple[str, float]]] | None:
+    """优先从预测账本取 log_mv 命中（账本=已结算真值源，U8 ③）.
+
+    账本 ``factor_value`` 是入账时的因子值（与 JSON 同源，回放回填）；score 仍走
+    log_mv 反向 ``-factor_value``。账本不可用 / 为空 → None，调用方回退只读 JSON。
+    JSON 自此仅作审计/输入日志，分析以账本为准。
+    """
+    try:
+        from kss.prediction.ledger import PredictionLedger
+    except Exception:
+        return None
+    try:
+        records = PredictionLedger().query(symbol=None)
+    except Exception:
+        return None
+    if not records:
+        return None
+    out: dict[str, list[tuple[str, float]]] = {}
+    for rec in records:
+        if rec.get("strategy") != "log_mv_reverse":
+            continue
+        date = rec.get("prediction_date")
+        code = rec.get("symbol")
+        fv = rec.get("factor_value")
+        if not date or not code or fv is None:
+            continue
+        out.setdefault(str(date), []).append((str(code), -float(fv)))
+    return out or None
+
+
 def _hits_log_mv() -> dict[str, list[tuple[str, float]]]:
+    # 账本为已结算真值源：优先读账本，缺失/空时回退只读 JSON（退役过渡期回放来源）。
+    from_ledger = _hits_log_mv_from_ledger()
+    if from_ledger is not None:
+        return from_ledger
     out: dict[str, list[tuple[str, float]]] = {}
     for fp in sorted(PAPER_DIR.glob("*.json")):
         try:
