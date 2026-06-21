@@ -6,6 +6,8 @@ enum BridgeError: LocalizedError {
     case invalidOutput
     /// 桥协议版本与 app 支持版本不一致（KTD3）。
     case schemaMismatch(bridge: Int, app: Int)
+    /// 首启 uv bootstrap 失败（U2）。
+    case runtimeBootstrapFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -21,6 +23,8 @@ enum BridgeError: LocalizedError {
             } else {
                 return "桥协议版本过旧（脚本 v\(bridge) < App v\(app)）——请更新 scripts/（git pull）。"
             }
+        case .runtimeBootstrapFailed(let message):
+            return "首次配置 Python 运行时失败：\(message)"
         }
     }
 }
@@ -32,12 +36,18 @@ struct BridgeClient {
     /// bundle-mode 默认 = ~/Library/Application Support/KSS。
     let stateRoot: URL
 
+    /// bridge 脚本运行用的 Python 解释器。
+    let python: URL
+
     init() throws {
         guard let roots = Self.resolveRoots() else {
             throw BridgeError.projectRootNotFound
         }
         self.projectRoot = roots.project
         self.stateRoot = roots.state
+        // U2：bundle-mode 首启若 state-root venv 缺失，bootstrap provision（uv sync）。
+        try Self.provisionRuntimeIfNeeded(projectRoot: roots.project, stateRoot: roots.state)
+        self.python = Self.resolvePython(stateRoot: roots.state)
     }
 
     func snapshot() throws -> AppSnapshot {
@@ -118,13 +128,14 @@ struct BridgeClient {
     private func run<T: Decodable>(_ args: [String], as type: T.Type) throws -> T {
         let bridge = projectRoot.appending(path: "scripts/kss_app_bridge.py")
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.executableURL = python
         process.arguments = [bridge.path] + args
         process.currentDirectoryURL = projectRoot
-        // 显式注入双根，使 bridge 及其派生子脚本（U1 惰性 env 解析）一致定位代码/状态。
+        // 显式注入双根 + 解释器，使 bridge 及其派生子脚本（U1 惰性 env 解析）一致定位代码/状态/运行时。
         var env = ProcessInfo.processInfo.environment
         env["KSS_PROJECT_ROOT"] = projectRoot.path
         env["KSS_STATE_ROOT"] = stateRoot.path
+        env["KSS_PYTHON"] = python.path
         process.environment = env
 
         let output = Pipe()
@@ -255,5 +266,68 @@ struct BridgeClient {
         else { state = appSupportDefault }                      // bundle 默认
 
         return (resolvedProject, state)
+    }
+
+    // MARK: - U2 运行时解析 + 首启 bootstrap
+
+    /// bridge 脚本解释器：KSS_PYTHON env → state-root bootstrap venv → 系统 python3。
+    static func resolvePython(stateRoot: URL) -> URL {
+        let fm = FileManager.default
+        if let envPy = ProcessInfo.processInfo.environment["KSS_PYTHON"],
+           fm.isExecutableFile(atPath: envPy) {
+            return URL(fileURLWithPath: envPy)
+        }
+        let venvPy = stateRoot.appending(path: "venv/bin/python3")
+        if fm.isExecutableFile(atPath: venvPy.path) { return venvPy }
+        return URL(fileURLWithPath: "/usr/bin/python3")
+    }
+
+    /// 定位 uv 可执行（PATH + 常见安装位置）。
+    private static func findUV() -> URL? {
+        let fm = FileManager.default
+        var candidates = ["\(NSHomeDirectory())/.local/bin/uv",
+                          "/opt/homebrew/bin/uv", "/usr/local/bin/uv"]
+        if let path = ProcessInfo.processInfo.environment["PATH"] {
+            candidates += path.split(separator: ":").map { "\($0)/uv" }
+        }
+        for c in candidates where fm.isExecutableFile(atPath: c) {
+            return URL(fileURLWithPath: c)
+        }
+        return nil
+    }
+
+    /// bundle-mode 首启：state-root venv 缺失则 `uv sync --frozen` provision（dev-mode 跳过）。
+    static func provisionRuntimeIfNeeded(projectRoot: URL, stateRoot: URL) throws {
+        guard !isDevMode else { return }                 // dev 用 .venv-desktop，不 bootstrap
+        let fm = FileManager.default
+        let venvPy = stateRoot.appending(path: "venv/bin/python3")
+        if fm.isExecutableFile(atPath: venvPy.path) { return }   // 已 provision
+
+        guard let uv = findUV() else {
+            throw BridgeError.runtimeBootstrapFailed(
+                "未找到 uv，请先安装：curl -LsSf https://astral.sh/uv/install.sh | sh")
+        }
+        try? fm.createDirectory(at: stateRoot, withIntermediateDirectories: true)
+        let p = Process()
+        p.executableURL = uv
+        p.arguments = ["sync", "--frozen", "--project", projectRoot.path]
+        var env = ProcessInfo.processInfo.environment
+        env["UV_PROJECT_ENVIRONMENT"] = stateRoot.appending(path: "venv").path
+        p.environment = env
+        let errPipe = Pipe()
+        p.standardError = errPipe
+        p.standardOutput = Pipe()
+        do { try p.run() } catch {
+            throw BridgeError.runtimeBootstrapFailed("uv 启动失败：\(error.localizedDescription)")
+        }
+        p.waitUntilExit()
+        if p.terminationStatus != 0 {
+            let msg = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(),
+                             encoding: .utf8) ?? ""
+            throw BridgeError.runtimeBootstrapFailed("uv sync 失败：\(msg.suffix(300))")
+        }
+        guard fm.isExecutableFile(atPath: venvPy.path) else {
+            throw BridgeError.runtimeBootstrapFailed("uv sync 完成但缺解释器：\(venvPy.path)")
+        }
     }
 }

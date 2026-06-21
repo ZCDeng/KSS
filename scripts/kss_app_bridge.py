@@ -377,10 +377,15 @@ def report_detail(path_text: str) -> dict[str, Any]:
 
 
 def _python_candidates() -> list[Path]:
-    raw = [
+    raw = []
+    # U2: 首启 bootstrap venv（state root）+ KSS_PYTHON 显式覆盖优先于 dev .venv。
+    env_py = os.environ.get("KSS_PYTHON")
+    if env_py:
+        raw.append(Path(env_py))
+    raw.append(STATE_ROOT / "venv" / "bin" / "python")
+    raw += [
         PROJECT_ROOT / ".venv-desktop" / "bin" / "python",
         PROJECT_ROOT / ".venv" / "bin" / "python",
-        Path("/Users/zcdeng/.local/bin/python3.11"),
         Path("/opt/homebrew/bin/python3"),
         Path("/usr/bin/python3"),
     ]
