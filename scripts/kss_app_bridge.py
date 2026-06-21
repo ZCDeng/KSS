@@ -275,21 +275,41 @@ def _recommendations(
     return date, items
 
 
+# U3: 按股归档文件名 {date}_{tscode}.md (新) vs {date}.md (旧, 兼容)。
+_REVIEW_PERSYMBOL_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})_(\d{6}\.(?:SH|SZ|BJ))$")
+# 个股段标题行 "📊 *奥比中光(688322) R...*" → 取 "奥比中光(688322)" 作可读标题。
+_REVIEW_STOCK_TITLE_RE = re.compile(r"\*([^*()]+\(\d{6}(?:\.\w+)?\))")
+
+
 def _reviews() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for path in sorted(REVIEW_DIR.glob("*.md"), reverse=True):
         text = path.read_text(encoding="utf-8", errors="ignore")
         lines = [line.rstrip() for line in text.splitlines()]
-        title = next((line.lstrip("# ").strip() for line in lines if line.startswith("#")), path.stem)
         body_lines = [line for line in lines if line.strip() and not line.startswith("#")]
         excerpt = "\n".join(body_lines[:16])
-        symbols = sorted(set(re.findall(r"\b(?:688|300|301|920)\d{3}(?:\.(?:SH|SZ|BJ))?\b", text)))
+
+        m = _REVIEW_PERSYMBOL_RE.match(path.stem)
+        if m:
+            # 按股产物: date / focusSymbols 由文件名确定 (非正则反解)。
+            date = m.group(1)
+            symbol = m.group(2)
+            focus = [symbol]
+            tm = _REVIEW_STOCK_TITLE_RE.search(text)
+            title = tm.group(1).strip() if tm else f"{symbol} 复盘"
+        else:
+            # 旧按日产物兼容: date=stem, 标题取首个 #, symbols 正则反解。
+            date = path.stem
+            title = next((line.lstrip("# ").strip() for line in lines if line.startswith("#")), path.stem)
+            symbols = sorted(set(re.findall(r"\b(?:688|300|301|920)\d{3}(?:\.(?:SH|SZ|BJ))?\b", text)))
+            focus = symbols[:12]
+
         out.append({
-            "date": path.stem,
+            "date": date,
             "title": title,
             "excerpt": excerpt,
             "path": str(path.relative_to(STATE_ROOT)),
-            "focusSymbols": symbols[:12],
+            "focusSymbols": focus,
         })
     return out
 
