@@ -20,6 +20,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+# U1: 状态根（storage）可由 KSS_STATE_ROOT 重定向到 bundle 外；默认回落 REPO_ROOT。
+_KSS_STATE = Path(__import__("os").environ.get("KSS_STATE_ROOT") or REPO_ROOT)
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -55,7 +57,7 @@ def main() -> int:
     )
     ap.add_argument(
         "--output-dir",
-        default="storage/sector_rotation",
+        default=str(_KSS_STATE / "storage" / "sector_rotation"),
         help="归档目录",
     )
     ap.add_argument(

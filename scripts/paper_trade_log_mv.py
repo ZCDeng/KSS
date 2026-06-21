@@ -37,6 +37,7 @@ from pathlib import Path
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_KSS_STATE = Path(__import__("os").environ.get("KSS_STATE_ROOT") or PROJECT_ROOT)  # U1: bundle-mode 写入重定向
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from kss.backtest.cost_model import ExecutionModel  # noqa: E402
@@ -53,8 +54,8 @@ from kss.prediction.cross_sectional_forecast import CrossSectionalForecast  # no
 # 常量
 # ---------------------------------------------------------------------- #
 
-DATA_GLOB = str(PROJECT_ROOT / "cs_data_688*.csv")
-LOG_DIR = PROJECT_ROOT / "storage" / "paper_trade"
+DATA_GLOB = str(_KSS_STATE / "cs_data_688*.csv")
+LOG_DIR = _KSS_STATE / "storage" / "paper_trade"
 TOP_PCT = 0.2   # 仅作 fallback 元数据; 实际选股走 TOP_N
 TOP_N = 5       # 2026-06-07 起固定 Top 5 (此前 top 20% ≈ 10 只)
 MIN_STOCKS = 10
@@ -244,7 +245,7 @@ def summarize_log_dir(lookback_days: int | None = None) -> dict:
     all_data: dict[str, pd.DataFrame] = {}
     for sym in all_symbols:
         code = sym.split(".")[0]
-        path = PROJECT_ROOT / f"cs_data_{code}.csv"
+        path = _KSS_STATE / f"cs_data_{code}.csv"
         if not path.exists():
             continue
         df = pd.read_csv(path)
@@ -421,7 +422,7 @@ def main() -> None:
     actual_date = pd.Timestamp(pool.attrs["target_date"])
 
     # ---- 附上 stock_names.csv 的可选元数据列（名称/申万行业/概念板块） ----
-    nm_path = Path("storage") / "stock_names.csv"
+    nm_path = (_KSS_STATE / "storage") / "stock_names.csv"
     if nm_path.exists():
         try:
             nm_df = pd.read_csv(nm_path, dtype=str)

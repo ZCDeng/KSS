@@ -8,10 +8,22 @@ update_macro_daily / risk_filters 三处独立硬编码导致漂移.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-PROJECT_ROOT: Path = Path(__file__).resolve().parents[2]
-STORAGE_ROOT: Path = PROJECT_ROOT / "storage"
+
+def _env_path(var: str) -> Path | None:
+    """读环境变量为绝对路径；未设/空返回 None。"""
+    v = os.environ.get(var)
+    return Path(v).expanduser().resolve() if v else None
+
+
+# 不可变代码根：dev/源码树位置。bundle-mode 由 KSS_PROJECT_ROOT 指定。
+PROJECT_ROOT: Path = _env_path("KSS_PROJECT_ROOT") or Path(__file__).resolve().parents[2]
+# 可变状态根：sqlite/parquet/.md/logs。默认回落到 PROJECT_ROOT —— 未设 env 时
+# STORAGE_ROOT 与历史行为逐字一致（in-repo），设了 KSS_STATE_ROOT 才重定向到 bundle 外。
+STATE_ROOT: Path = _env_path("KSS_STATE_ROOT") or PROJECT_ROOT
+STORAGE_ROOT: Path = STATE_ROOT / "storage"
 MACRO_ROOT: Path = STORAGE_ROOT / "macro"
 
 # ----- 日频 -----

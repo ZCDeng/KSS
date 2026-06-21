@@ -31,6 +31,7 @@ import numpy as np
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_KSS_STATE = Path(__import__("os").environ.get("KSS_STATE_ROOT") or PROJECT_ROOT)  # U1: bundle-mode 写入重定向
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from kss.notifications.manager import CHANNEL_CHOICES, send_to_channels  # noqa: E402
@@ -880,7 +881,7 @@ def main():
     # 存档: 落盘到 storage/daily_review/YYYY-MM-DD.md
     # dry-run 不覆盖已存在的档案——存档是预测校验 (validate_predictions.py) 的审计底稿,
     # 回放旧日期重新生成 (STOCKS 变更 / 数据修订) 会静默改写历史预测记录
-    archive_dir = PROJECT_ROOT / 'storage' / 'daily_review'
+    archive_dir = _KSS_STATE / "storage" / 'daily_review'
     archive_dir.mkdir(parents=True, exist_ok=True)
     archive_path = archive_dir / f'{today_str}.md'
     header = f"# KSS {today_str} 复盘 / {t1_str} 预测\n\n"

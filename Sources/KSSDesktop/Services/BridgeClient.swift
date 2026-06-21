@@ -18,13 +18,18 @@ enum BridgeError: LocalizedError {
 }
 
 struct BridgeClient {
+    /// 不可变代码根（scripts/ 与 kss/config 所在）。
     let projectRoot: URL
+    /// 可变状态根（storage/.cache）。dev-mode 默认 = projectRoot（in-repo，行为不变）；
+    /// bundle-mode 默认 = ~/Library/Application Support/KSS。
+    let stateRoot: URL
 
     init() throws {
-        guard let root = Self.findProjectRoot() else {
+        guard let roots = Self.resolveRoots() else {
             throw BridgeError.projectRootNotFound
         }
-        self.projectRoot = root
+        self.projectRoot = roots.project
+        self.stateRoot = roots.state
     }
 
     func snapshot() throws -> AppSnapshot {
@@ -108,6 +113,11 @@ struct BridgeClient {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         process.arguments = [bridge.path] + args
         process.currentDirectoryURL = projectRoot
+        // 显式注入双根，使 bridge 及其派生子脚本（U1 惰性 env 解析）一致定位代码/状态。
+        var env = ProcessInfo.processInfo.environment
+        env["KSS_PROJECT_ROOT"] = projectRoot.path
+        env["KSS_STATE_ROOT"] = stateRoot.path
+        process.environment = env
 
         let output = Pipe()
         let error = Pipe()
@@ -140,30 +150,86 @@ struct BridgeClient {
         }
     }
 
-    private static func findProjectRoot() -> URL? {
+    /// dev-mode 判定：`KSS_PROJECT_ROOT` env 存在即 dev（build_and_run.sh 注入）。
+    private static var isDevMode: Bool {
+        ProcessInfo.processInfo.environment["KSS_PROJECT_ROOT"] != nil
+    }
+
+    /// bundle-mode 状态根默认：`~/Library/Application Support/KSS`。
+    private static var appSupportDefault: URL {
+        FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "KSS")
+    }
+
+    /// 安装/首启写下的面包屑：`~/Library/Application Support/KSS/breadcrumb.json`，
+    /// 记 `{projectRoot, stateRoot}`，bundle-mode 据此定位（取代 8 层文件系统爬升）。
+    private static var breadcrumbURL: URL {
+        appSupportDefault.appending(path: "breadcrumb.json")
+    }
+
+    private struct Breadcrumb: Codable { var projectRoot: String; var stateRoot: String }
+
+    private static func readBreadcrumb() -> Breadcrumb? {
+        guard let data = try? Data(contentsOf: breadcrumbURL) else { return nil }
+        return try? JSONDecoder().decode(Breadcrumb.self, from: data)
+    }
+
+    /// 持久化解析结果（bundle-mode 首启），供后续启动免再探测。
+    static func writeBreadcrumb(project: URL, state: URL) {
+        let dir = appSupportDefault
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let crumb = Breadcrumb(projectRoot: project.path, stateRoot: state.path)
+        if let data = try? JSONEncoder().encode(crumb) {
+            try? data.write(to: breadcrumbURL)
+        }
+    }
+
+    /// 解析 (代码根, 状态根)。优先级：
+    /// projectRoot = KSS_PROJECT_ROOT(dev) → breadcrumb → bundle Resources → 历史爬升兜底。
+    /// stateRoot   = KSS_STATE_ROOT → breadcrumb → (dev? projectRoot : ~/Library/Application Support/KSS)。
+    private static func resolveRoots() -> (project: URL, state: URL)? {
         let fm = FileManager.default
-        var candidates: [URL] = []
-        if let env = ProcessInfo.processInfo.environment["KSS_PROJECT_ROOT"] {
-            candidates.append(URL(fileURLWithPath: env))
-        }
-        candidates.append(URL(fileURLWithPath: fm.currentDirectoryPath))
-        candidates.append(Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent())
+        let envProject = ProcessInfo.processInfo.environment["KSS_PROJECT_ROOT"]
+        let envState = ProcessInfo.processInfo.environment["KSS_STATE_ROOT"]
+        let crumb = readBreadcrumb()
 
-        if let executable = Bundle.main.executableURL {
-            candidates.append(executable.deletingLastPathComponent())
+        func hasBridge(_ url: URL) -> Bool {
+            fm.fileExists(atPath: url.appending(path: "scripts/kss_app_bridge.py").path)
         }
 
-        for candidate in candidates {
-            var url = candidate
-            for _ in 0..<8 {
-                if fm.fileExists(atPath: url.appending(path: "scripts/kss_app_bridge.py").path) {
-                    return url
+        // ---- projectRoot ----
+        var project: URL?
+        if let envProject { project = URL(fileURLWithPath: envProject) }            // dev 硬分支
+        else if let crumb { project = URL(fileURLWithPath: crumb.projectRoot) }     // bundle 面包屑
+        else {
+            // bundle baseline：scripts 随 .app 进 Resources。
+            let resources = Bundle.main.resourceURL
+            if let resources, hasBridge(resources) { project = resources }
+        }
+        // 兜底：历史向上爬升（仅当上面全落空，dev 无 env 启动等罕见场景）。
+        if project == nil || !(project.map(hasBridge) ?? false) {
+            for start in [URL(fileURLWithPath: fm.currentDirectoryPath),
+                          Bundle.main.executableURL?.deletingLastPathComponent()].compactMap({ $0 }) {
+                var url = start
+                for _ in 0..<8 {
+                    if hasBridge(url) { project = url; break }
+                    let parent = url.deletingLastPathComponent()
+                    if parent.path == url.path { break }
+                    url = parent
                 }
-                let parent = url.deletingLastPathComponent()
-                if parent.path == url.path { break }
-                url = parent
+                if project.map(hasBridge) ?? false { break }
             }
         }
-        return nil
+        guard let resolvedProject = project, hasBridge(resolvedProject) else { return nil }
+
+        // ---- stateRoot ----
+        let state: URL
+        if let envState { state = URL(fileURLWithPath: envState) }
+        else if let crumb { state = URL(fileURLWithPath: crumb.stateRoot) }
+        else if isDevMode { state = resolvedProject }          // dev：in-repo，行为不变
+        else { state = appSupportDefault }                      // bundle 默认
+
+        return (resolvedProject, state)
     }
 }

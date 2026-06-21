@@ -22,17 +22,25 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-PAPER_DIR = PROJECT_ROOT / "storage" / "paper_trade"
-REVIEW_DIR = PROJECT_ROOT / "storage" / "daily_review"
-REPORT_DIR = PROJECT_ROOT / "storage" / "reports"
+def _env_path(var: str) -> Path | None:
+    v = os.environ.get(var)
+    return Path(v).expanduser().resolve() if v else None
+
+
+# 不可变代码根（脚本/config 所在）；bundle-mode 由 KSS_PROJECT_ROOT 指定。
+PROJECT_ROOT = _env_path("KSS_PROJECT_ROOT") or Path(__file__).resolve().parents[1]
+# 可变状态根（storage/.cache）；默认回落 PROJECT_ROOT → 未设 env 时与历史行为逐字一致。
+STATE_ROOT = _env_path("KSS_STATE_ROOT") or PROJECT_ROOT
+PAPER_DIR = STATE_ROOT / "storage" / "paper_trade"
+REVIEW_DIR = STATE_ROOT / "storage" / "daily_review"
+REPORT_DIR = STATE_ROOT / "storage" / "reports"
 BJ_SCAN_DIR = REPORT_DIR / "bj50_scan"
-BJ_CACHE_DIR = PROJECT_ROOT / "storage" / "bj_cache"
-APP_RUN_DIR = PROJECT_ROOT / "storage" / "app_runs"
+BJ_CACHE_DIR = STATE_ROOT / "storage" / "bj_cache"
+APP_RUN_DIR = STATE_ROOT / "storage" / "app_runs"
 TASK_LOG_PATH = APP_RUN_DIR / "kss_desktop_tasks.jsonl"
-NAMES_PATH = PROJECT_ROOT / "storage" / "stock_names.csv"
-SUPPLY_CHAIN_PATH = PROJECT_ROOT / "kss" / "config" / "supply_chain.yaml"
-SECTOR_ROTATION_DIR = PROJECT_ROOT / "storage" / "sector_rotation"
+NAMES_PATH = STATE_ROOT / "storage" / "stock_names.csv"
+SUPPLY_CHAIN_PATH = PROJECT_ROOT / "kss" / "config" / "supply_chain.yaml"  # config = 代码，随 bundle
+SECTOR_ROTATION_DIR = STATE_ROOT / "storage" / "sector_rotation"
 TOP_N = 5
 TOP_PCT = 0.2
 FRESHNESS_DAYS = 7
@@ -154,7 +162,7 @@ def _load_supply_chain_names() -> dict[str, dict[str, str]]:
 
 def _stock_file(symbol: str) -> Path:
     code = symbol.split(".")[0].replace("cs_data_", "")
-    return PROJECT_ROOT / f"cs_data_{code}.csv"
+    return STATE_ROOT / f"cs_data_{code}.csv"
 
 
 def _stock_summary(path: Path, names: dict[str, dict[str, str]]) -> dict[str, Any] | None:
@@ -189,7 +197,7 @@ def _stock_summary(path: Path, names: dict[str, dict[str, str]]) -> dict[str, An
 
 
 def _load_stock_summaries(names: dict[str, dict[str, str]]) -> list[dict[str, Any]]:
-    paths = sorted(PROJECT_ROOT.glob("cs_data_*.csv"))
+    paths = sorted(STATE_ROOT.glob("cs_data_*.csv"))
     summaries = [_stock_summary(path, names) for path in paths]
     combined = [item for item in summaries if item is not None] + _bj_stock_summaries()
     return sorted(combined, key=lambda item: (item.get("symbol") or ""))
@@ -269,7 +277,7 @@ def _reviews() -> list[dict[str, Any]]:
             "date": path.stem,
             "title": title,
             "excerpt": excerpt,
-            "path": str(path.relative_to(PROJECT_ROOT)),
+            "path": str(path.relative_to(STATE_ROOT)),
             "focusSymbols": symbols[:12],
         })
     return out
@@ -324,7 +332,7 @@ def _backtest_reports() -> list[dict[str, Any]]:
         excerpt_lines = [line for line in lines if line.strip() and not line.startswith("#") and not line.startswith("|")]
         out.append({
             "title": title,
-            "path": str(path.relative_to(PROJECT_ROOT)),
+            "path": str(path.relative_to(STATE_ROOT)),
             "updatedAt": datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
             "metrics": _report_metrics(text),
             "excerpt": "\n".join(excerpt_lines[:10]),
@@ -336,9 +344,9 @@ def _resolve_markdown_path(path_text: str) -> Path:
     raw = Path(path_text)
     if raw.is_absolute():
         raise SystemExit("report path must be relative to the project root")
-    path = (PROJECT_ROOT / raw).resolve()
+    path = (STATE_ROOT / raw).resolve()
     try:
-        path.relative_to(PROJECT_ROOT.resolve())
+        path.relative_to(STATE_ROOT.resolve())
     except ValueError as exc:
         raise SystemExit("report path escapes the project root") from exc
     if path.suffix.lower() != ".md":
@@ -355,7 +363,7 @@ def report_detail(path_text: str) -> dict[str, Any]:
     title = next((line.lstrip("# ").strip() for line in lines if line.startswith("#")), path.stem)
     return {
         "title": title,
-        "path": str(path.relative_to(PROJECT_ROOT)),
+        "path": str(path.relative_to(STATE_ROOT)),
         "updatedAt": datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
         "text": text,
     }
@@ -572,7 +580,7 @@ def _run_process_task(
     artifacts: list[str] | None = None,
     timeout: int = 300,
 ) -> dict[str, Any]:
-    cache_dir = PROJECT_ROOT / ".cache"
+    cache_dir = STATE_ROOT / ".cache"
     mpl_dir = cache_dir / "matplotlib"
     home_dir = cache_dir / "home"
     mpl_dir.mkdir(parents=True, exist_ok=True)
@@ -582,6 +590,9 @@ def _run_process_task(
     env["XDG_CACHE_HOME"] = str(cache_dir)
     env["HOME"] = str(home_dir)
     env["PYTHONPATH"] = str(PROJECT_ROOT)
+    # 显式下传，使派生子脚本（各自 parents[1] 算 root）的 storage 写入重定向到 state root。
+    env["KSS_PROJECT_ROOT"] = str(PROJECT_ROOT)
+    env["KSS_STATE_ROOT"] = str(STATE_ROOT)
     env.update(_load_project_env())
     proc = subprocess.run(
         command,
@@ -643,7 +654,7 @@ def _normalize_script_date(date_text: str | None) -> str | None:
 def _latest_local_date_for(symbol_codes: tuple[str, ...]) -> str | None:
     dates: list[str] = []
     for code in symbol_codes:
-        path = PROJECT_ROOT / f"cs_data_{code}.csv"
+        path = STATE_ROOT / f"cs_data_{code}.csv"
         if not path.exists():
             continue
         rows = _read_csv_rows(path)
@@ -688,7 +699,7 @@ def _parse_args(argv: list[str]) -> dict[str, str | bool]:
 
 def _rows_by_symbol() -> dict[str, list[dict[str, str]]]:
     out: dict[str, list[dict[str, str]]] = {}
-    for path in sorted(PROJECT_ROOT.glob("cs_data_688*.csv")):
+    for path in sorted(STATE_ROOT.glob("cs_data_688*.csv")):
         rows = _read_csv_rows(path)
         if not rows:
             continue
@@ -823,7 +834,7 @@ def _run_daily_picks(args: dict[str, str | bool]) -> dict[str, Any]:
         artifacts: list[str] = []
         if save:
             path, wrote = _save_picks(target_date, picks, force=force)
-            artifacts.append(str(path.relative_to(PROJECT_ROOT)))
+            artifacts.append(str(path.relative_to(STATE_ROOT)))
             status = "success" if wrote else "skipped"
             action = "saved" if wrote else "already exists"
         else:
@@ -969,19 +980,19 @@ def _run_logmv_backtest(args: dict[str, str | bool]) -> dict[str, Any]:
         started,
         stdout=stdout,
         stderr="" if daily else "No daily returns could be computed",
-        artifacts=[str(report_path.relative_to(PROJECT_ROOT))],
+        artifacts=[str(report_path.relative_to(STATE_ROOT))],
         exit_code=0 if daily else 1,
     )
 
 
 def _load_radar_archives() -> list[dict[str, Any]]:
     archives: list[dict[str, Any]] = []
-    for path in sorted((PROJECT_ROOT / "storage" / "etf_radar").glob("*.json")):
+    for path in sorted((STATE_ROOT / "storage" / "etf_radar").glob("*.json")):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             continue
-        payload["_path"] = str(path.relative_to(PROJECT_ROOT))
+        payload["_path"] = str(path.relative_to(STATE_ROOT))
         archives.append(payload)
     return archives
 
@@ -1093,7 +1104,7 @@ def _run_radar_archive_analysis() -> dict[str, Any]:
         f"{len(archives)} archive days; {len(rows)} theme signals",
         started,
         stdout="\n".join(lines[:18]),
-        artifacts=[str(report_path.relative_to(PROJECT_ROOT))],
+        artifacts=[str(report_path.relative_to(STATE_ROOT))],
     )
 
 
@@ -1592,9 +1603,9 @@ def _bj_detail(symbol: str) -> dict[str, Any] | None:
     return None
 
 
-_DAILYBASIC_JSON = PROJECT_ROOT / "storage" / "macro" / "dailybasic_latest.json"
-_MARKET_STRIP_JSON = PROJECT_ROOT / "storage" / "macro" / "market_strip.json"
-ETF_RADAR_DIR = PROJECT_ROOT / "storage" / "etf_radar"
+_DAILYBASIC_JSON = STATE_ROOT / "storage" / "macro" / "dailybasic_latest.json"
+_MARKET_STRIP_JSON = STATE_ROOT / "storage" / "macro" / "market_strip.json"
+ETF_RADAR_DIR = STATE_ROOT / "storage" / "etf_radar"
 
 
 def _market_strip() -> dict[str, Any] | None:
@@ -1607,7 +1618,7 @@ def _market_strip() -> dict[str, Any] | None:
         return None
 
 
-_NAME_INDEX_JSON = PROJECT_ROOT / "storage" / "macro" / "stock_name_index.json"
+_NAME_INDEX_JSON = STATE_ROOT / "storage" / "macro" / "stock_name_index.json"
 
 
 def _load_name_index() -> dict[str, Any]:
@@ -1633,7 +1644,7 @@ def resolve_stocks(text: str) -> list[dict[str, Any]]:
     by_code: dict[str, str] = index.get("byCode", {})
     pairs: list[list[str]] = index.get("pairs", [])
     meta: dict[str, dict[str, str]] = index.get("meta", {})
-    existing = {p.stem.replace("cs_data_", "") for p in PROJECT_ROOT.glob("cs_data_*.csv")}
+    existing = {p.stem.replace("cs_data_", "") for p in STATE_ROOT.glob("cs_data_*.csv")}
 
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -1718,7 +1729,7 @@ def _load_dailybasic_cache() -> dict[str, Any]:
 def _cs_metrics(symbol: str) -> dict[str, Any]:
     """从 cs_data_<code>.csv 计算 日/周/月/年 涨幅 + 最新 PE/PB/总市值。"""
     digits = symbol.split(".")[0]
-    fp = PROJECT_ROOT / f"cs_data_{digits}.csv"
+    fp = STATE_ROOT / f"cs_data_{digits}.csv"
     if not fp.exists():
         return {}
     rows = _read_csv_rows(fp)
@@ -1997,7 +2008,7 @@ def _perilla_picks(top_n: int = 12, min_score: float = 0.4) -> list[dict[str, An
 #   - 金融数字代码渲染：score/raw_score 全部代码算，无 LLM 介入。
 # ===================================================================== #
 
-PIPELINE_WEIGHTS_PATH = PROJECT_ROOT / "storage" / "pipeline_weights.json"
+PIPELINE_WEIGHTS_PATH = STATE_ROOT / "storage" / "pipeline_weights.json"
 PIPELINE_IDS = ("log_mv", "bj50_scan", "sector_hotspot", "supply_chain")
 CONSENSUS_MULTIPLIER = 1.2
 MIN_HIT_COUNT_FOR_BONUS = 2
@@ -2829,7 +2840,7 @@ def _cron_rerun_many(labels: list[str]) -> dict[str, Any]:
 # 本命令纯 stdlib，日期参数走正则白名单防注入/路径穿越。
 # ---------------------------------------------------------------------------
 
-_TRENDS_DIR = PROJECT_ROOT / "storage" / "trends"
+_TRENDS_DIR = STATE_ROOT / "storage" / "trends"
 _MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -2894,7 +2905,7 @@ def _trends_day(date: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 _LEADER_RANK = {"龙一": 1, "龙二": 2, "龙三": 3, "龙四": 4, "龙五": 5}
-THEMES_PATH = PROJECT_ROOT / "storage" / "themes_15th_5y.yaml"
+THEMES_PATH = STATE_ROOT / "storage" / "themes_15th_5y.yaml"
 
 
 def _load_themes() -> dict[str, dict[str, list[str]]]:

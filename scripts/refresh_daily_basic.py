@@ -17,9 +17,10 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT_PATH = ROOT / "storage" / "macro" / "dailybasic_latest.parquet"
+_KSS_STATE = Path(__import__("os").environ.get("KSS_STATE_ROOT") or ROOT)  # U1: bundle-mode 写入重定向
+OUT_PATH = _KSS_STATE / "storage" / "macro" / "dailybasic_latest.parquet"
 # 桥接读取用的轻量 JSON（bridge 只依赖标准库，不引入 pandas/parquet）。
-JSON_PATH = ROOT / "storage" / "macro" / "dailybasic_latest.json"
+JSON_PATH = _KSS_STATE / "storage" / "macro" / "dailybasic_latest.json"
 
 
 def _load_env() -> None:
