@@ -103,6 +103,18 @@ def list_cron() -> dict:
     return _call("cron-list")
 
 
+@mcp.tool
+def get_data_catalog() -> dict:
+    """全量数据资产字典：每个数据集的 列/含义/粒度/最近日期/路径（自动反射 schema + 手维含义 overlay）。"""
+    return _call("data-catalog")
+
+
+@mcp.tool
+def get_orientation() -> dict:
+    """一次调用上手：dispatch 命令图 + run_task 白名单 + 数据目录摘要 + cron 新鲜度 + 关键文档指针。"""
+    return _call("orientation")
+
+
 # ---- 写命令（paper-only：仅 KSS_MCP_LIVE=1 注册，且每调用须 confirm）----
 
 if _LIVE:
