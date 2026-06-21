@@ -29,6 +29,7 @@ from pathlib import Path
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_KSS_STATE = Path(__import__("os").environ.get("KSS_STATE_ROOT") or PROJECT_ROOT)  # U1: cs_data 重定向
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from kss.data.tushare_client import TushareClient  # noqa: E402
@@ -137,7 +138,7 @@ def main() -> None:
     args = parser.parse_args()
 
     pattern = f"cs_data_{args.pattern}*.csv" if args.pattern else "cs_data_*.csv"
-    files = sorted((PROJECT_ROOT).glob(pattern))
+    files = sorted((_KSS_STATE).glob(pattern))
     if not files:
         logger.error("未找到匹配 %s", pattern)
         sys.exit(1)

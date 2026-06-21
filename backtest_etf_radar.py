@@ -32,6 +32,7 @@ import numpy as np
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+_KSS_STATE = Path(__import__("os").environ.get("KSS_STATE_ROOT") or PROJECT_ROOT)  # U1: bundle-mode 写入重定向
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from kss.data.tushare_client import TushareClient  # noqa: E402
@@ -41,8 +42,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 START, END = "20250601", "20260605"
-CACHE = PROJECT_ROOT / "storage" / "etf_radar_backtest_raw.parquet"
-REPORT = PROJECT_ROOT / "storage" / "reports" / "etf_radar_backtest_20260607.md"
+CACHE = _KSS_STATE / "storage" / "etf_radar_backtest_raw.parquet"
+REPORT = _KSS_STATE / "storage" / "reports" / "etf_radar_backtest_20260607.md"
 
 DIP_RET, DIP_FLOW = -2.0, 0.5      # 检验 2 阈值
 RALLY_RET, RALLY_FLOW = 2.0, -1.5  # 检验 3 阈值

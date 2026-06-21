@@ -19,6 +19,7 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
+_KSS_STATE = Path(__import__("os").environ.get("KSS_STATE_ROOT") or ROOT)  # U1: bundle-mode 写入重定向
 EXPECTED_COLS = [
     "ts_code", "trade_date", "open", "high", "low", "close",
     "pre_close", "change", "pct_chg", "vol", "amount",
@@ -105,7 +106,7 @@ def main() -> None:
 
     # 从名称索引取 kind（stock / fund）以决定用 daily 还是 fund_daily
     import json
-    idx_path = ROOT / "storage" / "macro" / "stock_name_index.json"
+    idx_path = _KSS_STATE / "storage" / "macro" / "stock_name_index.json"
     meta = {}
     if idx_path.exists():
         try:

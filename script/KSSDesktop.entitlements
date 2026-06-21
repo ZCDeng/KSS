@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    最小授权（KTD6）。Python 运行时经 U2 bootstrap 落在 state root，作为子进程运行，
+    不加载进本签名进程 —— 故无需 com.apple.security.cs.disable-library-validation，
+    也不沙箱化（App Sandbox 会阻断 Process() 拉起 python）。
+    保持空 dict：hardened runtime 默认即最严，子进程不受本进程 library-validation 约束。
+  -->
+</dict>
+</plist>

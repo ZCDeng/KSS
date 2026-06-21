@@ -35,11 +35,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_KSS_STATE = Path(__import__("os").environ.get("KSS_STATE_ROOT") or PROJECT_ROOT)  # U1: bundle-mode 写入重定向
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # 雷达存档目录 —— 预测校验周报 (validate_predictions.py) 的审计底稿.
 # first-write-wins: 已存在不覆盖 (复刻 daily_review 的 dry-run 改写存档教训)
-RADAR_ARCHIVE_DIR = PROJECT_ROOT / "storage" / "etf_radar"
+RADAR_ARCHIVE_DIR = _KSS_STATE / "storage" / "etf_radar"
 
 from kss.data.tushare_client import TushareClient  # noqa: E402
 from kss.notifications.manager import (  # noqa: E402

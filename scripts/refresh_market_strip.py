@@ -16,8 +16,9 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "storage" / "macro" / "market_strip.json"
-HSGT = ROOT / "storage" / "macro" / "hsgt_daily.parquet"
+_KSS_STATE = Path(__import__("os").environ.get("KSS_STATE_ROOT") or ROOT)  # U1: bundle-mode 写入重定向
+OUT = _KSS_STATE / "storage" / "macro" / "market_strip.json"
+HSGT = _KSS_STATE / "storage" / "macro" / "hsgt_daily.parquet"
 
 ETFS = [
     ("563360.SH", "A500ETF"),

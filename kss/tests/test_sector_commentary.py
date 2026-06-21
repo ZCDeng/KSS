@@ -950,3 +950,16 @@ class TestPromptInjectionDefense:
         assert "<script>x</script>" not in result["avoid_sectors"]
         # rationale 整体 redact
         assert result["rationale"] == "[REDACTED]"
+
+
+# U7：百分比结构后盾 —— LLM 正文幻觉数字中和，日期/计数保留。
+def test_neutralize_fabricated_percentages():
+    from kss.sector.commentary import _neutralize_fabricated_percentages as neutralize
+
+    assert "%" not in neutralize("半导体大涨 3.58%，资金流入")
+    assert "%" not in neutralize("A +5.83%，B -3.33%")
+    # 日期 / 计数 / 排名不受影响
+    unchanged = "2026-03-01 共 10 只入选，前 5 名强势"
+    assert neutralize(unchanged) == unchanged
+    # 无百分比时原样返回
+    assert neutralize("板块情绪偏暖，龙头活跃") == "板块情绪偏暖，龙头活跃"

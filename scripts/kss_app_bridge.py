@@ -22,17 +22,25 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-PAPER_DIR = PROJECT_ROOT / "storage" / "paper_trade"
-REVIEW_DIR = PROJECT_ROOT / "storage" / "daily_review"
-REPORT_DIR = PROJECT_ROOT / "storage" / "reports"
+def _env_path(var: str) -> Path | None:
+    v = os.environ.get(var)
+    return Path(v).expanduser().resolve() if v else None
+
+
+# 不可变代码根（脚本/config 所在）；bundle-mode 由 KSS_PROJECT_ROOT 指定。
+PROJECT_ROOT = _env_path("KSS_PROJECT_ROOT") or Path(__file__).resolve().parents[1]
+# 可变状态根（storage/.cache）；默认回落 PROJECT_ROOT → 未设 env 时与历史行为逐字一致。
+STATE_ROOT = _env_path("KSS_STATE_ROOT") or PROJECT_ROOT
+PAPER_DIR = STATE_ROOT / "storage" / "paper_trade"
+REVIEW_DIR = STATE_ROOT / "storage" / "daily_review"
+REPORT_DIR = STATE_ROOT / "storage" / "reports"
 BJ_SCAN_DIR = REPORT_DIR / "bj50_scan"
-BJ_CACHE_DIR = PROJECT_ROOT / "storage" / "bj_cache"
-APP_RUN_DIR = PROJECT_ROOT / "storage" / "app_runs"
+BJ_CACHE_DIR = STATE_ROOT / "storage" / "bj_cache"
+APP_RUN_DIR = STATE_ROOT / "storage" / "app_runs"
 TASK_LOG_PATH = APP_RUN_DIR / "kss_desktop_tasks.jsonl"
-NAMES_PATH = PROJECT_ROOT / "storage" / "stock_names.csv"
-SUPPLY_CHAIN_PATH = PROJECT_ROOT / "kss" / "config" / "supply_chain.yaml"
-SECTOR_ROTATION_DIR = PROJECT_ROOT / "storage" / "sector_rotation"
+NAMES_PATH = STATE_ROOT / "storage" / "stock_names.csv"
+SUPPLY_CHAIN_PATH = PROJECT_ROOT / "kss" / "config" / "supply_chain.yaml"  # config = 代码，随 bundle
+SECTOR_ROTATION_DIR = STATE_ROOT / "storage" / "sector_rotation"
 TOP_N = 5
 TOP_PCT = 0.2
 FRESHNESS_DAYS = 7
@@ -40,8 +48,19 @@ REQUIRED_FULL_MODULES = ("pandas", "lightgbm", "tushare", "akshare")
 ETF_PARQUET_MODULES = ("pyarrow", "fastparquet")
 
 
+# 桥协议版本（KTD3）。Swift supportedSchemaVersion 必须同 commit 同步。
+# additive 改动不 bump；字段重命名/删除/语义变更才 bump。
+BRIDGE_SCHEMA_VERSION = 1
+
+
+def _envelope_json(payload: Any) -> str:
+    """版本化信封 {schemaVersion, data} 的 JSON 行（U4/U5：subprocess 与 sidecar 共用）。"""
+    envelope = {"schemaVersion": BRIDGE_SCHEMA_VERSION, "data": payload}
+    return json.dumps(envelope, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+
+
 def _json_dump(payload: Any) -> None:
-    print(json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")))
+    print(_envelope_json(payload))
 
 
 def _shorten(text: str, limit: int = 12000) -> str:
@@ -154,7 +173,7 @@ def _load_supply_chain_names() -> dict[str, dict[str, str]]:
 
 def _stock_file(symbol: str) -> Path:
     code = symbol.split(".")[0].replace("cs_data_", "")
-    return PROJECT_ROOT / f"cs_data_{code}.csv"
+    return STATE_ROOT / f"cs_data_{code}.csv"
 
 
 def _stock_summary(path: Path, names: dict[str, dict[str, str]]) -> dict[str, Any] | None:
@@ -189,7 +208,7 @@ def _stock_summary(path: Path, names: dict[str, dict[str, str]]) -> dict[str, An
 
 
 def _load_stock_summaries(names: dict[str, dict[str, str]]) -> list[dict[str, Any]]:
-    paths = sorted(PROJECT_ROOT.glob("cs_data_*.csv"))
+    paths = sorted(STATE_ROOT.glob("cs_data_*.csv"))
     summaries = [_stock_summary(path, names) for path in paths]
     combined = [item for item in summaries if item is not None] + _bj_stock_summaries()
     return sorted(combined, key=lambda item: (item.get("symbol") or ""))
@@ -269,7 +288,7 @@ def _reviews() -> list[dict[str, Any]]:
             "date": path.stem,
             "title": title,
             "excerpt": excerpt,
-            "path": str(path.relative_to(PROJECT_ROOT)),
+            "path": str(path.relative_to(STATE_ROOT)),
             "focusSymbols": symbols[:12],
         })
     return out
@@ -324,7 +343,7 @@ def _backtest_reports() -> list[dict[str, Any]]:
         excerpt_lines = [line for line in lines if line.strip() and not line.startswith("#") and not line.startswith("|")]
         out.append({
             "title": title,
-            "path": str(path.relative_to(PROJECT_ROOT)),
+            "path": str(path.relative_to(STATE_ROOT)),
             "updatedAt": datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
             "metrics": _report_metrics(text),
             "excerpt": "\n".join(excerpt_lines[:10]),
@@ -336,9 +355,9 @@ def _resolve_markdown_path(path_text: str) -> Path:
     raw = Path(path_text)
     if raw.is_absolute():
         raise SystemExit("report path must be relative to the project root")
-    path = (PROJECT_ROOT / raw).resolve()
+    path = (STATE_ROOT / raw).resolve()
     try:
-        path.relative_to(PROJECT_ROOT.resolve())
+        path.relative_to(STATE_ROOT.resolve())
     except ValueError as exc:
         raise SystemExit("report path escapes the project root") from exc
     if path.suffix.lower() != ".md":
@@ -355,17 +374,22 @@ def report_detail(path_text: str) -> dict[str, Any]:
     title = next((line.lstrip("# ").strip() for line in lines if line.startswith("#")), path.stem)
     return {
         "title": title,
-        "path": str(path.relative_to(PROJECT_ROOT)),
+        "path": str(path.relative_to(STATE_ROOT)),
         "updatedAt": datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
         "text": text,
     }
 
 
 def _python_candidates() -> list[Path]:
-    raw = [
+    raw = []
+    # U2: 首启 bootstrap venv（state root）+ KSS_PYTHON 显式覆盖优先于 dev .venv。
+    env_py = os.environ.get("KSS_PYTHON")
+    if env_py:
+        raw.append(Path(env_py))
+    raw.append(STATE_ROOT / "venv" / "bin" / "python")
+    raw += [
         PROJECT_ROOT / ".venv-desktop" / "bin" / "python",
         PROJECT_ROOT / ".venv" / "bin" / "python",
-        Path("/Users/zcdeng/.local/bin/python3.11"),
         Path("/opt/homebrew/bin/python3"),
         Path("/usr/bin/python3"),
     ]
@@ -572,7 +596,7 @@ def _run_process_task(
     artifacts: list[str] | None = None,
     timeout: int = 300,
 ) -> dict[str, Any]:
-    cache_dir = PROJECT_ROOT / ".cache"
+    cache_dir = STATE_ROOT / ".cache"
     mpl_dir = cache_dir / "matplotlib"
     home_dir = cache_dir / "home"
     mpl_dir.mkdir(parents=True, exist_ok=True)
@@ -582,7 +606,12 @@ def _run_process_task(
     env["XDG_CACHE_HOME"] = str(cache_dir)
     env["HOME"] = str(home_dir)
     env["PYTHONPATH"] = str(PROJECT_ROOT)
-    env.update(_load_project_env())
+    # 显式下传，使派生子脚本（各自 parents[1] 算 root）的 storage 写入重定向到 state root。
+    env["KSS_PROJECT_ROOT"] = str(PROJECT_ROOT)
+    env["KSS_STATE_ROOT"] = str(STATE_ROOT)
+    # U3：Keychain 经 Swift 注入到 os.environ 的凭据优先；.env/network.env 仅填空缺。
+    for key, value in _load_project_env().items():
+        env.setdefault(key, value)
     proc = subprocess.run(
         command,
         cwd=PROJECT_ROOT,
@@ -613,21 +642,24 @@ def _load_project_env() -> dict[str, str]:
         "TELEGRAM_CHAT_ID",
         "TELEGRAM_API_URL",
     }
-    env_path = PROJECT_ROOT / ".env"
-    if not env_path.exists():
-        return {}
     loaded: dict[str, str] = {}
-    for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
+    # U3：dev .env（代码根）+ bundle-mode network.env（state root，非敏感，非 iCloud）。
+    # 敏感凭据正路是 Swift 经 Keychain 注入到 os.environ（见 _run_process_task setdefault 优先）；
+    # 这两个文件是 dev / 非敏感回落。
+    for env_path in (PROJECT_ROOT / ".env", STATE_ROOT / "network.env"):
+        if not env_path.exists():
             continue
-        key, value = stripped.split("=", 1)
-        key = key.strip()
-        if key not in allowed:
-            continue
-        value = value.strip().strip("\"'")
-        if value:
-            loaded[key] = value
+        for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, value = stripped.split("=", 1)
+            key = key.strip()
+            if key not in allowed:
+                continue
+            value = value.strip().strip("\"'")
+            if value:
+                loaded.setdefault(key, value)
     return loaded
 
 
@@ -643,7 +675,7 @@ def _normalize_script_date(date_text: str | None) -> str | None:
 def _latest_local_date_for(symbol_codes: tuple[str, ...]) -> str | None:
     dates: list[str] = []
     for code in symbol_codes:
-        path = PROJECT_ROOT / f"cs_data_{code}.csv"
+        path = STATE_ROOT / f"cs_data_{code}.csv"
         if not path.exists():
             continue
         rows = _read_csv_rows(path)
@@ -688,7 +720,7 @@ def _parse_args(argv: list[str]) -> dict[str, str | bool]:
 
 def _rows_by_symbol() -> dict[str, list[dict[str, str]]]:
     out: dict[str, list[dict[str, str]]] = {}
-    for path in sorted(PROJECT_ROOT.glob("cs_data_688*.csv")):
+    for path in sorted(STATE_ROOT.glob("cs_data_688*.csv")):
         rows = _read_csv_rows(path)
         if not rows:
             continue
@@ -823,7 +855,7 @@ def _run_daily_picks(args: dict[str, str | bool]) -> dict[str, Any]:
         artifacts: list[str] = []
         if save:
             path, wrote = _save_picks(target_date, picks, force=force)
-            artifacts.append(str(path.relative_to(PROJECT_ROOT)))
+            artifacts.append(str(path.relative_to(STATE_ROOT)))
             status = "success" if wrote else "skipped"
             action = "saved" if wrote else "already exists"
         else:
@@ -969,19 +1001,19 @@ def _run_logmv_backtest(args: dict[str, str | bool]) -> dict[str, Any]:
         started,
         stdout=stdout,
         stderr="" if daily else "No daily returns could be computed",
-        artifacts=[str(report_path.relative_to(PROJECT_ROOT))],
+        artifacts=[str(report_path.relative_to(STATE_ROOT))],
         exit_code=0 if daily else 1,
     )
 
 
 def _load_radar_archives() -> list[dict[str, Any]]:
     archives: list[dict[str, Any]] = []
-    for path in sorted((PROJECT_ROOT / "storage" / "etf_radar").glob("*.json")):
+    for path in sorted((STATE_ROOT / "storage" / "etf_radar").glob("*.json")):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             continue
-        payload["_path"] = str(path.relative_to(PROJECT_ROOT))
+        payload["_path"] = str(path.relative_to(STATE_ROOT))
         archives.append(payload)
     return archives
 
@@ -1093,7 +1125,7 @@ def _run_radar_archive_analysis() -> dict[str, Any]:
         f"{len(archives)} archive days; {len(rows)} theme signals",
         started,
         stdout="\n".join(lines[:18]),
-        artifacts=[str(report_path.relative_to(PROJECT_ROOT))],
+        artifacts=[str(report_path.relative_to(STATE_ROOT))],
     )
 
 
@@ -1592,9 +1624,9 @@ def _bj_detail(symbol: str) -> dict[str, Any] | None:
     return None
 
 
-_DAILYBASIC_JSON = PROJECT_ROOT / "storage" / "macro" / "dailybasic_latest.json"
-_MARKET_STRIP_JSON = PROJECT_ROOT / "storage" / "macro" / "market_strip.json"
-ETF_RADAR_DIR = PROJECT_ROOT / "storage" / "etf_radar"
+_DAILYBASIC_JSON = STATE_ROOT / "storage" / "macro" / "dailybasic_latest.json"
+_MARKET_STRIP_JSON = STATE_ROOT / "storage" / "macro" / "market_strip.json"
+ETF_RADAR_DIR = STATE_ROOT / "storage" / "etf_radar"
 
 
 def _market_strip() -> dict[str, Any] | None:
@@ -1607,7 +1639,7 @@ def _market_strip() -> dict[str, Any] | None:
         return None
 
 
-_NAME_INDEX_JSON = PROJECT_ROOT / "storage" / "macro" / "stock_name_index.json"
+_NAME_INDEX_JSON = STATE_ROOT / "storage" / "macro" / "stock_name_index.json"
 
 
 def _load_name_index() -> dict[str, Any]:
@@ -1633,7 +1665,7 @@ def resolve_stocks(text: str) -> list[dict[str, Any]]:
     by_code: dict[str, str] = index.get("byCode", {})
     pairs: list[list[str]] = index.get("pairs", [])
     meta: dict[str, dict[str, str]] = index.get("meta", {})
-    existing = {p.stem.replace("cs_data_", "") for p in PROJECT_ROOT.glob("cs_data_*.csv")}
+    existing = {p.stem.replace("cs_data_", "") for p in STATE_ROOT.glob("cs_data_*.csv")}
 
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -1718,7 +1750,7 @@ def _load_dailybasic_cache() -> dict[str, Any]:
 def _cs_metrics(symbol: str) -> dict[str, Any]:
     """从 cs_data_<code>.csv 计算 日/周/月/年 涨幅 + 最新 PE/PB/总市值。"""
     digits = symbol.split(".")[0]
-    fp = PROJECT_ROOT / f"cs_data_{digits}.csv"
+    fp = STATE_ROOT / f"cs_data_{digits}.csv"
     if not fp.exists():
         return {}
     rows = _read_csv_rows(fp)
@@ -1997,7 +2029,7 @@ def _perilla_picks(top_n: int = 12, min_score: float = 0.4) -> list[dict[str, An
 #   - 金融数字代码渲染：score/raw_score 全部代码算，无 LLM 介入。
 # ===================================================================== #
 
-PIPELINE_WEIGHTS_PATH = PROJECT_ROOT / "storage" / "pipeline_weights.json"
+PIPELINE_WEIGHTS_PATH = STATE_ROOT / "storage" / "pipeline_weights.json"
 PIPELINE_IDS = ("log_mv", "bj50_scan", "sector_hotspot", "supply_chain")
 CONSENSUS_MULTIPLIER = 1.2
 MIN_HIT_COUNT_FOR_BONUS = 2
@@ -2829,7 +2861,7 @@ def _cron_rerun_many(labels: list[str]) -> dict[str, Any]:
 # 本命令纯 stdlib，日期参数走正则白名单防注入/路径穿越。
 # ---------------------------------------------------------------------------
 
-_TRENDS_DIR = PROJECT_ROOT / "storage" / "trends"
+_TRENDS_DIR = STATE_ROOT / "storage" / "trends"
 _MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -2894,7 +2926,7 @@ def _trends_day(date: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 _LEADER_RANK = {"龙一": 1, "龙二": 2, "龙三": 3, "龙四": 4, "龙五": 5}
-THEMES_PATH = PROJECT_ROOT / "storage" / "themes_15th_5y.yaml"
+THEMES_PATH = STATE_ROOT / "storage" / "themes_15th_5y.yaml"
 
 
 def _load_themes() -> dict[str, dict[str, list[str]]]:
@@ -2990,6 +3022,77 @@ def _theme_leaders() -> list[dict[str, Any]]:
     return out
 
 
+# 写命令（产生副作用 / 修改状态）；U6 MCP 的 paper-only 闸据此分类。
+WRITE_COMMANDS = frozenset({
+    "run", "import", "resolve",
+    "cron-rerun", "cron-enable", "cron-disable", "cron-catchup", "cron-rerun-many",
+})
+
+
+def dispatch(command: str, args: list[str]) -> Any:
+    """命令 → payload（传给 _json_dump 的对象）。subprocess(main) 与 sidecar 共用。
+    参数错误 raise ValueError；下游可能 raise SystemExit（如 report 路径护栏）——
+    sidecar 须捕获，不可让 daemon 退出。"""
+    if command == "snapshot":
+        return snapshot()
+    if command == "stock":
+        if not args:
+            raise ValueError("stock command requires SYMBOL")
+        return stock_detail(args[0])
+    if command == "report":
+        if not args:
+            raise ValueError("report command requires PATH")
+        return report_detail(args[0])
+    if command == "paper-summary":
+        return _paper_summary()
+    if command == "resolve":
+        return resolve_stocks(args[0] if args else "")
+    if command == "import":
+        codes = [c.strip() for c in (args[0] if args else "").split(",") if c.strip()]
+        result = _run_import_stocks(codes)
+        _append_task_history(result)
+        return result
+    if command == "python-env":
+        return _python_env_status()
+    if command == "sector-rotation":
+        if not args:
+            return _latest_sector_rotation() or {}
+        return _sector_rotation_snapshot(SECTOR_ROTATION_DIR / f"{args[0]}.json") or {}
+    if command == "sector-rotation-history":
+        limit = int(args[0]) if args and args[0].isdigit() else 30
+        return _sector_rotation_history(limit=limit)
+    if command == "run":
+        if not args:
+            raise ValueError("run command requires TASK")
+        result = run_task(args[0], args[1:])
+        _append_task_history(result)
+        return result
+    if command == "theme-leaders":
+        return _theme_leaders()
+    if command == "get-discovery-candidates":
+        return _discovery_merge()
+    if command == "cron-list":
+        return _scheduled_jobs()
+    if command in {"cron-rerun", "cron-enable", "cron-disable"}:
+        if not args:
+            raise ValueError(f"{command} requires LABEL")
+        return _cron_action(args[0], command.split("-", 1)[1])
+    if command == "cron-catchup":
+        return _cron_catchup()
+    if command == "cron-rerun-many":
+        labels = [s for s in (args[0].split(",") if args else []) if s]
+        return _cron_rerun_many(labels)
+    if command == "trends-month":
+        if not args:
+            raise ValueError("trends-month requires YYYY-MM")
+        return _trends_month(args[0])
+    if command == "trends-day":
+        if not args:
+            raise ValueError("trends-day requires YYYY-MM-DD")
+        return _trends_day(args[0])
+    raise ValueError(f"unknown command: {command}")
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print(
@@ -2999,94 +3102,13 @@ def main(argv: list[str]) -> int:
             file=sys.stderr,
         )
         return 2
-    command = argv[1]
-    if command == "snapshot":
-        _json_dump(snapshot())
-        return 0
-    if command == "stock":
-        if len(argv) < 3:
-            print("stock command requires SYMBOL", file=sys.stderr)
-            return 2
-        _json_dump(stock_detail(argv[2]))
-        return 0
-    if command == "report":
-        if len(argv) < 3:
-            print("report command requires PATH", file=sys.stderr)
-            return 2
-        _json_dump(report_detail(argv[2]))
-        return 0
-    if command == "paper-summary":
-        _json_dump(_paper_summary())
-        return 0
-    if command == "resolve":
-        _json_dump(resolve_stocks(argv[2] if len(argv) > 2 else ""))
-        return 0
-    if command == "import":
-        codes = [c.strip() for c in (argv[2] if len(argv) > 2 else "").split(",") if c.strip()]
-        result = _run_import_stocks(codes)
-        _append_task_history(result)
-        _json_dump(result)
-        return 0
-    if command == "python-env":
-        _json_dump(_python_env_status())
-        return 0
-    if command == "sector-rotation":
-        if len(argv) < 3:
-            _json_dump(_latest_sector_rotation() or {})
-        else:
-            path = SECTOR_ROTATION_DIR / f"{argv[2]}.json"
-            _json_dump(_sector_rotation_snapshot(path) or {})
-        return 0
-    if command == "sector-rotation-history":
-        limit = int(argv[2]) if len(argv) > 2 and argv[2].isdigit() else 30
-        _json_dump(_sector_rotation_history(limit=limit))
-        return 0
-    if command == "run":
-        if len(argv) < 3:
-            print("run command requires TASK", file=sys.stderr)
-            return 2
-        result = run_task(argv[2], argv[3:])
-        _append_task_history(result)
-        _json_dump(result)
-        return 0
-    if command == "theme-leaders":
-        _json_dump(_theme_leaders())
-        return 0
-    if command == "get-discovery-candidates":
-        _json_dump(_discovery_merge())
-        return 0
-    if command == "cron-list":
-        _json_dump(_scheduled_jobs())
-        return 0
-    if command in {"cron-rerun", "cron-enable", "cron-disable"}:
-        if len(argv) < 3:
-            print(f"{command} requires LABEL", file=sys.stderr)
-            return 2
-        action = command.split("-", 1)[1]  # rerun / enable / disable
-        _json_dump(_cron_action(argv[2], action))
-        return 0
-    if command == "cron-catchup":
-        _json_dump(_cron_catchup())
-        return 0
-    if command == "cron-rerun-many":
-        # 逗号分隔 label 列表，空则重跑全部启用项；每个 label 仍走白名单校验。
-        labels = [s for s in (argv[2].split(",") if len(argv) >= 3 else []) if s]
-        _json_dump(_cron_rerun_many(labels))
-        return 0
-    if command == "trends-month":
-        if len(argv) < 3:
-            print("trends-month requires YYYY-MM", file=sys.stderr)
-            return 2
-        _json_dump(_trends_month(argv[2]))
-        return 0
-    if command == "trends-day":
-        if len(argv) < 3:
-            print("trends-day requires YYYY-MM-DD", file=sys.stderr)
-            return 2
-        _json_dump(_trends_day(argv[2]))
-        return 0
-    print(f"unknown command: {command}", file=sys.stderr)
-    return 2
+    try:
+        payload = dispatch(argv[1], argv[2:])
+    except (ValueError, SystemExit) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    _json_dump(payload)
+    return 0
 
 
 if __name__ == "__main__":

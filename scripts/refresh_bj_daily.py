@@ -16,12 +16,13 @@ from pathlib import Path
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_KSS_STATE = Path(__import__("os").environ.get("KSS_STATE_ROOT") or PROJECT_ROOT)  # U1: bundle-mode 写入重定向
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from kss.data.tushare_client import TushareClient, _fetch_with_retry  # noqa: E402
 
-CACHE_DIR = PROJECT_ROOT / "storage" / "bj_cache"
-SCAN_DIR = PROJECT_ROOT / "storage" / "reports" / "bj50_scan"
+CACHE_DIR = _KSS_STATE / "storage" / "bj_cache"
+SCAN_DIR = _KSS_STATE / "storage" / "reports" / "bj50_scan"
 
 
 def _pool_symbols() -> list[str]:
