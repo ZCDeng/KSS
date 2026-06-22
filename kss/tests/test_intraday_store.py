@@ -783,3 +783,472 @@ def test_canonical_orphan_observation_fk_rejected(store, instrument_id):
                 " 'em-1m-end-v1', 999999, '', 'x', '2026-06-19T15:05:00+08:00')",
                 (instrument_id,),
             )
+
+
+# =========================================================================== #
+# U4：coverage 评估 + complete/reconciled + manifest 绑定 + forward-only PIT
+# =========================================================================== #
+
+from kss.data.intraday_store import (  # noqa: E402
+    PitBar,
+    ReviewBar,
+)
+
+# 玩具会话：09:30~09:32 三端点（09:30 开盘竞价 + 09:31 + 09:32），使「所有期望
+# 端点到齐」可手工构造而无需 241 行。
+_TOY_SEGMENTS = (("09:30", "09:32"),)
+_TOY_BAR_ENDS = ("09:30", "09:31", "09:32")
+_DAY = "2026-06-19"
+
+
+def _register_toy_profile(store, version="toy-v1", **kw):
+    return store.register_session_profile(
+        version=version,
+        interval_minutes=1,
+        segments=_TOY_SEGMENTS,
+        include_segment_open=True,
+        effective_from=kw.get("effective_from", "2026-01-01"),
+        effective_to=kw.get("effective_to"),
+    )
+
+
+def _toy_rows(close_1532=10.2, high_1532=10.3, amount_1532=8200.0):
+    return [
+        {"时间": f"{_DAY} 09:30:00", "开盘": 10.0, "收盘": 10.0,
+         "最高": 10.0, "最低": 10.0, "成交量": 0, "成交额": 0.0},
+        {"时间": f"{_DAY} 09:31:00", "开盘": 10.0, "收盘": 10.1,
+         "最高": 10.2, "最低": 9.9, "成交量": 1500, "成交额": 15150.0},
+        {"时间": f"{_DAY} 09:32:00", "开盘": 10.1, "收盘": close_1532,
+         "最高": high_1532, "最低": 10.0, "成交量": 800, "成交额": amount_1532},
+    ]
+
+
+def _bootstrap_toy_canonical(store, instrument_id, rows, *, pv, cv):
+    """ingest + certify 一组玩具行，返回 run。"""
+    obs = ObservationInput(
+        instrument_id=instrument_id, provider="eastmoney_akshare",
+        interval_minutes=1,
+        request_meta={"method": "GET", "url": "https://push2his.eastmoney.com/x"},
+        payload_rows=rows, source_asof_ts="2026-06-19T15:00:00+08:00",
+        availability_class="forward_observed", eligibility="forward_observed",
+        status_code=200, frozen_schema_hash="h1",
+        frozen_session_profile_version=pv, frozen_contract_version=cv,
+    )
+    r = store.ingest_run(provider="eastmoney_akshare", mode="close",
+                         trade_date=_DAY, observations=[obs])
+    store.certify_observations_to_canonical(run_id=r.run_id)
+    return r
+
+
+# --- manifest 计算 -------------------------------------------------------- #
+
+
+def test_manifest_changes_when_revision_changes(store, instrument_id):
+    """canonical revision 变 → manifest sha 变（含选定 revision + observation_id）。"""
+    pv = _register_toy_profile(store)
+    cv = _register_contract(store, "em-1m-end-v1", "end")
+    _bootstrap_toy_canonical(store, instrument_id, _toy_rows(), pv=pv, cv=cv)
+    m1 = store.compute_canonical_manifest(
+        instrument_id=instrument_id, trade_date=_DAY, interval_minutes=1,
+        provider="eastmoney_akshare", contract_version=cv,
+        session_profile_version=pv, expected_bar_ends=_TOY_BAR_ENDS,
+    )
+    # 改一根 bar → rev2。
+    _bootstrap_toy_canonical(
+        store, instrument_id, _toy_rows(close_1532=10.9, high_1532=11.0),
+        pv=pv, cv=cv,
+    )
+    m2 = store.compute_canonical_manifest(
+        instrument_id=instrument_id, trade_date=_DAY, interval_minutes=1,
+        provider="eastmoney_akshare", contract_version=cv,
+        session_profile_version=pv, expected_bar_ends=_TOY_BAR_ENDS,
+    )
+    assert m1["manifest_sha256"] != m2["manifest_sha256"]
+    assert m1["missing"] == []  # 三端点到齐
+
+
+def test_manifest_lists_missing_endpoints(store, instrument_id):
+    """缺一端点 → manifest 显式列 missing，sha 与全到齐不同。"""
+    pv = _register_toy_profile(store)
+    cv = _register_contract(store, "em-1m-end-v1", "end")
+    rows = _toy_rows()[:2]  # 缺 09:32
+    _bootstrap_toy_canonical(store, instrument_id, rows, pv=pv, cv=cv)
+    m = store.compute_canonical_manifest(
+        instrument_id=instrument_id, trade_date=_DAY, interval_minutes=1,
+        provider="eastmoney_akshare", contract_version=cv,
+        session_profile_version=pv, expected_bar_ends=_TOY_BAR_ENDS,
+    )
+    assert "2026-06-19T09:32:00+08:00" in m["missing"]
+
+
+# --- complete 评估 -------------------------------------------------------- #
+
+
+def test_assess_complete_passes_full_session(store, instrument_id):
+    pv = _register_toy_profile(store)
+    cv = _register_contract(store, "em-1m-end-v1", "end")
+    _bootstrap_toy_canonical(store, instrument_id, _toy_rows(), pv=pv, cv=cv)
+    res = store.assess_complete(
+        instrument_id=instrument_id, trade_date=_DAY, interval_minutes=1,
+        provider="eastmoney_akshare", contract_version=cv,
+        session_profile_version=pv, expected_bar_ends=_TOY_BAR_ENDS,
+        assessed_at="2026-06-19T15:05:00+08:00",
+    )
+    assert res["assessment_kind"] == "complete"
+    assert res["status"] == "passed"
+
+
+def test_assess_complete_fails_on_missing_endpoint(store, instrument_id):
+    pv = _register_toy_profile(store)
+    cv = _register_contract(store, "em-1m-end-v1", "end")
+    _bootstrap_toy_canonical(store, instrument_id, _toy_rows()[:2], pv=pv, cv=cv)
+    res = store.assess_complete(
+        instrument_id=instrument_id, trade_date=_DAY, interval_minutes=1,
+        provider="eastmoney_akshare", contract_version=cv,
+        session_profile_version=pv, expected_bar_ends=_TOY_BAR_ENDS,
+        assessed_at="2026-06-19T15:05:00+08:00",
+    )
+    assert res["status"] != "passed"  # 缺端点 → 形状不合格
+
+
+def test_coverage_assessments_append_only(store, instrument_id):
+    """同一天两次评估 → 两行（绝不可变更新单行）。"""
+    pv = _register_toy_profile(store)
+    cv = _register_contract(store, "em-1m-end-v1", "end")
+    _bootstrap_toy_canonical(store, instrument_id, _toy_rows(), pv=pv, cv=cv)
+    store.assess_complete(
+        instrument_id=instrument_id, trade_date=_DAY, interval_minutes=1,
+        provider="eastmoney_akshare", contract_version=cv,
+        session_profile_version=pv, expected_bar_ends=_TOY_BAR_ENDS,
+        assessed_at="2026-06-19T15:05:00+08:00",
+    )
+    store.assess_complete(
+        instrument_id=instrument_id, trade_date=_DAY, interval_minutes=1,
+        provider="eastmoney_akshare", contract_version=cv,
+        session_profile_version=pv, expected_bar_ends=_TOY_BAR_ENDS,
+        assessed_at="2026-06-19T15:06:00+08:00",
+    )
+    rows = store.list_coverage_assessments(instrument_id=instrument_id)
+    assert len(rows) == 2
+
+
+# --- RB2：信号/执行延迟闸 -------------------------------------------------- #
+
+
+def test_signal_inadmissible_before_publication_delay():
+    """bar_end + delay > signal_time → 不可作信号输入。"""
+    from kss.data.intraday_store import is_signal_admissible
+    # bar end 09:31:00 +08:00, delay 90s → 可用最早 09:32:30。
+    assert not is_signal_admissible(
+        "2026-06-19T09:31:00+08:00", 90, "2026-06-19T09:32:00+08:00"
+    )
+    assert is_signal_admissible(
+        "2026-06-19T09:31:00+08:00", 90, "2026-06-19T09:32:30+08:00"
+    )
+
+
+def test_same_close_fill_rejected_moved_to_next_bar():
+    """bar N 信号不得在 bar N 收盘成交，最早下一合格 bar。"""
+    from kss.data.intraday_store import earliest_fill_bar_end
+    candidates = [
+        "2026-06-19T09:30:00+08:00",
+        "2026-06-19T09:31:00+08:00",
+        "2026-06-19T09:32:00+08:00",
+    ]
+    fill = earliest_fill_bar_end("2026-06-19T09:31:00+08:00", candidates)
+    assert fill == "2026-06-19T09:32:00+08:00"  # 不是 09:31（同收盘）
+    # 末根无下一根 → None。
+    assert earliest_fill_bar_end("2026-06-19T09:32:00+08:00", candidates) is None
+
+
+# --- U6 / 集成#3 / RB1：load_asof eligibility + revision 隔离 ------------- #
+
+
+def _bar_end(hhmm):
+    return f"2026-06-19T{hhmm}:00+08:00"
+
+
+def test_complete_only_excluded_from_pit_until_reconciled(store, instrument_id):
+    """RB1：仅 complete 的 forward bar 被 pit_backtest 查询排除，直到 reconciled。"""
+    pv = _register_toy_profile(store)
+    cv = _register_contract(store, "em-1m-end-v1", "end")
+    _bootstrap_toy_canonical(store, instrument_id, _toy_rows(), pv=pv, cv=cv)
+    store.assess_complete(
+        instrument_id=instrument_id, trade_date=_DAY, interval_minutes=1,
+        provider="eastmoney_akshare", contract_version=cv,
+        session_profile_version=pv, expected_bar_ends=_TOY_BAR_ENDS,
+        assessed_at="2026-06-19T15:05:00+08:00",
+    )
+    # 复盘面板路径可读 complete。
+    review = store.load_review_bars(
+        instruments=[instrument_id], start=_bar_end("09:30"),
+        end=_bar_end("09:32"), interval=1,
+    )
+    assert len(review) == 3
+    assert all(isinstance(b, ReviewBar) for b in review)
+    # pit_backtest 查询：仅 complete → 排除。
+    pit = store.load_asof(
+        instruments=[instrument_id], start=_bar_end("09:30"),
+        end=_bar_end("09:32"), interval=1,
+        as_of_ts="2026-06-20T15:05:00+08:00",
+        eligibility="pit_backtest_eligible",
+    )
+    assert pit == []
+    # reconciled 落地后 → 准入。
+    store.record_coverage_assessment(
+        instrument_id=instrument_id, trade_date=_DAY, interval_minutes=1,
+        provider="eastmoney_akshare", contract_version=cv,
+        session_profile_version=pv, assessment_kind="reconciled",
+        status="passed", expected_bar_ends=_TOY_BAR_ENDS,
+        assessed_at="2026-06-20T09:00:00+08:00",
+    )
+    pit2 = store.load_asof(
+        instruments=[instrument_id], start=_bar_end("09:30"),
+        end=_bar_end("09:32"), interval=1,
+        as_of_ts="2026-06-20T15:05:00+08:00",
+        eligibility="pit_backtest_eligible",
+    )
+    assert len(pit2) == 3
+    assert all(isinstance(b, PitBar) for b in pit2)
+
+
+def test_load_asof_respects_assessed_at_gate(store, instrument_id):
+    """assessed_at > as_of_ts → 该评估对该 as_of 不可见（PIT 自然门控）。"""
+    pv = _register_toy_profile(store)
+    cv = _register_contract(store, "em-1m-end-v1", "end")
+    _bootstrap_toy_canonical(store, instrument_id, _toy_rows(), pv=pv, cv=cv)
+    store.record_coverage_assessment(
+        instrument_id=instrument_id, trade_date=_DAY, interval_minutes=1,
+        provider="eastmoney_akshare", contract_version=cv,
+        session_profile_version=pv, assessment_kind="reconciled",
+        status="passed", expected_bar_ends=_TOY_BAR_ENDS,
+        assessed_at="2026-06-20T09:00:00+08:00",
+    )
+    # as_of 早于评估时间 → 排除。
+    early = store.load_asof(
+        instruments=[instrument_id], start=_bar_end("09:30"),
+        end=_bar_end("09:32"), interval=1,
+        as_of_ts="2026-06-19T16:00:00+08:00",
+        eligibility="pit_backtest_eligible",
+    )
+    assert early == []
+
+
+def test_research_backfill_never_enters_pit(store, instrument_id):
+    """research_backfill 永久排除 PIT（即便有 reconciled 评估）。"""
+    pv = _register_toy_profile(store)
+    cv = _register_contract(store, "em-1m-end-v1", "end")
+    # 以 research_backfill availability 摄入。
+    obs = ObservationInput(
+        instrument_id=instrument_id, provider="eastmoney_akshare",
+        interval_minutes=1,
+        request_meta={"method": "GET", "url": "https://x"},
+        payload_rows=_toy_rows(), source_asof_ts=None,
+        availability_class="research_backfill", eligibility="research_only",
+        status_code=200, frozen_schema_hash="h1",
+        frozen_session_profile_version=pv, frozen_contract_version=cv,
+    )
+    r = store.ingest_run(provider="eastmoney_akshare", mode="close",
+                         trade_date=_DAY, observations=[obs])
+    store.certify_observations_to_canonical(run_id=r.run_id)
+    store.record_coverage_assessment(
+        instrument_id=instrument_id, trade_date=_DAY, interval_minutes=1,
+        provider="eastmoney_akshare", contract_version=cv,
+        session_profile_version=pv, assessment_kind="reconciled",
+        status="passed", expected_bar_ends=_TOY_BAR_ENDS,
+        assessed_at="2026-06-20T09:00:00+08:00",
+    )
+    pit = store.load_asof(
+        instruments=[instrument_id], start=_bar_end("09:30"),
+        end=_bar_end("09:32"), interval=1,
+        as_of_ts="2026-06-21T09:00:00+08:00",
+        eligibility="pit_backtest_eligible",
+    )
+    assert pit == []  # research_backfill canonical source 永不入 PIT
+
+
+def test_rev2_does_not_inherit_rev1_assessment(store, instrument_id):
+    """U6/集成#3：rev2 在自身评估前到 → 不继承 rev1 绿评估。"""
+    pv = _register_toy_profile(store)
+    cv = _register_contract(store, "em-1m-end-v1", "end")
+    _bootstrap_toy_canonical(store, instrument_id, _toy_rows(), pv=pv, cv=cv)
+    m1 = store.compute_canonical_manifest(
+        instrument_id=instrument_id, trade_date=_DAY, interval_minutes=1,
+        provider="eastmoney_akshare", contract_version=cv,
+        session_profile_version=pv, expected_bar_ends=_TOY_BAR_ENDS,
+    )
+    # rev1 通过 reconciled（绑定 m1 manifest）。
+    store.record_coverage_assessment(
+        instrument_id=instrument_id, trade_date=_DAY, interval_minutes=1,
+        provider="eastmoney_akshare", contract_version=cv,
+        session_profile_version=pv, assessment_kind="reconciled",
+        status="passed", expected_bar_ends=_TOY_BAR_ENDS,
+        assessed_at="2026-06-20T09:00:00+08:00",
+        canonical_manifest_sha256=m1["manifest_sha256"],
+    )
+    # rev2 到（改 09:32），但还没有自己的评估。
+    _bootstrap_toy_canonical(
+        store, instrument_id, _toy_rows(close_1532=10.9, high_1532=11.0),
+        pv=pv, cv=cv,
+    )
+    # as_of 在 rev2 之后：manifest 已变 → 与 m1 评估不匹配 → 排除。
+    pit = store.load_asof(
+        instruments=[instrument_id], start=_bar_end("09:30"),
+        end=_bar_end("09:32"), interval=1,
+        as_of_ts="2026-06-21T09:00:00+08:00",
+        eligibility="pit_backtest_eligible",
+    )
+    assert pit == []  # rev2 不继承 rev1 绿评估
+
+
+def test_reconcile_failed_rejects_after_its_assessed_at(store, instrument_id):
+    """集成#3：as_of 在两评估间返回当时合格 revision；>= reconcile_failed 拒绝。"""
+    pv = _register_toy_profile(store)
+    cv = _register_contract(store, "em-1m-end-v1", "end")
+    _bootstrap_toy_canonical(store, instrument_id, _toy_rows(), pv=pv, cv=cv)
+    m1 = store.compute_canonical_manifest(
+        instrument_id=instrument_id, trade_date=_DAY, interval_minutes=1,
+        provider="eastmoney_akshare", contract_version=cv,
+        session_profile_version=pv, expected_bar_ends=_TOY_BAR_ENDS,
+    )
+    # t1：reconciled passed。
+    store.record_coverage_assessment(
+        instrument_id=instrument_id, trade_date=_DAY, interval_minutes=1,
+        provider="eastmoney_akshare", contract_version=cv,
+        session_profile_version=pv, assessment_kind="reconciled",
+        status="passed", expected_bar_ends=_TOY_BAR_ENDS,
+        assessed_at="2026-06-20T09:00:00+08:00",
+        canonical_manifest_sha256=m1["manifest_sha256"],
+    )
+    # t2：同 manifest 又核对，这次失配 → reconcile_failed。
+    store.record_coverage_assessment(
+        instrument_id=instrument_id, trade_date=_DAY, interval_minutes=1,
+        provider="eastmoney_akshare", contract_version=cv,
+        session_profile_version=pv, assessment_kind="reconciled",
+        status="reconcile_failed", expected_bar_ends=_TOY_BAR_ENDS,
+        assessed_at="2026-06-21T09:00:00+08:00",
+        canonical_manifest_sha256=m1["manifest_sha256"],
+    )
+    # as_of 在 t1~t2 间 → 合格。
+    mid = store.load_asof(
+        instruments=[instrument_id], start=_bar_end("09:30"),
+        end=_bar_end("09:32"), interval=1,
+        as_of_ts="2026-06-20T15:00:00+08:00",
+        eligibility="pit_backtest_eligible",
+    )
+    assert len(mid) == 3
+    # as_of >= reconcile_failed.assessed_at → 拒绝。
+    after = store.load_asof(
+        instruments=[instrument_id], start=_bar_end("09:30"),
+        end=_bar_end("09:32"), interval=1,
+        as_of_ts="2026-06-21T15:00:00+08:00",
+        eligibility="pit_backtest_eligible",
+    )
+    assert after == []
+
+
+def test_reconcile_against_daily_within_tolerance_passes(store, instrument_id):
+    """次周期日频核对在容差内 → reconciled passed。"""
+    pv = _register_toy_profile(store)
+    cv = _register_contract(store, "em-1m-end-v1", "end")
+    _bootstrap_toy_canonical(store, instrument_id, _toy_rows(), pv=pv, cv=cv)
+    # 玩具日聚合：high=max(10.0,10.2,10.3)=10.3、amount=0+15150+8200=23350。
+    res = store.reconcile_against_daily(
+        instrument_id=instrument_id, trade_date=_DAY, interval_minutes=1,
+        provider="eastmoney_akshare", contract_version=cv,
+        session_profile_version=pv, expected_bar_ends=_TOY_BAR_ENDS,
+        daily_ohlcv={"high": 10.3, "low": 9.9, "amount": 23350.0},
+        tolerance=0.001, assessed_at="2026-06-20T09:00:00+08:00",
+    )
+    assert res["assessment_kind"] == "reconciled"
+    assert res["status"] == "passed"
+
+
+def test_reconcile_against_daily_beyond_tolerance_fails(store, instrument_id):
+    """集成#3：fake 日频 high/amount 超容差 → reconcile_failed。"""
+    pv = _register_toy_profile(store)
+    cv = _register_contract(store, "em-1m-end-v1", "end")
+    _bootstrap_toy_canonical(store, instrument_id, _toy_rows(), pv=pv, cv=cv)
+    res = store.reconcile_against_daily(
+        instrument_id=instrument_id, trade_date=_DAY, interval_minutes=1,
+        provider="eastmoney_akshare", contract_version=cv,
+        session_profile_version=pv, expected_bar_ends=_TOY_BAR_ENDS,
+        daily_ohlcv={"high": 99.0, "low": 9.9, "amount": 999999.0},  # 超容差
+        tolerance=0.001, assessed_at="2026-06-20T09:00:00+08:00",
+    )
+    assert res["status"] == "reconcile_failed"
+
+
+# --- A3：ReviewBar 类型隔离 ------------------------------------------------ #
+
+
+def test_review_bar_and_pit_bar_are_distinct_types(store, instrument_id):
+    """A3：复盘 ReviewBar 与回测 PitBar 是不同类型，结构上不可互喂。"""
+    assert ReviewBar is not PitBar
+    # ReviewBar 不是 PitBar 子类（结构隔离，非约定）。
+    assert not issubclass(ReviewBar, PitBar)
+    assert not issubclass(PitBar, ReviewBar)
+
+
+def test_review_path_latest_revision_wins(store, instrument_id):
+    """复盘面板 latest-revision-wins（非 PIT），且无 reconciled 也可读。"""
+    pv = _register_toy_profile(store)
+    cv = _register_contract(store, "em-1m-end-v1", "end")
+    _bootstrap_toy_canonical(store, instrument_id, _toy_rows(), pv=pv, cv=cv)
+    _bootstrap_toy_canonical(
+        store, instrument_id, _toy_rows(close_1532=10.9, high_1532=11.0),
+        pv=pv, cv=cv,
+    )
+    review = store.load_review_bars(
+        instruments=[instrument_id], start=_bar_end("09:32"),
+        end=_bar_end("09:32"), interval=1,
+    )
+    assert len(review) == 1
+    assert review[0].revision == 2  # latest-revision-wins
+    assert review[0].close == 10.9
+
+
+# --- A4：reconciliation backlog 闭合 → reconciliation_stalled ------------- #
+
+
+def test_reconciliation_stalled_after_k_cycles(store, instrument_id):
+    """A4：complete 日 K 周期仍无 reconciled → reconciliation_stalled 信号。"""
+    pv = _register_toy_profile(store)
+    cv = _register_contract(store, "em-1m-end-v1", "end")
+    _bootstrap_toy_canonical(store, instrument_id, _toy_rows(), pv=pv, cv=cv)
+    store.assess_complete(
+        instrument_id=instrument_id, trade_date=_DAY, interval_minutes=1,
+        provider="eastmoney_akshare", contract_version=cv,
+        session_profile_version=pv, expected_bar_ends=_TOY_BAR_ENDS,
+        assessed_at="2026-06-19T15:05:00+08:00",
+    )
+    # 当前日比 trade_date 晚 K=2 个周期且无 reconciled → stalled。
+    stalled = store.detect_reconciliation_stalled(
+        as_of_date="2026-06-22", max_cycles=2,
+    )
+    assert any(s["trade_date"] == _DAY for s in stalled)
+    assert all(s["signal"] == "reconciliation_stalled" for s in stalled)
+
+
+def test_reconciled_day_not_stalled(store, instrument_id):
+    """已 reconciled 的日不报 stalled。"""
+    pv = _register_toy_profile(store)
+    cv = _register_contract(store, "em-1m-end-v1", "end")
+    _bootstrap_toy_canonical(store, instrument_id, _toy_rows(), pv=pv, cv=cv)
+    store.assess_complete(
+        instrument_id=instrument_id, trade_date=_DAY, interval_minutes=1,
+        provider="eastmoney_akshare", contract_version=cv,
+        session_profile_version=pv, expected_bar_ends=_TOY_BAR_ENDS,
+        assessed_at="2026-06-19T15:05:00+08:00",
+    )
+    store.record_coverage_assessment(
+        instrument_id=instrument_id, trade_date=_DAY, interval_minutes=1,
+        provider="eastmoney_akshare", contract_version=cv,
+        session_profile_version=pv, assessment_kind="reconciled",
+        status="passed", expected_bar_ends=_TOY_BAR_ENDS,
+        assessed_at="2026-06-20T09:00:00+08:00",
+    )
+    stalled = store.detect_reconciliation_stalled(
+        as_of_date="2026-06-22", max_cycles=2,
+    )
+    assert not any(s["trade_date"] == _DAY for s in stalled)

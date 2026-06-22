@@ -130,6 +130,56 @@ class NormalizedBar:
     quality_flags: tuple[QualityFlag, ...] = ()
 
 
+@dataclass(frozen=True)
+class PitBar:
+    """``load_asof`` 前向-PIT 查询返回的 bar（A3：与 ``ReviewBar`` 结构隔离）.
+
+    **唯一**进回测/walk-forward 入口的 bar 类型。``ReviewBar`` 不是它、也不继承它，
+    故复盘面板的 bar 在类型层面就喂不进 PIT 消费方（隔离靠类型而非约定）。
+    """
+
+    instrument_id: int
+    symbol: str
+    bar_end_ts: str
+    trade_date: str
+    interval_minutes: int
+    source: str
+    revision: int
+    open: float | None
+    high: float | None
+    low: float | None
+    close: float | None
+    volume: float | None
+    amount: float | None
+    observation_id: int
+    canonical_manifest_sha256: str
+
+
+@dataclass(frozen=True)
+class ReviewBar:
+    """只读复盘面板返回的 bar（latest-revision-wins，非 PIT；A3）.
+
+    **故意**不与 :class:`PitBar` 共享基类、不可转换：任何回测/walk-forward 入口都只接
+    ``PitBar``，故 ``ReviewBar`` 无路径绕过 reconciled 闸进入策略消费。可读仅 ``complete``
+    的 bar（无 reconciled 也可）。
+    """
+
+    instrument_id: int
+    symbol: str
+    bar_end_ts: str
+    trade_date: str
+    interval_minutes: int
+    source: str
+    revision: int
+    open: float | None
+    high: float | None
+    low: float | None
+    close: float | None
+    volume: float | None
+    amount: float | None
+    quality_flags: str
+
+
 class CredentialInPayloadError(Exception):
     """响应体含凭据 → 终止 run（credential_in_payload），不持久化任何数据行。"""
 
@@ -285,6 +335,38 @@ class IntradayStore:
         "ON canonical_bars(instrument_id, bar_end_ts)"
     )
 
+    # ----- U4 coverage 评估层（RB1：complete / reconciled 两独立评估状态） ----- #
+
+    # coverage_assessments：**append-only**（绝无可变状态列——每次评估写一条带时间戳的
+    # 新行）。assessment_kind ∈ {complete, reconciled}：complete=收盘 session 形状有效；
+    # reconciled=次周期对独立日频 OHLCV 在容差内核对。status ∈ {passed, reconcile_failed}。
+    # canonical_manifest_sha256 绑定**当时**的 canonical revision 集（后到 revision 不继承
+    # 前 revision 评估）。assessed_at 带时区 ISO（KTD7），PIT 自然门控 as_of。
+    SCHEMA_COVERAGE_ASSESSMENTS = """
+    CREATE TABLE IF NOT EXISTS coverage_assessments (
+        assessment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        instrument_id INTEGER NOT NULL,
+        trade_date TEXT NOT NULL,
+        interval_minutes INTEGER NOT NULL,
+        provider TEXT NOT NULL,
+        contract_version TEXT NOT NULL,
+        session_profile_version TEXT NOT NULL,
+        assessment_kind TEXT NOT NULL,
+        status TEXT NOT NULL,
+        canonical_manifest_sha256 TEXT NOT NULL,
+        assessed_at TEXT NOT NULL,
+        details_json TEXT,
+        missing_json TEXT,
+        FOREIGN KEY (instrument_id) REFERENCES instrument_registry (instrument_id)
+    )
+    """
+
+    SCHEMA_INDEX_COVERAGE_LOOKUP = (
+        "CREATE INDEX IF NOT EXISTS idx_coverage_lookup "
+        "ON coverage_assessments(instrument_id, trade_date, interval_minutes, "
+        "provider, contract_version)"
+    )
+
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -346,6 +428,8 @@ class IntradayStore:
             conn.execute(self.SCHEMA_CANONICAL_BARS)
             conn.execute(self.SCHEMA_INDEX_CANON_UNIQUE)
             conn.execute(self.SCHEMA_INDEX_CANON_LOOKUP)
+            conn.execute(self.SCHEMA_COVERAGE_ASSESSMENTS)
+            conn.execute(self.SCHEMA_INDEX_COVERAGE_LOOKUP)
 
     # ------------------------------------------------------------------ #
     # registry（fail-closed 解析 + 注册）
@@ -882,6 +966,579 @@ class IntradayStore:
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------ #
+    # U4 coverage 评估 + manifest 绑定（RB1：complete / reconciled 两独立状态）
+    # ------------------------------------------------------------------ #
+
+    # 永久排除 PIT 的 canonical source（D1）：研究回填绝不进 forward-only 路径。
+    _PIT_EXCLUDED_SOURCES: frozenset[str] = frozenset()  # source 是 provider，不据此排除
+
+    def _latest_canonical_revisions(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        instrument_id: int,
+        trade_date: str,
+        interval_minutes: int,
+        provider: str,
+        contract_version: str,
+        session_profile_version: str,
+    ) -> dict[str, dict[str, Any]]:
+        """每 ``bar_end_ts`` 选**最高 revision** 的 canonical 行（按本 manifest scope）.
+
+        scope = instrument/day/interval/provider(source)/contract/profile。返回
+        ``{bar_end_ts: row_dict}``（含 revision/observation_id 等，供 manifest 与
+        load_asof 复用）。
+        """
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT * FROM canonical_bars "
+            "WHERE instrument_id=? AND trade_date=? AND interval_minutes=? "
+            "AND source=? AND contract_version=? AND session_profile_version=? "
+            "ORDER BY bar_end_ts, revision",
+            (
+                instrument_id, trade_date, interval_minutes, provider,
+                contract_version, session_profile_version,
+            ),
+        ).fetchall()
+        latest: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            d = dict(r)
+            cur = latest.get(d["bar_end_ts"])
+            if cur is None or d["revision"] > cur["revision"]:
+                latest[d["bar_end_ts"]] = d
+        return latest
+
+    def compute_canonical_manifest(
+        self,
+        *,
+        instrument_id: int,
+        trade_date: str,
+        interval_minutes: int,
+        provider: str,
+        contract_version: str,
+        session_profile_version: str,
+        expected_bar_ends: tuple[str, ...],
+    ) -> dict[str, Any]:
+        """算 ``canonical_manifest_sha256`` 并列缺端点（RB1 manifest 绑定）.
+
+        manifest = 按 ``(instrument_id, bar_end_ts, interval, source)`` 排序的 canonical
+        JSON 列：每**期望端点**选定 revision + observation_id + content_sha + contract /
+        profile version + **显式缺端点列**。canonical revision 变或对账跑时重算 → sha 变，
+        故后到 revision 不能继承前 revision 的绿评估。
+
+        ``expected_bar_ends`` 是 ``HH:MM`` 合法端点；本方法把它落到 ``trade_date`` 的带时区
+        ISO bar_end（与 canonical 行键一致）。
+        """
+        expected_iso = [
+            _localize_shanghai(_parse_naive_ts(f"{trade_date} {hhmm}:00"))
+            for hhmm in expected_bar_ends
+        ]
+        with self._conn() as conn:
+            latest = self._latest_canonical_revisions(
+                conn,
+                instrument_id=instrument_id,
+                trade_date=trade_date,
+                interval_minutes=interval_minutes,
+                provider=provider,
+                contract_version=contract_version,
+                session_profile_version=session_profile_version,
+            )
+        entries: list[dict[str, Any]] = []
+        missing: list[str] = []
+        for ts in sorted(expected_iso):
+            row = latest.get(ts)
+            if row is None:
+                missing.append(ts)
+                continue
+            entries.append(
+                {
+                    "instrument_id": instrument_id,
+                    "bar_end_ts": ts,
+                    "interval_minutes": interval_minutes,
+                    "source": provider,
+                    "revision": row["revision"],
+                    "observation_id": row["observation_id"],
+                    "content_sha256": row["content_sha256"],
+                    "contract_version": contract_version,
+                    "session_profile_version": session_profile_version,
+                }
+            )
+        manifest_doc = {
+            "scope": {
+                "instrument_id": instrument_id,
+                "trade_date": trade_date,
+                "interval_minutes": interval_minutes,
+                "source": provider,
+                "contract_version": contract_version,
+                "session_profile_version": session_profile_version,
+            },
+            "entries": entries,
+            "missing": sorted(missing),
+        }
+        sha = _sha256_text(
+            json.dumps(manifest_doc, ensure_ascii=False, sort_keys=True)
+        )
+        return {
+            "manifest_sha256": sha,
+            "missing": sorted(missing),
+            "entries": entries,
+        }
+
+    def record_coverage_assessment(
+        self,
+        *,
+        instrument_id: int,
+        trade_date: str,
+        interval_minutes: int,
+        provider: str,
+        contract_version: str,
+        session_profile_version: str,
+        assessment_kind: str,
+        status: str,
+        expected_bar_ends: tuple[str, ...],
+        assessed_at: str,
+        canonical_manifest_sha256: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """append 一条评估行（绝不更新既有行——append-only，RB1）.
+
+        ``canonical_manifest_sha256`` 缺省时按**当前** canonical revision 集重算并绑定。
+        """
+        if assessment_kind not in ("complete", "reconciled"):
+            raise ValueError(f"assessment_kind 须为 complete/reconciled，得 {assessment_kind!r}")
+        if status not in ("passed", "reconcile_failed"):
+            raise ValueError(f"status 须为 passed/reconcile_failed，得 {status!r}")
+        manifest = self.compute_canonical_manifest(
+            instrument_id=instrument_id, trade_date=trade_date,
+            interval_minutes=interval_minutes, provider=provider,
+            contract_version=contract_version,
+            session_profile_version=session_profile_version,
+            expected_bar_ends=expected_bar_ends,
+        )
+        sha = canonical_manifest_sha256 or manifest["manifest_sha256"]
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO coverage_assessments "
+                "(instrument_id, trade_date, interval_minutes, provider, "
+                " contract_version, session_profile_version, assessment_kind, "
+                " status, canonical_manifest_sha256, assessed_at, details_json, "
+                " missing_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    instrument_id, trade_date, interval_minutes, provider,
+                    contract_version, session_profile_version, assessment_kind,
+                    status, sha, assessed_at,
+                    json.dumps(details or {}, ensure_ascii=False, sort_keys=True),
+                    json.dumps(manifest["missing"], ensure_ascii=False),
+                ),
+            )
+            assessment_id = int(cur.lastrowid)
+        return {
+            "assessment_id": assessment_id,
+            "assessment_kind": assessment_kind,
+            "status": status,
+            "canonical_manifest_sha256": sha,
+            "missing": manifest["missing"],
+        }
+
+    def assess_complete(
+        self,
+        *,
+        instrument_id: int,
+        trade_date: str,
+        interval_minutes: int,
+        provider: str,
+        contract_version: str,
+        session_profile_version: str,
+        expected_bar_ends: tuple[str, ...],
+        assessed_at: str,
+    ) -> dict[str, Any]:
+        """收盘 ``complete`` 评估：session 形状有效才 passed（RB1）.
+
+        形状有效 = 所有期望端点到齐 **且** 各 bar 无 quality_flags（OHLC 合法 / 在 profile /
+        无负量）。任一缺端点或带 flag → ``reconcile_failed``（结构上不合格，PIT 拒绝）。
+        """
+        manifest = self.compute_canonical_manifest(
+            instrument_id=instrument_id, trade_date=trade_date,
+            interval_minutes=interval_minutes, provider=provider,
+            contract_version=contract_version,
+            session_profile_version=session_profile_version,
+            expected_bar_ends=expected_bar_ends,
+        )
+        flagged = [
+            e["bar_end_ts"]
+            for e in manifest["entries"]
+            if self._entry_has_quality_flags(e)
+        ]
+        ok = not manifest["missing"] and not flagged
+        return self.record_coverage_assessment(
+            instrument_id=instrument_id, trade_date=trade_date,
+            interval_minutes=interval_minutes, provider=provider,
+            contract_version=contract_version,
+            session_profile_version=session_profile_version,
+            assessment_kind="complete",
+            status="passed" if ok else "reconcile_failed",
+            expected_bar_ends=expected_bar_ends, assessed_at=assessed_at,
+            canonical_manifest_sha256=manifest["manifest_sha256"],
+            details={"missing": manifest["missing"], "flagged": flagged},
+        )
+
+    def _entry_has_quality_flags(self, entry: dict[str, Any]) -> bool:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT quality_flags FROM canonical_bars WHERE canonical_id IN ("
+                "  SELECT canonical_id FROM canonical_bars "
+                "  WHERE instrument_id=? AND bar_end_ts=? AND interval_minutes=? "
+                "  AND source=? AND revision=?)",
+                (
+                    entry["instrument_id"], entry["bar_end_ts"],
+                    entry["interval_minutes"], entry["source"], entry["revision"],
+                ),
+            ).fetchone()
+        return bool(row and row[0])
+
+    def reconcile_against_daily(
+        self,
+        *,
+        instrument_id: int,
+        trade_date: str,
+        interval_minutes: int,
+        provider: str,
+        contract_version: str,
+        session_profile_version: str,
+        expected_bar_ends: tuple[str, ...],
+        daily_ohlcv: dict[str, float],
+        tolerance: float,
+        assessed_at: str,
+    ) -> dict[str, Any]:
+        """次周期对独立日频 OHLCV 交叉核对（容差内 → reconciled passed）.
+
+        把当日 canonical bar 聚合（high=max、low=min、amount=sum）与 ``daily_ohlcv``
+        逐字段相对容差比较；任一字段超容差 → ``reconcile_failed``（集成#3）。
+        """
+        with self._conn() as conn:
+            latest = self._latest_canonical_revisions(
+                conn, instrument_id=instrument_id, trade_date=trade_date,
+                interval_minutes=interval_minutes, provider=provider,
+                contract_version=contract_version,
+                session_profile_version=session_profile_version,
+            )
+        highs = [r["high"] for r in latest.values() if r["high"] is not None]
+        lows = [r["low"] for r in latest.values() if r["low"] is not None]
+        amounts = [r["amount"] for r in latest.values() if r["amount"] is not None]
+        agg = {
+            "high": max(highs) if highs else None,
+            "low": min(lows) if lows else None,
+            "amount": sum(amounts) if amounts else None,
+        }
+        mismatches: dict[str, Any] = {}
+        for field, daily_val in daily_ohlcv.items():
+            ours = agg.get(field)
+            if ours is None or not _within_tolerance(ours, daily_val, tolerance):
+                mismatches[field] = {"ours": ours, "daily": daily_val}
+        status = "passed" if not mismatches else "reconcile_failed"
+        return self.record_coverage_assessment(
+            instrument_id=instrument_id, trade_date=trade_date,
+            interval_minutes=interval_minutes, provider=provider,
+            contract_version=contract_version,
+            session_profile_version=session_profile_version,
+            assessment_kind="reconciled", status=status,
+            expected_bar_ends=expected_bar_ends, assessed_at=assessed_at,
+            details={"aggregated": agg, "mismatches": mismatches},
+        )
+
+    def list_coverage_assessments(
+        self,
+        *,
+        instrument_id: int | None = None,
+        trade_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if instrument_id is not None:
+            clauses.append("instrument_id=?")
+            params.append(instrument_id)
+        if trade_date is not None:
+            clauses.append("trade_date=?")
+            params.append(trade_date)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM coverage_assessments" + where
+                + " ORDER BY assessment_id",
+                params,
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------ #
+    # U4 forward-only PIT 查询（load_asof）+ 非-PIT 复盘路径（A3）
+    # ------------------------------------------------------------------ #
+
+    def load_asof(
+        self,
+        *,
+        instruments: list[int],
+        start: str,
+        end: str,
+        interval: int,
+        as_of_ts: str,
+        eligibility: str,
+    ) -> list[PitBar]:
+        """前向-PIT 查询：仅返回**截至 ``as_of_ts`` 已被合格评估准入**的 bar.
+
+        准入谓词（每 ``(instrument, day, interval, provider, contract, manifest)``）：
+          1. 按 ``as_of_ts`` 选候选 canonical 行（latest revision ≤ 当时），推导该 manifest；
+          2. **仅当**存在 ``assessed_at <= as_of_ts`` 且 ``canonical_manifest_sha256`` 与当
+             前 manifest 一致、且 ``assessment_kind`` 满足 ``eligibility`` 的评估才准入
+             （``pit_backtest_eligible`` → 强制 ``assessment_kind='reconciled'``，RB1）；
+          3. 该 manifest 上**最新**那条匹配评估 ``status`` 须 ``passed``（reconcile_failed
+             从其 ``assessed_at`` 起拒绝，集成#3）。
+        后到 revision 改 manifest sha → 与旧评估不匹配 → 排除（不继承前 revision 绿评估）。
+        ``research_backfill`` availability 的 observation 永久排除（D1）。
+        确定性 tie-break：``available_from_ts``→``observed_at``→revision→observation_id。
+        """
+        requires_reconciled = eligibility == "pit_backtest_eligible"
+        out: list[PitBar] = []
+        with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
+            for instrument_id in instruments:
+                # 候选 canonical 行：在 [start,end] 区间、该 interval。
+                rows = conn.execute(
+                    "SELECT cb.*, o.availability_class AS av, o.observed_at AS obs_at, "
+                    "       o.source_asof_ts AS avail_from "
+                    "FROM canonical_bars cb "
+                    "JOIN payload_observations o "
+                    "  ON o.observation_id = cb.observation_id "
+                    "WHERE cb.instrument_id=? AND cb.interval_minutes=? "
+                    "  AND cb.bar_end_ts BETWEEN ? AND ? "
+                    "ORDER BY cb.bar_end_ts, cb.revision",
+                    (instrument_id, interval, start, end),
+                ).fetchall()
+                # 每 (bar_end_ts) 选 as_of 可见的最新 revision；剔 research_backfill。
+                by_bar: dict[str, dict[str, Any]] = {}
+                scope_keys: set[tuple[str, str, str, str]] = set()
+                for r in rows:
+                    d = dict(r)
+                    if d["av"] == "research_backfill":
+                        continue  # D1：永久排除 PIT
+                    # 候选可见性按数据**自报可得时间**（available_from / source_asof）门控，
+                    # **不**用 ingest 墙钟（observed_at 是回填/重摄入的物理时刻，非 PIT 语义）。
+                    # forward-only 准入的权威闸是评估 assessed_at <= as_of（见 _manifest_admitted）。
+                    avail_from = d.get("avail_from")
+                    if avail_from is not None and str(avail_from) > as_of_ts:
+                        continue  # 数据可得时间晚于 as_of → 不可见
+                    key = d["bar_end_ts"]
+                    cur = by_bar.get(key)
+                    if cur is None or self._pit_tie_break(d, cur):
+                        by_bar[key] = d
+                    scope_keys.add(
+                        (d["trade_date"], d["source"], d["contract_version"],
+                         d["session_profile_version"])
+                    )
+                # 逐 scope 验评估准入；准入则收该 scope 内全部 by_bar 行。
+                for (trade_date, source, cv, pv) in scope_keys:
+                    scope_bars = {
+                        ts: d for ts, d in by_bar.items()
+                        if d["trade_date"] == trade_date and d["source"] == source
+                        and d["contract_version"] == cv
+                        and d["session_profile_version"] == pv
+                    }
+                    if not scope_bars:
+                        continue
+                    expected_ends = tuple(
+                        _hhmm_of_iso(ts) for ts in sorted(scope_bars)
+                    )
+                    manifest = self.compute_canonical_manifest(
+                        instrument_id=instrument_id, trade_date=trade_date,
+                        interval_minutes=interval, provider=source,
+                        contract_version=cv, session_profile_version=pv,
+                        expected_bar_ends=expected_ends,
+                    )
+                    if not self._manifest_admitted(
+                        conn,
+                        instrument_id=instrument_id, trade_date=trade_date,
+                        interval=interval, provider=source, contract_version=cv,
+                        manifest_sha=manifest["manifest_sha256"],
+                        as_of_ts=as_of_ts,
+                        requires_reconciled=requires_reconciled,
+                    ):
+                        continue
+                    for ts in sorted(scope_bars):
+                        d = scope_bars[ts]
+                        out.append(
+                            PitBar(
+                                instrument_id=int(d["instrument_id"]),
+                                symbol=str(d["symbol"]),
+                                bar_end_ts=str(d["bar_end_ts"]),
+                                trade_date=str(d["trade_date"]),
+                                interval_minutes=int(d["interval_minutes"]),
+                                source=str(d["source"]),
+                                revision=int(d["revision"]),
+                                open=d["open"], high=d["high"],
+                                low=d["low"], close=d["close"],
+                                volume=d["volume"], amount=d["amount"],
+                                observation_id=int(d["observation_id"]),
+                                canonical_manifest_sha256=manifest[
+                                    "manifest_sha256"
+                                ],
+                            )
+                        )
+        out.sort(key=lambda b: (b.instrument_id, b.bar_end_ts))
+        return out
+
+    @staticmethod
+    def _pit_tie_break(cand: dict[str, Any], cur: dict[str, Any]) -> bool:
+        """确定性 tie-break：avail_from→observed_at→revision→observation_id，取较新.
+
+        返回 True 表示 ``cand`` 应替换 ``cur``（更高 revision / 更晚可得，确定性）。
+        """
+        ck = (
+            str(cand.get("avail_from") or ""), str(cand.get("obs_at") or ""),
+            int(cand["revision"]), int(cand["observation_id"]),
+        )
+        uk = (
+            str(cur.get("avail_from") or ""), str(cur.get("obs_at") or ""),
+            int(cur["revision"]), int(cur["observation_id"]),
+        )
+        return ck > uk
+
+    def _manifest_admitted(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        instrument_id: int,
+        trade_date: str,
+        interval: int,
+        provider: str,
+        contract_version: str,
+        manifest_sha: str,
+        as_of_ts: str,
+        requires_reconciled: bool,
+    ) -> bool:
+        """该 manifest 截至 ``as_of_ts`` 是否被合格评估准入（取最新一条匹配评估的 status）."""
+        kind_clause = (
+            " AND assessment_kind='reconciled'" if requires_reconciled else ""
+        )
+        row = conn.execute(
+            "SELECT status FROM coverage_assessments "
+            "WHERE instrument_id=? AND trade_date=? AND interval_minutes=? "
+            "  AND provider=? AND contract_version=? "
+            "  AND canonical_manifest_sha256=? AND assessed_at<=?" + kind_clause
+            + " ORDER BY assessed_at DESC, assessment_id DESC LIMIT 1",
+            (
+                instrument_id, trade_date, interval, provider,
+                contract_version, manifest_sha, as_of_ts,
+            ),
+        ).fetchone()
+        return bool(row and row[0] == "passed")
+
+    def load_review_bars(
+        self,
+        *,
+        instruments: list[int],
+        start: str,
+        end: str,
+        interval: int,
+    ) -> list[ReviewBar]:
+        """只读复盘面板路径（A3）：latest-revision-wins，**不**经 ``load_asof``.
+
+        返回 :class:`ReviewBar`（与 :class:`PitBar` 结构隔离，喂不进回测入口）。可读仅
+        ``complete``、未 reconciled 的 bar；不做 as_of / eligibility 门控（非 PIT）。
+        """
+        out: list[ReviewBar] = []
+        with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
+            for instrument_id in instruments:
+                rows = conn.execute(
+                    "SELECT * FROM canonical_bars "
+                    "WHERE instrument_id=? AND interval_minutes=? "
+                    "  AND bar_end_ts BETWEEN ? AND ? "
+                    "ORDER BY bar_end_ts, revision",
+                    (instrument_id, interval, start, end),
+                ).fetchall()
+                latest: dict[str, dict[str, Any]] = {}
+                for r in rows:
+                    d = dict(r)
+                    cur = latest.get(d["bar_end_ts"])
+                    if cur is None or d["revision"] > cur["revision"]:
+                        latest[d["bar_end_ts"]] = d
+                for ts in sorted(latest):
+                    d = latest[ts]
+                    out.append(
+                        ReviewBar(
+                            instrument_id=int(d["instrument_id"]),
+                            symbol=str(d["symbol"]),
+                            bar_end_ts=str(d["bar_end_ts"]),
+                            trade_date=str(d["trade_date"]),
+                            interval_minutes=int(d["interval_minutes"]),
+                            source=str(d["source"]),
+                            revision=int(d["revision"]),
+                            open=d["open"], high=d["high"],
+                            low=d["low"], close=d["close"],
+                            volume=d["volume"], amount=d["amount"],
+                            quality_flags=str(d["quality_flags"]),
+                        )
+                    )
+        return out
+
+    # ------------------------------------------------------------------ #
+    # U4 A4：reconciliation backlog 闭合 → reconciliation_stalled
+    # ------------------------------------------------------------------ #
+
+    def detect_reconciliation_stalled(
+        self,
+        *,
+        as_of_date: str,
+        max_cycles: int,
+    ) -> list[dict[str, Any]]:
+        """检出 ``complete`` 后 K 周期仍无 ``reconciled`` 的日（A4）.
+
+        每 ``complete`` 日每后续周期重试 reconciliation 直到成功；``as_of_date`` 距其
+        ``trade_date`` 已过 > ``max_cycles`` 个交易日（此处近似为日历日）且无 ``reconciled``
+        passed 评估 → 发 ``reconciliation_stalled`` 信号（计入 U8 数据持久性门；实际告警
+        wiring 在 U7）。返回结构化结果，**不**直接告警。
+        """
+        with self._conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT DISTINCT instrument_id, trade_date, interval_minutes, "
+                "       provider, contract_version "
+                "FROM coverage_assessments "
+                "WHERE assessment_kind='complete' AND status='passed'"
+            ).fetchall()
+            stalled: list[dict[str, Any]] = []
+            for r in rows:
+                d = dict(r)
+                cycles = _calendar_days_between(d["trade_date"], as_of_date)
+                if cycles <= max_cycles:
+                    continue  # 仍在重试窗内
+                recon = conn.execute(
+                    "SELECT 1 FROM coverage_assessments "
+                    "WHERE instrument_id=? AND trade_date=? AND interval_minutes=? "
+                    "  AND provider=? AND contract_version=? "
+                    "  AND assessment_kind='reconciled' AND status='passed' LIMIT 1",
+                    (
+                        d["instrument_id"], d["trade_date"],
+                        d["interval_minutes"], d["provider"], d["contract_version"],
+                    ),
+                ).fetchone()
+                if recon is None:
+                    stalled.append(
+                        {
+                            "signal": "reconciliation_stalled",
+                            "instrument_id": d["instrument_id"],
+                            "trade_date": d["trade_date"],
+                            "interval_minutes": d["interval_minutes"],
+                            "provider": d["provider"],
+                            "contract_version": d["contract_version"],
+                            "cycles_elapsed": cycles,
+                            "max_cycles": max_cycles,
+                        }
+                    )
+        return stalled
+
+    # ------------------------------------------------------------------ #
     # 只读查询（测试 / 可观测性）
     # ------------------------------------------------------------------ #
 
@@ -962,6 +1619,65 @@ def _new_run_id() -> str:
 def _canonical_blob_text(rows: list[dict[str, Any]]) -> str:
     """把观测行确定性序列化（排序键），使「相同数据 → 相同 sha256」内容寻址成立。"""
     return json.dumps(rows, ensure_ascii=False, sort_keys=True, default=str)
+
+
+# --------------------------------------------------------------------------- #
+# U4 RB2：信号准入 + 执行成交闸（防 look-ahead / 同收盘成交）
+# --------------------------------------------------------------------------- #
+
+
+def is_signal_admissible(
+    bar_end_ts: str, publication_delay_seconds: int, signal_time: str
+) -> bool:
+    """RB2：bar 仅当 ``bar_end_ts + publication_delay <= signal_time`` 才可作信号输入.
+
+    ``publication_delay`` 取值源是 provider 探针 p95+裕度（保守偏晚，不引入 look-ahead）。
+    """
+    available_from = _parse_aware_ts(bar_end_ts) + _timedelta_seconds(
+        publication_delay_seconds
+    )
+    return available_from <= _parse_aware_ts(signal_time)
+
+
+def earliest_fill_bar_end(
+    signal_bar_end: str, candidate_bar_ends: list[str]
+) -> str | None:
+    """RB2：bar N 信号不得在 bar N 收盘成交，返回**严格之后**最早合格 bar end.
+
+    无后续 bar（信号在末根）→ ``None``（不可成交）。
+    """
+    later = sorted(ts for ts in candidate_bar_ends if ts > signal_bar_end)
+    return later[0] if later else None
+
+
+def _parse_aware_ts(ts: str):
+    return datetime.fromisoformat(ts)
+
+
+def _timedelta_seconds(seconds: int):
+    from datetime import timedelta
+
+    return timedelta(seconds=seconds)
+
+
+def _within_tolerance(a: float, b: float, tolerance: float) -> bool:
+    """相对容差比较（分母取较大绝对值，避免 0 除）；两者皆 0 视为一致。"""
+    denom = max(abs(a), abs(b))
+    if denom == 0:
+        return True
+    return abs(a - b) / denom <= tolerance
+
+
+def _hhmm_of_iso(iso_ts: str) -> str:
+    """从带时区 ISO bar_end 取 ``HH:MM``（manifest 期望端点回算）。"""
+    return _parse_aware_ts(iso_ts).strftime("%H:%M")
+
+
+def _calendar_days_between(start_date: str, end_date: str) -> int:
+    """两横杠日期间的日历日差（A4 周期近似；负值截 0）。"""
+    sd = datetime.strptime(start_date, "%Y-%m-%d")
+    ed = datetime.strptime(end_date, "%Y-%m-%d")
+    return max((ed - sd).days, 0)
 
 
 def _sha256_text(text: str) -> str:
@@ -1166,10 +1882,14 @@ __all__ = [
     "MappingStatus",
     "NormalizedBar",
     "ObservationInput",
+    "PitBar",
     "QualityFlag",
+    "ReviewBar",
     "RunResult",
     "TERMINAL_FAILURES",
     "build_legal_bar_ends",
+    "earliest_fill_bar_end",
+    "is_signal_admissible",
     "normalize_bar",
     "validate_bar",
 ]
