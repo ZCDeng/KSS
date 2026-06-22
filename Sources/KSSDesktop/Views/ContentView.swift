@@ -232,7 +232,8 @@ struct ContentView: View {
                     detail: store.reportDetail,
                     isLoadingDetail: store.isLoadingReport,
                     onSelectReview: { path in Task { await store.loadReport(path: path) } },
-                    onSelectSectorRotationDate: { date in Task { await store.loadSectorRotation(date: date) } }
+                    onSelectSectorRotationDate: { date in Task { await store.loadSectorRotation(date: date) } },
+                    onOpenExternally: { path in store.openReportInMarkEdit(path: path) }
                 )
             case .backtests:
                 BacktestsView(
@@ -241,7 +242,8 @@ struct ContentView: View {
                     selectedPath: store.selectedReportPath,
                     detail: store.reportDetail,
                     isLoadingDetail: store.isLoadingReport,
-                    onSelectReport: { path in Task { await store.loadReport(path: path) } }
+                    onSelectReport: { path in Task { await store.loadReport(path: path) } },
+                    onOpenExternally: { path in store.openReportInMarkEdit(path: path) }
                 )
             case .stocks:
                 StockBrowserView(

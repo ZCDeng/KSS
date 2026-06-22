@@ -219,6 +219,25 @@ final class KSSStore: ObservableObject {
         isLoadingReport = false
     }
 
+    /// 用 MarkEdit 打开当前选中报告（外部编辑桥）。仅打开文件——不改内容、不重载快照、不入 Python 桥。
+    /// 路径校验复用 `ExternalReportOpener`（安全边界，见该文件 source-of-truth 注释）。
+    func openReportInMarkEdit(path: String) {
+        guard let bridge else {
+            errorMessage = "Cannot locate KSS project root"
+            return
+        }
+        let stateRoot = bridge.stateRoot
+        errorMessage = nil
+        Task.detached { [weak self] in
+            ExternalReportOpener.open(relativePath: path, under: stateRoot) { err in
+                // openURLs 完成回调在主线程外触发——hop 回 MainActor 改 @Published。
+                Task { @MainActor in
+                    if let err { self?.errorMessage = err.errorDescription }
+                }
+            }
+        }
+    }
+
     func runTask(_ task: KSSTask) async {
         guard let bridge else {
             errorMessage = "Cannot locate KSS project root"

@@ -25,6 +25,7 @@ struct ReviewsView: View {
     var isLoadingDetail: Bool
     var onSelectReview: (String) -> Void
     var onSelectSectorRotationDate: (String) -> Void
+    var onOpenExternally: (String) -> Void
 
     @State private var mode: ReviewMode = .sector
     @State private var selectedReview: DailyReview?
@@ -208,6 +209,12 @@ struct ReviewsView: View {
             HStack(alignment: .firstTextBaseline) {
                 PageTitle(review.title)
                 Spacer()
+                Button { onOpenExternally(review.path) } label: {
+                    Label("MarkEdit", systemImage: "pencil.and.outline")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("用 MarkEdit 打开当前报告")
                 StatusBadge(icon: "calendar", text: review.date, tint: theme.accent)
             }
             if !review.focusSymbols.isEmpty {

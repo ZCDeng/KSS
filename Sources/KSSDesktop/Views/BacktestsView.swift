@@ -14,6 +14,7 @@ struct BacktestsView: View {
     var detail: ReportDetail?
     var isLoadingDetail: Bool
     var onSelectReport: (String) -> Void
+    var onOpenExternally: (String) -> Void
 
     @State private var selectedReport: BacktestReport?
     @State private var sort: BacktestSort = .updated
@@ -81,7 +82,16 @@ struct BacktestsView: View {
                 }
 
                 if let selectedReport {
-                    BacktestDetailHeader(report: selectedReport)
+                    HStack(alignment: .firstTextBaseline) {
+                        BacktestDetailHeader(report: selectedReport)
+                        Spacer()
+                        Button { onOpenExternally(selectedReport.path) } label: {
+                            Label("MarkEdit", systemImage: "pencil.and.outline")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("用 MarkEdit 打开当前报告")
+                    }
                     if isLoadingDetail && selectedPath == selectedReport.path {
                         ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else if detail?.path == selectedReport.path, let detail {
