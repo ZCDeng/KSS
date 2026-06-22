@@ -64,6 +64,7 @@ dependencies = [
     "xgboost==3.2.0",
     "xlrd==2.0.2",
     "fastmcp==3.3.1",
+    "openai==2.43.0",
 ]
 
 [dependency-groups]
