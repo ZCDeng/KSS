@@ -133,12 +133,15 @@
     ambientLoop();
   }, null, 1.86);
 
-  // ── 背景循环：仅重放「四键显影→收拢」，KSS/口号/按钮不动、不重建、不失焦 ──
+  // ── 背景循环：四键显影→收拢，下移到口号下方空带（不再压在 KSS 字标上）──
+  // DROP 把符号从原顶部位置（y≈110-190）平移到口号 war（y≈436-501）下方的空带，
+  // KSS/口号/按钮不动、不重建、不失焦。
+  var DROP = 405;
   function ambientLoop(){
     var loop = gsap.timeline({repeat:-1});
-    loop.set(symbols,{opacity:0,y:0});
+    loop.set(symbols,{opacity:0,y:DROP});
     loop.to(symbols,{strokeDashoffset:0,opacity:1,duration:0.6,stagger:0.08,ease:'power2.out'},0.0);
-    loop.to(symbols,{opacity:0,y:26,duration:0.4,ease:'power1.in'},1.9);
+    loop.to(symbols,{opacity:0,y:DROP+26,duration:0.4,ease:'power1.in'},1.9);
     loop.to({},{duration:0.5}); // 呼吸间隔 → 单轮 ≈2.6s
   }
 })();
