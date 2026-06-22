@@ -53,10 +53,14 @@ REGIME_ALERT_SENTINEL: Path = MACRO_ROOT / "regime_alert_sentinel.txt"
 # ----- 报告输出 -----
 REPORT_DIR: Path = STORAGE_ROOT / "reports"
 
+# ----- 分时数据层 (plan 005；隔离 SQLite 库，解析于 STATE_ROOT 防 bundle 双根坑) -----
+INTRADAY_DB: Path = STORAGE_ROOT / "intraday_quotes.db"
+
 
 __all__ = [
     "CREDIT_DIR",
     "DAILY_PARQUET",
+    "INTRADAY_DB",
     "FINA_QUARTERLY_PARQUET",
     "HS300_PE_PARQUET",
     "HSGT_PARQUET",
