@@ -60,6 +60,7 @@ idx_*.csv
 # storage 缓存 / legacy（可重建，不入库）
 storage/bj_cache/
 storage/legacy/
+storage/data_catalog.json
 
 # scan 排名输出（数据产物，可重建）
 scan_*_rank.csv
