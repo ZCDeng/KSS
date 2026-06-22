@@ -595,6 +595,20 @@ struct BridgeClient {
         }
     }
 
+    /// 凭据/开关变更后重启 sidecar：**SIGTERM 全杀**（SIGHUP re-exec 会保留旧 env，拿不到新 key），
+    /// 并移除 socket，使下次调用以最新 `injectedEnvironment()` 重启常驻进程（#4 key 管理）。
+    static func restartSidecarForEnvChange() {
+        guard let roots = resolveRoots() else { return }
+        let runDir = roots.state.appending(path: "run")
+        let pidFile = runDir.appending(path: "kss-sidecar.pid")
+        if let pidStr = try? String(contentsOf: pidFile, encoding: .utf8),
+           let pid = Int32(pidStr.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            kill(pid, SIGTERM)
+        }
+        // 兜底移除 socket：SIGTERM 处理器也会自清，但移除可确保 ensureSidecarRunning 认定需重启。
+        try? FileManager.default.removeItem(at: runDir.appending(path: "kss-sidecar.sock"))
+    }
+
     /// U9：venv 已存在但 uv.lock 变化 → 后台非阻塞 uv sync，再 SIGHUP 重载 sidecar。
     /// 永不阻塞启动；失败保留现有 venv（read-only 看数据不该被同步卡死）。
     static func refreshRuntimeIfLockChanged(projectRoot: URL, stateRoot: URL) {
