@@ -3,6 +3,9 @@
 .env.local
 .env.*.local
 !.env.example
+# 分时数据层 token secrets（KSS_STATE_ROOT/secrets/，0600，绝不入库；plan 005 S5/KTD4）
+secrets/
+/secrets/
 
 # Python
 __pycache__/
