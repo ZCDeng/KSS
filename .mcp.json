@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "kss-mcp": {
+      "type": "stdio",
+      "command": "bash",
+      "args": ["scripts/run_kss_mcp.sh"],
+      "env": {}
+    }
+  }
+}

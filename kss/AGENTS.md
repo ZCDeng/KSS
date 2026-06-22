@@ -155,6 +155,22 @@ pytest tests/ -v --cov=kss --cov-report=term-missing
 
 ---
 
+## Agent 能力面（MCP 工具 + 编排剧本 + 技能）
+
+任何 agent 在本仓库查 A 股盘面/数据，**优先用 `kss-mcp` 工具，别凭空假设有哪些表/命令**。
+
+- **注册**：`.mcp.json`（repo 根）经 `scripts/run_kss_mcp.sh` 起 `scripts/kss_mcp.py`，任何 clone 此 repo 的 Claude Code 自动加载。wrapper 自定位 PROJECT_ROOT、挑第一个装了 fastmcp 的 venv（`uv sync` 后即有）。
+- **首调 `get_orientation`**：拿命令图 + 数据目录摘要 + 可用剧本 + cron 新鲜度 + 文档指针。要某数据集列/含义再 `get_data_catalog`。
+- **复盘走剧本**：`run_recipe explain_stock_today`（个股为什么动）/ `sector_context`（板块上下文）——确定性 DAG，一束取齐、可复现、省 token。`list_recipes` 看目录。
+- **写工具**：MCP 写 tool 默认不注册，仅 `KSS_MCP_LIVE=1` 才开且须 confirm；KSSDeck 面板内的写走人在环内逐次确认，agent 不自行触发。
+- **技能 playbook**：`.claude/skills/kss-orientation`（上手）、`.claude/skills/kss-review`（个股/板块复盘打法）。
+
+### 数字纪律（硬约束，所有 agent 适用）
+
+金融数字（涨跌幅/金额/排名/净流入）**必须来自工具返回值，逐字引用，不得自己算或臆造**；工具没给就说没给。透传的 `commentary` 标 `provenance: llm_prior` = 未核实先验，转述须注明、不当事实。角色是 operator/explainer，**不是 decider**——不给个性化买卖建议、不预测涨跌。
+
+---
+
 ## 文件模板
 
 ### 新模块模板

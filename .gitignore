@@ -26,8 +26,10 @@ env/
 .idea/
 .vscode/
 
-# Claude / agents 私有状态
-.claude/
+# Claude / agents 私有状态(排内容而非目录本身,好让下面的 skills 例外生效)
+.claude/*
+# 例外:公开 Skill playbook 入库供任意 agent 用(#1-#3 能力面)
+!.claude/skills/
 
 # 数据（由 scripts/update_cs_data.py 重建，体积大）
 storage/*.db
