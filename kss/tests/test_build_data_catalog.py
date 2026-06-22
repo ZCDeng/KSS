@@ -118,12 +118,161 @@ def test_sqlite_table_introspection(tmp_path, monkeypatch):
     con = sqlite3.connect(dbp)
     con.execute("CREATE TABLE ledger (id INTEGER, ret REAL)")
     con.commit(); con.close()
-    monkeypatch.setattr(bd, "_DB_CANDIDATES", [(tmp_path, "storage/t.db", "测试库")])
+    monkeypatch.setattr(
+        bd, "_DB_CANDIDATES",
+        [(tmp_path, "storage/t.db", "测试库", None, frozenset())],
+    )
     catalog, _ = bd.build_catalog({})
     ds = next(d for d in catalog["datasets"] if d["name"] == "t")
     assert ds["kind"] == "sqlite"
     tbl = next(t for t in ds["tables"] if t["table"] == "ledger")
     assert {c["name"] for c in tbl["columns"]} == {"id", "ret"}
+
+
+def _make_intraday_db(path: Path, *, error_summary: str = "", details_json: str = "",
+                      missing_json: str = "") -> None:
+    """建一个含 BLOB + 自由文本列 + payload_observations 的伪分时库（U9/S5）。"""
+    con = sqlite3.connect(path)
+    con.execute(
+        "CREATE TABLE ingest_runs (run_id TEXT, provider TEXT, error_summary TEXT)"
+    )
+    con.execute(
+        "CREATE TABLE payload_blobs (payload_sha256 TEXT, payload BLOB, byte_size INTEGER)"
+    )
+    con.execute(
+        "CREATE TABLE payload_observations "
+        "(observation_id INTEGER, redacted_request_json TEXT)"
+    )
+    con.execute(
+        "CREATE TABLE coverage_assessments "
+        "(assessment_id INTEGER, trade_date TEXT, details_json TEXT, missing_json TEXT)"
+    )
+    con.execute("CREATE TABLE canonical_bars (canonical_id INTEGER, close REAL)")
+    con.execute(
+        "INSERT INTO ingest_runs VALUES ('r1', 'akshare', ?)", (error_summary,)
+    )
+    con.execute("INSERT INTO payload_blobs VALUES ('h1', X'00FF', 2)")
+    con.execute("INSERT INTO payload_observations VALUES (1, '{}')")
+    con.execute(
+        "INSERT INTO coverage_assessments VALUES (1, '2026-06-22', ?, ?)",
+        (details_json, missing_json),
+    )
+    con.execute("INSERT INTO canonical_bars VALUES (1, 10.0)")
+    con.commit()
+    con.close()
+
+
+_INTRADAY_ALLOWLIST = frozenset({
+    "ingest_runs", "coverage_assessments", "instrument_registry",
+    "session_profiles", "provider_bar_contracts", "canonical_bars",
+})
+_INTRADAY_EXCLUDED = frozenset({
+    "ingest_runs.error_summary",
+    "coverage_assessments.details_json",
+    "coverage_assessments.missing_json",
+})
+
+
+def _patch_intraday_candidate(monkeypatch, tmp_path, dbrel="storage/intraday_quotes.db"):
+    monkeypatch.setattr(
+        bd, "_DB_CANDIDATES",
+        [(tmp_path, dbrel, "分时隔离库", _INTRADAY_ALLOWLIST, _INTRADAY_EXCLUDED)],
+    )
+
+
+def test_intraday_allowlist_and_blob_exclusion(tmp_path, monkeypatch):
+    """Covers U9：catalog 暴露 allowlist 表字段，但无 BLOB 列、无 payload_blobs/observations 表。"""
+    _setup_roots(monkeypatch, tmp_path)
+    _make_intraday_db(tmp_path / "storage" / "intraday_quotes.db")
+    _patch_intraday_candidate(monkeypatch, tmp_path)
+    catalog, _ = bd.build_catalog({})
+    ds = next(d for d in catalog["datasets"] if d["name"] == "intraday_quotes")
+    table_names = {t["table"] for t in ds["tables"]}
+    # allowlist 外的表整表排除
+    assert "payload_blobs" not in table_names
+    assert "payload_observations" not in table_names
+    # allowlist 内的表可见
+    assert {"ingest_runs", "coverage_assessments", "canonical_bars"} <= table_names
+    # 全 catalog 序列化后无 BLOB 列名、无 redacted_request_json
+    blob = json.dumps(catalog, ensure_ascii=False)
+    assert '"payload"' not in blob
+    assert "payload_blobs" not in blob
+    assert "redacted_request_json" not in blob
+
+
+def test_intraday_text_columns_excluded_s5(tmp_path, monkeypatch):
+    """评审 S5：error_summary/details_json/missing_json 填合成 token → catalog 均不含。"""
+    _setup_roots(monkeypatch, tmp_path)
+    token = "deadbeef" * 5  # 40-hex token 形态
+    _make_intraday_db(
+        tmp_path / "storage" / "intraday_quotes.db",
+        error_summary=f"401 {token}",
+        details_json=f'{{"k":"{token}"}}',
+        missing_json=f"[{token}]",
+    )
+    _patch_intraday_candidate(monkeypatch, tmp_path)
+    catalog, _ = bd.build_catalog({})
+    ds = next(d for d in catalog["datasets"] if d["name"] == "intraday_quotes")
+    cols = {c["name"] for t in ds["tables"] for c in t["columns"]}
+    assert "error_summary" not in cols
+    assert "details_json" not in cols
+    assert "missing_json" not in cols
+    # 即使列里有 token 文本(数据值)，因列被排除，catalog 输出不含该 token
+    assert token not in json.dumps(catalog, ensure_ascii=False)
+
+
+def test_intraday_overlay_meaning_and_drift(tmp_path, monkeypatch):
+    """Covers U9：overlay 注字段含义；overlay 漂移现 warning（沿 main 路径）。"""
+    _setup_roots(monkeypatch, tmp_path)
+    _make_intraday_db(tmp_path / "storage" / "intraday_quotes.db")
+    _patch_intraday_candidate(monkeypatch, tmp_path)
+    overlay = {"intraday_quotes": {"tables": {
+        "ingest_runs": {"meanings": {"provider": "数据提供方", "gone_col": "已删列"}},
+    }}}
+    catalog, _ = bd.build_catalog(overlay)
+    ds = next(d for d in catalog["datasets"] if d["name"] == "intraday_quotes")
+    runs = next(t for t in ds["tables"] if t["table"] == "ingest_runs")
+    prov = next(c for c in runs["columns"] if c["name"] == "provider")
+    assert prov["meaning"] == "数据提供方"
+    assert ds["overlayDrift"] == ["ingest_runs.gone_col"]  # KTD-1 fail-loud
+
+
+def test_intraday_excluded_column_in_overlay_no_drift(tmp_path, monkeypatch):
+    """overlay 声明被显式排除的敏感列 → 不计 overlayDrift（属正常排除非漂移）。"""
+    _setup_roots(monkeypatch, tmp_path)
+    _make_intraday_db(tmp_path / "storage" / "intraday_quotes.db")
+    _patch_intraday_candidate(monkeypatch, tmp_path)
+    overlay = {"intraday_quotes": {"tables": {
+        "ingest_runs": {"meanings": {"error_summary": "失败原因(脱敏)"}},
+    }}}
+    catalog, _ = bd.build_catalog(overlay)
+    ds = next(d for d in catalog["datasets"] if d["name"] == "intraday_quotes")
+    assert "overlayDrift" not in ds  # 排除列不算漂移
+
+
+def test_real_overlay_yaml_aligns_with_intraday_schema(tmp_path, monkeypatch):
+    """真实 data_catalog_meta.yaml 的 intraday_quotes overlay 列名对齐真 store schema → 零漂移.
+
+    用**真 IntradayStore** 建库(真 schema)，验真实 overlay 无失配——防 overlay 漂移留缝。
+    """
+    from kss.data.intraday_store import IntradayStore
+
+    _setup_roots(monkeypatch, tmp_path)
+    dbp = tmp_path / "storage" / "intraday_quotes.db"
+    IntradayStore(dbp)  # 建全 schema
+    _patch_intraday_candidate(monkeypatch, tmp_path)
+    overlay = bd._load_overlay()
+    assert "intraday_quotes" in overlay  # overlay 确有 intraday 条目
+    catalog, _ = bd.build_catalog(overlay)
+    ds = next(d for d in catalog["datasets"] if d["name"] == "intraday_quotes")
+    # 真实 overlay 列名须与真 schema(扣除排除列)逐一对齐 → 零漂移。
+    assert ds.get("overlayDrift", []) == []
+    # 同时复核真库的 BLOB/排除列确实不出现。
+    blob = json.dumps(catalog, ensure_ascii=False)
+    assert '"payload"' not in blob and "payload_blobs" not in blob
+    assert "redacted_request_json" not in blob
+    cols = {c["name"] for t in ds["tables"] for c in t["columns"]}
+    assert {"error_summary", "details_json", "missing_json"}.isdisjoint(cols)
 
 
 def test_parquet_blackout_fail_loud(tmp_path, monkeypatch):

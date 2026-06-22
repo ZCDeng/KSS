@@ -96,3 +96,31 @@ def test_catalog_missing_degrades_other_regions(tmp_path, monkeypatch):
     o = b.dispatch("orientation", [])
     assert "error" in o["dataCatalog"]      # catalog 区降级
     assert o["commands"] and o["cron"]      # 其余区仍正常
+
+
+def test_collect_intraday_label_registered():
+    """U7：collect_intraday 标签已在 U6 注册 → bridge 暴露正确 title/category。"""
+    assert b.LABEL_TITLES["collect_intraday"] == "分时收盘采集"
+    assert b.LABEL_CATEGORY["collect_intraday"] == "数据更新"
+
+
+def test_scheduled_job_collect_intraday_title_category(tmp_path):
+    """U7：_scheduled_job 对 collect_intraday plist 返回正确 title/category（不调 launchctl 真实状态依赖）。"""
+    import plistlib
+
+    label = "com.zcdeng.kss.collect_intraday"
+    plist = tmp_path / f"{label}.plist"
+    with plist.open("wb") as fh:
+        plistlib.dump(
+            {
+                "Label": label,
+                "ProgramArguments": ["/abs/scripts/run_collect_intraday.sh"],
+                "StartCalendarInterval": {"Hour": 15, "Minute": 5},
+                "StandardOutPath": str(tmp_path / "out.log"),
+            },
+            fh,
+        )
+    job = b._scheduled_job(label, plist, uid=501, disabled=set())
+    assert job["title"] == "分时收盘采集"
+    assert job["category"] == "数据更新"
+    assert job["script"] == "run_collect_intraday.sh"

@@ -119,3 +119,86 @@ datasets:
     meanings:
       total_mv: 总市值
       pe_ttm: 市盈率 TTM
+
+  # 分时隔离库(intraday_quotes.db)——sqlite，per-table 含义(KTD5/S5)。
+  # 仅列 allowlist 表的可见列含义；BLOB 列(payload_blobs.payload)与自由文本列
+  # (ingest_runs.error_summary / coverage_assessments.details_json|missing_json)
+  # 已在反射期排除，不在此声明(声明亦不计 overlayDrift，因属显式排除)。
+  intraday_quotes:
+    tables:
+      ingest_runs:
+        meanings:
+          run_id: 采集 run 唯一 ID
+          provider: 数据提供方(akshare/eastmoney)
+          mode: 采集模式(close/watch)
+          trade_date: 交易日 YYYY-MM-DD
+          started_at: run 开始时刻(Asia/Shanghai ISO)
+          finished_at: run 结束时刻
+          status: run 状态(completed/failed/...)
+          failure_reason: 失败原因码(脱敏)
+          exit_code: 进程退出码
+          requested_symbols: 请求标的数
+          succeeded_symbols: 成功标的数
+      coverage_assessments:
+        meanings:
+          assessment_id: 评估 ID
+          instrument_id: 标的内部 ID
+          trade_date: 交易日 YYYY-MM-DD
+          interval_minutes: bar 周期(分钟)
+          provider: 数据提供方
+          contract_version: provider bar 契约版本
+          session_profile_version: session profile 版本
+          assessment_kind: 评估类型(complete/reconciled)
+          status: 评估结果(passed/reconcile_failed)
+          canonical_manifest_sha256: 当时 canonical revision 集的 SHA-256
+          assessed_at: 评估时刻(PIT 门控 as_of)
+      instrument_registry:
+        meanings:
+          instrument_id: 标的内部 ID
+          symbol: 规范标的代码
+          asset_kind: 资产类别(stock/etf/index)
+          provider: 数据提供方
+          provider_symbol: provider 侧代码
+          active_from: 映射生效起
+          active_to: 映射生效止(NULL=仍生效)
+      session_profiles:
+        meanings:
+          profile_version: profile 版本
+          timezone: 时区(Asia/Shanghai)
+          interval_minutes: bar 周期(分钟)
+          segments_json: 交易时段定义(JSON)
+          include_segment_open: 是否含集合竞价开盘 bar
+          legal_bar_ends_json: 合法 bar-end 端点(JSON)
+          effective_from: 生效起
+          effective_to: 生效止
+          created_at: 创建时刻
+      provider_bar_contracts:
+        meanings:
+          contract_version: 契约版本
+          provider: 数据提供方
+          interval_minutes: bar 周期(分钟)
+          timestamp_basis: 时间戳语义(start/end)
+          publication_delay_seconds: 发布延迟(秒，p95+裕度)
+          created_at: 创建时刻
+      canonical_bars:
+        meanings:
+          canonical_id: canonical bar ID
+          instrument_id: 标的内部 ID
+          symbol: 规范标的代码
+          bar_end_ts: bar 结束时刻(Asia/Shanghai ISO)
+          trade_date: 交易日 YYYY-MM-DD
+          interval_minutes: bar 周期(分钟)
+          source: 数据来源
+          revision: 版本号(写一次-PIT)
+          open: 开盘价
+          high: 最高价
+          low: 最低价
+          close: 收盘价
+          volume: 成交量
+          amount: 成交额
+          session_profile_version: session profile 版本
+          contract_version: provider bar 契约版本
+          observation_id: 来源 observation ID
+          quality_flags: 质量标记
+          content_sha256: bar 内容 SHA-256
+          certified_at: 认证时刻
