@@ -84,28 +84,48 @@ struct AIChatView: View {
                 Spacer(minLength: 60)
                 Text(msg.text)
                     .font(.system(size: 13)).foregroundStyle(theme.textPrimary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
                     .padding(.horizontal, 14).padding(.vertical, 10)
                     .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
             }
         } else {
-            VStack(alignment: .leading, spacing: 4) {
-                if msg.text.isEmpty && store.isChatStreaming {
-                    HStack(spacing: 8) { ProgressView().controlSize(.small); Text("思考中…")
-                        .font(.system(size: 12)).foregroundStyle(theme.textSecondary) }
-                } else {
-                    MarkdownWebView(text: msg.text)
-                        .frame(minHeight: 24)
+            HStack {
+                VStack(alignment: .leading, spacing: 6) {
+                    if msg.text.isEmpty && store.isChatStreaming {
+                        HStack(spacing: 8) { ProgressView().controlSize(.small); Text("思考中…")
+                            .font(.system(size: 12)).foregroundStyle(theme.textSecondary) }
+                    } else {
+                        markdownText(msg.text)
+                            .font(.system(size: 13))
+                            .foregroundStyle(msg.isError ? theme.up : theme.textPrimary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)   // 自适应高度,不裁切
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if msg.numbersUnverified && store.isChatStreaming {
+                        Label("数字校验中（以工具真值为准）", systemImage: "exclamationmark.triangle")
+                            .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                    }
                 }
-                if msg.numbersUnverified && store.isChatStreaming {
-                    Label("数字校验中（以工具真值为准）", systemImage: "exclamationmark.triangle")
-                        .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
-                }
+                .padding(.horizontal, 14).padding(.vertical, 10)
+                .background(msg.isError ? theme.surfaceRaised : theme.canvas,
+                            in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+                .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeM).stroke(theme.hairline))
+                Spacer(minLength: 40)
             }
-            .padding(.horizontal, 14).padding(.vertical, 10)
-            .background(msg.isError ? theme.surfaceRaised : theme.canvas,
-                        in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
-            .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeM).stroke(theme.hairline))
         }
+    }
+
+    /// 把 markdown 串渲染成原生 Text(行内 **粗** *斜* `码`,保留换行)。解析失败回退纯文本。
+    private func markdownText(_ s: String) -> Text {
+        if let attr = try? AttributedString(
+            markdown: s,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+            return Text(attr)
+        }
+        return Text(s)
     }
 
     private func toolIndicator(_ tool: String) -> some View {
