@@ -1271,6 +1271,36 @@ class IntradayStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def has_complete_assessment(
+        self,
+        *,
+        instrument_id: int,
+        trade_date: str,
+        interval_minutes: int,
+        provider: str,
+    ) -> bool:
+        """该 (instrument, day, interval, provider) 是否已有 ``complete`` 且 passed 评估.
+
+        窗内追补（U5/RB3 + 评审 M2）的外科式门：已 ``complete`` 的日**不**重做 canonical
+        归一化/revision 分配（不靠写一次守卫兜底），杜绝追补改写 PIT 冻结历史。
+        """
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM coverage_assessments "
+                "WHERE instrument_id=? AND trade_date=? AND interval_minutes=? "
+                "  AND provider=? AND assessment_kind='complete' "
+                "  AND status='passed' LIMIT 1",
+                (instrument_id, trade_date, interval_minutes, provider),
+            ).fetchone()
+        return row is not None
+
+    def db_byte_size(self) -> int:
+        """库的物理字节数（``page_count * page_size``）；retention 硬限用（KTD2）。"""
+        with self._conn() as conn:
+            page_count = int(conn.execute("PRAGMA page_count").fetchone()[0])
+            page_size = int(conn.execute("PRAGMA page_size").fetchone()[0])
+        return page_count * page_size
+
     # ------------------------------------------------------------------ #
     # U4 forward-only PIT 查询（load_asof）+ 非-PIT 复盘路径（A3）
     # ------------------------------------------------------------------ #
