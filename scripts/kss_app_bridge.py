@@ -3151,6 +3151,8 @@ COMMANDS = {
     "trends-day": {"desc": "趋势页某日明细", "args": ["YYYY-MM-DD"]},
     "data-catalog": {"desc": "全量数据资产字典", "args": []},
     "orientation": {"desc": "一次调用上手定向包", "args": []},
+    "recipe-list": {"desc": "编排剧本目录(确定性复盘 DAG)", "args": []},
+    "run-recipe": {"desc": "跑一条只读复盘剧本", "args": ["NAME", "[JSON_ARGS]"]},
 }
 
 # run_task 白名单 —— orientation 报此清单。须与 run_task() if-chain 实际接受集合一致
@@ -3209,13 +3211,67 @@ def _orientation() -> dict:
         }
     commands = [{"command": k, "write": k in WRITE_COMMANDS, **v}
                 for k, v in COMMANDS.items()]
+    try:
+        recipes = _recipe_list()
+    except Exception as exc:  # noqa: BLE001  recipes 模块坏不拖垮 orientation(KTD-4)
+        recipes = {"error": f"recipes unavailable: {exc}"}
     return {
         "commands": commands,
         "runTaskWhitelist": list(RUN_TASKS),
         "dataCatalog": catalog_summary,
         "cron": _scheduled_jobs(),
         "docs": _doc_pointers(),
+        "recipes": recipes,
     }
+
+
+# ---------------------------------------------------------------------------
+# 编排剧本(U3 / plan 003)—— 只读侧。能力式门控:read 路径注入「碰 WRITE_COMMANDS 即 raise」
+# 的受限 call,写操作物理不可达(KTD-3);write 执行路径 defer 到 #4。
+# ---------------------------------------------------------------------------
+
+def _make_read_only_call(dispatch_fn):
+    """受限 call:read 剧本只能调读命令;碰写命令即 raise;SystemExit 归一为普通异常(KTD-3/7)。"""
+    def _call(command: str, args: list | None = None):
+        if command in WRITE_COMMANDS:
+            raise PermissionError(f"read recipe attempted write command: {command}")
+        try:
+            return dispatch_fn(command, args or [])
+        except SystemExit as exc:  # report 路径护栏抛 SystemExit,except Exception 捕不到
+            raise RuntimeError(f"command '{command}' rejected: {exc}") from exc
+    return _call
+
+
+def _recipe_list() -> list[dict]:
+    """剧本目录(不含 fn)。惰性 import 避免循环(KTD-4)。"""
+    import kss_recipes  # noqa: PLC0415
+    return [{"name": name, "desc": meta["desc"], "write": meta["write"], "args": meta["args"]}
+            for name, meta in kss_recipes.RECIPES.items()]
+
+
+def _run_recipe(name: str, json_args: str = "") -> dict:
+    """跑只读剧本:拒 write 剧本,校验 args,注入受限 call(KTD-3/5)。"""
+    import kss_recipes  # noqa: PLC0415
+    meta = kss_recipes.RECIPES.get(name)
+    if meta is None:
+        return {"error": "unknown_recipe", "hint": f"未知剧本 '{name}';见 recipe-list"}
+    if meta["write"]:
+        return {"error": "write_recipe_deferred",
+                "hint": f"剧本 '{name}' 声明 write;write 执行路径 defer 到 #4,read 路径不放行"}
+    try:
+        parsed = json.loads(json_args) if json_args and json_args.strip() else {}
+    except (json.JSONDecodeError, TypeError) as exc:
+        return {"error": "bad_json_args", "hint": f"args 须为 JSON 对象: {exc}"}
+    if not isinstance(parsed, dict):
+        return {"error": "bad_json_args", "hint": "args 须为 JSON 对象(dict)"}
+    allowed = set(meta["args"])
+    extra = set(parsed) - allowed
+    if extra:
+        return {"error": "unexpected_args", "hint": f"未声明的参数 {sorted(extra)};允许 {sorted(allowed)}"}
+    if any(not isinstance(v, str) for v in parsed.values()):
+        return {"error": "bad_arg_type", "hint": "所有参数值须为字符串"}
+    call = _make_read_only_call(dispatch)
+    return meta["fn"](call, **parsed)
 
 
 def dispatch(command: str, args: list[str]) -> Any:
@@ -3283,6 +3339,12 @@ def dispatch(command: str, args: list[str]) -> Any:
         return _data_catalog()
     if command == "orientation":
         return _orientation()
+    if command == "recipe-list":
+        return _recipe_list()
+    if command == "run-recipe":
+        if not args:
+            raise ValueError("run-recipe requires NAME")
+        return _run_recipe(args[0], args[1] if len(args) > 1 else "")
     raise ValueError(f"unknown command: {command}")
 
 
