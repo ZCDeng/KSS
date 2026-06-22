@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "subject": "KSS intraday data layer",
+  "created_at": "2026-06-22T10:32:24Z",
+  "terminal_state": "complete",
+  "planning_artifacts": [
+    ".omx/context/intraday-data-layer-20260622T101625Z.md",
+    ".omx/plans/prd-intraday-data-layer.md",
+    ".omx/plans/test-spec-intraday-data-layer.md"
+  ],
+  "review_sequence": [
+    {
+      "round": 1,
+      "role": "architect",
+      "verdict": "iterate",
+      "outcome": "Added observation-vs-blob provenance, historical availability classes, time-versioned assessments, SQLite transaction/FK settings, registry mapping, state-root deployment, retention and calendar gates."
+    },
+    {
+      "round": 2,
+      "role": "architect",
+      "verdict": "iterate",
+      "outcome": "Added versioned session profiles/provider timestamp contracts and non-retroactive reconciliation tests."
+    },
+    {
+      "round": 3,
+      "role": "architect",
+      "verdict": "approve",
+      "outcome": "Confirmed exact-manifest assessment binding, fail-closed mapping resolution and concrete launchd rendering contract."
+    },
+    {
+      "round": 1,
+      "role": "critic",
+      "verdict": "iterate",
+      "outcome": "Required exact snapshot certification, mapping-ambiguity fail-close, and concrete plist template/renderer/deployment path."
+    },
+    {
+      "round": 2,
+      "role": "critic",
+      "verdict": "approve",
+      "outcome": "All material blockers closed."
+    }
+  ],
+  "ralplan_architect_review": {
+    "completed": true,
+    "final_verdict": "approve",
+    "final_round": 3
+  },
+  "ralplan_critic_review": {
+    "completed": true,
+    "final_verdict": "approve",
+    "final_round": 2
+  },
+  "ralplan_consensus_gate": {
+    "complete": true,
+    "implementation_authorized_by_this_record": false
+  }
+}
