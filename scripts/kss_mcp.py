@@ -115,6 +115,19 @@ def get_orientation() -> dict:
     return _call("orientation")
 
 
+@mcp.tool
+def list_recipes() -> dict:
+    """编排剧本目录(确定性复盘 DAG):每条 name/desc/write/args。选一条用 run_recipe 跑。"""
+    return {"recipes": _call("recipe-list")}   # 包 dict:MCP structured_content 须非 list
+
+
+@mcp.tool
+def run_recipe(name: str, args: str = "") -> dict:
+    """跑一条只读复盘剧本(如 explain_stock_today)。args 为 JSON 串(如 '{"symbol":"688114.SH"}')。
+    只读公开;write 剧本经此拒(write 执行路径 defer 到 #4)。"""
+    return _call("run-recipe", [name, args])
+
+
 # ---- 写命令（paper-only：仅 KSS_MCP_LIVE=1 注册，且每调用须 confirm）----
 
 if _LIVE:
