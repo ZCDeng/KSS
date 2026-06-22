@@ -49,7 +49,8 @@ depth: deep
 - 存储位置 = `provider_bar_contracts.publication_delay_seconds`（per provider+interval+contract version，schema 已有）。
 - 取值来源 = **阶段 1 探针实测**：测「bar_end 到该 bar 首次出现在轮询响应」的滞后分布，取 **p95**。
 - 保守策略 = p95 **向上取整 + 安全裕度**（偏晚，与 D2 同方向，抗 look-ahead）。
-- 持续校准 = 影子期（U8）复核；`--mode watch`（若启用）每次观测到 bar 到达晚于配置 delay，写 `publication_delay_exceeded` 告警触发重标定（fail-loud，不静默）。
+- 持续校准 = **收盘路径自报漂移**（评审 M1）：每根 bar 记 `retrieved_at - bar_end_ts` 实测滞后，超配置 delay 即从收盘路径写 `publication_delay_exceeded` 告警触发重标定（**不依赖可选 watch 模式**，fail-loud）；影子期（U8）复核基线；`--mode watch`（若启用）作额外盘中观测源。
+- **硬前置**：任何策略消费分钟 bar 前须有「delay 在近 N 场内被复验」的 freshness 断言通过，否则执行闸安全裕度在运行期未校准（策略消费本就推迟 Follow-Up）。
 - 信号闸（U4）：`bar_end_ts + publication_delay <= signal_time` 才可作为信号输入；bar N 生成的单不得在 bar N 收盘成交，最早下一个合格 bar。
 
 ### RB3 — 停机/恢复窗内追补 + 影子门纳入数据持久性（原 A3/A6）
@@ -222,7 +223,9 @@ storage/intraday_quotes.db   # 运行时生成（STATE_ROOT/storage）
 
 ## Implementation Units
 
-### U1. 供应商探针 + IntradayProvider 协议 + 能力门控
+> **U-ID 约定（评审 C1）**：本节实现单元为 U1–U8。各单元 Test scenarios 里的 `Covers U<n>` 指 **companion test-spec** 的测试单元（test-spec U1–U11，独立命名空间），**非**本节实现单元——实现/对测时按此消歧。
+
+### U1. 供应商探针 + IntradayProvider 协议 + 能力门控（阶段 1）
 
 **Goal**：在写任何客户端代码前，拉真实响应核字段/粒度/增量（学习 #5「先验数据源」），产出不可变探针报告对 10 个代表性标的分类；定义 `IntradayProvider` 协议。
 
@@ -246,7 +249,7 @@ storage/intraday_quotes.db   # 运行时生成（STATE_ROOT/storage）
 
 ---
 
-### U2. 薄前向 raw-capture 存储 + logger（D3，立即起采）
+### U2. 薄前向 raw-capture 存储 + logger（阶段 1；D3，立即起采）
 
 **Goal**：最小 append-only 落盘——`ingest_runs` + `payload_blobs` + `payload_observations` + 最小 `instrument_registry` 解析（fail-closed），收盘即采，**不做 canonical**。第一周开始沉淀。
 
@@ -256,7 +259,7 @@ storage/intraday_quotes.db   # 运行时生成（STATE_ROOT/storage）
 
 **Files**：`kss/data/intraday_store.py`（最小 schema + KTD1 连接/事务/写一次守卫 + 凭据安全不变式）、`scripts/collect_intraday.py`（薄 `--mode close` 原始追加）、`kss/config/paths.py`（`INTRADAY_DB` + `__all__`）、`kss/tests/test_intraday_store.py`。
 
-**Approach**：建 `ingest_runs`/`payload_blobs`(内容寻址去重)/`payload_observations`（每次 HTTP observation 都记，含 `availability_class`、`eligibility`、`redacted_request_json`）。pragmas WAL/FK/busy_timeout + 显式单事务（KTD1）。registry 运行期解析器要求**恰好一个**活跃映射：0→`mapping_unknown`、>1→终止 `mapping_ambiguous`，两者该标的**零 provider 调用**；不从前缀推断东财 secid。**凭据安全（D5/D6，从第一单 bake-in）**：单序列化器为 `redacted_request_json` 唯一写入点，序列化前剥离 URL query/header/body 中 `(token|key|secret|auth|credential)`；blob 压缩前扫响应体 token/账号 pattern，命中→终止 `credential_in_payload`；`error_summary` 走同一脱敏器。INTRADAY_DB 解析于 STATE_ROOT（学习 #4）。
+**Approach**：建 `ingest_runs`/`payload_blobs`(内容寻址去重)/`payload_observations`（每次 HTTP observation 都记，含 `availability_class`、`eligibility`、`redacted_request_json`）。pragmas WAL/FK/busy_timeout + 显式单事务（KTD1）。registry 运行期解析器要求**恰好一个**活跃映射：0→`mapping_unknown`、>1→终止 `mapping_ambiguous`，两者该标的**零 provider 调用**；不从前缀推断东财 secid。**凭据安全（D5/D6，从第一单 bake-in）**：单序列化器为 `redacted_request_json` 唯一写入点，序列化前剥离 URL query/header/body 中 `(token|key|secret|auth|credential)`；blob 压缩前扫响应体 token/账号 pattern，命中→终止 `credential_in_payload`；`error_summary` 走同一脱敏器。**统一脱敏正则（评审 S3）**：token/账号 pattern 与 key-name pattern 定为单一 canonical 常量（新 `kss/security/redaction.py`），U2 响应体扫描与 U6 渲染器守卫共用同一常量，加双路径同 fixture 拒绝测试，杜绝两处定义漂移留缝。INTRADAY_DB 解析于 STATE_ROOT（学习 #4）。
 
 **Execution note**：test-first——PIT/不可变/凭据不变式正是测试要钉死的（学习 #2 PIT 用代码而非散文保证）。
 
@@ -274,7 +277,7 @@ storage/intraday_quotes.db   # 运行时生成（STATE_ROOT/storage）
 
 ---
 
-### U3. Canonical bar 契约 + session 校验 + 版本化归一化
+### U3. Canonical bar 契约 + session 校验 + 版本化归一化（阶段 2）
 
 **Goal**：在 U2 已留 blob 上层叠 canonical 层（非破坏追认）：`session_profiles` + `provider_bar_contracts` + `canonical_bars` + 原子版本分配；归一化（start/end → 合法 end）、session 校验、版本绑定、schema-hash 漂移检测。
 
@@ -302,7 +305,7 @@ storage/intraday_quotes.db   # 运行时生成（STATE_ROOT/storage）
 
 ---
 
-### U4. coverage 评估 + complete/reconciled 状态 + manifest 绑定 + forward-only load_asof（前向-PIT 核心，D1；RB1+RB2）
+### U4. coverage 评估 + complete/reconciled 状态 + manifest 绑定 + forward-only load_asof（阶段 2；前向-PIT 核心，D1；RB1+RB2）
 
 **Goal**：建 `coverage_assessments`（`assessment_kind` complete/reconciled + `canonical_manifest_sha256`）、次周期日频对账、`load_asof` forward-only（reconciled 准入）+ 执行延迟闸。
 
@@ -312,7 +315,7 @@ storage/intraday_quotes.db   # 运行时生成（STATE_ROOT/storage）
 
 **Files**：`kss/data/intraday_store.py`（`coverage_assessments` + `load_asof` + 执行闸）、`kss/tests/test_intraday_store.py`（扩展）。
 
-**Approach**：`assessment_kind` = `complete`（session 形状）/ `reconciled`（日频 OHLCV 核对，RB1）。`canonical_manifest_sha256` = canonical JSON 列（按 `(instrument_id,bar_end_ts,interval_minutes,source)` 排序、含每期望端点选定 revision + observation_id + contract/profile version + 显式缺端点列）的 SHA-256；canonical revision 变或对账跑时重算。`load_asof(instruments,start,end,interval,as_of_ts,eligibility)`：先按 `as_of_ts` 选候选行、推导该 manifest、**仅当**存在同 instrument/day/interval/provider/contract/manifest 且 `assessment_kind` 满足 eligibility（`pit_backtest_eligible` → 强制 `reconciled`，RB1）、`assessed_at <= as_of_ts` 的评估才准入；后到 revision 不能继承前 revision 绿评估。确定性 tie-break：`available_from_ts`→`observed_at`→revision→`observation_id`。**仅 forward**：`forward_observed` 走此路；`provider_historical_evidence`/`research_backfill` 路径推 Follow-Up（D1）；`research_backfill` 永久排除。执行闸（RB2）：`bar_end_ts + publication_delay <= signal_time` 才作信号；bar N 单不得 bar N 收盘成交，最早下一合格 bar。原价与复权因子分开。只读复盘面板**不走** `load_asof`（独立 latest-revision-wins 非-PIT 路径，可读 complete）。
+**Approach**：`assessment_kind` = `complete`（session 形状）/ `reconciled`（日频 OHLCV 核对，RB1）。`canonical_manifest_sha256` = canonical JSON 列（按 `(instrument_id,bar_end_ts,interval_minutes,source)` 排序、含每期望端点选定 revision + observation_id + contract/profile version + 显式缺端点列）的 SHA-256；canonical revision 变或对账跑时重算。`load_asof(instruments,start,end,interval,as_of_ts,eligibility)`：先按 `as_of_ts` 选候选行、推导该 manifest、**仅当**存在同 instrument/day/interval/provider/contract/manifest 且 `assessment_kind` 满足 eligibility（`pit_backtest_eligible` → 强制 `reconciled`，RB1）、`assessed_at <= as_of_ts` 的评估才准入；后到 revision 不能继承前 revision 绿评估。确定性 tie-break：`available_from_ts`→`observed_at`→revision→`observation_id`。**仅 forward**：`forward_observed` 走此路；`provider_historical_evidence`/`research_backfill` 路径推 Follow-Up（D1）；`research_backfill` 永久排除。执行闸（RB2）：`bar_end_ts + publication_delay <= signal_time` 才作信号；bar N 单不得 bar N 收盘成交，最早下一合格 bar。原价与复权因子分开。只读复盘面板**不走** `load_asof`（独立 latest-revision-wins 非-PIT 路径，可读 complete）；**该路径返回独立 `ReviewBar` 类型，结构上不可喂给任何回测/walk-forward 入口（评审 A3）**，杜绝绕过 reconciled 闸（隔离靠类型而非约定）。**对账积压闭合（评审 A4）**：complete 日每后续周期重试 reconciliation 直到成功；K 周期仍无 reconciled → `reconciliation_stalled` 告警且计入 U8 数据持久性门——避免日频源瞬时中断变成静默 PIT 覆盖空洞。
 
 **Execution note**：test-first（这是整个 PIT 安全属性的代码闸，invariant 必须先钉）。
 
@@ -322,6 +325,8 @@ storage/intraday_quotes.db   # 运行时生成（STATE_ROOT/storage）
 - 集成 #3. fake 日频在 high/amount 超容差；`as_of_ts` 在两评估间返回当时合格 revision，`as_of_ts >= reconcile_failed.assessed_at` 拒绝；rev2 在自身 reconciled 前被 `load_asof` 排除。
 - RB1 隔离：仅 `complete` 的 forward bar 被 `pit_backtest` 查询排除，直到 reconciled 落地；复盘面板路径可读 complete。
 - RB2 保守：publication_delay 取探针 p95+裕度；偏晚不引入 look-ahead。
+- 评审 A3：复盘面板 `ReviewBar` 类型无路径进 `load_asof` 消费方/回测入口。
+- 评审 A4：对账源次周期不可用 → 该 complete 日重试，K 周期后 `reconciliation_stalled` 告警、计入持久性门。
 
 **Verification**：`load_asof` 演示排除晚 observation/research backfill/无合格评估行；执行模型拒绝同收盘成交；complete vs reconciled 隔离生效。
 
@@ -337,7 +342,7 @@ storage/intraday_quotes.db   # 运行时生成（STATE_ROOT/storage）
 
 **Files**：`scripts/collect_intraday.py`（完整 `--mode close`，可选 `--mode watch` shadow-only）、`kss/data/intraday_client.py`（采集编排）、`kss/tests/test_intraday_collector.py`。
 
-**Approach**：15:05 SSE 交易日跑；用 provider 门控/能力、serial 限速、`_fetch_with_retry` 有界重试 + `_bypass_system_proxy`。`trade_cal` 失败→终止 `calendar_unknown`、非零退出、**不** weekday/archive 猜（KTD3）。仅采**当场** session；不得用滚动响应（零/改 opens）更新先前日，改记 coverage gap。**窗内追补（RB3）**：每 run 查 `trade_cal`，对仍在 provider 滚动窗内、库中无 `complete` 评估的交易日重拉（校验质量、作新 observation/revision、次周期 reconcile，不盲覆盖）。**窗外 gap（RB3）**：检出窗外无覆盖交易日 → `permanent_gap` + 告警。retention（采集前配硬限）：`INTRADAY_MAX_DB_BYTES=4294967296`、`INTRADAY_MAX_RAW_BYTES_PER_RUN=67108864`；超→终止 `retention_limit`、非零退出（影子后由 U8 校准）。每 instrument/day/interval append `coverage_assessments`。`--mode watch` 仅按配置小 watchlist 5 分钟轮询、shadow/observability、单独启用前不接策略，并喂 publication_delay 复核（RB2）。
+**Approach**：15:05 SSE 交易日跑；用 provider 门控/能力、serial 限速、`_fetch_with_retry` 有界重试 + `_bypass_system_proxy`。`trade_cal` 失败→终止 `calendar_unknown`、非零退出、**不** weekday/archive 猜（KTD3）。仅采**当场** session；不得用滚动响应（零/改 opens）更新先前日，改记 coverage gap。**窗内追补（RB3）**：每 run 查 `trade_cal`，对仍在 provider 滚动窗内、库中无 `complete` 评估的交易日重拉（校验质量、作新 observation/revision、次周期 reconcile，不盲覆盖）。**窗外 gap（RB3）**：检出窗外无覆盖交易日 → `permanent_gap` + 告警。**追补外科式限定（评审 M2）**：滚动响应整体作一 observation 存（内容寻址去重处理字节同一），但 canonical 归一化/revision 分配**仅对无 `complete` 评估的 trade_date 运行**；已 complete 日在 canonical 层即跳过（不靠写一次守卫兜底），杜绝追补改写 PIT 冻结历史。**漂移自报（评审 M1）**：每根 bar 记 `retrieved_at - bar_end_ts`，超配置 delay 即从收盘路径写 `publication_delay_exceeded`。retention（采集前配硬限）：`INTRADAY_MAX_DB_BYTES=4294967296`、`INTRADAY_MAX_RAW_BYTES_PER_RUN=67108864`；超→终止 `retention_limit`、非零退出（影子后由 U8 校准）。每 instrument/day/interval append `coverage_assessments`。`--mode watch` 仅按配置小 watchlist 5 分钟轮询、shadow/observability、单独启用前不接策略，并喂 publication_delay 复核（RB2）。
 
 **Execution note**：characterization-first 不适用（新代码）；对失败闭合路径 test-first。
 
@@ -349,13 +354,14 @@ storage/intraday_quotes.db   # 运行时生成（STATE_ROOT/storage）
 - 集成 #7. `trade_cal` 不可达 → 持久化 `calendar_unknown` 终止 run、非零退出，绝无 weekday/archive fallback。
 - Covers U10（retention）. 超额 payload/run → `retention_limit` 终止 run、无可查行。
 - RB3 窗内追补：构造窗内缺失交易日 → 下一 run 检出并重拉、入新 observation；窗外缺失 → `permanent_gap` + 告警。
+- 评审 M2：追补响应含缺失日 D3 + 已 complete 日 D1/D2/D4/D5 → 只对 D3 产新 canonical revision，D1/D2/D4/D5 零新 revision。
 - 窗内追补不盲覆盖既有 `complete` 日（写一次-PIT）。
 
 **Verification**：happy path/部分失败/日历失败/retention/窗内追补全绿；漏跑语义文档化（学习 #3）。
 
 ---
 
-### U6. launchd 模板 + 确定性渲染器 + wrapper + 部署校验（KTD6/D4；S5 token）
+### U6. launchd 模板 + 确定性渲染器 + wrapper + 部署校验（阶段 3；KTD6/D4；S5 token）
 
 **Goal**：仓库首个 render-plist 机制：模板 + 标准库渲染器 + wrapper，渲染产物落 code root 供 bridge glob；token 不进 plist。
 
@@ -365,7 +371,7 @@ storage/intraday_quotes.db   # 运行时生成（STATE_ROOT/storage）
 
 **Files**：`deploy/launchd/com.zcdeng.kss.collect_intraday.plist.template`、`scripts/render_intraday_launchd_plist.py`、`scripts/run_collect_intraday.sh`、生成的 `deploy/launchd/com.zcdeng.kss.collect_intraday.plist`、`kss/tests/test_intraday_render_plist.py`。
 
-**Approach**：渲染器 `--project-root <abs> --state-root <abs> --output deploy/launchd/...plist` 写具体绝对 `ProgramArguments`、`EnvironmentVariables.KSS_STATE_ROOT`、`StandardOutPath`/`StandardErrorPath` 于 `<state-root>/storage/logs/launchd`；**拒绝**未解析占位符、相对路径、任何 token-pattern 字符串（S5）。部署须 `plutil -lint` + `launchctl bootstrap gui/<uid>`（手动/本地）。Label=`com.zcdeng.kss.collect_intraday`=文件名 stem，自动入 bridge glob 与 selfcheck 漏跑白名单（学习 #3）。wrapper 镜像 `run_data_catalog_daily.sh` 形，但经 plist env 收 `KSS_STATE_ROOT`（不硬编码 state root；调和静态 wrapper 约定与双根）。**token（S5/KTD4）**：`TUSHARE_TOKEN` 绝不进渲染 plist `EnvironmentVariables`（仅 `KSS_STATE_ROOT`）；采集器从 `KSS_STATE_ROOT/secrets/`（0600，git-ignored）或 keychain 读；渲染器拒绝输出含 token-pattern。
+**Approach**：渲染器 `--project-root <abs> --state-root <abs> --output deploy/launchd/...plist` 写具体绝对 `ProgramArguments`、`EnvironmentVariables.KSS_STATE_ROOT`、`StandardOutPath`/`StandardErrorPath` 于 `<state-root>/storage/logs/launchd`；**拒绝**未解析占位符、相对路径、任何 token-pattern 字符串（S5）。部署须 `plutil -lint` + `launchctl bootstrap gui/<uid>`（手动/本地）。Label=`com.zcdeng.kss.collect_intraday`=文件名 stem，自动入 bridge glob 与 selfcheck 漏跑白名单（学习 #3）。wrapper 镜像 `run_data_catalog_daily.sh` 形，但经 plist env 收 `KSS_STATE_ROOT`（不硬编码 state root；调和静态 wrapper 约定与双根）。**token（S5/KTD4）**：`TUSHARE_TOKEN` 绝不进渲染 plist `EnvironmentVariables`（仅 `KSS_STATE_ROOT`）；采集器从 `KSS_STATE_ROOT/secrets/`（0600，git-ignored）或 keychain 读；渲染器拒绝输出含 token-pattern。**wrapper 凭据纪律（评审 S1）**：`run_collect_intraday.sh` **禁止** grep 任何 `.env` 取 `TUSHARE_TOKEN`、禁止 `export TUSHARE_TOKEN`、禁止 echo 任何 token 相关值（长度/来源），唯一注入 `KSS_STATE_ROOT`（不抄 `run_update_data_daily.sh:26-30` 的 .env grep 习惯）。**selfcheck 不补跑（评审 F1）**：collect_intraday 入 selfcheck 白名单仅取可见性/staleness；须在 `_kickstart_labels`（`kss_app_bridge.py:2905-2942`，现唯一排除是 `.selfcheck` 后缀）加显式非补跑排除（或渲染器写标记），使其**被 kickstart 跳过**——分钟快照漏跑不可由重触发恢复，重跑只拉当前窗 session 并会掩盖 `permanent_gap`。
 
 **Patterns to follow**：静态 plist 输出形（`deploy/launchd/com.zcdeng.kss.data_catalog_daily.plist`）、wrapper 形（`scripts/run_data_catalog_daily.sh`）；`_scheduled_job`/`_parse_schedule`（`kss_app_bridge.py:2644,2802-2858`）。
 
@@ -374,6 +380,8 @@ storage/intraday_quotes.db   # 运行时生成（STATE_ROOT/storage）
 - 集成 #6. 把渲染 plist 放 bridge-glob 部署目的地，经现有 `_scheduled_job` 解析 → title/category/log path/schedule 可见，CI 不调 `launchctl`；命令级部署 smoke 跑 `plutil -lint`。
 - S5：渲染输出含 token-pattern → 渲染器拒绝；`EnvironmentVariables` 无 `TUSHARE_TOKEN`。
 - 占位符/相对路径未解析 → 渲染器拒绝。
+- 评审 F1：陈旧 collect_intraday 被报 stale 但**不**被 kickstart；漏跑日经 catchup 后仍显 `permanent_gap`。
+- 评审 S1：wrapper 以陈旧 ambient `TUSHARE_TOKEN` 跑 → 采集器用 secrets 文件值；wrapper 输出无 token 相关字符串。
 
 **Verification**：渲染 plist `plutil -lint` 通过、bridge 自省可见、token 不落盘；`launchctl bootstrap` 留手动。
 
@@ -389,13 +397,15 @@ storage/intraday_quotes.db   # 运行时生成（STATE_ROOT/storage）
 
 **Files**：`scripts/build_data_catalog.py`（扩展 `_build_sqlite_dataset` + `_DB_CANDIDATES` 结构）、`kss/config/data_catalog_meta.yaml`（字段含义）、`scripts/kss_app_bridge.py`（`LABEL_TITLES`/`LABEL_CATEGORY` 注册 `collect_intraday`）、`kss/tests/test_build_data_catalog.py`（扩展）。
 
-**Approach**：`_build_sqlite_dataset` 扩展接受表 allowlist（`ingest_runs`/`coverage_assessments`/`instrument_registry`/`session_profiles`/`provider_bar_contracts`/`canonical_bars`）+ 排除全部 BLOB 列；`payload_blobs`、`payload_observations.redacted_request_json` 永不出现（KTD5/S3）。`_DB_CANDIDATES` 改富结构带 allowlist。bridge `LABEL_TITLES["collect_intraday"]="分时收盘采集"`、`LABEL_CATEGORY["collect_intraday"]="数据更新"`（已在 `CATEGORY_ORDER`，无需改序）。每 run 结构化日志：provider、run_id、requested/succeeded symbols、rows、coverage ratio、backlog、failure reason、DB bytes、status、latency。告警：活跃 session 终覆盖低于配置阈值 或 16:00 前无 complete 收盘 run → 机读 `degraded`（阈值与 retention 为保守起值，U8 校准）。bridge 只暴露 state/coverage/latest timestamp，绝不暴露原始 payload 字节。
+**Approach**：`_build_sqlite_dataset` 扩展接受表 allowlist（`ingest_runs`/`coverage_assessments`/`instrument_registry`/`session_profiles`/`provider_bar_contracts`/`canonical_bars`）+ 排除全部 BLOB 列；`payload_blobs`、`payload_observations.redacted_request_json` 永不出现（KTD5/S3）。`_DB_CANDIDATES` 改富结构带 allowlist。bridge `LABEL_TITLES["collect_intraday"]="分时收盘采集"`、`LABEL_CATEGORY["collect_intraday"]="数据更新"`（已在 `CATEGORY_ORDER`，无需改序）。每 run 结构化日志：provider、run_id、requested/succeeded symbols、rows、coverage ratio、backlog、failure reason、DB bytes、status、latency。告警：活跃 session 终覆盖低于配置阈值 或 16:00 前无 complete 收盘 run → 机读 `degraded`（阈值与 retention 为保守起值，U8 校准）。bridge 只暴露 state/coverage/latest timestamp，绝不暴露原始 payload 字节。**日志脱敏（评审 S4）**：结构化 run 日志 `failure_reason` 写 stdout/stderr 前过同一脱敏器（401 回显 token 不落 `storage/logs/launchd/*.log`）。**catalog TEXT 列排除（评审 S5）**：除 BLOB 列外，`ingest_runs.error_summary`、`coverage_assessments.details_json`/`missing_json` 也从 catalog 反射排除（或确认脱敏后才纳入）。
 
 **Test scenarios**：
 - Covers U9. fake DB + meta overlay → catalog 暴露 DB/表字段；overlay 漂移现 warning（沿 `build_data_catalog.py:80-91`）；catalog 输出**无** BLOB 列、无 `payload_blobs` 表。
 - bridge `_scheduled_job` 对 collect_intraday 返回正确 title/category。
 - 告警：16:00 无 complete run / 覆盖低于阈值 → 机读 `degraded`。
 - 隐私：日志/catalog/持久化 redacted request 不含 `TUSHARE_TOKEN`/凭据头；blob 仅响应体。
+- 评审 S4：注入回显 token 的 provider 错误 → 日志 `failure_reason` 无 token 子串。
+- 评审 S5：`error_summary`/`details_json` 填合成 token → catalog 输出均不含。
 
 **Verification**：catalog 注册且 BLOB 排除；bridge 标签正确；告警可触发；零凭据泄露。
 
@@ -411,15 +421,28 @@ storage/intraday_quotes.db   # 运行时生成（STATE_ROOT/storage）
 
 **Files**：`scripts/collect_intraday.py`（`--shadow-report` 子命令或独立 `scripts/intraday_shadow_report.py`）、`kss/tests/test_intraday_collector.py`（影子报告单元）、运行产物 `storage/reports/intraday_shadow_*.json`。
 
-**Approach**：在批准的活跃策略 universe（非全市场名）跑受控 20 场；trade-cal 确认日 serial 跑出 run 汇总。每成功整日报告覆盖率%、缺失时间戳、对账状态、响应 hash、延迟、磁盘增量。**通过门（RB3）**：(a) ≥19/20 期望收盘 run 成功 **且** (b) 窗内零未恢复 gap **且** (c) 零 `complete` 日有对账失配、且 as-of 回放无 run 消费晚到 bar。失败源日须留可见 gap，不得用滚动 1m 响应回填除非字段质量复验。影子末校准 `INTRADAY_MAX_DB_BYTES`/`INTRADAY_MAX_RAW_BYTES_PER_RUN`/覆盖告警阈值/publication_delay（RB2）从实测值。**零策略消费。**
+**Approach**：**硬前置（评审 S2）**：影子开跑前 (a) U2 凭据脱敏不变式测试 + (b) U7 BLOB/TEXT 列排除测试必须绿（hard stop，非依赖排序）——否则 20 场 live 采集会把未脱敏行 append-only 累积、不可事后清洗。在批准的活跃策略 universe（非全市场名）跑受控 20 场；trade-cal 确认日 serial 跑出 run 汇总。每成功整日报告覆盖率%、缺失时间戳、对账状态、响应 hash、延迟、磁盘增量。**通过门（RB3）**：(a) ≥19/20 期望收盘 run 成功 **且** (b) 窗内零未恢复 gap **且** (c) 零 `complete` 日有对账失配、且 as-of 回放无 run 消费晚到 bar。失败源日须留可见 gap，不得用滚动 1m 响应回填除非字段质量复验。影子末校准 `INTRADAY_MAX_DB_BYTES`/`INTRADAY_MAX_RAW_BYTES_PER_RUN`/覆盖告警阈值/publication_delay（RB2）从实测值。**零策略消费。**
 
 **Test scenarios**：
 - 影子报告聚合：构造 20 场 fixture（含 1 场失败 + 1 场窗内 gap 已恢复）→ 报告正确计 run 成功率、gap 恢复状态、false-complete=0。
 - 数据持久性门：未恢复窗内 gap → 影子判失败（即便 run 成功率≥95%）。
 - as-of 回放：注入晚到 bar → 报告标记 run 消费晚到 bar = 失败。
 - 校准建议：报告输出基于实测的 retention/delay/阈值建议值。
+- 评审 A7：注入 >窗长停机场景 → `permanent_gap` 检测 + 告警被影子 harness 验证（非仅单测 fixture）。
 
 **Verification**：影子报告产出且三维门可判；校准值写回配置文档。
+
+---
+
+## Open Questions（doc-review round 1 留待实现期）
+
+非阻塞、已核实，实现期消化：
+
+- **A5 薄 logger 上下文冻结**：U2 ingest 时即冻结 schema-hash + 它认为生效的 session_profile/contract 版本，使 U3 retroactive 认证能检出窗内上下文变更，而非把事后 profile 套到所有 blob。
+- **A6 探针代表性**：U1 探针含至少一个稀薄标的，或 publication_delay 裕度取最坏类——避免 10 票流动性样本的 delay/零成交模式套全 universe 失真。
+- **S6 token 优先级**：KTD4 明确 `_resolve_token` 是「接受 env 首位（dev 覆盖，operator 须保证无陈旧 token）」还是「倒置为 secrets/keychain 优先、env 仅 dev 逃生」——二选一并写定。
+- **追补 revision 与 eligibility**：catch-up 产更高 revision 后，新 revision 须自己 fresh reconciled 才可 PIT；明确旧 revision 对新 manifest 的 eligibility 处置。
+- **reconcile_failed 修正**：日频源事后修正时采集器是否 re-reconcile 还是终态——影响瞬时修正是否永久排除有效分钟日。
 
 ---
 
