@@ -143,6 +143,42 @@ def is_auto_task(command: str, args: list[str]) -> bool:
     return command == "run" and bool(args) and args[0] in AUTO_TASKS
 
 
+# U5:写命令人话效果(确认 modal 标题)。config 改不动码,stdlib 朴素解析(不依赖 pyyaml)。
+_WRITE_LABELS_PATH = bridge.PROJECT_ROOT / "kss" / "config" / "write_command_labels.yaml"
+_write_labels_cache: dict[str, dict] = {"mtime": None, "data": None}
+
+
+def _load_write_labels() -> dict[str, str]:
+    """读扁平 `key: "值"` YAML,按 mtime 缓存。缺失/解析失败 → 空 dict(fail-safe)。"""
+    try:
+        mtime = _WRITE_LABELS_PATH.stat().st_mtime
+    except OSError:
+        return {}
+    if _write_labels_cache["mtime"] != mtime:
+        labels: dict[str, str] = {}
+        try:
+            for line in _WRITE_LABELS_PATH.read_text(encoding="utf-8").splitlines():
+                s = line.strip()
+                if not s or s.startswith("#") or ":" not in s:
+                    continue
+                key, _, val = s.partition(":")
+                labels[key.strip()] = val.strip().strip('"').strip("'")
+        except OSError:
+            return {}
+        _write_labels_cache.update(mtime=mtime, data=labels)
+    return _write_labels_cache["data"] or {}
+
+
+def write_effect_label(command: str, args: list[str]) -> str:
+    """命令(+run 任务)→ 人话效果。优先 `命令.任务`,退 `命令`,再退裸命令串。"""
+    labels = _load_write_labels()
+    if command == "run" and args:
+        hit = labels.get(f"run.{args[0]}")
+        if hit:
+            return hit
+    return labels.get(command) or f"执行写操作:{command} {' '.join(args)}".strip()
+
+
 # ---------------------------------------------------------------------------
 # 数字 provenance 守卫(KTD-5/R7)
 # ---------------------------------------------------------------------------
@@ -296,5 +332,6 @@ async def _exec_tool(tc, read_call, request_write, emit) -> str:
 
 __all__ = [
     "run_turn", "build_tools_schema", "resolve_tool", "is_write_command",
-    "is_auto_task", "number_guard", "load_system_prompt", "AUTO_TASKS", "TOOL_SPECS",
+    "is_auto_task", "number_guard", "load_system_prompt", "write_effect_label",
+    "AUTO_TASKS", "TOOL_SPECS",
 ]

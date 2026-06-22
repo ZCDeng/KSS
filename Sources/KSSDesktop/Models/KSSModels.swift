@@ -641,6 +641,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     case backtests = "Backtests"
     case stocks = "Stocks"
     case runbook = "Runbook"
+    case aiChat = "AI Chat"
     case architecture = "Architecture"
 
     var id: String { rawValue }
@@ -656,6 +657,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .reviews: return "AI复盘"
         case .backtests: return "AI回测"
         case .stocks: return "股票池"
+        case .aiChat: return "AI复盘助手"
         case .architecture: return "架构"
         }
     }
@@ -671,6 +673,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .reviews: return "doc.text.magnifyingglass"
         case .backtests: return "chart.xyaxis.line"
         case .stocks: return "list.bullet.rectangle"
+        case .aiChat: return "bubble.left.and.text.bubble.right"
         case .architecture: return "circle.hexagongrid"
         }
     }
@@ -717,4 +720,52 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
             .map { $0.rawValue }
             .joined(separator: ",")
     }
+}
+
+// MARK: - AI 复盘助手聊天模型（#4 U4/U5）
+
+/// 一条聊天消息。会话历史归 KSSStore（不放 view @State，避免 .id(selectedSection) 销毁）。
+struct ChatMessage: Identifiable, Equatable {
+    enum Role { case user, assistant }
+    let id = UUID()
+    let role: Role
+    var text: String
+    /// 助手本轮自产数字是否还「未核实」（流式中为 true，done 守卫过转 false）。R7/KTD-5。
+    var numbersUnverified: Bool = false
+    /// 终态错误气泡样式（step-limit / 断连 等）。
+    var isError: Bool = false
+}
+
+/// 流式帧（sidecar chat-turn handler 回的 newline-delimited JSON）。U3 协议。
+struct ChatFrame: Decodable {
+    let type: String
+    let text: String?
+    let name: String?            // tool_call / tool_done 的工具名
+    let reason: String?          // done 的原因（stop / max_steps / timeout / error）
+    let error: String?
+    let callId: String?          // confirm_required
+    let tool: String?
+    let command: String?
+    let effect: String?          // 人话效果（U5 modal 标题）
+    let argsText: String?        // 写参数格式化串（Swift modal body）
+    let numberGuard: NumberGuard?
+
+    struct NumberGuard: Decodable { let unverified: [String]? }
+
+    enum CodingKeys: String, CodingKey {
+        case type, text, name, reason, error, tool, command, effect, argsText
+        case callId = "call_id"
+        case numberGuard
+    }
+}
+
+/// 待人工确认的写操作（人在环内闸，U5）。modal 显 effect + args。
+struct PendingWriteConfirm: Identifiable {
+    let id = UUID()
+    let callId: String
+    let tool: String
+    let command: String
+    let effect: String
+    let argsText: String
+    let contextLine: String      // loop 最近一句作上下文
 }

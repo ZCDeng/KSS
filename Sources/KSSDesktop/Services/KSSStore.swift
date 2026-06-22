@@ -30,10 +30,112 @@ final class KSSStore: ObservableObject {
     @Published var importingSymbol: String?   // 点击导入进行中的代码（行级/全局指示）
     @Published var errorMessage: String?
 
+    // MARK: AI 复盘助手聊天态（#4 U4/U5）—— 会话历史归 store，section 切换不丢
+    @Published var chatMessages: [ChatMessage] = []
+    @Published var isChatStreaming = false
+    @Published var chatToolInProgress: String?            // 正在调用的工具名（进度指示）
+    @Published var pendingWriteConfirm: PendingWriteConfirm?   // 待人工确认的写（app-modal）
+    /// 当前阻塞中的 confirm 闸（后台流式线程持，UI tap 后 resolve）。
+    private var activeConfirmGate: ChatConfirmGate?
+
     private let bridge: BridgeClient?
 
     init() {
         self.bridge = try? BridgeClient()
+    }
+
+    // MARK: - 聊天一轮（流式 + 人在环内写闸）
+
+    func sendChat(_ text: String) {
+        guard let bridge else { errorMessage = "Cannot locate KSS project root"; return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !isChatStreaming else { return }   // 单活动轮（R11）
+        chatMessages.append(ChatMessage(role: .user, text: trimmed))
+        let assistant = ChatMessage(role: .assistant, text: "", numbersUnverified: true)
+        chatMessages.append(assistant)
+        let assistantId = assistant.id
+        isChatStreaming = true
+        chatToolInProgress = nil
+        // 发给 sidecar 的历史：仅 user/assistant，去掉本轮空 assistant 占位。
+        let payload: [[String: String]] = chatMessages.dropLast().map { m in
+            ["role": m.role == .user ? "user" : "assistant", "content": m.text]
+        }
+        Task.detached { [weak self] in
+            bridge.chatTurn(
+                messages: payload,
+                onFrame: { frame in
+                    Task { @MainActor [weak self] in self?.applyChatFrame(frame, assistantId: assistantId) }
+                },
+                onConfirmRequired: { frame in
+                    // 后台线程:建闸 → 主线程弹 modal → 阻塞等本人 tap（默认拒由 dismiss 触发）。
+                    let gate = ChatConfirmGate()
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self else { gate.resolve(false); return }
+                        self.activeConfirmGate = gate
+                        let ctx = self.chatMessages.last(where: { $0.role == .assistant })?.text ?? ""
+                        self.pendingWriteConfirm = PendingWriteConfirm(
+                            callId: frame.callId ?? "", tool: frame.tool ?? "",
+                            command: frame.command ?? "", effect: frame.effect ?? "执行写操作",
+                            argsText: frame.argsText ?? "", contextLine: ctx)
+                    }
+                    return gate.wait()
+                },
+                onEnd: { err in
+                    Task { @MainActor [weak self] in self?.endChat(assistantId: assistantId, error: err) }
+                })
+        }
+    }
+
+    /// 用户 tap 确认/拒绝（或 dismiss=拒）。解阻塞后台流式线程。
+    func resolveWriteConfirm(approved: Bool) {
+        pendingWriteConfirm = nil
+        activeConfirmGate?.resolve(approved)
+        activeConfirmGate = nil
+    }
+
+    private func applyChatFrame(_ frame: ChatFrame, assistantId: UUID) {
+        guard let idx = chatMessages.firstIndex(where: { $0.id == assistantId }) else { return }
+        switch frame.type {
+        case "chunk":
+            chatMessages[idx].text += frame.text ?? ""
+        case "tool_call":
+            chatToolInProgress = frame.name
+        case "tool_done":
+            chatToolInProgress = nil
+        case "done":
+            chatToolInProgress = nil
+            // 数字守卫:无未核实数字则转正样式（R7/KTD-5）。
+            let unverified = frame.numberGuard?.unverified ?? []
+            chatMessages[idx].numbersUnverified = !unverified.isEmpty
+            if frame.reason == "max_steps" {
+                chatMessages[idx].text += "\n\n_（已达步数上限，优雅终止；如未答全请追问）_"
+            } else if frame.reason == "timeout" {
+                chatMessages[idx].text += "\n\n_（已达时间上限，优雅终止）_"
+            }
+        case "error":
+            chatToolInProgress = nil
+            if chatMessages[idx].text.isEmpty {
+                chatMessages[idx].text = "出错了：\(frame.error ?? "未知错误")"
+                chatMessages[idx].isError = true
+            } else {
+                errorMessage = frame.error
+            }
+        default:
+            break
+        }
+    }
+
+    private func endChat(assistantId: UUID, error: String?) {
+        isChatStreaming = false
+        chatToolInProgress = nil
+        activeConfirmGate = nil
+        pendingWriteConfirm = nil
+        guard let error else { return }
+        if let idx = chatMessages.firstIndex(where: { $0.id == assistantId }),
+           chatMessages[idx].text.isEmpty {
+            chatMessages[idx].text = "连接中断：\(error)"
+            chatMessages[idx].isError = true
+        }
     }
 
     func loadSnapshot() async {
@@ -312,5 +414,31 @@ final class KSSStore: ObservableObject {
             merged.append(result)
         }
         return Array(merged.sorted { $0.startedAt > $1.startedAt }.prefix(25))
+    }
+}
+
+/// confirm 闸:后台流式线程同步 wait,主线程 tap 后 resolve(人在环内写闸,U5)。
+/// 非 MainActor —— 跨线程握手靠 DispatchSemaphore,本身线程安全。
+final class ChatConfirmGate: @unchecked Sendable {
+    private let sem = DispatchSemaphore(value: 0)
+    private var approved = false
+    private var resolved = false
+    private let lock = NSLock()
+
+    /// 后台线程调:阻塞至 resolve,返回是否批准。
+    func wait() -> Bool {
+        sem.wait()
+        lock.lock(); defer { lock.unlock() }
+        return approved
+    }
+
+    /// 主线程调:tap 确认/拒绝。幂等(重复 resolve 忽略)。
+    func resolve(_ ok: Bool) {
+        lock.lock()
+        if resolved { lock.unlock(); return }
+        resolved = true
+        approved = ok
+        lock.unlock()
+        sem.signal()
     }
 }

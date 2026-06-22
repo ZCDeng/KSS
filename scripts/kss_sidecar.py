@@ -120,7 +120,9 @@ async def _handle_chat_turn(reader: asyncio.StreamReader,
         fut = asyncio.get_running_loop().create_future()
         pending[call_id] = {"future": fut, "command": command, "args": args}
         await emit({"type": "confirm_required", "call_id": call_id,
-                    "tool": tool_name, "command": command, "args": tool_args})
+                    "tool": tool_name, "command": command, "args": tool_args,
+                    "argsText": json.dumps(tool_args, ensure_ascii=False),   # Swift modal 直接显
+                    "effect": chat_loop.write_effect_label(command, args)})   # 人话效果(U5)
         try:
             return await asyncio.wait_for(fut, timeout=_CONFIRM_TIMEOUT)
         except asyncio.TimeoutError:          # 超时即拒(B3),删条目防后到 approved 复用

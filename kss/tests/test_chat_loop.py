@@ -198,6 +198,14 @@ def test_system_prompt_loaded_and_injected(monkeypatch):
     assert first_msgs[0]["role"] == "system" and "decider" in first_msgs[0]["content"]
 
 
+def test_write_effect_label():
+    """U5:命令(+run 任务)→ 人话效果;命中 run.<task> 优先,退裸命令。"""
+    assert "覆盖本地行情" in loop.write_effect_label("run", ["update-cs-data"])
+    assert loop.write_effect_label("cron-rerun", ["daily"]) == "重跑一个计划任务"
+    # 未登记命令 → 兜底串(含命令名)
+    assert "frobnicate" in loop.write_effect_label("frobnicate", ["x"])
+
+
 def test_system_prompt_fallback(monkeypatch):
     monkeypatch.setattr(loop, "_SYSTEM_PROMPT_PATH", Path("/nonexistent/xx.md"))
     assert "operator" in loop.load_system_prompt()
