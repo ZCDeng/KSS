@@ -6,12 +6,19 @@ import Security
 enum KeychainStore {
     static let service = "com.zcdeng.KSSDesktop.credentials"
 
-    /// 敏感凭据（存 Keychain）。TELEGRAM_API_URL 非敏感，但一并管理便于配置。
+    /// 敏感凭据（存 Keychain）。非敏感项（API URL / 模型名 / live 开关）一并管理便于配置注入。
+    /// LLM key 用于 app 内 AI 复盘助手（#4）：sidecar 启动时读出注入子进程 env，
+    /// openai_client 据 OPENAI_API_KEY / DEEPSEEK_API_KEY 解析网关。KSS_APP_LIVE=1 才允许 loop 真写。
     static let managedKeys = [
         "TUSHARE_TOKEN",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_CHAT_ID",
         "TELEGRAM_API_URL",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "DEEPSEEK_API_KEY",
+        "KSS_LLM_MODEL",
+        "KSS_APP_LIVE",
     ]
 
     static func read(_ key: String) -> String? {

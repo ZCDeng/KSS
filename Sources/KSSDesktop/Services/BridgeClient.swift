@@ -312,6 +312,123 @@ struct BridgeClient {
         return out.isEmpty ? nil : out
     }
 
+    // MARK: - 流式聊天（#4 U3/U4）—— 独立于 unixSocketRoundtrip，无 3s 硬超时、逐帧投递
+
+    /// 流式跑一轮聊天。**阻塞**调用（store 在 Task.detached 里跑）。
+    /// onFrame：每收一帧调一次（后台线程，store 内自行 hop MainActor）。
+    /// onConfirmRequired：收到 confirm_required 时同步调用，返回本人是否批准；据此在**同连接**写回确认。
+    /// onEnd：流结束时调一次，error 非 nil 表示异常收尾（断连/超时/编码失败）。
+    func chatTurn(messages: [[String: String]],
+                  onFrame: @escaping (ChatFrame) -> Void,
+                  onConfirmRequired: @escaping (ChatFrame) -> Bool,
+                  onEnd: @escaping (String?) -> Void) {
+        ensureSidecarRunning()
+        guard var request = try? JSONSerialization.data(
+            withJSONObject: ["cmd": "chat-turn", "messages": messages]) else {
+            onEnd("无法编码聊天请求"); return
+        }
+        request.append(0x0A)
+        Self.chatTurnStream(path: socketPath, request: request,
+                            onFrame: onFrame, onConfirmRequired: onConfirmRequired, onEnd: onEnd)
+    }
+
+    /// 连接 → 发请求 → 逐 newline 帧读到 done/error/EOF。SO_RCVTIMEO 作 **idle 间隔**而非硬超时。
+    private static func chatTurnStream(path: String, request: Data,
+                                       onFrame: @escaping (ChatFrame) -> Void,
+                                       onConfirmRequired: @escaping (ChatFrame) -> Bool,
+                                       onEnd: @escaping (String?) -> Void) {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        if fd < 0 { onEnd("无法创建 socket"); return }
+        defer { close(fd) }
+
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = Array(path.utf8)
+        let cap = MemoryLayout.size(ofValue: addr.sun_path) - 1
+        let n = min(pathBytes.count, cap)
+        withUnsafeMutableBytes(of: &addr.sun_path) { raw in
+            pathBytes.withUnsafeBytes { src in
+                raw.baseAddress!.copyMemory(from: src.baseAddress!, byteCount: n)
+            }
+        }
+        // 1s idle 间隔：read() 每秒返回一次让我们检查（而非一直阻塞）。非硬超时。
+        var tv = timeval(tv_sec: 1, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+
+        let connected = withUnsafePointer(to: &addr) { ptr -> Int32 in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                connect(fd, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        if connected != 0 { onEnd("无法连接 sidecar"); return }
+
+        let reqBytes = [UInt8](request)
+        var sent = 0
+        while sent < reqBytes.count {
+            let w = reqBytes.withUnsafeBytes { raw in
+                send(fd, raw.baseAddress!.advanced(by: sent), reqBytes.count - sent, 0)
+            }
+            if w <= 0 { onEnd("发送请求失败"); return }
+            sent += w
+        }
+
+        var acc = Data()
+        var buf = [UInt8](repeating: 0, count: 65536)
+        var idleTicks = 0
+        let maxIdleTicks = 300        // 1s × 300 = 5min 无任何数据 → 放弃（idle 总上限）
+        while true {
+            let r = read(fd, &buf, buf.count)
+            if r > 0 {
+                idleTicks = 0
+                acc.append(contentsOf: buf[0..<r])
+                // 逐 newline 切帧 —— 不在首个 0x0A break（流式可能一次收多帧）
+                while let nl = acc.firstIndex(of: 0x0A) {
+                    let lineData = acc.subdata(in: acc.startIndex..<nl)
+                    acc.removeSubrange(acc.startIndex...nl)
+                    if lineData.isEmpty { continue }
+                    guard let frame = try? JSONDecoder().decode(ChatFrame.self, from: lineData)
+                    else { continue }
+                    onFrame(frame)
+                    if frame.type == "confirm_required" {
+                        let approved = onConfirmRequired(frame)
+                        sendConfirm(fd: fd, callId: frame.callId ?? "", approved: approved)
+                    }
+                    if frame.type == "done" || frame.type == "error" {
+                        onEnd(nil); return
+                    }
+                }
+            } else if r == 0 {
+                onEnd("连接中断"); return          // EOF
+            } else {
+                let e = errno
+                if e == EAGAIN || e == EWOULDBLOCK {   // idle：本秒无数据，继续等
+                    idleTicks += 1
+                    if idleTicks >= maxIdleTicks { onEnd("响应超时"); return }
+                    continue
+                }
+                onEnd("读取错误 errno=\(e)"); return    // 真错
+            }
+        }
+    }
+
+    /// 在同连接写回 chat-turn-confirm{call_id, approved}（U5 人在环内闸）。
+    private static func sendConfirm(fd: Int32, callId: String, approved: Bool) {
+        guard var line = try? JSONSerialization.data(withJSONObject: [
+            "cmd": "chat-turn-confirm", "call_id": callId, "approved": approved
+        ]) else { return }
+        line.append(0x0A)
+        let bytes = [UInt8](line)
+        var sent = 0
+        while sent < bytes.count {
+            let w = bytes.withUnsafeBytes { raw in
+                send(fd, raw.baseAddress!.advanced(by: sent), bytes.count - sent, 0)
+            }
+            if w <= 0 { return }
+            sent += w
+        }
+    }
+
     /// 版本化信封两段解码（KTD3，可测 seam）：先探 schemaVersion，不匹配 throw
     /// `.schemaMismatch`（可读横幅）；缺字段视为 v0（旧/未包裹）；再解 `data` 为 T。
     static func decodeEnvelope<T: Decodable>(_ data: Data) throws -> T {
@@ -476,6 +593,20 @@ struct BridgeClient {
         guard fm.isExecutableFile(atPath: venvPy.path) else {
             throw BridgeError.runtimeBootstrapFailed("uv sync 完成但缺解释器：\(venvPy.path)")
         }
+    }
+
+    /// 凭据/开关变更后重启 sidecar：**SIGTERM 全杀**（SIGHUP re-exec 会保留旧 env，拿不到新 key），
+    /// 并移除 socket，使下次调用以最新 `injectedEnvironment()` 重启常驻进程（#4 key 管理）。
+    static func restartSidecarForEnvChange() {
+        guard let roots = resolveRoots() else { return }
+        let runDir = roots.state.appending(path: "run")
+        let pidFile = runDir.appending(path: "kss-sidecar.pid")
+        if let pidStr = try? String(contentsOf: pidFile, encoding: .utf8),
+           let pid = Int32(pidStr.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            kill(pid, SIGTERM)
+        }
+        // 兜底移除 socket：SIGTERM 处理器也会自清，但移除可确保 ensureSidecarRunning 认定需重启。
+        try? FileManager.default.removeItem(at: runDir.appending(path: "kss-sidecar.sock"))
     }
 
     /// U9：venv 已存在但 uv.lock 变化 → 后台非阻塞 uv sync，再 SIGHUP 重载 sidecar。

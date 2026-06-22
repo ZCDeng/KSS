@@ -119,6 +119,13 @@ struct ContentView: View {
         } message: {
             Text(store.errorMessage ?? "")
         }
+        // U5：人在环内写确认 app-modal（sheet 阻塞窗口；dismiss=拒，gate 幂等）。
+        .sheet(item: $store.pendingWriteConfirm,
+               onDismiss: { store.resolveWriteConfirm(approved: false) }) { pending in
+            WriteConfirmView(pending: pending) { approved in
+                store.resolveWriteConfirm(approved: approved)
+            }
+        }
     }
 
     /// 工具栏「主题」入口：只读当前摘要 + 设计系统区 + 外观区，全部带勾选状态。
@@ -247,6 +254,8 @@ struct ContentView: View {
                     onSelect: { symbol in Task { await store.selectStock(symbol, navigate: false) } },
                     onToggleWatchlist: toggleWatchlist
                 )
+            case .aiChat:
+                AIChatView()
             case .architecture:
                 ArchitectureView()
             }

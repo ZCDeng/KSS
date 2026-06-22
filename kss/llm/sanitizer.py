@@ -97,6 +97,24 @@ _REDACTED: str = "[REDACTED]"
 # ====================================================================== #
 
 
+def scan_for_injection(text: str | None) -> str | None:
+    """对 **tool 结果** 做 pattern 级注入扫描(R8),命中返回匹配模式串,否则 None。
+
+    与 :func:`sanitize_llm_input` 的区别:**不截断、不剥字符** —— tool 返回常是
+    KB 级 JSON,64-char/字符白名单会毁数据。只扫可疑模式、打告警,正文完整透传给 loop。
+    """
+    if not text or not isinstance(text, str):
+        return None
+    for pat in _SUSPICIOUS_PATTERNS:
+        if pat.search(text):
+            logger.warning(
+                "[llm-sanitizer] tool 结果命中注入模式: pattern=%r snippet=%r",
+                pat.pattern, text[:120],
+            )
+            return pat.pattern
+    return None
+
+
 def sanitize_llm_input(text: str | None, max_len: int = 64) -> str:
     """清洗外部字符串，确保安全进入 LLM payload.
 
@@ -145,4 +163,4 @@ def sanitize_llm_input(text: str | None, max_len: int = 64) -> str:
     return filtered
 
 
-__all__ = ["sanitize_llm_input"]
+__all__ = ["sanitize_llm_input", "scan_for_injection"]
