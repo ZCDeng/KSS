@@ -215,6 +215,7 @@ struct ReviewsView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .help("用 MarkEdit 打开当前报告")
+                .padding(.trailing, 6)
                 StatusBadge(icon: "calendar", text: review.date, tint: theme.accent)
             }
             if !review.focusSymbols.isEmpty {

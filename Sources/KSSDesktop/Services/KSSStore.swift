@@ -228,12 +228,11 @@ final class KSSStore: ObservableObject {
         }
         let stateRoot = bridge.stateRoot
         errorMessage = nil
-        Task.detached { [weak self] in
-            ExternalReportOpener.open(relativePath: path, under: stateRoot) { err in
-                // openURLs 完成回调在主线程外触发——hop 回 MainActor 改 @Published。
-                Task { @MainActor in
-                    if let err { self?.errorMessage = err.errorDescription }
-                }
+        // open() 非阻塞返回（resolveReportURL 仅本地 stat，NSWorkspace.open 异步），不必 detach。
+        ExternalReportOpener.open(relativePath: path, under: stateRoot) { [weak self] err in
+            // 完成回调可能在主线程外触发——防御性 hop 回 MainActor 改 @Published（已在主线程亦安全）。
+            Task { @MainActor in
+                if let err { self?.errorMessage = err.errorDescription }
             }
         }
     }

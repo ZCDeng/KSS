@@ -9,10 +9,12 @@ import Foundation
 enum ExternalReportOpener {
 
     enum OpenError: LocalizedError, Equatable {
-        /// 路径校验失败（绝对 / 逃逸 / 非 .md / 非常规文件 / 缺失）。
+        /// 路径校验失败（绝对 / 含 .. / 逃逸 / 非 .md / 非常规文件 / 缺失）。
         case pathResolution(String)
         /// 未找到 MarkEdit.app。
         case markEditNotFound
+        /// 路径校验通过、定位到 MarkEdit，但 NSWorkspace 启动失败（沙箱拒绝 / 应用崩溃等）。
+        case appLaunch(String)
 
         var errorDescription: String? {
             switch self {
@@ -20,6 +22,8 @@ enum ExternalReportOpener {
                 return "无法打开报告：\(detail)"
             case .markEditNotFound:
                 return "MarkEdit 未安装，请安装后重试。"
+            case .appLaunch(let detail):
+                return "MarkEdit 打开失败：\(detail)"
             }
         }
     }
@@ -39,6 +43,13 @@ enum ExternalReportOpener {
         }
         guard !(trimmed as NSString).isAbsolutePath else {
             throw OpenError.pathResolution("报告路径必须相对于状态根")
+        }
+        // 1b. 拒绝任何 `..` 路径分量。报告路径来自 `_collect_reports` 的 `relative_to(STATE_ROOT)`
+        //     干净相对路径，绝不含 `..`。显式拒绝消除一处相对 Python 物理 `.resolve()` 的解析漂移：
+        //     `standardizedFileURL` 对 `..` 做**词法**折叠（如 `symlinkDir/../x` → `x`），而 Python
+        //     物理跟随符号链接后再上跳，二者结果可不同。拒绝 `..` 让两侧在此类输入上都收敛到 reject。
+        guard !(trimmed as NSString).pathComponents.contains("..") else {
+            throw OpenError.pathResolution("报告路径不得包含 .. 分量")
         }
         // 2. 在 stateRoot 下拼接，对两侧做符号链接规范化（对应 Python `.resolve()`，跟随符号链接）。
         let base = stateRoot.resolvingSymlinksInPath().standardizedFileURL
@@ -103,7 +114,7 @@ enum ExternalReportOpener {
         let config = NSWorkspace.OpenConfiguration()
         NSWorkspace.shared.open([fileURL], withApplicationAt: markEdit,
                                 configuration: config) { _, error in
-            completion(error.map { .pathResolution($0.localizedDescription) })
+            completion(error.map { .appLaunch($0.localizedDescription) })
         }
     }
 }

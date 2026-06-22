@@ -104,7 +104,34 @@ final class ExternalReportOpenerTests: XCTestCase {
         let created = try write("REPORT.MD")
         let resolved = try ExternalReportOpener.resolveReportURL(
             relativePath: "REPORT.MD", under: root)
-        XCTAssertEqual(resolved.lastPathComponent, created.lastPathComponent)
+        XCTAssertEqual(resolved.resolvingSymlinksInPath().standardizedFileURL,
+                       created.resolvingSymlinksInPath().standardizedFileURL)
+    }
+
+    func testDotDotComponentRejectedEvenWhenInRoot() throws {
+        // 即便 `..` 折叠后仍在 root 内，也拒绝——消除相对 Python 物理 `.resolve()` 的解析漂移。
+        _ = try write("real.md")
+        assertRejects("sub/../real.md", "含 .. 分量（即便折叠后在 root 内）应拒绝")
+    }
+
+    func testSymlinkedDirDotDotRejected() throws {
+        // 漂移点：`symlinkDir/../x`——Swift 词法折叠 vs Python 物理解析；现两侧统一拒绝。
+        let outsideDir = root.deletingLastPathComponent()
+            .appending(path: "od2-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: outsideDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outsideDir) }
+        try FileManager.default.createSymbolicLink(
+            at: root.appending(path: "linkdir"), withDestinationURL: outsideDir)
+        _ = try write("secret.md")
+        assertRejects("linkdir/../secret.md", "符号链接目录 + .. 应拒绝（解析漂移点）")
+    }
+
+    func testErrorDescriptionsAreDistinct() {
+        // 启动失败 (.appLaunch) 与路径校验失败 (.pathResolution) 须出不同文案，便于排障。
+        XCTAssertEqual(ExternalReportOpener.OpenError.markEditNotFound.errorDescription,
+                       "MarkEdit 未安装，请安装后重试。")
+        XCTAssertNotEqual(ExternalReportOpener.OpenError.appLaunch("boom").errorDescription,
+                          ExternalReportOpener.OpenError.pathResolution("boom").errorDescription)
     }
 
     // MARK: open() 的 MarkEdit 缺失分支（注入 locate，不真启动）
