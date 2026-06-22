@@ -39,6 +39,23 @@ AUTO_TASKS: frozenset[str] = frozenset()
 _DEFAULT_MAX_STEPS = 8          # 步数上限(KTD-6 Q2 初始值)
 _DEFAULT_TURN_TIMEOUT = 240.0   # 单轮总超时秒(多轮放宽,KTD-6)
 
+# U6:system prompt 放 config(改不动码)。operator-not-decider + 首调 orientation + 数字纪律。
+_SYSTEM_PROMPT_PATH = bridge.PROJECT_ROOT / "kss" / "config" / "chat_system_prompt.md"
+_FALLBACK_SYSTEM_PROMPT = (
+    "你是 KSSDeck 的 A 股复盘助手(operator/explainer,永不 decider)。中文应答,"
+    "不给买卖建议;首轮先调 get_orientation;所有金融数字必须引工具返回值,不得臆造。"
+)
+
+
+def load_system_prompt() -> str:
+    """读 config system prompt;缺失则用内置兜底(fail-safe,不让 loop 因缺文件崩)。"""
+    try:
+        text = _SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
+        return text or _FALLBACK_SYSTEM_PROMPT
+    except OSError:
+        logger.warning("[chat-loop] system prompt 缺失,用内置兜底: %s", _SYSTEM_PROMPT_PATH)
+        return _FALLBACK_SYSTEM_PROMPT
+
 
 # ---------------------------------------------------------------------------
 # 工具目录 —— 映射 LLM function-calling 工具 → bridge 命令(与 MCP 同源面)。
@@ -172,6 +189,8 @@ async def run_turn(
     tools = build_tools_schema()
     read_call = bridge._make_read_only_call(bridge.dispatch)   # 读受限 call(碰写即 raise)
     convo = list(messages)
+    if not convo or convo[0].get("role") != "system":          # U6:注入 system prompt
+        convo.insert(0, {"role": "system", "content": load_system_prompt()})
     deadline = time.monotonic() + turn_timeout
     tool_results_text: list[str] = []   # 本轮所有 tool 结果文本(数字守卫用)
 
@@ -277,5 +296,5 @@ async def _exec_tool(tc, read_call, request_write, emit) -> str:
 
 __all__ = [
     "run_turn", "build_tools_schema", "resolve_tool", "is_write_command",
-    "is_auto_task", "number_guard", "AUTO_TASKS", "TOOL_SPECS",
+    "is_auto_task", "number_guard", "load_system_prompt", "AUTO_TASKS", "TOOL_SPECS",
 ]

@@ -186,6 +186,23 @@ def test_resolve_tool_and_schema():
     assert {"get_stock", "run_task", "run_recipe", "get_orientation"} <= names
 
 
+def test_system_prompt_loaded_and_injected(monkeypatch):
+    """U6:config system prompt 存在且含边界条款;run_turn 首条注入 system。"""
+    prompt = loop.load_system_prompt()
+    assert "operator" in prompt and "decider" in prompt
+    assert "get_orientation" in prompt
+
+    # 首条 message 注入 system(确定性)
+    frames, chat = _drive([[_text("ok"), {"type": "finish", "reason": "stop"}]])
+    first_msgs = chat.calls[0]
+    assert first_msgs[0]["role"] == "system" and "decider" in first_msgs[0]["content"]
+
+
+def test_system_prompt_fallback(monkeypatch):
+    monkeypatch.setattr(loop, "_SYSTEM_PROMPT_PATH", Path("/nonexistent/xx.md"))
+    assert "operator" in loop.load_system_prompt()
+
+
 def test_number_guard():
     # 5.5% 不在 tool 文本 → 未核实;3.2 在 tool 文本 → 核实
     unv = loop.number_guard("涨 5.5% 且 3.2 倍量", "{'pctChange': 3.2}")
