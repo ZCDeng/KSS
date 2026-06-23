@@ -2,7 +2,8 @@
 # cs_data 增量更新 - 每日 8:30 cron wrapper（在 9:00 选股之前补数据）.
 #
 # 行为：
-#   - 调 Tushare 增量拉 51 只科创板日线 + daily_basic
+#   - 增量更新【整个股票池】cs_data（股票 daily+daily_basic / ETF fund_daily / 指数 index_daily，按 kind 自适应）
+#   - 紧接着刷新指数行情入库 market_strip.json（仪表盘指数条）—— 折进同一日更，不另设独立 cron
 #   - throttle=0.5s（免费版 ~120 次/分钟，0.5s 安全）
 #
 # 手动测试：
@@ -36,4 +37,9 @@ if [ -z "$TUSHARE_TOKEN" ] && [ -f "$HOME/.tushare/token" ]; then
 fi
 
 cd "$PROJECT_ROOT"
-exec "$PYTHON" scripts/update_cs_data.py --pattern 688 --throttle 0.5 "$@"
+# 1) 全量增量更新整个股票池 cs_data（kind 自适应：stock→daily / fund→fund_daily / index→index_daily）
+"$PYTHON" scripts/update_cs_data.py --throttle 0.5 "$@"
+
+# 2) 指数行情入库（market_strip.json，仪表盘指数条）—— 折进日更，不另设 cron
+echo "===== $(date '+%Y-%m-%d %H:%M:%S') refresh_market_strip 开始 ====="
+"$PYTHON" scripts/refresh_market_strip.py

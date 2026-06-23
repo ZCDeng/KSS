@@ -32,7 +32,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _KSS_STATE = Path(__import__("os").environ.get("KSS_STATE_ROOT") or PROJECT_ROOT)  # U1: cs_data 重定向
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from kss.data.tushare_client import TushareClient  # noqa: E402
+from kss.data.tushare_client import TushareClient, _fetch_with_retry  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -124,6 +124,29 @@ def ensure_history(
     return len(merged), "written"
 
 
+_NAME_INDEX_PATH = _KSS_STATE / "storage" / "macro" / "stock_name_index.json"
+_NAME_META_CACHE: dict | None = None
+
+
+def _kind_for(ts_code: str) -> str:
+    """从名称索引取证券类型 (stock/fund/index)，缺失默认 stock。
+
+    决定增量取数走 daily(+daily_basic) / fund_daily / index_daily：ETF/基金与指数
+    在 Tushare 不走 `daily`（返回空），且无 daily_basic 的 pe/pb/换手。
+    """
+    global _NAME_META_CACHE
+    if _NAME_META_CACHE is None:
+        import json
+
+        try:
+            _NAME_META_CACHE = json.loads(
+                _NAME_INDEX_PATH.read_text(encoding="utf-8")
+            ).get("meta", {})
+        except Exception:  # noqa: BLE001
+            _NAME_META_CACHE = {}
+    return (_NAME_META_CACHE.get(ts_code) or {}).get("kind", "stock")
+
+
 def update_one(
     csv_path: Path,
     client: TushareClient,
@@ -161,9 +184,26 @@ def update_one(
     if start > end:
         return 0, max_date.strftime("%Y-%m-%d")  # 已是最新
 
-    # 拉新数据
-    daily = client.fetch_daily(ts_code, start, end)
-    daily_basic = client.fetch_daily_basic(ts_code, start, end)
+    # 拉新数据：按证券类型选 API —— 股票走 daily + daily_basic，ETF/基金走 fund_daily，
+    # 指数走 index_daily（后两者无 daily_basic，对齐 EXPECTED_COLS 时填 NaN）。
+    kind = _kind_for(ts_code)
+    if kind == "fund":
+        pro = client.get_pro()
+        daily = _fetch_with_retry(
+            lambda: pro.fund_daily(ts_code=ts_code, start_date=start, end_date=end),
+            f"fund_daily {ts_code}",
+        )
+        daily_basic = None
+    elif kind == "index":
+        pro = client.get_pro()
+        daily = _fetch_with_retry(
+            lambda: pro.index_daily(ts_code=ts_code, start_date=start, end_date=end),
+            f"index_daily {ts_code}",
+        )
+        daily_basic = None
+    else:
+        daily = client.fetch_daily(ts_code, start, end)
+        daily_basic = client.fetch_daily_basic(ts_code, start, end)
     if daily is None or daily.empty:
         return 0, max_date.strftime("%Y-%m-%d")
 
