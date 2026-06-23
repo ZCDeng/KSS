@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KSS · 要不要塞一个 Agent 推理框架 — 选题盘点</title>
+<style>
+  :root { --ink:#1a1a1a; --muted:#666; --line:#e3e3e0; --bg:#faf9f6; --accent:#1f4e79; --good:#2e7d32; --warn:#b26a00; --bad:#a23b3b; }
+  * { box-sizing:border-box; }
+  body { font-family:-apple-system,"PingFang SC","Helvetica Neue",sans-serif; color:var(--ink); background:var(--bg); line-height:1.62; margin:0; }
+  .wrap { max-width:860px; margin:0 auto; padding:48px 28px 80px; }
+  h1 { font-size:1.7rem; line-height:1.3; margin:0 0 6px; }
+  .sub { color:var(--muted); font-size:.92rem; margin-bottom:30px; }
+  h2 { font-size:1.18rem; margin:42px 0 14px; padding-bottom:6px; border-bottom:2px solid var(--ink); }
+  h3 { font-size:1.02rem; margin:26px 0 6px; }
+  p { margin:8px 0; }
+  .lead { background:#fff; border:1px solid var(--line); border-left:4px solid var(--accent); padding:16px 18px; border-radius:6px; font-size:.97rem; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:8px; padding:18px 20px; margin:16px 0; }
+  .rank { display:inline-block; background:var(--accent); color:#fff; font-size:.78rem; font-weight:600; border-radius:4px; padding:2px 8px; margin-right:8px; vertical-align:middle; }
+  .tag { display:inline-block; font-size:.72rem; color:var(--muted); border:1px solid var(--line); border-radius:10px; padding:1px 9px; margin-left:6px; }
+  .meta { font-size:.86rem; color:var(--muted); margin:10px 0 0; }
+  .meta b { color:var(--ink); font-weight:600; }
+  .effort { font-size:.8rem; }
+  .e-low { color:var(--good); } .e-med { color:var(--warn); } .e-high { color:var(--bad); }
+  ul { margin:8px 0; padding-left:20px; } li { margin:4px 0; }
+  code { background:#f0efea; padding:1px 5px; border-radius:3px; font-size:.85em; }
+  .rej { background:#fbf7f5; border:1px dashed #d9c6c0; border-radius:8px; padding:6px 16px; margin:12px 0; }
+  .rej h3 { margin:14px 0 2px; font-size:.96rem; }
+  .rej p { font-size:.9rem; color:#705; color:var(--muted); }
+  .verdict { font-size:1.02rem; }
+  .verdict b { color:var(--accent); }
+  hr { border:0; border-top:1px solid var(--line); margin:30px 0; }
+  .axes { font-size:.85rem; color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>要不要给 KSS 塞一个 Agent 推理框架?</h1>
+<div class="sub">选题盘点 · 2026-06-22 · ce-ideate(聚焦版) · 基于代码实证,非计划承诺</div>
+
+<div class="lead">
+<b>一句话结论:不需要"自主 agent 框架",需要的是三块薄层。</b><br>
+KSS 的 agent 底座已经搭好了 —— MCP parity(13 tool)、LLM 在管线里有实职、数字/注入双纪律。
+真正缺的不是"让 AI 自己决策的回路"(那条线你<i>有意不做</i>),而是:(1) 让 agent 一次调用就<b>吃透</b>代码与数据的自描述层;
+(2) 用<b>固定剧本</b>而非自主循环换便利性;(3) 把 agent 从「只有 Claude Code 能用」搬进 <b>KSSDeck 给真实用户用</b>。
+边界其实已建了 90%(read/paper/live 三档 + confirm),只差把它写成 agent 自知的红线。
+</div>
+
+<p class="axes"><b>题面分解(5 轴):</b> A 推理回路形态 · B 便利性增量 · C 边界红线 · D 自我描述(吃透) · E 可验证</p>
+
+<h2>三个子问题的直接回答</h2>
+<div class="card">
+<p><b>① 有必要塞 agent 推理框架吗?</b> —— <b>不必要塞重的。</b> Claude Code + 你的 MCP <i>本身就是</i>推理回路了。
+再叠一个 LangGraph/AutoGPT 式自主 loop,边际价值低(回路已存在)、风险高(逼近"替用户做买卖判断"的红线)。
+真正的 ROI 在"让现有 MCP 面更易被 agent 理解"和"一层薄编排",不在"造自主大脑"。</p>
+<p><b>② 边界怎么定?</b> —— <b>operator / explainer,永不做 decider。</b> Agent 能查、能解释、能跑 paper 任务、能解释为什么某只上榜;
+不能下单、不能给个性化买卖建议。底层 <code>_LIVE</code> + <code>confirm=True</code> 三档闸已在,缺的是把这条线写进 system prompt + 输出守卫,并让 agent 自知所处档位。</p>
+<p><b>③ 怎么快速吃透代码库 + 数据库?</b> —— <b>一次调用拿到"定向包"。</b> 现在 agent 要读 AGENTS.md + 调 get_snapshot + 调 list_cron + 猜 parquet 列名才上手,且<b>没有任何数据字典/catalog</b>。
+答案是自动生成的数据目录 + 一个 <code>get_orientation</code> 入口工具(能力图 + 数据目录 + 新鲜度 + 文档指针,一次返回)。</p>
+</div>
+
+<h2>留存创意(按价值排序)</h2>
+
+<div class="card">
+<p><span class="rank">#1</span><b>自动生成的数据目录(data catalog)</b><span class="tag">轴 D · 数据库</span></p>
+<p>从代码反射出全量数据资产字典:每个 parquet/cs_data_*.csv/*.db 的<b>列名 · 含义 · 粒度 · 刷新源 · 最近日期</b>。
+当前零目录 —— agent 只能 grep pipeline 脚本去猜列名。这是"吃透数据库"的根。</p>
+<ul>
+<li>实现:introspect bridge 的 read 函数 + 读 parquet schema + 扫 storage/ 目录,产出 <code>storage/data_catalog.json</code>,由一个 launchd 任务每日刷新,<b>永不漂移</b>。</li>
+<li>对比手维 doc:手维必烂。自动生成才是对的那套(冲突暴露不折中)。</li>
+</ul>
+<p class="meta"><b>成功标准:</b>新 agent 不读任何 pipeline 脚本就能正确回答"margin_daily 里有哪些字段、几号的数据"。 <span class="effort e-low">· 工作量 低</span></p>
+</div>
+
+<div class="card">
+<p><span class="rank">#2</span><b>get_orientation —— 一次调用的"定向包"</b><span class="tag">轴 D · 代码库</span></p>
+<p>一个 MCP 入口工具/资源,单次返回:dispatch 命令图 + run_task 白名单 + 数据目录(#1) + 各 cron 新鲜度 + 关键文档指针(AGENTS.md / ai_native_surface_assessment.md)。
+把"读 4 处才上手"压成"1 个工具调用上手"。</p>
+<p class="meta"><b>成功标准:</b>冷启动 agent 第一个工具调 get_orientation 后,后续查询零误调(不再调不存在的 tool/列)。 <span class="effort e-low">· 工作量 低</span> · 依赖 #1</p>
+</div>
+
+<div class="card">
+<p><span class="rank">#3</span><b>有界编排剧本(复盘 playbooks),取代自主 loop</b><span class="tag">轴 A·B·C</span></p>
+<p>"框架"= 剧本注册表,不是 LangGraph。把高频多步任务固化成确定性 DAG,agent 只<b>选剧本</b>不自由发挥。
+例:<code>解释为什么这只今天上榜</code> = get_stock → get_sector_rotation → get_discovery_candidates → get_report 串成一条。</p>
+<ul>
+<li>便利性来自"一句话触发一条复盘链",而非让模型自己想步骤(省 token、可复现、可测)。</li>
+<li>路由/串接由代码做,模型只做"选哪条 + 解释结果"的判断类任务。</li>
+</ul>
+<p class="meta"><b>成功标准:</b>3-5 条最高频复盘问题各有一条剧本,端到端可复现,有 golden 测试。 <span class="effort e-med">· 工作量 中</span></p>
+</div>
+
+<div class="card">
+<p><span class="rank">#4</span><b>KSSDeck 内置 agent 面板 —— 把 agent 给真实用户</b><span class="tag">轴 B · 便利性主增量</span></p>
+<p>当前 agent 只有开 Claude Code 的开发者能用。真正的"用户便利性"是在桌面 app 里放一个 chat-with-tools 面板:
+复用 MCP 读 tool + 数字纪律,用户用中文问"今天北向在买啥板块",app 调工具 + 代码渲染真值答。</p>
+<ul>
+<li>这是 agent parity 从"原则"走到"终端用户能摸到"的那一步。</li>
+<li>读优先(#5 边界守卫兜底);写/跑任务走已有 confirm 闸。</li>
+</ul>
+<p class="meta"><b>成功标准:</b>非技术用户不开终端,在 KSSDeck 里完成一次带真值的盘面问答。 <span class="effort e-high">· 工作量 高</span> · 依赖 #2 #5</p>
+</div>
+
+<div class="card">
+<p><span class="rank">#5</span><b>把"operator 不 decider"红线工程化</b><span class="tag">轴 C · 边界</span></p>
+<p>三档能力(read 恒开 / paper-write 需 confirm / live 需 env+confirm)已在代码里。缺的是:
+(a) system prompt 显式声明"不给个性化买卖判断";(b) 输出守卫 —— 检出"建议买/卖/仓位"措辞即 fail-loud 中和(复用 U7 风格);(c) agent 自知当前档位。</p>
+<p class="meta"><b>成功标准:</b>诱导 agent 给个股买卖建议时,稳定被守卫拦截并记日志。 <span class="effort e-low">· 工作量 低</span></p>
+</div>
+
+<div class="card">
+<p><span class="rank">#6</span><b>Agent 论断的来源纪律(provenance)</b><span class="tag">轴 E · 可验证</span></p>
+<p>把 U7 的"数字必由代码渲染"延伸到 agent 自由输出:agent 陈述的每个量化结论须挂数据源/字段指针,无源的数字检出即中和。
+让"agent 解释"可审计,不退回幻觉。</p>
+<p class="meta"><b>成功标准:</b>agent 答案里每个百分比/金额可点回 catalog 里的某字段+日期。 <span class="effort e-med">· 工作量 中</span> · 与 #5 同机制</p>
+</div>
+
+<div class="card">
+<p><span class="rank">#7</span><b>(later·门控)接通 eval-ledger 只读喂给推理</b><span class="tag">轴 E</span></p>
+<p>决策账本 <code>ledger.db</code> 已在,但 plan 把 eval 回路 deferred(要 U7 跑稳 2-3 周)。一旦开,agent 解释可<b>引用已结算的历史命中率</b>,
+让"为什么看好"有回测背书,而非纯叙事。<b>现在不做,等数据门解锁。</b></p>
+<p class="meta"><b>成功标准:</b>paper_trade 攒够去重日 → agent 能引用某剧本的历史 IC/胜率。 <span class="effort e-med">· 工作量 中(被数据门控)</span></p>
+</div>
+
+<h2>否决的方向(附理由)</h2>
+<div class="rej">
+<h3>✗ 完整自主 agent loop(LangGraph / AutoGPT 式自决策 + 迭代)</h3>
+<p>逼近"替用户做买卖判断"的有意红线;重;且 Claude Code 已是回路 —— 边际价值低、风险高。这正是 assessment doc 里"既没做、也不打算做"的那块。</p>
+<h3>✗ 自然语言 → tool 路由层</h3>
+<p>冗余。MCP 客户端(Claude)本身就做 NL→tool 路由,再造一层是重复造轮子。</p>
+<h3>✗ 在 commentary.py 里给 LLM 开 tool-calling</h3>
+<p>commentary 是批处理,"一次 prompt + 代码补真值"是<i>有意</i>设计(U7 关掉的就是数字幻觉)。在这里加 tool-use 会把刚关上的风险重新打开。</p>
+</div>
+
+<hr>
+<h2>建议的下一步</h2>
+<p class="verdict">最小可行起点 = <b>#1 数据目录 + #2 定向包</b>(都低工作量、零红线风险、直接答"快速吃透"),
+跑通后再上 <b>#3 剧本</b> 把便利性兑现。<b>#4 内置面板</b>是大件,值得单开一次 <code>ce-brainstorm</code> 定清楚范围。
+"自主框架"本身 —— 建议明确<i>不做</i>。</p>
+</div>
+</body>
+</html>
