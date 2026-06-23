@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  分时收盘采集 launchd 模板（仓库首个 render-plist；KTD6 / D4 / SG6）.
+
+  这是**模板**，不直接部署。由 scripts/render_intraday_launchd_plist.py 确定性渲染：
+    python3 scripts/render_intraday_launchd_plist.py \
+        --project-root <abs code root> \
+        --state-root   <abs state root> \
+        --output deploy/launchd/com.zcdeng.kss.collect_intraday.plist
+
+  占位符（渲染器全部解析为绝对路径；任一残留 → 渲染器拒绝、非零退出、不写文件）：
+    __WRAPPER__       -> <project-root>/scripts/run_collect_intraday.sh
+    __PROJECT_ROOT__  -> 代码根（bridge glob 落点；WorkingDirectory）
+    __STATE_ROOT__    -> 状态根（运行期路径；EnvironmentVariables.KSS_STATE_ROOT）
+    __STDOUT_PATH__   -> <state-root>/storage/logs/launchd/collect_intraday.log
+    __STDERR_PATH__   -> 同上
+
+  Label 必须 == 文件名 stem com.zcdeng.kss.collect_intraday（bridge 白名单/selfcheck）.
+  EnvironmentVariables 只注入 KSS_STATE_ROOT（仓库首例）；TUSHARE_TOKEN 绝不出现（S5）.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.zcdeng.kss.collect_intraday</string>
+
+    <!-- 分时收盘采集 - 每个交易日 15:05（收盘后；trade_cal 在采集器内确认交易日） -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key><integer>15</integer>
+        <key>Minute</key><integer>5</integer>
+    </dict>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__WRAPPER__</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__PROJECT_ROOT__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/zcdeng</string>
+        <key>KSS_STATE_ROOT</key>
+        <string>__STATE_ROOT__</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__STDOUT_PATH__</string>
+    <key>StandardErrorPath</key>
+    <string>__STDERR_PATH__</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+</dict>
+</plist>

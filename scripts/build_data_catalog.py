@@ -41,13 +41,36 @@ STATE_ROOT = _env_path("KSS_STATE_ROOT") or PROJECT_ROOT
 OVERLAY_PATH = PROJECT_ROOT / "kss" / "config" / "data_catalog_meta.yaml"
 OUTPUT_PATH = STATE_ROOT / "storage" / "data_catalog.json"
 
+# 分时库(intraday_quotes.db)的反射策略(KTD5/S5)：只反射 allowlist 内的表；
+# 永不反射 BLOB 列(payload_blobs.payload)，payload_blobs/payload_observations 整表排除；
+# 另排除可能携带脱敏后仍敏感文本的自由文本列(error_summary/details_json/missing_json)。
+_INTRADAY_TABLE_ALLOWLIST = frozenset({
+    "ingest_runs",
+    "coverage_assessments",
+    "instrument_registry",
+    "session_profiles",
+    "provider_bar_contracts",
+    "canonical_bars",
+})
+# 即便在 allowlist 表内，这些自由文本列也从 catalog 反射排除(S5)。
+_INTRADAY_EXCLUDED_COLUMNS = frozenset({
+    "ingest_runs.error_summary",
+    "coverage_assessments.details_json",
+    "coverage_assessments.missing_json",
+})
+
 # *.db 资产白名单(相对 STATE_ROOT / PROJECT_ROOT)，显式枚举以排除 .build/.cache 构建产物(KTD-4)。
+# 每项：(根, 子路径, 描述, table_allowlist | None, excluded_columns)。
+#   table_allowlist=None → 全表反射(既有日频库行为不变)；
+#   非 None → 仅反射列出的表，且按 excluded_columns 滤列(KTD5 分时库专用)。
 _DB_CANDIDATES = [
-    (STATE_ROOT, "storage/kss_quotes.db", "行情库"),
-    (STATE_ROOT, "storage/prediction_ledger/ledger.db", "决策账本"),
-    (STATE_ROOT, "storage/factor_health/factor_health.db", "因子健康"),
-    (STATE_ROOT, "storage/kronos/predictions.sqlite", "Kronos 预测"),
-    (PROJECT_ROOT, "datasette/kss.db", "datasette 探索库"),
+    (STATE_ROOT, "storage/kss_quotes.db", "行情库", None, frozenset()),
+    (STATE_ROOT, "storage/prediction_ledger/ledger.db", "决策账本", None, frozenset()),
+    (STATE_ROOT, "storage/factor_health/factor_health.db", "因子健康", None, frozenset()),
+    (STATE_ROOT, "storage/kronos/predictions.sqlite", "Kronos 预测", None, frozenset()),
+    (PROJECT_ROOT, "datasette/kss.db", "datasette 探索库", None, frozenset()),
+    (STATE_ROOT, "storage/intraday_quotes.db", "分时隔离库(PIT-safe)",
+     _INTRADAY_TABLE_ALLOWLIST, _INTRADAY_EXCLUDED_COLUMNS),
 ]
 
 # 目录数据集(json/md)：name → (相对根, 子路径, 文件 glob, 日期解析提示)
@@ -167,25 +190,80 @@ def _csv_latest(path: Path, header: list[str], date_col: str | None) -> str | No
     return last
 
 
-def _build_sqlite_dataset(name: str, path: Path, desc: str) -> dict[str, Any]:
+def _is_blob_dtype(dtype: Any) -> bool:
+    """SQLite 声明类型含 BLOB 即视为 BLOB 列(KTD5：catalog 永不暴露 BLOB)。"""
+    return "blob" in str(dtype or "").lower()
+
+
+def _build_sqlite_dataset(
+    name: str,
+    path: Path,
+    desc: str,
+    *,
+    table_allowlist: frozenset[str] | None = None,
+    excluded_columns: frozenset[str] = frozenset(),
+    overlay: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """反射 sqlite schema。
+
+    既有日频库：``table_allowlist=None`` → 全表全列反射(行为不变)。
+    分时库(KTD5/S5)：``table_allowlist`` 限定可见表；BLOB 列与 ``excluded_columns``
+    里的 ``<table>.<column>`` 自由文本列从反射结果剔除(凭据/敏感文本永不进 catalog)。
+
+    overlay 结构（per-table 含义）::
+
+        intraday_quotes:
+          tables:
+            ingest_runs:
+              meanings: {run_id: ..., provider: ...}
+
+    overlayDrift = overlay 写了含义但反射后不存在(被排除/改名/删除)的 ``<table>.<col>``
+    列；沿 ``main()`` 现有告警路径(KTD-1 fail-loud，build_data_catalog.py:80-91 同语义)。
+    """
+    ov = (overlay or {}).get(name, {})
+    ov_tables: dict[str, Any] = ov.get("tables", {}) or {}
     tables: list[dict] = []
+    drift: list[str] = []
+    reflected_cols: dict[str, set[str]] = {}
     con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     try:
         cur = con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
         for (tbl,) in cur.fetchall():
+            if table_allowlist is not None and tbl not in table_allowlist:
+                continue  # allowlist 外的表(含 payload_blobs/payload_observations)整表排除
             safe_tbl, _ = _safe_name(tbl)
             info = con.execute(f"PRAGMA table_info('{tbl}')").fetchall()
+            tbl_meanings = (ov_tables.get(tbl, {}) or {}).get("meanings", {}) or {}
+            present: set[str] = set()
             tcols = []
             for row in info:
-                safe_c, flagged = _safe_name(row[1])
-                c = {"name": safe_c, "dtype": row[2]}
+                col_name = row[1]
+                if _is_blob_dtype(row[2]):
+                    continue  # BLOB 列永不暴露
+                if f"{tbl}.{col_name}" in excluded_columns:
+                    continue  # S5：自由文本列排除
+                present.add(col_name)
+                safe_c, flagged = _safe_name(col_name)
+                c = {"name": safe_c, "dtype": row[2],
+                     "meaning": tbl_meanings.get(col_name, "")}
                 if flagged:
                     c["flagged"] = True
                 tcols.append(c)
+            reflected_cols[tbl] = present
             tables.append({"table": safe_tbl, "columns": tcols})
     finally:
         con.close()
-    return {
+    # overlayDrift：overlay 含义指向已反射表里不存在的列(改名/删除信号，KTD-1)。
+    # 仅对**已反射的表**判漂移——表整体不在反射集(未建/不在 allowlist)不算列漂移；
+    # 被显式排除的敏感列(excluded_columns)也不算漂移(属正常排除)。
+    for tbl in reflected_cols:
+        meanings = (ov_tables.get(tbl, {}) or {}).get("meanings", {}) or {}
+        present = reflected_cols[tbl]
+        for col in meanings:
+            qualified = f"{tbl}.{col}"
+            if col not in present and qualified not in excluded_columns:
+                drift.append(qualified)
+    ds = {
         "name": name,
         "kind": "sqlite",
         "root": "project" if path.is_relative_to(PROJECT_ROOT) else "state",
@@ -194,6 +272,9 @@ def _build_sqlite_dataset(name: str, path: Path, desc: str) -> dict[str, Any]:
         "source": desc,
         "tables": tables,
     }
+    if drift:
+        ds["overlayDrift"] = drift
+    return ds
 
 
 def _build_dir_dataset(name: str, root: Path, sub: str, glob: str, desc: str) -> dict[str, Any] | None:
@@ -265,13 +346,18 @@ def build_catalog(overlay: dict[str, Any] | None = None) -> tuple[dict[str, Any]
         except Exception as exc:  # noqa: BLE001
             datasets.append({"name": nm, "kind": "csv-glob", "error": f"read failed: {exc}"})
 
-    for root, sub, desc in _DB_CANDIDATES:
+    for root, sub, desc, allowlist, excluded in _DB_CANDIDATES:
         p = root / sub
         if not p.exists():
             continue
         nm = Path(sub).stem
         try:
-            datasets.append(_build_sqlite_dataset(nm, p, desc))
+            datasets.append(_build_sqlite_dataset(
+                nm, p, desc,
+                table_allowlist=allowlist,
+                excluded_columns=excluded,
+                overlay=overlay,
+            ))
         except Exception as exc:  # noqa: BLE001
             datasets.append({"name": nm, "kind": "sqlite", "path": _rel(p),
                              "error": f"introspect failed: {exc}"})

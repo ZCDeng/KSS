@@ -2605,8 +2605,15 @@ LABEL_TITLES = {
     "data_catalog_daily": "数据目录刷新",
     "factor_health": "因子健康度",
     "ledger_settle": "纸交易结算",
+    "collect_intraday": "分时收盘采集",
     "selfcheck": "开机自检补跑",
 }
+
+# 漏跑可见但**不补跑**的 label 集合（评审 F1）。分时分钟快照漏跑**不可由重触发恢复**——
+# 重跑 collect_intraday 只拉当前滚动窗 session，会掩盖 permanent_gap（窗外永久 gap 只能
+# 由后续 Tushare 历史 proxy 填）。故仍入 selfcheck/任务页报 staleness（可见性），但
+# _kickstart_labels 显式跳过其 kickstart。
+NO_CATCHUP_LABELS = {"com.zcdeng.kss.collect_intraday"}
 
 # label 后缀 → 分类（任务页按此分组 + 批量重跑）。
 LABEL_CATEGORY = {
@@ -2618,6 +2625,7 @@ LABEL_CATEGORY = {
     "hotspot_rotation_daily": "板块复盘",
     "trends_archive_daily": "数据更新",
     "data_catalog_daily": "数据更新",
+    "collect_intraday": "数据更新",
     "paper_trade_daily": "纸交易",
     "paper_trade_weekly": "纸交易",
     "prediction_validation_weekly": "校验回测",
@@ -2916,7 +2924,9 @@ def _kickstart_labels(labels: list[str], require_stale: bool) -> dict[str, Any]:
     ran: list[dict[str, Any]] = []
     skipped: list[str] = []
     for label in labels:
-        if label not in plists or label.endswith(".selfcheck"):
+        # selfcheck 自身永不递归补跑；NO_CATCHUP_LABELS（分时分钟快照，F1）报 stale
+        # 但不可重触发恢复 —— 显式跳过 kickstart，避免重跑掩盖 permanent_gap。
+        if label not in plists or label.endswith(".selfcheck") or label in NO_CATCHUP_LABELS:
             skipped.append(label)
             continue
         job = _scheduled_job(label, plists[label], uid, disabled)

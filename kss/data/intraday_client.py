@@ -1,0 +1,427 @@
+"""分时数据 provider 协议 + 东财(AKShare)前向适配 + 能力门控.
+
+两条硬约束传入本模块（plan U1 / PRD F1）：
+
+1. **数据层契约**（``kss/AGENTS.md``）：取数失败**不抛异常**，返回带 ``error``
+   的 :class:`FetchResult`；重试/退避复用 ``tushare_client._fetch_with_retry`` 思路。
+2. **PIT 红线**（``docs/solutions/dragon_tiger_integration_retrospective.md``）：
+   AKShare/东财 分钟流按定义是**非-PIT 实时层**，能力门控**结构上**只允许
+   ``forward_observed`` / ``research_only``，**绝不** ``pit_backtest_eligible``。
+   历史 PIT 准入（Tushare proxy）仅产出分类，不在本计划建读路径（决策 D1）。
+
+能力门控 :func:`classify_eligibility` 是**确定性纯函数**（不是模型判断）：把
+「provider 是否前向源 / 各项证据是否齐」映射到 eligibility，便于 U1 测试钉死。
+"""
+
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any, Protocol, runtime_checkable
+
+
+class Eligibility(str, Enum):
+    """provider/observation 的回测准入分级（与 test-spec U8 / 准入测试对齐）.
+
+    取值与 PRD 词表一致；序列化即字符串值（``str`` 基类）。
+    """
+
+    PIT_BACKTEST_ELIGIBLE = "pit_backtest_eligible"
+    FORWARD_OBSERVED = "forward_observed"
+    RESEARCH_ONLY = "research_only"
+    FAILED = "failed"
+
+
+# 前向-only 实时层 provider 名集合：这些源**结构上**不可进 PIT 回测（红线）。
+# 任何此集合内的 provider，无论响应多完整，eligibility 上限都是 forward_observed。
+FORWARD_ONLY_PROVIDERS: frozenset[str] = frozenset(
+    {"eastmoney_akshare", "eastmoney_direct"}
+)
+
+# 东财 1m 分钟接口的已知上游限制：仅近 ~5 个交易日（与 akshare 上游一致）。
+EASTMOTNEY_1M_MAX_HISTORY_DAYS: int = 5
+
+# 东财(akshare)分钟响应的原始中文列 → canonical 字段名映射。
+# U1 仅用于**记录字段映射 / 探针可见**；真正的归一化在 U3（canonical 层）。
+EM_COLUMN_MAP: dict[str, str] = {
+    "时间": "bar_ts",
+    "开盘": "open",
+    "收盘": "close",
+    "最高": "high",
+    "最低": "low",
+    "成交量": "volume",
+    "成交额": "amount",
+    "涨跌幅": "pct_change",
+    "涨跌额": "change",
+    "振幅": "amplitude",
+    "换手率": "turnover_rate",
+    "均价": "vwap",
+    "最新价": "last",
+}
+
+
+@dataclass(frozen=True)
+class FetchResult:
+    """单次 ``fetch_bars`` 的取数结果（永不抛异常，失败走 ``error``）.
+
+    Attributes:
+        rows: 原始行（保留 provider 原始列名，未归一化）；失败时为空 list。
+        raw_columns: 响应列名（按出现序），用于探针 schema-hash 与字段映射。
+        source_asof_ts: provider 数据的 as-of 时点（ISO-8601 带时区）；前向源
+            取「响应内最晚 bar 时间」，无法判定时为 ``None``。
+        status_code: HTTP 状态码（成功 200）；异常路径无从得知时 ``None``。
+        latency_ms: 本次请求耗时（毫秒）。
+        error: 失败原因（已脱去凭据的简述）；成功时 ``None``。
+    """
+
+    rows: list[dict[str, Any]]
+    raw_columns: tuple[str, ...]
+    source_asof_ts: str | None
+    status_code: int | None
+    latency_ms: float
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None and bool(self.rows)
+
+
+@dataclass(frozen=True)
+class CapabilityResult:
+    """provider 能力门控结果（探针报告的核心分类）.
+
+    ``eligibility`` 由 :func:`classify_eligibility` 产出，绝不由调用方手填，
+    避免「前向源被误标 pit_backtest_eligible」这类红线破坏散落各处。
+    """
+
+    provider: str
+    version: str
+    supported_intervals: tuple[int, ...]
+    supported_assets: tuple[str, ...]
+    max_history_days: int | None
+    eligibility: Eligibility
+    reachable: bool
+    # 历史 PIT 证据旗标（仅 Tushare 历史分类路径会填；前向源全 None）。
+    has_entitlement: bool | None = None
+    requested_history_ok: bool | None = None
+    correction_policy_known: bool | None = None
+    has_frozen_manifest_evidence: bool | None = None
+    has_availability_proxy: bool | None = None
+    notes: tuple[str, ...] = ()
+
+
+@runtime_checkable
+class IntradayProvider(Protocol):
+    """分时 provider 协议（U1 定义；适配器各自实现）.
+
+    实现方**禁止**在 ``fetch_bars`` 抛异常——异常即数据层契约违例。
+    """
+
+    name: str
+    version: str
+
+    def supported_intervals(self) -> tuple[int, ...]:
+        """支持的分钟周期（如 ``(1, 5, 15, 30, 60)``）。"""
+        ...
+
+    def supported_assets(self) -> tuple[str, ...]:
+        """支持的标的类型（``stock`` / ``etf`` / ``index``）。"""
+        ...
+
+    def fetch_bars(
+        self,
+        symbol: str,
+        *,
+        interval_minutes: int,
+        asset_kind: str,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> FetchResult:
+        """拉取分钟 bar（失败返回带 ``error`` 的 :class:`FetchResult`，不抛）。"""
+        ...
+
+    def capability(self) -> CapabilityResult:
+        """能力门控分类（eligibility 由确定性门控函数产出）。"""
+        ...
+
+
+def classify_eligibility(
+    provider_name: str,
+    *,
+    reachable: bool,
+    has_entitlement: bool | None = None,
+    requested_history_ok: bool | None = None,
+    correction_policy_known: bool | None = None,
+    has_frozen_manifest_evidence: bool | None = None,
+    has_availability_proxy: bool | None = None,
+) -> Eligibility:
+    """把 provider 可达性 + 历史证据旗标映射到 eligibility（确定性纯函数）.
+
+    判定顺序（红线优先）：
+
+    1. **不可达** → ``failed``（错误/权限/覆盖 stub 失败都落这；test-spec U8）。
+    2. **前向-only 源**（AKShare/东财）→ 恒 ``forward_observed``——无论响应多全，
+       结构上不可进 PIT（红线）。1m 5 日限制是上游约束，不影响前向分级。
+    3. **历史路径**（如 Tushare）：仅当**全部**证据为 ``True`` 才
+       ``pit_backtest_eligible``；entitlement/coverage/correction 任一未知 → 对
+       历史分钟回测**硬失败**，但其前向源若可用仍可影子采集 → ``research_only``。
+
+    Args:
+        provider_name: provider 名（用于判定是否前向-only 源）。
+        reachable: 探针是否成功触达该源（连通 + 有响应）。
+        has_entitlement: 是否有历史分钟权限（Tushare 路径）。
+        requested_history_ok: 请求的历史覆盖是否满足。
+        correction_policy_known: 修正/重述政策是否明确。
+        has_frozen_manifest_evidence: 是否有冻结 manifest 证据。
+        has_availability_proxy: 是否有文档化的保守 ``available_from_ts`` 代理（D2）。
+
+    Returns:
+        :class:`Eligibility` 分级。
+    """
+    if not reachable:
+        return Eligibility.FAILED
+
+    if provider_name in FORWARD_ONLY_PROVIDERS:
+        # 非-PIT 实时层：永远 forward_observed，绝不 pit_backtest_eligible。
+        return Eligibility.FORWARD_OBSERVED
+
+    # 历史路径：全证据齐才放行 PIT；否则降级为 research_only（影子可续）。
+    evidence = (
+        has_entitlement,
+        requested_history_ok,
+        correction_policy_known,
+        has_frozen_manifest_evidence,
+        has_availability_proxy,
+    )
+    if all(flag is True for flag in evidence):
+        return Eligibility.PIT_BACKTEST_ELIGIBLE
+    return Eligibility.RESEARCH_ONLY
+
+
+# --------------------------------------------------------------------------- #
+# 东财(AKShare)前向适配
+# --------------------------------------------------------------------------- #
+
+# akshare 分钟接口按标的类型分流（已实测签名）：
+#   stock -> stock_zh_a_hist_min_em(symbol, start_date, end_date, period, adjust)
+#   etf   -> fund_etf_hist_min_em(symbol, start_date, end_date, period, adjust)
+#   index -> index_zh_a_hist_min_em(symbol, period, start_date, end_date)  # 无 adjust
+_EM_ASSET_FUNCS: dict[str, str] = {
+    "stock": "stock_zh_a_hist_min_em",
+    "etf": "fund_etf_hist_min_em",
+    "index": "index_zh_a_hist_min_em",
+}
+
+_SHANGHAI_TZ = "Asia/Shanghai"
+
+
+def _to_iso_shanghai(naive_ts: str) -> str | None:
+    """把东财裸时间串 ``YYYY-MM-DD HH:MM:SS`` 定位到 Asia/Shanghai 的 ISO-8601.
+
+    KTD7：``bar_end_ts`` 规范为带时区 ISO-8601（Asia/Shanghai）。解析失败返回
+    ``None``（U1 不做严格校验，那是 U3 的事）。
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            dt = datetime.strptime(naive_ts.strip(), fmt)
+        except (ValueError, AttributeError):
+            continue
+        return dt.replace(tzinfo=ZoneInfo(_SHANGHAI_TZ)).isoformat()
+    return None
+
+
+class EastmoneyAkshareProvider:
+    """东财分钟前向适配（经 akshare）。前向-only，永不 PIT.
+
+    akshare 是国内直连接口，沿用 ``TushareClient._bypass_system_proxy`` 同思路
+    把东财域名加入 ``NO_PROXY``，避免 macOS 系统代理（Clash）挂起拖垮采集。
+    """
+
+    name = "eastmoney_akshare"
+
+    # 东财域名（push2his.eastmoney.com 等）走直连，绕系统代理。
+    _BYPASS_HOSTS = ("eastmoney.com", "push2his.eastmoney.com", "quote.eastmoney.com")
+
+    def __init__(self) -> None:
+        self._bypass_system_proxy()
+        self.version = self._resolve_version()
+
+    @staticmethod
+    def _resolve_version() -> str:
+        try:
+            import akshare  # noqa: PLC0415
+
+            return f"akshare-{getattr(akshare, '__version__', 'unknown')}"
+        except Exception:  # noqa: BLE001 — 缺包不致命，版本记 unknown
+            return "akshare-unavailable"
+
+    @classmethod
+    def _bypass_system_proxy(cls) -> None:
+        """把东财域名追加进 NO_PROXY（追加非覆盖；大小写双写），同 tushare 思路。"""
+        import os
+
+        existing = os.environ.get("no_proxy") or os.environ.get("NO_PROXY") or ""
+        hosts = [h.strip() for h in existing.split(",") if h.strip()]
+        for host in cls._BYPASS_HOSTS:
+            if host not in hosts:
+                hosts.append(host)
+        merged = ",".join(hosts)
+        os.environ["NO_PROXY"] = merged
+        os.environ["no_proxy"] = merged
+
+    def supported_intervals(self) -> tuple[int, ...]:
+        return (1, 5, 15, 30, 60)
+
+    def supported_assets(self) -> tuple[str, ...]:
+        return ("stock", "etf", "index")
+
+    def capability(self) -> CapabilityResult:
+        """能力门控：可达性由「能否 import akshare」近似（真实触达在 fetch_bars）。"""
+        reachable = self.version != "akshare-unavailable"
+        eligibility = classify_eligibility(self.name, reachable=reachable)
+        return CapabilityResult(
+            provider=self.name,
+            version=self.version,
+            supported_intervals=self.supported_intervals(),
+            supported_assets=self.supported_assets(),
+            max_history_days=EASTMOTNEY_1M_MAX_HISTORY_DAYS,
+            eligibility=eligibility,
+            reachable=reachable,
+            notes=("东财1m仅近5交易日（上游限制）", "前向-only：结构上不可进PIT回测"),
+        )
+
+    def fetch_bars(
+        self,
+        symbol: str,
+        *,
+        interval_minutes: int,
+        asset_kind: str,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> FetchResult:
+        """拉取东财分钟 bar（异常吞为 error，遵循数据层契约）。"""
+        t0 = time.monotonic()
+        fn_name = _EM_ASSET_FUNCS.get(asset_kind)
+        if fn_name is None:
+            return FetchResult(
+                rows=[],
+                raw_columns=(),
+                source_asof_ts=None,
+                status_code=None,
+                latency_ms=(time.monotonic() - t0) * 1000.0,
+                error=f"unsupported asset_kind={asset_kind!r}",
+            )
+        try:
+            import akshare  # noqa: PLC0415
+
+            fn = getattr(akshare, fn_name)
+            kwargs: dict[str, Any] = {"symbol": symbol, "period": str(interval_minutes)}
+            if start:
+                kwargs["start_date"] = start
+            if end:
+                kwargs["end_date"] = end
+            # index 接口无 adjust 参数；stock/etf 显式空 adjust（原价，复权另算）。
+            if asset_kind != "index":
+                kwargs["adjust"] = ""
+            df = fn(**kwargs)
+        except Exception as exc:  # noqa: BLE001 — 数据层不抛
+            return FetchResult(
+                rows=[],
+                raw_columns=(),
+                source_asof_ts=None,
+                status_code=None,
+                latency_ms=(time.monotonic() - t0) * 1000.0,
+                error=_short_error(exc),
+            )
+
+        latency_ms = (time.monotonic() - t0) * 1000.0
+        if df is None or getattr(df, "empty", True):
+            cols = getattr(df, "columns", None)
+            empty_columns = tuple(str(c) for c in cols) if cols is not None else ()
+            return FetchResult(
+                rows=[],
+                raw_columns=empty_columns,
+                source_asof_ts=None,
+                status_code=200,
+                latency_ms=latency_ms,
+                error="empty response",
+            )
+
+        raw_columns = tuple(str(c) for c in df.columns)
+        rows = df.to_dict(orient="records")
+        source_asof_ts = _latest_bar_ts(rows)
+        return FetchResult(
+            rows=rows,
+            raw_columns=raw_columns,
+            source_asof_ts=source_asof_ts,
+            status_code=200,
+            latency_ms=latency_ms,
+            error=None,
+        )
+
+
+def _short_error(exc: Exception) -> str:
+    """异常转简短字符串（截断，避免把整段堆栈/可能含敏感串塞进报告）。"""
+    text = f"{type(exc).__name__}: {exc}"
+    return text[:200]
+
+
+def _latest_bar_ts(rows: list[dict[str, Any]]) -> str | None:
+    """从原始行里取最晚 bar 时间并定位到 Asia/Shanghai ISO-8601。"""
+    times = [str(r.get("时间")) for r in rows if r.get("时间") is not None]
+    if not times:
+        return None
+    return _to_iso_shanghai(max(times))
+
+
+def schema_hash(raw_columns: tuple[str, ...]) -> str:
+    """对响应列名集合算 SHA-256（排序后），用于 U3 schema 漂移冻结对比。"""
+    import hashlib
+
+    joined = "|".join(sorted(raw_columns))
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class RepresentativeSymbol:
+    """探针代表性标的（A6：含至少一个稀薄标的以免 delay/零成交模式失真）。"""
+
+    symbol: str
+    asset_kind: str
+    label: str
+    liquidity_tier: str = "normal"  # normal | thin
+
+
+# 10 个代表性标的：科创/创业个股 + ETF + 指数，含 1 个稀薄标的（A6）。
+DEFAULT_PROBE_UNIVERSE: tuple[RepresentativeSymbol, ...] = (
+    RepresentativeSymbol("688008", "stock", "科创-澜起科技"),
+    RepresentativeSymbol("688009", "stock", "科创-中国通号"),
+    RepresentativeSymbol("688012", "stock", "科创-中微公司"),
+    RepresentativeSymbol("300750", "stock", "创业-宁德时代"),
+    RepresentativeSymbol("300059", "stock", "创业-东方财富"),
+    RepresentativeSymbol("688041", "stock", "科创-海光信息", liquidity_tier="thin"),
+    RepresentativeSymbol("588000", "etf", "科创50ETF"),
+    RepresentativeSymbol("159915", "etf", "创业板ETF"),
+    RepresentativeSymbol("000688", "index", "科创50指数"),
+    RepresentativeSymbol("399006", "index", "创业板指"),
+)
+
+
+__all__ = [
+    "DEFAULT_PROBE_UNIVERSE",
+    "EASTMOTNEY_1M_MAX_HISTORY_DAYS",
+    "EM_COLUMN_MAP",
+    "EastmoneyAkshareProvider",
+    "Eligibility",
+    "FORWARD_ONLY_PROVIDERS",
+    "CapabilityResult",
+    "FetchResult",
+    "IntradayProvider",
+    "RepresentativeSymbol",
+    "classify_eligibility",
+    "schema_hash",
+]

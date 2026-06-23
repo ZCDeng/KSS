@@ -113,6 +113,7 @@ class TestTushareClient:
     def test_resolve_token_not_found(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """测试无 token 时返回空字符串."""
         monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+        monkeypatch.delenv("KSS_STATE_ROOT", raising=False)
         monkeypatch.chdir(tmp_path)
         TushareClient._instance = None
         TushareClient._pro = None
@@ -120,6 +121,40 @@ class TestTushareClient:
         client = TushareClient()
         token = client._resolve_token()
         assert token == ""
+
+    def test_resolve_token_from_state_root_secrets(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """KTD4：无 env 时从 $KSS_STATE_ROOT/secrets/tushare_token 读（U6 部署路径）."""
+        monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+        secrets = tmp_path / "secrets"
+        secrets.mkdir()
+        (secrets / "tushare_token").write_text("state_root_token_abc\n")
+        monkeypatch.setenv("KSS_STATE_ROOT", str(tmp_path))
+        # cwd 不含任何 token 文件，避免误命中其它候选。
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+        monkeypatch.chdir(cwd)
+        TushareClient._instance = None
+        TushareClient._pro = None
+
+        client = TushareClient()
+        assert client._resolve_token() == "state_root_token_abc"
+
+    def test_resolve_token_env_first_over_state_root(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """S6/KTD4：env 仍**首位**——同时存在时取 env，不取 secrets 文件."""
+        secrets = tmp_path / "secrets"
+        secrets.mkdir()
+        (secrets / "tushare_token").write_text("from_secrets_file\n")
+        monkeypatch.setenv("KSS_STATE_ROOT", str(tmp_path))
+        monkeypatch.setenv("TUSHARE_TOKEN", "env_wins_token")
+        TushareClient._instance = None
+        TushareClient._pro = None
+
+        client = TushareClient()
+        assert client._resolve_token() == "env_wins_token"
 
 
 # ====================================================================== #

@@ -120,12 +120,29 @@ class TushareClient:
 
     @staticmethod
     def _resolve_token() -> str:
-        """Find tushare token from env or known file paths."""
+        """Find tushare token from env or known file paths.
+
+        解析优先级（KTD4/S6 定型为 **env-first**）：
+        1. ``TUSHARE_TOKEN`` 环境变量（dev 覆盖入口，**首位**；operator 须保证
+           运行环境无陈旧 token）。
+        2. ``$KSS_STATE_ROOT/secrets/tushare_token``（0600、git-ignored；
+           bundle/launchd 部署的规范 secret 落点——U6 渲染的 plist **只**注入
+           ``KSS_STATE_ROOT`` env，采集器据此 root 解析此文件，token 绝不进 plist）。
+        3. 历史已知文件路径（``~/.tushare/token`` / cwd 文件）。
+
+        选 env-first 而非 secrets-first：保持与 ``S6`` 定型一致（env 是 dev 覆盖，
+        secrets 是部署默认），且 launchd plist 不带 ``TUSHARE_TOKEN``，故生产路径
+        自然落到 secrets 文件，不被陈旧 env 误用。
+        """
         token = os.environ.get("TUSHARE_TOKEN", "").strip()
         if token:
             return token
 
-        candidates = [
+        state_root = os.environ.get("KSS_STATE_ROOT", "").strip()
+        candidates: list[Path] = []
+        if state_root:
+            candidates.append(Path(state_root).expanduser() / "secrets" / "tushare_token")
+        candidates += [
             Path.home() / ".tushare" / "token",
             Path(".tushare_token"),
             Path("tushare_token.txt"),
