@@ -128,6 +128,24 @@ def run_recipe(name: str, args: str = "") -> dict:
     return _call("run-recipe", [name, args])
 
 
+@mcp.tool
+def research_search(query: str, limit: int = 5) -> dict:
+    """搜索外部资料作为 evidence-only 背景；不得覆盖 KSS 本地工具真值。"""
+    return _call("research-search", [query, str(limit)])
+
+
+@mcp.tool
+def research_fetch(url: str, max_chars: int = 8000) -> dict:
+    """抓取一个外部 URL 的 evidence-only 摘要；带 SSRF 护栏。"""
+    return _call("research-fetch", [url, str(max_chars)])
+
+
+@mcp.tool
+def research_bundle(query: str, limit: int = 3, max_chars_per_source: int = 3000) -> dict:
+    """搜索并抓取外部证据 bundle，返回 URL/retrievedAt/sourceTier/excerpt ledger。"""
+    return _call("research-bundle", [query, str(limit), str(max_chars_per_source)])
+
+
 # ---- 写命令（paper-only：仅 KSS_MCP_LIVE=1 注册，且每调用须 confirm）----
 
 if _LIVE:

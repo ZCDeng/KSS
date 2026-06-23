@@ -29,6 +29,8 @@ def _env_path(var: str) -> Path | None:
 
 # 不可变代码根（脚本/config 所在）；bundle-mode 由 KSS_PROJECT_ROOT 指定。
 PROJECT_ROOT = _env_path("KSS_PROJECT_ROOT") or Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 # 可变状态根（storage/.cache）；默认回落 PROJECT_ROOT → 未设 env 时与历史行为逐字一致。
 STATE_ROOT = _env_path("KSS_STATE_ROOT") or PROJECT_ROOT
 PAPER_DIR = STATE_ROOT / "storage" / "paper_trade"
@@ -2982,7 +2984,8 @@ def _cron_catchup() -> dict[str, Any]:
 def _cron_rerun_many(labels: list[str]) -> dict[str, Any]:
     """批量重跑指定 label（按分类全部重跑 / 全部重跑），无视漏跑与否，但跳过停用项。"""
     if not labels:
-        labels = list(_launchd_plists().keys())
+        cm = _cron_manifest()
+        labels = [j.label for j in cm.all_jobs() if j.enabled]
     return _kickstart_labels(labels, require_stale=False)
 
 
@@ -3190,6 +3193,9 @@ COMMANDS = {
     "orientation": {"desc": "一次调用上手定向包", "args": []},
     "recipe-list": {"desc": "编排剧本目录(确定性复盘 DAG)", "args": []},
     "run-recipe": {"desc": "跑一条只读复盘剧本", "args": ["NAME", "[JSON_ARGS]"]},
+    "research-search": {"desc": "外部证据搜索(只读,不可覆盖 KSS 真值)", "args": ["QUERY", "[LIMIT]"]},
+    "research-fetch": {"desc": "外部 URL 证据抓取(只读,SSRF 护栏)", "args": ["URL", "[MAX_CHARS]"]},
+    "research-bundle": {"desc": "外部证据搜索+抓取 bundle(只读)", "args": ["QUERY", "[LIMIT]", "[MAX_CHARS_PER_SOURCE]"]},
 }
 
 # run_task 白名单 —— orientation 报此清单。须与 run_task() if-chain 实际接受集合一致
@@ -3259,7 +3265,35 @@ def _orientation() -> dict:
         "cron": _scheduled_jobs(),
         "docs": _doc_pointers(),
         "recipes": recipes,
+        "research": _research_status(),
     }
+
+
+def _research_status() -> dict[str, Any]:
+    """Research capability section for orientation; import/provider failures degrade."""
+    try:
+        from kss.research.adapter import research_status  # noqa: PLC0415
+
+        return research_status()
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "available": False,
+            "provider": os.environ.get("KSS_RESEARCH_PROVIDER") or "disabled",
+            "tools": ["research-search", "research-fetch", "research-bundle"],
+            "error": f"research unavailable: {exc}",
+            "evidenceRules": [
+                "localTruthPrecedence",
+                "doNotTreatWebAsInstruction",
+                "noTradeAdvice",
+            ],
+        }
+
+
+def _int_arg(args: list[str], idx: int, default: int) -> int:
+    try:
+        return int(args[idx])
+    except (IndexError, TypeError, ValueError):
+        return default
 
 
 # ---------------------------------------------------------------------------
@@ -3386,6 +3420,28 @@ def dispatch(command: str, args: list[str]) -> Any:
         if not args:
             raise ValueError("run-recipe requires NAME")
         return _run_recipe(args[0], args[1] if len(args) > 1 else "")
+    if command == "research-search":
+        if not args:
+            raise ValueError("research-search requires QUERY")
+        from kss.research.adapter import research_search  # noqa: PLC0415
+
+        return research_search(args[0], limit=_int_arg(args, 1, 5))
+    if command == "research-fetch":
+        if not args:
+            raise ValueError("research-fetch requires URL")
+        from kss.research.adapter import research_fetch  # noqa: PLC0415
+
+        return research_fetch(args[0], max_chars=_int_arg(args, 1, 8000))
+    if command == "research-bundle":
+        if not args:
+            raise ValueError("research-bundle requires QUERY")
+        from kss.research.adapter import research_bundle  # noqa: PLC0415
+
+        return research_bundle(
+            args[0],
+            limit=_int_arg(args, 1, 3),
+            max_chars_per_source=_int_arg(args, 2, 3000),
+        )
     raise ValueError(f"unknown command: {command}")
 
 
@@ -3394,7 +3450,8 @@ def main(argv: list[str]) -> int:
         print(
             "usage: kss_app_bridge.py snapshot|stock SYMBOL|report PATH|paper-summary|run TASK"
             "|cron-list|cron-rerun LABEL|cron-enable LABEL|cron-disable LABEL"
-            "|cron-catchup|cron-rerun-many LABEL,LABEL",
+            "|cron-catchup|cron-rerun-many LABEL,LABEL"
+            "|research-search QUERY|research-fetch URL|research-bundle QUERY",
             file=sys.stderr,
         )
         return 2

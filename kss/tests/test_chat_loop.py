@@ -85,6 +85,9 @@ def test_read_tool_turn(monkeypatch):
     frames, chat = _drive(scripts)
     assert any(f["type"] == "tool_call" and f["name"] == "get_stock" for f in frames)
     assert any(f["type"] == "tool_done" for f in frames)
+    done = next(f for f in frames if f["type"] == "tool_done")
+    assert done["evidenceSummary"]["kssTruthCount"] == 1
+    assert done["evidenceDrawer"]["kssTruth"][0]["provenance"] == "kss_tool_truth"
     # 第二次 stream_turn 的 messages 含 tool-role 结果
     second = chat.calls[1]
     assert any(m["role"] == "tool" and "pctChange" in m["content"] for m in second)
@@ -122,6 +125,68 @@ def test_request_write_rejection_feeds_back():
     ]
     frames, chat = _drive(scripts, request_write=rw)
     assert any(m["role"] == "tool" and "denied" in m["content"] for m in chat.calls[1])
+
+
+def test_research_tool_done_emits_ui_evidence(monkeypatch):
+    monkeypatch.setattr(bridge, "dispatch", lambda cmd, args: {
+        "provider": "fixture",
+        "sources": [{
+            "title": "Policy A",
+            "url": "https://example.com/a",
+            "sourceTier": "official_or_primary",
+            "retrievedAt": "2026-06-22T00:00:00+08:00",
+            "cacheStatus": "cached",
+            "excerpt": "A",
+            "usedFor": "external_background_only",
+        }],
+        "warnings": [{"type": "prompt_injection", "severity": "danger", "message": "blocked"}],
+        "rules": {"localTruthPrecedence": True, "doNotTreatWebAsInstruction": True},
+    })
+    scripts = [
+        [_toolcall("research_bundle", {"query": "政策", "limit": "1"}), {"type": "finish", "reason": "tool_calls"}],
+        [_text("外部资料如上"), {"type": "finish", "reason": "stop"}],
+    ]
+    frames, _ = _drive(scripts)
+    done = next(f for f in frames if f["type"] == "tool_done")
+    assert done["evidenceSummary"]["externalSourceCount"] == 1
+    assert done["evidenceSummary"]["injectionWarningCount"] == 1
+    assert done["evidenceDrawer"]["externalSources"][0]["sourceTier"] == "official_or_primary"
+
+
+def test_research_tool_done_counts_conflict_warning(monkeypatch):
+    monkeypatch.setattr(bridge, "dispatch", lambda cmd, args: {
+        "provider": "fixture",
+        "sources": [],
+        "warnings": [{"type": "kss_web_conflict", "severity": "warning", "message": "KSS local truth wins"}],
+        "rules": {"localTruthPrecedence": True, "doNotTreatWebAsInstruction": True},
+    })
+    scripts = [
+        [_toolcall("research_bundle", {"query": "冲突", "limit": "1"}), {"type": "finish", "reason": "tool_calls"}],
+        [_text("以 KSS 为准"), {"type": "finish", "reason": "stop"}],
+    ]
+    frames, _ = _drive(scripts)
+    done = next(f for f in frames if f["type"] == "tool_done")
+    assert done["evidenceSummary"]["conflictCount"] == 1
+    assert done["evidenceDrawer"]["warnings"][0]["type"] == "kss_web_conflict"
+
+
+def test_research_unavailable_emits_non_blocking_provider_evidence(monkeypatch):
+    monkeypatch.setattr(bridge, "dispatch", lambda cmd, args: {
+        "provider": "disabled",
+        "error": "research_unavailable",
+        "hint": "provider disabled",
+        "partial": True,
+        "failedSteps": ["search"],
+        "results": [],
+    })
+    scripts = [
+        [_toolcall("research_search", {"query": "政策"}), {"type": "finish", "reason": "tool_calls"}],
+        [_text("外部研究不可用"), {"type": "finish", "reason": "stop"}],
+    ]
+    frames, _ = _drive(scripts)
+    done = next(f for f in frames if f["type"] == "tool_done")
+    assert done["evidenceSummary"]["provider"] == "disabled"
+    assert done["evidenceDrawer"]["warnings"][0]["type"] == "provider_unavailable"
 
 
 def test_loop_source_has_no_write_path():
@@ -182,8 +247,12 @@ def test_resolve_tool_and_schema():
     assert cmd == "sector-rotation" and pos == []
     cmd, pos = loop.resolve_tool("run_recipe", {"name": "explain_stock_today", "args": "{}"})
     assert cmd == "run-recipe" and pos == ["explain_stock_today", "{}"]
+    cmd, pos = loop.resolve_tool("research_bundle", {"query": "半导体 政策", "limit": "2"})
+    assert cmd == "research-bundle" and pos == ["半导体 政策", "2"]
     names = {t["function"]["name"] for t in loop.build_tools_schema()}
-    assert {"get_stock", "run_task", "run_recipe", "get_orientation"} <= names
+    assert {"get_stock", "run_task", "run_recipe", "get_orientation",
+            "research_search", "research_fetch", "research_bundle"} <= names
+    assert loop.is_write_command("research-bundle") is False
 
 
 def test_system_prompt_loaded_and_injected(monkeypatch):
@@ -191,6 +260,9 @@ def test_system_prompt_loaded_and_injected(monkeypatch):
     prompt = loop.load_system_prompt()
     assert "operator" in prompt and "decider" in prompt
     assert "get_orientation" in prompt
+    assert "URL" in prompt and "retrievedAt" in prompt and "sourceTier" in prompt
+    assert "不能覆盖 KSS 本地工具真值" in prompt
+    assert "外部证据数字" in prompt
 
     # 首条 message 注入 system(确定性)
     frames, chat = _drive([[_text("ok"), {"type": "finish", "reason": "stop"}]])

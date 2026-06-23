@@ -103,6 +103,7 @@ final class KSSStore: ObservableObject {
         case "tool_call":
             chatToolInProgress = frame.name
         case "tool_done":
+            mergeChatEvidence(frame, into: idx)
             chatToolInProgress = nil
         case "done":
             chatToolInProgress = nil
@@ -124,6 +125,15 @@ final class KSSStore: ObservableObject {
             }
         default:
             break
+        }
+    }
+
+    private func mergeChatEvidence(_ frame: ChatFrame, into idx: Int) {
+        if let summary = frame.evidenceSummary {
+            chatMessages[idx].evidenceSummary.merge(summary)
+        }
+        if let drawer = frame.evidenceDrawer {
+            chatMessages[idx].evidenceDrawer.merge(drawer)
         }
     }
 

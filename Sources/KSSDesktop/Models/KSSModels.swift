@@ -317,10 +317,11 @@ struct ScheduledJob: Codable, Identifiable, Hashable {
     var expectedAt: String?   // 最近一次本该触发的时刻
     var nextRunAt: String?    // 下次预定触发时刻
 
-    /// 综合健康态（监控用）：运行中 > 漏跑 > 失败 > 停用 > 正常。
-    enum Health { case running, stale, failed, disabled, ok }
+    /// 综合健康态（监控用）：运行中 > 需同步 > 停用 > 漏跑 > 失败 > 正常。
+    enum Health { case running, needsInstall, stale, failed, disabled, ok }
     var health: Health {
         if running { return .running }
+        if needsInstall == true { return .needsInstall }
         if !enabled { return .disabled }
         if stale { return .stale }
         if lastStatus == "failed" { return .failed }
@@ -737,10 +738,77 @@ struct ChatMessage: Identifiable, Equatable {
     let id = UUID()
     let role: Role
     var text: String
+    var evidenceSummary: ChatEvidenceSummary = .empty
+    var evidenceDrawer: ChatEvidenceDrawer = ChatEvidenceDrawer()
     /// 助手本轮自产数字是否还「未核实」（流式中为 true，done 守卫过转 false）。R7/KTD-5。
     var numbersUnverified: Bool = false
     /// 终态错误气泡样式（step-limit / 断连 等）。
     var isError: Bool = false
+}
+
+struct ChatEvidenceSummary: Codable, Equatable {
+    var kssTruthCount: Int = 0
+    var externalSourceCount: Int = 0
+    var injectionWarningCount: Int = 0
+    var conflictCount: Int = 0
+    var provider: String?
+
+    static let empty = ChatEvidenceSummary()
+
+    var hasEvidence: Bool {
+        kssTruthCount > 0 || externalSourceCount > 0 || injectionWarningCount > 0 || conflictCount > 0
+    }
+
+    mutating func merge(_ other: ChatEvidenceSummary) {
+        kssTruthCount += other.kssTruthCount
+        externalSourceCount += other.externalSourceCount
+        injectionWarningCount += other.injectionWarningCount
+        conflictCount += other.conflictCount
+        if let provider = other.provider, !provider.isEmpty {
+            self.provider = provider
+        }
+    }
+}
+
+struct ChatEvidenceDrawer: Codable, Equatable {
+    var kssTruth: [ChatKSSTruthEvidence] = []
+    var externalSources: [ChatExternalSourceEvidence] = []
+    var warnings: [ChatEvidenceWarning] = []
+
+    mutating func merge(_ other: ChatEvidenceDrawer) {
+        kssTruth.append(contentsOf: other.kssTruth)
+        externalSources.append(contentsOf: other.externalSources)
+        warnings.append(contentsOf: other.warnings)
+    }
+}
+
+struct ChatKSSTruthEvidence: Codable, Identifiable, Equatable {
+    var label: String
+    var tool: String
+    var fields: [String]
+    var provenance: String
+
+    var id: String { "\(tool)-\(label)-\(fields.joined(separator: ","))" }
+}
+
+struct ChatExternalSourceEvidence: Codable, Identifiable, Equatable {
+    var title: String
+    var url: String
+    var sourceTier: String
+    var retrievedAt: String
+    var cacheStatus: String
+    var excerpt: String
+    var usedFor: String?
+
+    var id: String { "\(url)-\(retrievedAt)-\(title)" }
+}
+
+struct ChatEvidenceWarning: Codable, Identifiable, Equatable {
+    var type: String
+    var severity: String
+    var message: String
+
+    var id: String { "\(type)-\(severity)-\(message)" }
 }
 
 /// 流式帧（sidecar chat-turn handler 回的 newline-delimited JSON）。U3 协议。
@@ -756,13 +824,15 @@ struct ChatFrame: Decodable {
     let effect: String?          // 人话效果（U5 modal 标题）
     let argsText: String?        // 写参数格式化串（Swift modal body）
     let numberGuard: NumberGuard?
+    let evidenceSummary: ChatEvidenceSummary?
+    let evidenceDrawer: ChatEvidenceDrawer?
 
     struct NumberGuard: Decodable { let unverified: [String]? }
 
     enum CodingKeys: String, CodingKey {
         case type, text, name, reason, error, tool, command, effect, argsText
         case callId = "call_id"
-        case numberGuard
+        case numberGuard, evidenceSummary, evidenceDrawer
     }
 }
 
