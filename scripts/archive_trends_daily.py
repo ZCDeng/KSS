@@ -274,25 +274,70 @@ def write_trend_day(date: str, force: bool = True) -> Path:
     return out
 
 
+def _compact_to_dash(cd: str) -> str:
+    """YYYYMMDD → YYYY-MM-DD。"""
+    return f"{cd[:4]}-{cd[4:6]}-{cd[6:8]}"
+
+
 def _latest_trading_date() -> str:
-    """缺省日期 = hsgt parquet 最新交易日（YYYY-MM-DD）。"""
+    """缺省日期 = cs_data 最新交易日（当天 8:30 已入库，不随北向 T+1 滞后）。
+
+    锚 cs_data 而非 hsgt：北向资金次日早 8:35 才到，若按 hsgt 取最新日，
+    日历恒落后一个交易日。cs_data 在当天开盘前更新，当晚归档即可写当天。
+    回退链：cs_data → hsgt parquet（可能滞后一日）→ 系统今日。
+    """
+    try:
+        latest = kb._latest_kcb_date(kb._rows_by_symbol())  # cs_data 的 trade_date 即 YYYY-MM-DD
+        if latest:
+            return latest
+    except Exception as exc:  # noqa: BLE001
+        _log(f"cs_data 最新日不可用，回退 hsgt: {exc}")
     try:
         import pandas as pd
         df = pd.read_parquet(HSGT_PARQUET)
-        cd = str(df["trade_date"].astype(str).max())
-        return f"{cd[:4]}-{cd[4:6]}-{cd[6:8]}"
+        return _compact_to_dash(str(df["trade_date"].astype(str).max()))
     except Exception:  # noqa: BLE001
         from datetime import date as _d
         return _d.today().isoformat()
 
 
+# 每日 going-forward 归档的回扫窗口（交易日数）。
+# 必要性：当天 north 当晚还没到（T+1），写出时 north=null；次日 north 入库后，
+# 下一次运行回扫重写即自愈。窗口 ≥2 保证「昨天」的 north 今晚补齐；取 3 留余量
+# （容忍一次漏跑 / 长假），write_trend_day 幂等覆盖，重写无副作用。
+ARCHIVE_WINDOW = 3
+
+
+def _recent_trading_dates(latest: str, k: int) -> list[str]:
+    """latest（含）往前 k 个交易日，升序 YYYY-MM-DD。
+
+    交易日轴用 hsgt 历史（完整到 T-1，北向最稠密）并入 latest（cs_data 锚的当天，
+    hsgt 可能还没有它）。只保留 ≤ latest 的日期。
+    """
+    latest_c = _compact(latest)
+    axis = {latest_c}
+    try:
+        import pandas as pd
+        df = pd.read_parquet(HSGT_PARQUET)
+        axis |= {str(x) for x in df["trade_date"].tolist()}
+    except Exception as exc:  # noqa: BLE001
+        _log(f"读 hsgt 交易日轴失败，仅归档 latest: {exc}")
+    ordered = [d for d in sorted(axis) if d <= latest_c]
+    tail = ordered[-k:] if len(ordered) >= k else ordered
+    return [_compact_to_dash(d) for d in tail]
+
+
 def main(argv: list[str]) -> int:
-    date = argv[1] if len(argv) > 1 else _latest_trading_date()
-    out = write_trend_day(date)
-    payload = json.loads(out.read_text(encoding="utf-8"))
-    flags = payload["flags"]
-    _log(f"写 {out.name}: north={flags['north']} etf={flags['etf']} "
-         f"sector={flags['sector']}({payload['sectorCount']}) recs={flags['recs']}({payload['recCount']})")
+    if len(argv) > 1:
+        dates = [argv[1]]  # 显式日期：只归档这一天
+    else:
+        dates = _recent_trading_dates(_latest_trading_date(), ARCHIVE_WINDOW)
+    for date in dates:
+        out = write_trend_day(date)
+        payload = json.loads(out.read_text(encoding="utf-8"))
+        flags = payload["flags"]
+        _log(f"写 {out.name}: north={flags['north']} etf={flags['etf']} "
+             f"sector={flags['sector']}({payload['sectorCount']}) recs={flags['recs']}({payload['recCount']})")
     return 0
 
 
