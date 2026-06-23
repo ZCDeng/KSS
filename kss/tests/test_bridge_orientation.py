@@ -99,9 +99,11 @@ def test_catalog_missing_degrades_other_regions(tmp_path, monkeypatch):
 
 
 def test_collect_intraday_label_registered():
-    """U7：collect_intraday 标签已在 U6 注册 → bridge 暴露正确 title/category。"""
-    assert b.LABEL_TITLES["collect_intraday"] == "分时收盘采集"
-    assert b.LABEL_CATEGORY["collect_intraday"] == "数据更新"
+    """U7→U4：collect_intraday 元数据从清单派生（LABEL_TITLES/LABEL_CATEGORY 已删，
+    单一真源 = kss.config.cron_manifest）→ bridge 暴露正确 title/category。"""
+    from kss.config import cron_manifest
+    assert cron_manifest.title_for("collect_intraday") == "分时收盘采集"
+    assert cron_manifest.category_for("collect_intraday") == "数据更新"
 
 
 def test_scheduled_job_collect_intraday_title_category(tmp_path):

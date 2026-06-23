@@ -306,6 +306,7 @@ struct ScheduledJob: Codable, Identifiable, Hashable {
     var schedule: String      // 人读调度，如「工作日 17:30」
     var script: String
     var enabled: Bool         // 是否启用（未被 launchctl disable）
+    var needsInstall: Bool?   // 清单有但 ~/Library/LaunchAgents 未装 → 需同步（U4/R4）
     var loaded: Bool          // 是否已 bootstrap 到 gui 域
     var running: Bool         // 当前是否有进程在跑
     var lastStatus: String    // success / failed / unknown
@@ -325,6 +326,12 @@ struct ScheduledJob: Codable, Identifiable, Hashable {
         if lastStatus == "failed" { return .failed }
         return .ok
     }
+}
+
+/// cron-list 响应：任务列表 + 清单派生的分类排序（U4 下发，U5 任务页读 categoryOrder）。
+struct CronListResponse: Codable, Hashable {
+    var jobs: [ScheduledJob]
+    var categoryOrder: [String]
 }
 
 /// cron-rerun / cron-enable / cron-disable 的返回。

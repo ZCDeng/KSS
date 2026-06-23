@@ -121,7 +121,12 @@ struct BridgeClient {
     // MARK: 定时任务（launchd）
 
     func scheduledJobs() throws -> [ScheduledJob] {
-        try run(["cron-list"], as: [ScheduledJob].self)
+        try run(["cron-list"], as: CronListResponse.self).jobs
+    }
+
+    /// cron-list 含分类排序的完整响应（U5 任务页读 categoryOrder 替代 Swift 硬编码）。
+    func cronList() throws -> CronListResponse {
+        try run(["cron-list"], as: CronListResponse.self)
     }
 
     func rerunJob(_ label: String) throws -> CronActionResult {

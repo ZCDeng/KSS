@@ -2588,54 +2588,26 @@ def stock_detail(symbol: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 LAUNCHD_DIR = PROJECT_ROOT / "deploy" / "launchd"
+# 已装副本目录（~/Library/LaunchAgents）—— 仅作「已装态」对账：loaded/running/enabled
+# 与 needsInstall 漂移判定。清单是任务枚举的唯一真源（U4 / R4）。
+LAUNCHAGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
 
-# label 后缀 → 中文任务名（新增 launchd 任务时在此补一条）。
-LABEL_TITLES = {
-    "macro_daily": "宏观数据更新",
-    "morning_divergence_alert": "开盘见顶快讯",
-    "paper_trade_daily": "纸交易日更",
-    "paper_trade_weekly": "纸交易周报",
-    "prediction_validation_weekly": "预测校验周报",
-    "scan_bj50_daily": "北证50扫描",
-    "scanner": "科创共振扫描",
-    "sector_review_daily": "板块复盘",
-    "update_data_daily": "股票池日线更新",
-    "hotspot_rotation_daily": "板块热点轮动归档",
-    "trends_archive_daily": "趋势归档",
-    "data_catalog_daily": "数据目录刷新",
-    "factor_health": "因子健康度",
-    "ledger_settle": "纸交易结算",
-    "collect_intraday": "分时收盘采集",
-    "selfcheck": "开机自检补跑",
-}
+# 任务元数据（标题/分类/排序/补跑资格）的唯一真源 = kss/config/cron_jobs.yaml，
+# 经 kss.config.cron_manifest 加载。曾在此硬编码的 LABEL_TITLES / LABEL_CATEGORY /
+# CATEGORY_ORDER / NO_CATCHUP_LABELS 已删（plan 2026-06-23-001 / U4）：
+#   title  ← cron_manifest.title_for(suffix)        （缺失回退 suffix）
+#   分类   ← cron_manifest.category_for(suffix)      （缺失回退「其他」）
+#   排序   ← cron_manifest.category_order()
+#   补跑   ← cron_manifest.catchup_eligible(suffix)  （catchup:false 不补跑，如 collect_intraday）
 
-# 漏跑可见但**不补跑**的 label 集合（评审 F1）。分时分钟快照漏跑**不可由重触发恢复**——
-# 重跑 collect_intraday 只拉当前滚动窗 session，会掩盖 permanent_gap（窗外永久 gap 只能
-# 由后续 Tushare 历史 proxy 填）。故仍入 selfcheck/任务页报 staleness（可见性），但
-# _kickstart_labels 显式跳过其 kickstart。
-NO_CATCHUP_LABELS = {"com.zcdeng.kss.collect_intraday"}
 
-# label 后缀 → 分类（任务页按此分组 + 批量重跑）。
-LABEL_CATEGORY = {
-    "update_data_daily": "数据更新",
-    "macro_daily": "数据更新",
-    "scanner": "扫描选股",
-    "scan_bj50_daily": "扫描选股",
-    "sector_review_daily": "板块复盘",
-    "hotspot_rotation_daily": "板块复盘",
-    "trends_archive_daily": "数据更新",
-    "data_catalog_daily": "数据更新",
-    "collect_intraday": "数据更新",
-    "paper_trade_daily": "纸交易",
-    "paper_trade_weekly": "纸交易",
-    "prediction_validation_weekly": "校验回测",
-    "factor_health": "校验回测",
-    "morning_divergence_alert": "盘中快讯",
-    "ledger_settle": "纸交易",
-    "selfcheck": "系统",
-}
-# 分类展示顺序（未列出的归「其他」并排末尾）。
-CATEGORY_ORDER = ["数据更新", "扫描选股", "板块复盘", "盘中快讯", "纸交易", "校验回测", "系统", "其他"]
+def _cron_manifest():
+    """惰性导入清单 API（确保 PROJECT_ROOT 在 sys.path，避免 import-time 副作用）。"""
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    from kss.config import cron_manifest  # noqa: PLC0415
+    return cron_manifest
+
 
 _WEEKDAY_CN = {0: "日", 1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "日"}
 
@@ -2811,7 +2783,14 @@ def _last_run(log_path: str | None) -> dict[str, Any]:
     return {"at": at, "line": line}
 
 
-def _scheduled_job(label: str, path: Path, uid: int, disabled: set[str]) -> dict[str, Any]:
+def _scheduled_job(
+    label: str,
+    path: Path,
+    uid: int,
+    disabled: set[str],
+    *,
+    needs_install: bool = False,
+) -> dict[str, Any]:
     import plistlib
 
     try:
@@ -2821,11 +2800,13 @@ def _scheduled_job(label: str, path: Path, uid: int, disabled: set[str]) -> dict
         pl = {}
 
     suffix = label.replace("com.zcdeng.kss.", "")
+    cm = _cron_manifest()
     interval = pl.get("StartCalendarInterval")
     prog = pl.get("ProgramArguments") or []
     script = Path(prog[0]).name if prog else ""
     schedule = _parse_schedule(interval)
     status = _launchctl_status(label, uid)
+    # StandardOutPath 取自 plist —— installed plist 优先（U2 日志改名后随之生效）。
     out_path = pl.get("StandardOutPath")
     last = _last_run(out_path)
 
@@ -2853,13 +2834,15 @@ def _scheduled_job(label: str, path: Path, uid: int, disabled: set[str]) -> dict
 
     return {
         "label": label,
-        "title": LABEL_TITLES.get(suffix, suffix),
-        "category": LABEL_CATEGORY.get(suffix, "其他"),
+        "title": cm.title_for(suffix),
+        "category": cm.category_for(suffix),
         "schedule": schedule,
         "script": script,
         "enabled": enabled,
         "loaded": status["loaded"],
         "running": status["pid"] is not None,
+        # 清单有而 ~/Library/LaunchAgents 未装 → 任务页显式告警「需同步」，绝不静默漏（R4）。
+        "needsInstall": needs_install,
         "lastStatus": last_status,
         "lastRunAt": last["at"],
         "lastLine": last["line"],
@@ -2870,11 +2853,41 @@ def _scheduled_job(label: str, path: Path, uid: int, disabled: set[str]) -> dict
     }
 
 
+def _installed_plists() -> dict[str, Path]:
+    """label → 已装 plist 路径（~/Library/LaunchAgents）。仅作已装态对账，非枚举真源。"""
+    out: dict[str, Path] = {}
+    for path in sorted(LAUNCHAGENTS_DIR.glob("com.zcdeng.kss.*.plist")):
+        out[path.stem] = path
+    return out
+
+
 def _scheduled_jobs() -> list[dict[str, Any]]:
+    """枚举源 = 清单 enabled 任务（R4）。glob/launchctl 仅作已装态对账：
+    清单有而 ~/Library/LaunchAgents 未装的任务 needsInstall=True，显式列出不静默漏。
+    每任务的 schedule/StandardOutPath 从「已装 plist 优先、否则 deploy/launchd 模板」的 plist 读，
+    使 U2 日志改名 apply 后随已装 plist 生效（DELIVER#4）。"""
     uid = os.getuid()
     disabled = _disabled_labels(uid)
-    plists = _launchd_plists()
-    return [_scheduled_job(label, path, uid, disabled) for label, path in plists.items()]
+    installed = _installed_plists()
+    deploy = _launchd_plists()
+    cm = _cron_manifest()
+
+    jobs: list[dict[str, Any]] = []
+    for job in cm.all_jobs():
+        if not job.enabled:
+            continue
+        label = job.label
+        installed_path = installed.get(label)
+        needs_install = installed_path is None
+        # plist 读源：已装优先（含 U2 改名后的日志路径）；未装回退 deploy 模板。
+        plist_path = installed_path or deploy.get(label)
+        if plist_path is None:
+            # 清单有、deploy 与 LaunchAgents 皆无 —— 仍登记，标 needsInstall，绝不漏。
+            plist_path = LAUNCHD_DIR / f"{label}.plist"
+        jobs.append(
+            _scheduled_job(label, plist_path, uid, disabled, needs_install=needs_install)
+        )
+    return jobs
 
 
 def _cron_action(label: str, action: str) -> dict[str, Any]:
@@ -2921,12 +2934,19 @@ def _kickstart_labels(labels: list[str], require_stale: bool) -> dict[str, Any]:
     domain = f"gui/{uid}"
     plists = _launchd_plists()
     disabled = _disabled_labels(uid)
+    cm = _cron_manifest()
     ran: list[dict[str, Any]] = []
     skipped: list[str] = []
     for label in labels:
-        # selfcheck 自身永不递归补跑；NO_CATCHUP_LABELS（分时分钟快照，F1）报 stale
-        # 但不可重触发恢复 —— 显式跳过 kickstart，避免重跑掩盖 permanent_gap。
-        if label not in plists or label.endswith(".selfcheck") or label in NO_CATCHUP_LABELS:
+        suffix = label.replace("com.zcdeng.kss.", "")
+        # selfcheck 自身永不递归补跑；清单 catchup:false 的任务（如分时分钟快照
+        # collect_intraday，F1）报 stale 但不可重触发恢复 —— 显式跳过 kickstart，
+        # 避免重跑掩盖 permanent_gap（补跑资格单一真源 = cron_manifest.catchup_eligible）。
+        if (
+            label not in plists
+            or label.endswith(".selfcheck")
+            or not cm.catchup_eligible(suffix)
+        ):
             skipped.append(label)
             continue
         job = _scheduled_job(label, plists[label], uid, disabled)
@@ -2952,8 +2972,11 @@ def _kickstart_labels(labels: list[str], require_stale: bool) -> dict[str, Any]:
 
 
 def _cron_catchup() -> dict[str, Any]:
-    """补跑所有「应跑未跑」的启用任务（开机自检 / 应用内一键补跑共用）。"""
-    return _kickstart_labels(list(_launchd_plists().keys()), require_stale=True)
+    """补跑所有「应跑未跑」的启用任务（开机自检 / 应用内一键补跑共用）。
+    候选集 = 清单 enabled 任务（R4 单一真源）；catchup:false 的由 _kickstart_labels 过滤。"""
+    cm = _cron_manifest()
+    labels = [j.label for j in cm.all_jobs() if j.enabled]
+    return _kickstart_labels(labels, require_stale=True)
 
 
 def _cron_rerun_many(labels: list[str]) -> dict[str, Any]:
@@ -3331,7 +3354,11 @@ def dispatch(command: str, args: list[str]) -> Any:
     if command == "get-discovery-candidates":
         return _discovery_merge()
     if command == "cron-list":
-        return _scheduled_jobs()
+        # 任务列表 + 分类排序（categoryOrder 供任务页分组，U5 读此值替代 Swift 硬编码）。
+        return {
+            "jobs": _scheduled_jobs(),
+            "categoryOrder": list(_cron_manifest().category_order()),
+        }
     if command in {"cron-rerun", "cron-enable", "cron-disable"}:
         if not args:
             raise ValueError(f"{command} requires LABEL")
