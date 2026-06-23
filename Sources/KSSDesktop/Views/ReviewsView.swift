@@ -210,10 +210,11 @@ struct ReviewsView: View {
                 PageTitle(review.title)
                 Spacer()
                 Button { onOpenExternally(review.path) } label: {
-                    Label("MarkEdit", systemImage: "pencil.and.outline")
+                    Image(systemName: "doc.text")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+                .tint(theme.accent)
                 .help("用 MarkEdit 打开当前报告")
                 .padding(.trailing, 6)
                 StatusBadge(icon: "calendar", text: review.date, tint: theme.accent)

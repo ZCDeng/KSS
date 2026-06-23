@@ -86,10 +86,11 @@ struct BacktestsView: View {
                         BacktestDetailHeader(report: selectedReport)
                         Spacer()
                         Button { onOpenExternally(selectedReport.path) } label: {
-                            Label("MarkEdit", systemImage: "pencil.and.outline")
+                            Image(systemName: "doc.text")
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+                        .tint(theme.accent)
                         .help("用 MarkEdit 打开当前报告")
                     }
                     if isLoadingDetail && selectedPath == selectedReport.path {
