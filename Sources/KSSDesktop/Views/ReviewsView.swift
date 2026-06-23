@@ -606,6 +606,13 @@ struct HotspotRotationPanel: View {
     @Environment(\.kssTheme) private var theme
     var snap: HotspotRotationSnapshot
 
+    enum BoardKind: String, CaseIterable, Identifiable {
+        case industry = "行业"
+        case concept = "概念"
+        var id: String { rawValue }
+    }
+    @State private var boardKind: BoardKind = .industry
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
@@ -640,29 +647,28 @@ struct HotspotRotationPanel: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        RoundedRectangle(cornerRadius: 2).fill(theme.accent).frame(width: 4, height: 16)
-                        Text("行业")
-                            .font(KSSFont.serif(16, .semibold))
-                            .foregroundStyle(theme.textPrimary)
+                    Picker("", selection: $boardKind) {
+                        ForEach(BoardKind.allCases) { kind in
+                            Text("\(kind.rawValue) \(boards(for: kind).count)").tag(kind)
+                        }
                     }
-                    HotspotBoardTable(boards: snap.industries)
-                }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
 
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        RoundedRectangle(cornerRadius: 2).fill(theme.accent).frame(width: 4, height: 16)
-                        Text("概念")
-                            .font(KSSFont.serif(16, .semibold))
-                            .foregroundStyle(theme.textPrimary)
-                    }
-                    HotspotBoardTable(boards: snap.concepts)
+                    HotspotBoardTable(boards: boards(for: boardKind))
                 }
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(theme.canvas)
+    }
+
+    private func boards(for kind: BoardKind) -> [HotspotBoard] {
+        switch kind {
+        case .industry: return snap.industries
+        case .concept: return snap.concepts
+        }
     }
 
     private var dateLabel: String {
