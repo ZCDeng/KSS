@@ -1,0 +1,153 @@
+# GENERATED-SOURCE-OF-TRUTH; 凭据字段禁止
+#
+# KSS launchd 定时任务的单一声明式真源（plan 2026-06-23-001 / U1）。
+# 一处编辑 → plist 渲染 + 安装 + app「任务」页元数据同步生效。
+# 严禁在本文件写入任何 token / api_key / secret / password 等凭据；token 由
+# wrapper 运行时加载。键名命中 kss.security.redaction.CREDENTIAL_KEY_RE 会被加载器拒绝。
+#
+# schedule 两种形态：
+#   daily   {hour, minute, weekdays: [1-5]}  —— weekdays 缺省/null = 每天（含周末）。
+#   weekly  {weekly: {weekday, hour, minute}} —— 单条目。
+# weekday 取值 1-7（launchd 约定：1=周一 … 7=周日；0/8 非法）。
+#
+# 字段对照 scripts/kss_app_bridge.py 的 LABEL_TITLES / LABEL_CATEGORY（清单为超集）。
+
+category_order:
+  - 数据更新
+  - 扫描选股
+  - 板块复盘
+  - 盘中快讯
+  - 纸交易
+  - 校验回测
+  - 系统
+  - 其他
+
+jobs:
+  - suffix: update_data_daily
+    wrapper: scripts/run_update_data_daily.sh
+    schedule: {hour: 8, minute: 30, weekdays: [1, 2, 3, 4, 5]}
+    title: 股票池日线更新
+    category: 数据更新
+    catchup: true
+    enabled: true
+
+  - suffix: macro_daily
+    wrapper: scripts/run_update_macro_daily.sh
+    schedule: {hour: 8, minute: 35, weekdays: [1, 2, 3, 4, 5]}
+    title: 宏观数据更新
+    category: 数据更新
+    catchup: true
+    enabled: true
+
+  - suffix: data_catalog_daily
+    wrapper: scripts/run_data_catalog_daily.sh
+    schedule: {hour: 8, minute: 50}
+    title: 数据目录刷新
+    category: 数据更新
+    catchup: true
+    enabled: true
+
+  - suffix: trends_archive_daily
+    wrapper: scripts/archive_trends_daily.sh
+    schedule: {hour: 18, minute: 10, weekdays: [1, 2, 3, 4, 5]}
+    title: 趋势归档
+    category: 数据更新
+    catchup: true
+    enabled: true
+
+  - suffix: collect_intraday
+    wrapper: scripts/run_collect_intraday.sh
+    schedule: {hour: 15, minute: 5}
+    title: 分时收盘采集
+    category: 数据更新
+    catchup: false
+    enabled: true
+
+  - suffix: scanner
+    wrapper: run_scanner.sh
+    schedule: {hour: 15, minute: 30, weekdays: [1, 2, 3, 4, 5]}
+    title: 科创共振扫描
+    category: 扫描选股
+    catchup: true
+    enabled: true
+
+  - suffix: scan_bj50_daily
+    wrapper: scripts/run_scan_bj50_daily.sh
+    args: ["--push"]
+    schedule: {hour: 17, minute: 45, weekdays: [1, 2, 3, 4, 5]}
+    title: 北证50扫描
+    category: 扫描选股
+    catchup: true
+    enabled: true
+
+  - suffix: sector_review_daily
+    wrapper: scripts/run_sector_review_daily.sh
+    schedule: {hour: 17, minute: 30, weekdays: [1, 2, 3, 4, 5]}
+    title: 板块复盘
+    category: 板块复盘
+    catchup: true
+    enabled: true
+
+  - suffix: hotspot_rotation_daily
+    wrapper: scripts/run_hotspot_rotation_daily.sh
+    schedule: {hour: 17, minute: 50, weekdays: [1, 2, 3, 4, 5]}
+    title: 板块热点轮动归档
+    category: 板块复盘
+    catchup: true
+    enabled: true
+
+  - suffix: morning_divergence_alert
+    wrapper: scripts/run_morning_divergence_alert.sh
+    schedule: {hour: 9, minute: 0, weekdays: [1, 2, 3, 4, 5]}
+    title: 开盘见顶快讯
+    category: 盘中快讯
+    catchup: true
+    enabled: true
+
+  - suffix: paper_trade_daily
+    wrapper: scripts/run_paper_trade_daily.sh
+    schedule: {hour: 9, minute: 5, weekdays: [1, 2, 3, 4, 5]}
+    title: 纸交易日更
+    category: 纸交易
+    catchup: true
+    enabled: true
+
+  - suffix: ledger_settle
+    wrapper: scripts/run_ledger_settle_daily.sh
+    schedule: {hour: 15, minute: 35, weekdays: [1, 2, 3, 4, 5]}
+    title: 纸交易结算
+    category: 纸交易
+    catchup: true
+    enabled: true
+
+  - suffix: paper_trade_weekly
+    wrapper: scripts/run_paper_trade_weekly.sh
+    schedule: {weekly: {weekday: 5, hour: 17, minute: 0}}
+    title: 纸交易周报
+    category: 纸交易
+    catchup: true
+    enabled: true
+
+  - suffix: factor_health
+    wrapper: scripts/run_factor_health_daily.sh
+    schedule: {hour: 15, minute: 50, weekdays: [1, 2, 3, 4, 5]}
+    title: 因子健康度
+    category: 校验回测
+    catchup: true
+    enabled: true
+
+  - suffix: prediction_validation_weekly
+    wrapper: scripts/run_prediction_validation_weekly.sh
+    schedule: {weekly: {weekday: 5, hour: 19, minute: 30}}
+    title: 预测校验周报
+    category: 校验回测
+    catchup: true
+    enabled: true
+
+  - suffix: selfcheck
+    wrapper: scripts/run_cron_selfcheck.sh
+    schedule: {hour: 12, minute: 0}
+    title: 开机自检补跑
+    category: 系统
+    catchup: true
+    enabled: true
