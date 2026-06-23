@@ -70,6 +70,9 @@ storage/bj_cache/
 storage/legacy/
 storage/data_catalog.json
 
+# cron 运行日志（wrapper 可能 echo TOKEN length，绝不入库；plan 005 cron-manifest 安全项）
+storage/logs/cron/
+
 # scan 排名输出（数据产物，可重建）
 scan_*_rank.csv
 

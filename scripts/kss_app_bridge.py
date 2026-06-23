@@ -2603,6 +2603,8 @@ LABEL_TITLES = {
     "hotspot_rotation_daily": "板块热点轮动归档",
     "trends_archive_daily": "趋势归档",
     "data_catalog_daily": "数据目录刷新",
+    "factor_health": "因子健康度",
+    "ledger_settle": "纸交易结算",
     "selfcheck": "开机自检补跑",
 }
 
@@ -2619,7 +2621,9 @@ LABEL_CATEGORY = {
     "paper_trade_daily": "纸交易",
     "paper_trade_weekly": "纸交易",
     "prediction_validation_weekly": "校验回测",
+    "factor_health": "校验回测",
     "morning_divergence_alert": "盘中快讯",
+    "ledger_settle": "纸交易",
     "selfcheck": "系统",
 }
 # 分类展示顺序（未列出的归「其他」并排末尾）。
