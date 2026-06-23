@@ -19,6 +19,8 @@ final class KSSStore: ObservableObject {
     var isRunningTask: Bool { runningTasks > 0 }
     @Published var taskResults: [TaskRunResult] = []
     @Published var scheduledJobs: [ScheduledJob] = []
+    // 分类展示顺序由 bridge cron-list 下发(清单单一真源,U5);默认值仅作首帧/失败兜底。
+    @Published var cronCategoryOrder: [String] = ["数据更新", "扫描选股", "板块复盘", "盘中快讯", "纸交易", "校验回测", "系统", "其他"]
     @Published var scheduledBusy: Set<String> = []   // 正在操作的 label（行级 loading）
     @Published var scheduledBatchBusy = false         // 批量补跑/重跑进行中
     @Published var scheduledBatchNote: String?        // 批量操作结果提示（一次性 toast 文案）
@@ -329,8 +331,9 @@ final class KSSStore: ObservableObject {
     /// 拉取 launchd 任务清单（调度 / 状态 / 上次运行）。
     func loadScheduledJobs() async {
         guard let bridge else { return }
-        let jobs = (try? await Task.detached { try bridge.scheduledJobs() }.value) ?? []
-        self.scheduledJobs = jobs
+        let resp = try? await Task.detached { try bridge.cronList() }.value
+        self.scheduledJobs = resp?.jobs ?? []
+        if let order = resp?.categoryOrder, !order.isEmpty { self.cronCategoryOrder = order }
     }
 
     /// 趋势页：加载某月月度格子（YYYY-MM）。

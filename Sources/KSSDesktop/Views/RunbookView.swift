@@ -6,6 +6,7 @@ struct RunbookView: View {
     var isRunning: Bool
     var results: [TaskRunResult]
     var scheduledJobs: [ScheduledJob]
+    var categoryOrder: [String]
     var scheduledBusy: Set<String>
     var scheduledBatchBusy: Bool
     var scheduledBatchNote: String?
@@ -43,6 +44,7 @@ struct RunbookView: View {
                     SectionHeader("定时任务")
                     ScheduledTasksSection(
                         jobs: scheduledJobs,
+                        categoryOrder: categoryOrder,
                         busy: scheduledBusy,
                         batchBusy: scheduledBatchBusy,
                         batchNote: scheduledBatchNote,
@@ -82,6 +84,7 @@ struct RunbookView: View {
 struct ScheduledTasksSection: View {
     @Environment(\.kssTheme) private var theme
     var jobs: [ScheduledJob]
+    var categoryOrder: [String]
     var busy: Set<String>
     var batchBusy: Bool
     var batchNote: String?
@@ -91,16 +94,13 @@ struct ScheduledTasksSection: View {
     var onRerunMany: ([String]) -> Void
     var onDismissBatchNote: () -> Void
 
-    /// 分类顺序（与 bridge LABEL_CATEGORY/CATEGORY_ORDER 对齐；未列出的排末尾）。
-    private static let categoryOrder = ["数据更新", "扫描选股", "板块复盘", "盘中快讯", "纸交易", "校验回测", "系统", "其他"]
-
     private var groups: [(category: String, jobs: [ScheduledJob])] {
         let grouped = Dictionary(grouping: jobs, by: \.category)
         return grouped
             .map { (category: $0.key, jobs: $0.value.sorted { $0.schedule < $1.schedule }) }
             .sorted { a, b in
-                let ia = Self.categoryOrder.firstIndex(of: a.category) ?? Int.max
-                let ib = Self.categoryOrder.firstIndex(of: b.category) ?? Int.max
+                let ia = categoryOrder.firstIndex(of: a.category) ?? Int.max
+                let ib = categoryOrder.firstIndex(of: b.category) ?? Int.max
                 return ia == ib ? a.category < b.category : ia < ib
             }
     }

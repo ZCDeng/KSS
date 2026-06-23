@@ -194,6 +194,7 @@ struct ContentView: View {
                     isRunning: store.isRunningTask,
                     results: store.taskResults,
                     scheduledJobs: store.scheduledJobs,
+                    categoryOrder: store.cronCategoryOrder,
                     scheduledBusy: store.scheduledBusy,
                     scheduledBatchBusy: store.scheduledBatchBusy,
                     scheduledBatchNote: store.scheduledBatchNote,
