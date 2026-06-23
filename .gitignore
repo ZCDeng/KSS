@@ -59,6 +59,11 @@ idx_*.csv
 # agent / 工具私有状态（同 .claude/）
 .pi/
 .omx/
+.cache/
+.codex/
+
+# 构建产物（SwiftPM .build / 可重建，不入库）
+.build/
 
 # storage 缓存 / legacy（可重建，不入库）
 storage/bj_cache/
