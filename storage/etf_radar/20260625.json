@@ -1,0 +1,77 @@
+{
+ "trade_date": "20260625",
+ "source": "live",
+ "data_date": "20260625",
+ "stale": false,
+ "note": "正=净申购/负=净赎回. 一年回测语义: 5日赎回≥2%=强势确认(后5日胜率75%); 上涨中转申购(divergence)=见顶预警(后5日-0.6%/上涨胜率38%); 大跌日申购不是抄底信号(已证伪)",
+ "momentum_regime_r3": {
+  "in_regime": false,
+  "mom20": 13.82,
+  "mom20_th": 8.0,
+  "breadth_5dma": null,
+  "breadth_th": 0.02,
+  "breadth_data_date": null
+ },
+ "themes": {
+  "科创50": {
+   "flow_1d": -1.3,
+   "flow_5d": -5.31,
+   "accel": false,
+   "past5_ret": 13.13,
+   "grade": "强势确认",
+   "divergence": false,
+   "n_funds": 2,
+   "rank_5d": 3
+  },
+  "科创芯片": {
+   "flow_1d": 0.07,
+   "flow_5d": -2.71,
+   "accel": false,
+   "past5_ret": 16.81,
+   "grade": "强势确认",
+   "divergence": false,
+   "n_funds": 1,
+   "rank_5d": 2
+  },
+  "芯片": {
+   "flow_1d": -44.18,
+   "flow_5d": -45.47,
+   "accel": true,
+   "past5_ret": 18.2,
+   "grade": "强势确认",
+   "divergence": false,
+   "n_funds": 2,
+   "rank_5d": 5
+  },
+  "半导体": {
+   "flow_1d": -0.02,
+   "flow_5d": 0.38,
+   "accel": false,
+   "past5_ret": 17.45,
+   "grade": "偏弱",
+   "divergence": true,
+   "n_funds": 1,
+   "rank_5d": 1
+  },
+  "机器人": {
+   "flow_1d": -73.89,
+   "flow_5d": -74.45,
+   "accel": true,
+   "past5_ret": 0.34,
+   "grade": "强势确认",
+   "divergence": false,
+   "n_funds": 2,
+   "rank_5d": 6
+  },
+  "人工智能": {
+   "flow_1d": -25.23,
+   "flow_5d": -26.86,
+   "accel": true,
+   "past5_ret": 7.17,
+   "grade": "强势确认",
+   "divergence": false,
+   "n_funds": 2,
+   "rank_5d": 4
+  }
+ }
+}
