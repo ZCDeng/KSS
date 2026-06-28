@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- GENERATED — do not edit; edit kss/config/cron_jobs.yaml -->
+<dict>
+	<key>Label</key>
+	<string>com.zcdeng.kss.news_digest_postclose</string>
+	<key>StartCalendarInterval</key>
+	<array>
+		<dict>
+			<key>Weekday</key>
+			<integer>1</integer>
+			<key>Hour</key>
+			<integer>17</integer>
+			<key>Minute</key>
+			<integer>35</integer>
+		</dict>
+		<dict>
+			<key>Weekday</key>
+			<integer>2</integer>
+			<key>Hour</key>
+			<integer>17</integer>
+			<key>Minute</key>
+			<integer>35</integer>
+		</dict>
+		<dict>
+			<key>Weekday</key>
+			<integer>3</integer>
+			<key>Hour</key>
+			<integer>17</integer>
+			<key>Minute</key>
+			<integer>35</integer>
+		</dict>
+		<dict>
+			<key>Weekday</key>
+			<integer>4</integer>
+			<key>Hour</key>
+			<integer>17</integer>
+			<key>Minute</key>
+			<integer>35</integer>
+		</dict>
+		<dict>
+			<key>Weekday</key>
+			<integer>5</integer>
+			<key>Hour</key>
+			<integer>17</integer>
+			<key>Minute</key>
+			<integer>35</integer>
+		</dict>
+	</array>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/zcdeng/projects/KSS/.claude/worktrees/feat+news-sentiment-digest/scripts/run_news_digest_postclose.sh</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/feat+news-sentiment-digest</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>HOME</key>
+		<string>/Users/zcdeng</string>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/feat+news-sentiment-digest/storage/logs/cron/news_digest_postclose.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/feat+news-sentiment-digest/storage/logs/cron/news_digest_postclose.log</string>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>ThrottleInterval</key>
+	<integer>60</integer>
+</dict>
+</plist>

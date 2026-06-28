@@ -1,0 +1,17 @@
+{
+  "generated_at": "2026-06-22T00:00:00+08:00",
+  "sources": [
+    {
+      "url": "https://example.com/policy-source-a",
+      "tier": "official_or_primary",
+      "retrieved_at": "2026-06-22T00:00:00+08:00",
+      "excerpt": "Policy source A snapshot for offline scoring."
+    },
+    {
+      "url": "https://example.com/news-source-b",
+      "tier": "reputable_secondary",
+      "retrieved_at": "2026-06-22T00:00:00+08:00",
+      "excerpt": "News source B snapshot for offline scoring."
+    }
+  ]
+}

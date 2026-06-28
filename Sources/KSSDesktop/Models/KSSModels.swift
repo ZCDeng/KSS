@@ -135,6 +135,185 @@ struct HotspotRotationHistoryItem: Codable, Hashable, Identifiable {
     var satelliteCount: Int
 }
 
+// MARK: - 舆情热点 digest（news-digest）
+
+/// 舆情热点：bridge `news-digest [DATE] [SCENE]` 顶层响应。
+/// available=false 时 selected=nil（空态）；index 供日期/场景选择列表。
+struct NewsDigestResponse: Codable, Hashable {
+    var available: Bool
+    var index: [NewsDigestIndexEntry]
+    var selected: NewsDigest?
+}
+
+/// 舆情热点：可选档案条目（日期 + 场景），newest first。
+struct NewsDigestIndexEntry: Codable, Hashable, Identifiable {
+    var id: String { "\(date)-\(scene)" }
+    var date: String
+    var scene: String
+}
+
+/// 舆情热点：选中档（某日某场景的完整 digest）。
+struct NewsDigest: Codable, Hashable {
+    var date: String
+    var scene: String
+    var generatedAt: String?
+    var directions: [NewsDirection]
+    var catalysts: [NewsCatalyst]
+    var quarantinedCount: Int?
+    var llmStatus: String?
+    var withMapping: Bool?
+    var partial: Bool?
+    var sources: [String: Int]?
+
+    enum CodingKeys: String, CodingKey {
+        case date, scene, generatedAt, directions, catalysts, partial, sources
+        case quarantinedCount = "quarantined_count"
+        case llmStatus = "llm_status"
+        case withMapping = "with_mapping"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        date = (try? c.decode(String.self, forKey: .date)) ?? ""
+        scene = (try? c.decode(String.self, forKey: .scene)) ?? ""
+        generatedAt = try? c.decode(String.self, forKey: .generatedAt)
+        directions = (try? c.decode([NewsDirection].self, forKey: .directions)) ?? []
+        catalysts = (try? c.decode([NewsCatalyst].self, forKey: .catalysts)) ?? []
+        quarantinedCount = try? c.decode(Int.self, forKey: .quarantinedCount)
+        llmStatus = try? c.decode(String.self, forKey: .llmStatus)
+        withMapping = try? c.decode(Bool.self, forKey: .withMapping)
+        partial = try? c.decode(Bool.self, forKey: .partial)
+        sources = try? c.decode([String: Int].self, forKey: .sources)
+    }
+}
+
+/// 舆情热点：单个集中方向（题材/板块）。
+struct NewsDirection: Codable, Hashable, Identifiable {
+    var id: String { label }
+    var label: String
+    var sentiment: String
+    var sentimentSource: String?
+    var heatLine: String?
+    var independentConfirmations: Int?
+    var distinctSources: [String]?
+    var heatScore: Double?
+    var theme: String?
+    var mapping: String?
+    var degradeReason: String?
+    var stocks: [NewsStock]?
+    var sourcePosts: [NewsSourcePost]?
+    var signalQuality: NewsSignalQuality?
+
+    enum CodingKeys: String, CodingKey {
+        case label, sentiment, theme, mapping, stocks
+        case sentimentSource = "sentiment_source"
+        case heatLine = "heat_line"
+        case independentConfirmations = "independent_confirmations"
+        case distinctSources = "distinct_sources"
+        case heatScore = "heat_score"
+        case degradeReason = "degrade_reason"
+        case sourcePosts = "source_posts"
+        case signalQuality = "signal_quality"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        label = (try? c.decode(String.self, forKey: .label)) ?? ""
+        sentiment = (try? c.decode(String.self, forKey: .sentiment)) ?? ""
+        sentimentSource = try? c.decode(String.self, forKey: .sentimentSource)
+        heatLine = try? c.decode(String.self, forKey: .heatLine)
+        independentConfirmations = try? c.decode(Int.self, forKey: .independentConfirmations)
+        distinctSources = try? c.decode([String].self, forKey: .distinctSources)
+        heatScore = try? c.decode(Double.self, forKey: .heatScore)
+        theme = try? c.decode(String.self, forKey: .theme)
+        mapping = try? c.decode(String.self, forKey: .mapping)
+        degradeReason = try? c.decode(String.self, forKey: .degradeReason)
+        stocks = try? c.decode([NewsStock].self, forKey: .stocks)
+        sourcePosts = try? c.decode([NewsSourcePost].self, forKey: .sourcePosts)
+        signalQuality = try? c.decode(NewsSignalQuality.self, forKey: .signalQuality)
+    }
+}
+
+/// 舆情热点：方向下挂的个股（龙头 / 二梯队）。
+struct NewsStock: Codable, Hashable, Identifiable {
+    var id: String { symbol }
+    var symbol: String
+    var name: String
+    var board: String?
+    var tier: String?
+    var theme: String?
+    var sourcePosts: [NewsSourcePost]?
+
+    enum CodingKeys: String, CodingKey {
+        case symbol, name, board, tier, theme
+        case sourcePosts = "source_posts"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        symbol = (try? c.decode(String.self, forKey: .symbol)) ?? ""
+        name = (try? c.decode(String.self, forKey: .name)) ?? ""
+        board = try? c.decode(String.self, forKey: .board)
+        tier = try? c.decode(String.self, forKey: .tier)
+        theme = try? c.decode(String.self, forKey: .theme)
+        sourcePosts = try? c.decode([NewsSourcePost].self, forKey: .sourcePosts)
+    }
+}
+
+/// 舆情热点：重大催化事件。
+struct NewsCatalyst: Codable, Hashable, Identifiable {
+    var id: String { "\(type)-\(title)" }
+    var type: String
+    var title: String
+    var source: String?
+    var url: String?
+    var attachStocks: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case type, title, source, url
+        case attachStocks = "attach_stocks"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        type = (try? c.decode(String.self, forKey: .type)) ?? ""
+        title = (try? c.decode(String.self, forKey: .title)) ?? ""
+        source = try? c.decode(String.self, forKey: .source)
+        url = try? c.decode(String.self, forKey: .url)
+        attachStocks = try? c.decode(Bool.self, forKey: .attachStocks)
+    }
+}
+
+/// 舆情热点：信号质量（独立源 / 真实催化 / 映射）。
+struct NewsSignalQuality: Codable, Hashable {
+    var independentSources: Int?
+    var hasRealCatalyst: Bool?
+    var mapping: String?
+
+    enum CodingKeys: String, CodingKey {
+        case mapping
+        case independentSources = "independent_sources"
+        case hasRealCatalyst = "has_real_catalyst"
+    }
+}
+
+/// 舆情热点：信息源帖（平台 + 标题 + 链接）。
+struct NewsSourcePost: Codable, Hashable, Identifiable {
+    var id: String { "\(source ?? "")-\(title)-\(url ?? "")" }
+    var source: String?
+    var title: String
+    var url: String?
+
+    enum CodingKeys: String, CodingKey { case source, title, url }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        source = try? c.decode(String.self, forKey: .source)
+        title = (try? c.decode(String.self, forKey: .title)) ?? ""
+        url = try? c.decode(String.self, forKey: .url)
+    }
+}
+
 /// 紫苏叶（供应链护城河评分）选股，数据源 supply_chain.yaml + ChainRegistry。
 struct PerillaPick: Codable, Identifiable, Hashable {
     var id: String { symbol }
@@ -317,10 +496,11 @@ struct ScheduledJob: Codable, Identifiable, Hashable {
     var expectedAt: String?   // 最近一次本该触发的时刻
     var nextRunAt: String?    // 下次预定触发时刻
 
-    /// 综合健康态（监控用）：运行中 > 漏跑 > 失败 > 停用 > 正常。
-    enum Health { case running, stale, failed, disabled, ok }
+    /// 综合健康态（监控用）：运行中 > 需同步 > 停用 > 漏跑 > 失败 > 正常。
+    enum Health { case running, needsInstall, stale, failed, disabled, ok }
     var health: Health {
         if running { return .running }
+        if needsInstall == true { return .needsInstall }
         if !enabled { return .disabled }
         if stale { return .stale }
         if lastStatus == "failed" { return .failed }
@@ -737,10 +917,77 @@ struct ChatMessage: Identifiable, Equatable {
     let id = UUID()
     let role: Role
     var text: String
+    var evidenceSummary: ChatEvidenceSummary = .empty
+    var evidenceDrawer: ChatEvidenceDrawer = ChatEvidenceDrawer()
     /// 助手本轮自产数字是否还「未核实」（流式中为 true，done 守卫过转 false）。R7/KTD-5。
     var numbersUnverified: Bool = false
     /// 终态错误气泡样式（step-limit / 断连 等）。
     var isError: Bool = false
+}
+
+struct ChatEvidenceSummary: Codable, Equatable {
+    var kssTruthCount: Int = 0
+    var externalSourceCount: Int = 0
+    var injectionWarningCount: Int = 0
+    var conflictCount: Int = 0
+    var provider: String?
+
+    static let empty = ChatEvidenceSummary()
+
+    var hasEvidence: Bool {
+        kssTruthCount > 0 || externalSourceCount > 0 || injectionWarningCount > 0 || conflictCount > 0
+    }
+
+    mutating func merge(_ other: ChatEvidenceSummary) {
+        kssTruthCount += other.kssTruthCount
+        externalSourceCount += other.externalSourceCount
+        injectionWarningCount += other.injectionWarningCount
+        conflictCount += other.conflictCount
+        if let provider = other.provider, !provider.isEmpty {
+            self.provider = provider
+        }
+    }
+}
+
+struct ChatEvidenceDrawer: Codable, Equatable {
+    var kssTruth: [ChatKSSTruthEvidence] = []
+    var externalSources: [ChatExternalSourceEvidence] = []
+    var warnings: [ChatEvidenceWarning] = []
+
+    mutating func merge(_ other: ChatEvidenceDrawer) {
+        kssTruth.append(contentsOf: other.kssTruth)
+        externalSources.append(contentsOf: other.externalSources)
+        warnings.append(contentsOf: other.warnings)
+    }
+}
+
+struct ChatKSSTruthEvidence: Codable, Identifiable, Equatable {
+    var label: String
+    var tool: String
+    var fields: [String]
+    var provenance: String
+
+    var id: String { "\(tool)-\(label)-\(fields.joined(separator: ","))" }
+}
+
+struct ChatExternalSourceEvidence: Codable, Identifiable, Equatable {
+    var title: String
+    var url: String
+    var sourceTier: String
+    var retrievedAt: String
+    var cacheStatus: String
+    var excerpt: String
+    var usedFor: String?
+
+    var id: String { "\(url)-\(retrievedAt)-\(title)" }
+}
+
+struct ChatEvidenceWarning: Codable, Identifiable, Equatable {
+    var type: String
+    var severity: String
+    var message: String
+
+    var id: String { "\(type)-\(severity)-\(message)" }
 }
 
 /// 流式帧（sidecar chat-turn handler 回的 newline-delimited JSON）。U3 协议。
@@ -756,13 +1003,15 @@ struct ChatFrame: Decodable {
     let effect: String?          // 人话效果（U5 modal 标题）
     let argsText: String?        // 写参数格式化串（Swift modal body）
     let numberGuard: NumberGuard?
+    let evidenceSummary: ChatEvidenceSummary?
+    let evidenceDrawer: ChatEvidenceDrawer?
 
     struct NumberGuard: Decodable { let unverified: [String]? }
 
     enum CodingKeys: String, CodingKey {
         case type, text, name, reason, error, tool, command, effect, argsText
         case callId = "call_id"
-        case numberGuard
+        case numberGuard, evidenceSummary, evidenceDrawer
     }
 }
 

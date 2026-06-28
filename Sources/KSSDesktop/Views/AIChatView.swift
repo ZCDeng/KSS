@@ -137,6 +137,24 @@ struct AIChatView: View {
         !store.isChatStreaming && !input.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
+    private var latestResearchProvider: String? {
+        store.chatMessages.reversed().compactMap { message in
+            let provider = message.evidenceSummary.provider?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return provider?.isEmpty == false ? provider : nil
+        }.first
+    }
+
+    private func researchProviderPill(_ provider: String) -> some View {
+        Label("外部研究: \(provider)", systemImage: provider == "disabled" ? "wifi.slash" : "link")
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .foregroundStyle(theme.textSecondary)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(theme.surface, in: Capsule())
+            .overlay(Capsule().stroke(theme.hairline))
+            .help(provider == "disabled" ? "外部研究 provider 当前不可用，不影响本地 KSS 问答" : "当前外部研究 provider")
+    }
+
     // MARK: 能力卡(列出 Skill/剧本)
 
     private func capabilityCards(width: CGFloat) -> some View {
@@ -235,6 +253,10 @@ struct AIChatView: View {
                         Label("数字校验中（以工具真值为准）", systemImage: "exclamationmark.triangle")
                             .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
                     }
+                    if msg.evidenceSummary.hasEvidence || msg.evidenceSummary.provider != nil {
+                        EvidenceDrawerView(summary: msg.evidenceSummary, drawer: msg.evidenceDrawer)
+                            .padding(.top, 2)
+                    }
                 }
                 .padding(.horizontal, 14).padding(.vertical, 10)
                 .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
@@ -264,12 +286,17 @@ struct AIChatView: View {
 
     /// 对话态底部固定输入栏(圆角卡风格,与空态一致)。
     private func pinnedInputBar(width: CGFloat) -> some View {
-        HStack(spacing: 10) {
-            TextField("继续问…（回车发送）", text: $input, axis: .vertical)
-                .textFieldStyle(.plain).font(.system(size: 14)).lineLimit(1...4)
-                .disabled(store.isChatStreaming)
-                .onSubmit(send)
-            sendButton
+        VStack(alignment: .leading, spacing: 8) {
+            if let provider = latestResearchProvider {
+                researchProviderPill(provider)
+            }
+            HStack(spacing: 10) {
+                TextField("继续问…（回车发送）", text: $input, axis: .vertical)
+                    .textFieldStyle(.plain).font(.system(size: 14)).lineLimit(1...4)
+                    .disabled(store.isChatStreaming)
+                    .onSubmit(send)
+                sendButton
+            }
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
         .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeL))

@@ -352,6 +352,8 @@ struct ScheduledJobRow: View {
         switch health {
         case .running:
             return StatusBadge(icon: "arrow.triangle.2.circlepath", text: "运行中", tint: theme.accent, emphasized: true)
+        case .needsInstall:
+            return StatusBadge(icon: "arrow.down.circle.fill", text: "待安装", tint: theme.ma5, emphasized: true)
         case .stale:
             return StatusBadge(icon: "exclamationmark.triangle.fill", text: "漏跑\(job.missedCycles)", tint: theme.ma5, emphasized: true)
         case .failed:

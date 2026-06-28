@@ -29,6 +29,8 @@ def _env_path(var: str) -> Path | None:
 
 # 不可变代码根（脚本/config 所在）；bundle-mode 由 KSS_PROJECT_ROOT 指定。
 PROJECT_ROOT = _env_path("KSS_PROJECT_ROOT") or Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 # 可变状态根（storage/.cache）；默认回落 PROJECT_ROOT → 未设 env 时与历史行为逐字一致。
 STATE_ROOT = _env_path("KSS_STATE_ROOT") or PROJECT_ROOT
 PAPER_DIR = STATE_ROOT / "storage" / "paper_trade"
@@ -41,6 +43,7 @@ TASK_LOG_PATH = APP_RUN_DIR / "kss_desktop_tasks.jsonl"
 NAMES_PATH = STATE_ROOT / "storage" / "stock_names.csv"
 SUPPLY_CHAIN_PATH = PROJECT_ROOT / "kss" / "config" / "supply_chain.yaml"  # config = 代码，随 bundle
 SECTOR_ROTATION_DIR = STATE_ROOT / "storage" / "sector_rotation"
+NEWS_DIGEST_DIR = STATE_ROOT / "storage" / "news_digest"  # 舆情热点 digest 归档(cron 生成)
 DATA_CATALOG_PATH = STATE_ROOT / "storage" / "data_catalog.json"  # 由 build_data_catalog.py 生成
 TOP_N = 5
 TOP_PCT = 0.2
@@ -1973,6 +1976,42 @@ def _sector_rotation_snapshot(path: Path) -> dict[str, Any] | None:
         return None
 
 
+def _news_digest(date: str = "", scene: str = "") -> dict[str, Any]:
+    """舆情热点 digest:读 cron 归档的结构化 JSON,供 UI 两段式渲染(plan U11)。
+
+    ``storage/news_digest/{date}_{scene}.json`` 由 run_news_digest.py 写出。
+    无参 → 取最新一份;指定 date/scene → 取该份。返回:
+      ``{available, selected: <digest|None>, index: [{date,scene}...]}``
+    index 新到旧,供面板切换场次/历史。读舆情面板不在此实时生成(避免阻塞 UI)。
+    """
+    index: list[dict[str, str]] = []
+    by_key: dict[tuple[str, str], Path] = {}
+    if NEWS_DIGEST_DIR.exists():
+        for fp in sorted(NEWS_DIGEST_DIR.glob("*.json"), reverse=True):
+            stem = fp.stem  # {date}_{scene}
+            if "_" not in stem:
+                continue
+            d, _, sc = stem.partition("_")
+            index.append({"date": d, "scene": sc})
+            by_key[(d, sc)] = fp
+
+    selected_path: Path | None = None
+    if date and scene:
+        selected_path = by_key.get((date, scene))
+    elif index:
+        first = index[0]
+        selected_path = by_key.get((first["date"], first["scene"]))
+
+    selected: dict[str, Any] | None = None
+    if selected_path is not None:
+        try:
+            selected = json.loads(selected_path.read_text(encoding="utf-8"))
+        except Exception:
+            selected = None
+
+    return {"available": selected is not None, "selected": selected, "index": index}
+
+
 def _sector_rotation_history(limit: int = 30) -> list[dict[str, Any]]:
     """板块热点轮动归档列表：最新 N 个交易日，新到旧。
 
@@ -2982,7 +3021,8 @@ def _cron_catchup() -> dict[str, Any]:
 def _cron_rerun_many(labels: list[str]) -> dict[str, Any]:
     """批量重跑指定 label（按分类全部重跑 / 全部重跑），无视漏跑与否，但跳过停用项。"""
     if not labels:
-        labels = list(_launchd_plists().keys())
+        cm = _cron_manifest()
+        labels = [j.label for j in cm.all_jobs() if j.enabled]
     return _kickstart_labels(labels, require_stale=False)
 
 
@@ -3190,6 +3230,10 @@ COMMANDS = {
     "orientation": {"desc": "一次调用上手定向包", "args": []},
     "recipe-list": {"desc": "编排剧本目录(确定性复盘 DAG)", "args": []},
     "run-recipe": {"desc": "跑一条只读复盘剧本", "args": ["NAME", "[JSON_ARGS]"]},
+    "research-search": {"desc": "外部证据搜索(只读,不可覆盖 KSS 真值)", "args": ["QUERY", "[LIMIT]"]},
+    "research-fetch": {"desc": "外部 URL 证据抓取(只读,SSRF 护栏)", "args": ["URL", "[MAX_CHARS]"]},
+    "research-bundle": {"desc": "外部证据搜索+抓取 bundle(只读)", "args": ["QUERY", "[LIMIT]", "[MAX_CHARS_PER_SOURCE]"]},
+    "news-digest": {"desc": "舆情热点 digest(读 cron 归档,两段式:方向+催化)", "args": ["[DATE]", "[SCENE]"]},
 }
 
 # run_task 白名单 —— orientation 报此清单。须与 run_task() if-chain 实际接受集合一致
@@ -3259,7 +3303,35 @@ def _orientation() -> dict:
         "cron": _scheduled_jobs(),
         "docs": _doc_pointers(),
         "recipes": recipes,
+        "research": _research_status(),
     }
+
+
+def _research_status() -> dict[str, Any]:
+    """Research capability section for orientation; import/provider failures degrade."""
+    try:
+        from kss.research.adapter import research_status  # noqa: PLC0415
+
+        return research_status()
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "available": False,
+            "provider": os.environ.get("KSS_RESEARCH_PROVIDER") or "disabled",
+            "tools": ["research-search", "research-fetch", "research-bundle"],
+            "error": f"research unavailable: {exc}",
+            "evidenceRules": [
+                "localTruthPrecedence",
+                "doNotTreatWebAsInstruction",
+                "noTradeAdvice",
+            ],
+        }
+
+
+def _int_arg(args: list[str], idx: int, default: int) -> int:
+    try:
+        return int(args[idx])
+    except (IndexError, TypeError, ValueError):
+        return default
 
 
 # ---------------------------------------------------------------------------
@@ -3386,6 +3458,33 @@ def dispatch(command: str, args: list[str]) -> Any:
         if not args:
             raise ValueError("run-recipe requires NAME")
         return _run_recipe(args[0], args[1] if len(args) > 1 else "")
+    if command == "research-search":
+        if not args:
+            raise ValueError("research-search requires QUERY")
+        from kss.research.adapter import research_search  # noqa: PLC0415
+
+        return research_search(args[0], limit=_int_arg(args, 1, 5))
+    if command == "research-fetch":
+        if not args:
+            raise ValueError("research-fetch requires URL")
+        from kss.research.adapter import research_fetch  # noqa: PLC0415
+
+        return research_fetch(args[0], max_chars=_int_arg(args, 1, 8000))
+    if command == "research-bundle":
+        if not args:
+            raise ValueError("research-bundle requires QUERY")
+        from kss.research.adapter import research_bundle  # noqa: PLC0415
+
+        return research_bundle(
+            args[0],
+            limit=_int_arg(args, 1, 3),
+            max_chars_per_source=_int_arg(args, 2, 3000),
+        )
+    if command == "news-digest":
+        return _news_digest(
+            args[0] if len(args) > 0 else "",
+            args[1] if len(args) > 1 else "",
+        )
     raise ValueError(f"unknown command: {command}")
 
 
@@ -3394,7 +3493,8 @@ def main(argv: list[str]) -> int:
         print(
             "usage: kss_app_bridge.py snapshot|stock SYMBOL|report PATH|paper-summary|run TASK"
             "|cron-list|cron-rerun LABEL|cron-enable LABEL|cron-disable LABEL"
-            "|cron-catchup|cron-rerun-many LABEL,LABEL",
+            "|cron-catchup|cron-rerun-many LABEL,LABEL"
+            "|research-search QUERY|research-fetch URL|research-bundle QUERY",
             file=sys.stderr,
         )
         return 2

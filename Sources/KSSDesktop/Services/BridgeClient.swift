@@ -114,6 +114,14 @@ struct BridgeClient {
         try run(["sector-rotation-history", String(limit)], as: [HotspotRotationHistoryItem].self)
     }
 
+    /// 舆情热点 digest：无参 = 最新；可指定 date / scene 拉某档。
+    func newsDigest(date: String? = nil, scene: String? = nil) throws -> NewsDigestResponse {
+        var args = ["news-digest"]
+        if let date, !date.isEmpty { args.append(date) }
+        if let scene, !scene.isEmpty { args.append(scene) }
+        return try run(args, as: NewsDigestResponse.self)
+    }
+
     func themeLeaders() throws -> [ThemeLeaders] {
         try run(["theme-leaders"], as: [ThemeLeaders].self)
     }

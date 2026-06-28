@@ -17,6 +17,7 @@ cd "$PROJECT_ROOT"
 CANDIDATES=(
   "${KSS_PYTHON:-}"
   "$PROJECT_ROOT/venv/bin/python3"
+  "$PROJECT_ROOT/.venv/bin/python"
   "$HOME/Library/Application Support/KSS/venv/bin/python3"
   "$PROJECT_ROOT/.venv-desktop/bin/python"
   "$(command -v python3 || true)"

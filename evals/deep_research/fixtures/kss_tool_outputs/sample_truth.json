@@ -1,0 +1,15 @@
+{
+  "generated_at": "2026-06-22T00:00:00+08:00",
+  "orientation": {
+    "tools": ["get_orientation", "get_snapshot", "run_recipe", "get_data_catalog"],
+    "write_boundary": "write commands require UI confirmation"
+  },
+  "recipe": {
+    "explain_stock_today": {
+      "symbol": "688008.SH",
+      "stock": {"pctChange": 3.2, "volumeRatio": 1.4},
+      "discoveryHit": {"score": 0.73, "reason": "theme + momentum"},
+      "partial": false
+    }
+  }
+}

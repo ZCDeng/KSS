@@ -87,6 +87,18 @@ _SUSPICIOUS_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"instruction[s]?\b.{0,40}\b(now\s+do|instead|actually)\b",
         re.IGNORECASE | re.DOTALL,
     ),
+    # ---- 中文 prompt injection（plan U3 / R13;舆情社媒长帖承载最多对抗内容）----
+    # "忽略/无视…(以上/之前/所有)…指令/提示" —— 覆盖 AE5 "忽略以上所有指令…"
+    re.compile(r"(忽略|无视|不要理会|请勿理会|不用管|别管)[^，。；!?\n]{0,16}(指令|提示|命令|规则|要求|设定|prompt)"),
+    # "以上/之前指令…无效/作废"
+    re.compile(r"(以上|之前|前面|上面|所有|全部)[^，。；\n]{0,8}(指令|提示|命令)[^，。；\n]{0,8}(无效|作废|不算数?|清空)"),
+    # 试图覆写 system role(收紧:只命中注入特征强的「系统提示词/系统 prompt」,
+    # 避免误杀「操作系统提示更新」「系统消息」等正常财经/科技表述)
+    re.compile(r"系统\s*(提示词|prompt)", re.IGNORECASE),
+    # 角色劫持："扮演/假装你是/你现在是…(助手/系统/管理员/开发者)"
+    re.compile(r"(扮演|假装你是|你现在是|你将作为)[^，。；\n]{0,12}(助手|系统|管理员|开发者|AI|模型)"),
+    # "重新/新的(指令|任务|角色)："
+    re.compile(r"(重新|新的|以下是新)[^，。；\n]{0,6}(指令|任务|角色|命令)[:：]"),
 )
 
 _REDACTED: str = "[REDACTED]"
@@ -163,4 +175,46 @@ def sanitize_llm_input(text: str | None, max_len: int = 64) -> str:
     return filtered
 
 
-__all__ = ["sanitize_llm_input", "scan_for_injection"]
+def quarantine_posts(
+    posts: list[dict] | None,
+    *,
+    text_keys: tuple[str, ...] = ("title", "summary"),
+    max_post_chars: int = 2000,
+) -> tuple[list[dict], list[dict]]:
+    """逐帖注入隔离 + 单帖长度上限(plan U3 / R13)。
+
+    社媒长帖正文超 64 字无法走 ``sanitize_llm_input`` 截断,只能 ``scan_for_injection``,
+    而该路径仅告警不拦截。本函数把"命中即移出 LLM 批次(quarantine)"落地:逐帖在
+    ``text_keys``(默认 title+summary)上扫注入,命中 **或** 该帖采集时已带
+    ``prompt_injection`` 告警 → 移入 ``dropped``(带 ``_quarantine_reason``),不进 LLM。
+    保留帖的 ``summary`` 按 ``max_post_chars`` 截断,防单帖主导 prompt。
+
+    Returns:
+        ``(clean, dropped)`` —— clean 进 LLM 批次,dropped 已隔离。
+    """
+    clean: list[dict] = []
+    dropped: list[dict] = []
+    for post in posts or []:
+        if not isinstance(post, dict):
+            continue
+        scan_text = "\n".join(str(post.get(k, "")) for k in text_keys)
+        hit = scan_for_injection(scan_text)
+        has_warn = any(
+            isinstance(w, dict) and w.get("type") == "prompt_injection"
+            for w in (post.get("warnings") or [])
+        )
+        if hit or has_warn:
+            d = dict(post)
+            d["_quarantine_reason"] = f"injection:{hit}" if hit else "injection:warned"
+            dropped.append(d)
+            continue
+        kept = dict(post)
+        summary = str(kept.get("summary", ""))
+        if len(summary) > max_post_chars:
+            kept["summary"] = summary[:max_post_chars]
+            kept["_truncated"] = True
+        clean.append(kept)
+    return clean, dropped
+
+
+__all__ = ["sanitize_llm_input", "scan_for_injection", "quarantine_posts"]
