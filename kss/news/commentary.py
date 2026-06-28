@@ -49,14 +49,6 @@ def strip_numbers(text: str) -> str:
     return _NUMBER_RE.sub("", text or "")
 
 
-def neutralize_numbers(text: str) -> str:
-    """中和 LLM 产出文本里的任何数字为「相关数值」(真值走代码渲染)。"""
-    hits = _NUMBER_RE.findall(text or "")
-    if not text or not any(h for h in hits):
-        return text or ""
-    return _NUMBER_RE.sub("", text)
-
-
 def render_news_heat_line(direction: Any) -> str:
     """确定性渲染方向热度真值行(HTML,数字唯一可信来源)。
 

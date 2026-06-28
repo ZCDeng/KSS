@@ -43,6 +43,17 @@ def test_single_source_spam_not_on_board():
     assert dirs == []
 
 
+def test_single_source_varied_text_not_on_board():
+    # R3/AE2:同一来源换措辞发多条(去重不并)→ 多簇但单平台 → 未达跨独立源 → 不上榜
+    items = [
+        _item("雪球", "光模块需求暴涨"),
+        _item("雪球", "光模块产业链景气上行"),
+        _item("雪球", "光模块龙头订单饱满"),
+    ]
+    dirs = hotspot.build_directions(items, lexicon=["光模块"], min_confirmations=2)
+    assert dirs == []  # ic 可能=3 但 distinct_sources=1 < 2
+
+
 def test_heat_score_reproducible():
     items = [
         _item("微博", "降息预期升温", heat=200000),

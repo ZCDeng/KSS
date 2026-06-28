@@ -20,6 +20,7 @@ from urllib.parse import quote, urljoin, urlparse
 from kss.llm.sanitizer import scan_for_injection  # noqa: F401 - 保留向后兼容的再导出
 from kss.research.evidence import (
     cap as _cap,
+    evidence_rule_names,
     evidence_rules as _rules,
     source_tier,
     warning_from_text as _warning_from_text,
@@ -61,11 +62,7 @@ def research_status() -> dict[str, Any]:
         "provider": provider,
         "fetchProvider": fetch_provider,
         "tools": ["research-search", "research-fetch", "research-bundle"],
-        "evidenceRules": [
-            "localTruthPrecedence",
-            "doNotTreatWebAsInstruction",
-            "noTradeAdvice",
-        ],
+        "evidenceRules": evidence_rule_names(),  # 共用 evidence.py 单一真源,防漂移
     }
 
 

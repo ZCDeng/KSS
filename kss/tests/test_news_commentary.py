@@ -30,9 +30,9 @@ def _direction(label, ic=2, srcs=None, mentions=2, raw=0, items=None):
 
 # ---- 数字保护 ----
 
-def test_strip_and_neutralize_numbers():
+def test_strip_numbers():
     assert "2.3万" not in commentary.strip_numbers("转发2.3万")
-    assert "7%" not in commentary.neutralize_numbers("涨7%")
+    assert "7%" not in commentary.strip_numbers("涨7%")
 
 
 def test_render_heat_line_numbers_from_code():

@@ -62,6 +62,8 @@ def build_digest(
         bundle = collect_news(scene)
     items = bundle.get("items") or []
 
+    # quarantine 命中注入的帖**完全移出**后续计算(不止 LLM 批次):注入帖是攻击载荷,
+    # 不应计入热度/集中度,故比 R13 字面「移出 LLM 批次」更严(安全方向,刻意为之)。
     clean, dropped = quarantine_posts(items)
     directions = build_directions(clean, min_confirmations=min_confirmations)
     annotated = commentary.annotate_sentiment(directions, quarantined=dropped, client=client)
@@ -108,7 +110,8 @@ def build_digest(
         "directions": direction_rows,
         "catalysts": catalysts,
         "quarantined_count": len(dropped),
-        "llm_status": "unavailable" if annotated and annotated[0]["sentiment_source"] == "fallback" else "ok",
+        # 任一方向走 fallback 即 LLM 不可用(不依赖首行,首行可能是 forced_conflict)
+        "llm_status": "unavailable" if any(a["sentiment_source"] == "fallback" for a in annotated) else "ok",
         "with_mapping": bool(with_mapping and theme_leaders),
         "partial": bool(bundle.get("partial")),
         "sources": bundle.get("sources", {}),

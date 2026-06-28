@@ -78,10 +78,18 @@ def build_directions(
     *,
     lexicon: Iterable[str] | None = None,
     min_confirmations: int = 2,
+    min_distinct_sources: int = 2,
     threshold: float = 0.6,
 ) -> list[Direction]:
-    """聚方向桶并排序。每条按关键词归入一个或多个方向;每个方向用 U4 去重 + 加权
-    得可信独立确认数,≥``min_confirmations`` 上榜。按热度分降序、标签次序稳定排序。"""
+    """聚方向桶并排序。每条按命中的关键词归入对应方向(一条可命中多个相关子题方向,
+    属预期:方向是关键词粒度,子题重叠由 U7/U8 题材归并处理);每方向用 U4 去重 + 加权
+    得可信独立确认数。
+
+    上榜须同时满足(R3「跨源、跨独立信息源」+ AE2「单源刷屏不入榜」):
+      - 可信独立确认数 ≥ ``min_confirmations``(去重后的独立信息条数);
+      - 可信确认覆盖的不同平台数 ≥ ``min_distinct_sources``(防单源换措辞刷多条绕过)。
+    按热度分降序、标签次序稳定排序。
+    """
     lex = list(lexicon) if lexicon is not None else default_lexicon()
     lex = sorted({t for t in lex if t}, key=len, reverse=True)
 
@@ -98,7 +106,7 @@ def build_directions(
     for label, bucket in buckets.items():
         res = dedupe_sources(bucket, threshold=threshold)
         ic = res.independent_confirmations
-        if ic < min_confirmations:
+        if ic < min_confirmations or len(res.distinct_sources) < min_distinct_sources:
             continue
         raw_heat = sum(int(it.get("heat") or 0) for c in res.authentic_clusters for it in c.items)
         mentions = sum(len(c.items) for c in res.authentic_clusters)

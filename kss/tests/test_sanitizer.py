@@ -50,6 +50,8 @@ def test_legit_financial_text_not_flagged():
         "固态电池量产进度超预期,产业链受益",
         "黄金价格创新高,贵金属概念活跃",
         "公司公告:拟扩产,规则按交易所要求执行",
+        "操作系统提示更新已推送",   # 「系统提示」收紧后不再误杀
+        "收到一条系统消息",
     ]:
         assert scan_for_injection(t) is None, t
 
