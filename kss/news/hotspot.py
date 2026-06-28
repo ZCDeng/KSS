@@ -116,3 +116,107 @@ def build_directions(
 
     directions.sort(key=lambda d: (-d.heat_score, d.label))
     return directions
+
+
+# ====================================================================== #
+# U8: 关联标的映射 + provenance 审计(R7, R5;经 U7 命中率 gate 放行)
+# ====================================================================== #
+
+def _direction_source_posts(direction: Any) -> list[dict[str, Any]]:
+    """方向的驱动来源帖(R5 provenance,随归档持久化)。"""
+    items = direction.get("items", []) if isinstance(direction, dict) else getattr(direction, "items", [])
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for it in items or []:
+        key = (str(it.get("source", "")), str(it.get("url", "")) or str(it.get("title", "")))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"source": str(it.get("source", "")), "title": str(it.get("title", "")), "url": str(it.get("url", ""))})
+    return out
+
+
+def attach_related_stocks(
+    directions: list[Any] | None,
+    *,
+    theme_leaders: list[dict[str, Any]] | None = None,
+    matcher: Any = None,
+) -> list[dict[str, Any]]:
+    """给每个方向挂关联标的(R7),留来源审计链(R5)。
+
+    直达主题 → 取该主题 ``_theme_leaders`` 的板块/龙头/二梯队;主题无 board(宏观/商品
+    不在 sector_rotation 快照宇宙)→ **落 R8 降级、不空挂、绝不臆造个股**(AE1)。
+    每个 surfaced 标的记录驱动它的来源帖。``theme_leaders`` 为 ``_theme_leaders()`` 输出
+    (调用方注入,避免 kss.news → bridge 循环依赖);``matcher`` 默认 U7 的 match_theme。
+    """
+    if matcher is None:
+        from kss.news.theme_match import match_theme as matcher  # noqa: PLW0127
+
+    tl_index: dict[str, dict[str, Any]] = {}
+    for entry in theme_leaders or []:
+        name = entry.get("name")
+        if name:
+            tl_index[name] = entry
+
+    out: list[dict[str, Any]] = []
+    for d in directions or []:
+        label = _label_of_any(d)
+        m = matcher(label) or {}
+        theme = m.get("theme")
+        direct = bool(m.get("direct_hit"))
+        source_posts = _direction_source_posts(d)
+
+        mapping: dict[str, Any] = {
+            "label": label,
+            "theme": theme,
+            "match": "direct" if direct else "fallback",
+            "boards": [],
+            "stocks": [],
+            "degrade": None,
+            "source_posts": source_posts,
+        }
+
+        if not direct or theme not in tl_index:
+            mapping["degrade"] = "no_direct_match" if not direct else "theme_not_in_library"
+            out.append(mapping)
+            continue
+
+        entry = tl_index[theme]
+        boards = entry.get("boards") or []
+        if not boards:
+            # 宏观/商品主题 board 不在快照宇宙 → R8 降级,不空挂(AE1)
+            mapping["degrade"] = "theme_no_board_in_universe"
+            out.append(mapping)
+            continue
+
+        by_symbol: dict[str, dict[str, Any]] = {}
+        board_names: list[str] = []
+        for bd in boards:
+            bname = bd.get("board", "")
+            board_names.append(bname)
+            for tier_key, tier_label in (("leaders", "leader"), ("secondTier", "second")):
+                for s in bd.get(tier_key) or []:
+                    sym = s.get("symbol") or s.get("code") or ""
+                    if not sym:
+                        continue
+                    # 候选与龙头去重:龙头优先
+                    if sym in by_symbol and by_symbol[sym]["tier"] == "leader":
+                        continue
+                    by_symbol[sym] = {
+                        "symbol": sym,
+                        "name": s.get("name", ""),
+                        "board": bname,
+                        "tier": tier_label,
+                        "theme": theme,
+                        "source_posts": source_posts,
+                    }
+        mapping["boards"] = board_names
+        mapping["stocks"] = list(by_symbol.values())
+        if not mapping["stocks"]:
+            mapping["degrade"] = "theme_no_board_in_universe"
+        out.append(mapping)
+    return out
+
+
+def _label_of_any(direction: Any) -> str:
+    return direction.get("label", "") if isinstance(direction, dict) else getattr(direction, "label", "")
