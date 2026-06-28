@@ -229,11 +229,14 @@ struct ContentView: View {
                     sectorRotationHistory: snapshot.sectorRotationHistory ?? [],
                     sectorRotationDetail: store.sectorRotationDetail,
                     isLoadingSectorRotation: store.isLoadingSectorRotation,
+                    newsDigest: store.newsDigest,
+                    isLoadingNewsDigest: store.isLoadingNewsDigest,
                     selectedPath: store.selectedReportPath,
                     detail: store.reportDetail,
                     isLoadingDetail: store.isLoadingReport,
                     onSelectReview: { path in Task { await store.loadReport(path: path) } },
                     onSelectSectorRotationDate: { date in Task { await store.loadSectorRotation(date: date) } },
+                    onSelectNewsDigest: { date, scene in Task { await store.loadNewsDigest(date: date, scene: scene) } },
                     onOpenExternally: { path in store.openReportInMarkEdit(path: path) }
                 )
             case .backtests:
