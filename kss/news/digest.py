@@ -10,6 +10,8 @@ pipeline 各步均可注入(bundle/client/theme_leaders),便于确定性测试�
 
 from __future__ import annotations
 
+import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -21,7 +23,9 @@ from kss.news.hotspot import attach_related_stocks, build_directions
 from kss.research.evidence import evidence_rules
 
 _ROOT = Path(__file__).resolve().parents[2]
-_ARCHIVE_DIR = _ROOT / "storage" / "news_digest"
+# bundle 双根:运行时归档落 STATE_ROOT(与 bridge 读取端一致),dev 下 == 仓库根。
+_STATE_ROOT = Path(os.environ["KSS_STATE_ROOT"]) if os.environ.get("KSS_STATE_ROOT") else _ROOT
+_ARCHIVE_DIR = _STATE_ROOT / "storage" / "news_digest"
 
 _SCENES = ("盘前", "盘后")
 
@@ -177,14 +181,19 @@ def render_markdown(digest: dict[str, Any]) -> str:
 
 
 def archive_digest(digest: dict[str, Any], *, directory: str | Path | None = None, overwrite: bool = True) -> Path:
-    """按 ``{date}_{scene}.md`` 归档(默认覆盖=最新一次为准)。返回写入路径。"""
+    """按 ``{date}_{scene}.md``(人读)+ ``{date}_{scene}.json``(供 UI/bridge 读)归档。
+
+    默认覆盖=最新一次为准。返回 markdown 路径。
+    """
     d = Path(directory) if directory is not None else _ARCHIVE_DIR
     d.mkdir(parents=True, exist_ok=True)
-    path = d / f"{digest['date']}_{digest['scene']}.md"
-    if path.exists() and not overwrite:
-        return path
-    path.write_text(render_markdown(digest), encoding="utf-8")
-    return path
+    md_path = d / f"{digest['date']}_{digest['scene']}.md"
+    json_path = d / f"{digest['date']}_{digest['scene']}.json"
+    if md_path.exists() and not overwrite:
+        return md_path
+    md_path.write_text(render_markdown(digest), encoding="utf-8")
+    json_path.write_text(json.dumps(digest, ensure_ascii=False, indent=2), encoding="utf-8")
+    return md_path
 
 
 def run_news_digest(
