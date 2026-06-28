@@ -1,0 +1,51 @@
+# 舆情采集源清单(plan R1:可配置、不硬编码;缺源/未达源容错跳过)。
+#
+# 每条 source:
+#   key      内部标识(也作 source_kind,用于 U5 跨源计数)
+#   name     展示源名(中文,用于 digest 与去重的"独立源"口径)
+#   tool     seek MCP 工具名(经 kss.research.seek_client.reach 调用)
+#   args     工具入参(搜索类需 query)
+#   enabled  是否启用(未达源置 false,一处开关)
+#
+# 现状(2026-06-28 spike):
+#   - reach_weibo_hot / bocha_web_search 实测可达,返回真实数据。
+#   - reach_twitter_search 经 reach-gateway 当前 500,故 X 源默认 enabled:false;
+#     gateway 恢复后置 true 即启用(种子账号见 twitter.accounts)。
+#   - 雪球/财联社/格隆汇 无专用 reach 工具,走 bocha 搜索(plan Assumptions)。
+
+sources:
+  - key: weibo
+    name: 微博
+    tool: reach_weibo_hot
+    args: {}
+    enabled: true
+
+  - key: xueqiu
+    name: 雪球
+    tool: bocha_web_search
+    args:
+      query: 雪球 热门 股票 板块 讨论
+    enabled: true
+
+  - key: cls
+    name: 财联社
+    tool: bocha_web_search
+    args:
+      query: 财联社 电报 政策 利好 涨价 量产
+    enabled: true
+
+  - key: gelonghui
+    name: 格隆汇
+    tool: bocha_web_search
+    args:
+      query: 格隆汇 热点 板块 异动 催化
+    enabled: true
+
+  - key: twitter
+    name: X
+    tool: reach_twitter_search
+    args:
+      query: A股 OR 港股 OR 黄金 OR 石油 OR 降息
+    accounts:
+      - "@aleabitoreddit"
+    enabled: false  # reach-gateway 当前 500;恢复后置 true

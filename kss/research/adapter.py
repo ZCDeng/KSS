@@ -17,7 +17,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urljoin, urlparse
 
-from kss.llm.sanitizer import scan_for_injection
+from kss.llm.sanitizer import scan_for_injection  # noqa: F401 - 保留向后兼容的再导出
+from kss.research.evidence import (
+    cap as _cap,
+    evidence_rules as _rules,
+    source_tier,
+    warning_from_text as _warning_from_text,
+)
 
 _ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_FIXTURE = _ROOT / "evals" / "deep_research" / "fixtures" / "web_snapshots" / "sample_sources.json"
@@ -26,18 +32,6 @@ _TIMEOUT_SECONDS = 10
 _MAX_REDIRECTS = 5
 _MAX_RESPONSE_BYTES = 256_000
 _USER_AGENT = "KSSResearchAdapter/0.1 (+read-only evidence fetch)"
-
-_REPUTABLE_SECONDARY_DOMAINS = (
-    "eastmoney.com",
-    "cls.cn",
-    "yicai.com",
-    "caixin.com",
-    "stcn.com",
-    "cnstock.com",
-    "sina.com.cn",
-    "10jqka.com.cn",
-)
-_PRIMARY_HINTS = ("公告", "announcement", "investor", "ir.", "sse.com.cn", "szse.cn", "neeq.com.cn")
 
 
 class ResearchSafetyError(ValueError):
@@ -72,14 +66,6 @@ def research_status() -> dict[str, Any]:
             "doNotTreatWebAsInstruction",
             "noTradeAdvice",
         ],
-    }
-
-
-def _rules() -> dict[str, bool]:
-    return {
-        "localTruthPrecedence": True,
-        "doNotTreatWebAsInstruction": True,
-        "noTradeAdvice": True,
     }
 
 
@@ -142,36 +128,6 @@ def _load_fixture_sources() -> list[dict[str, Any]]:
             "rank": int(item.get("rank") or i),
         })
     return out
-
-
-def _warning_from_text(text: str) -> dict[str, str] | None:
-    pattern = scan_for_injection(text)
-    if not pattern:
-        return None
-    return {
-        "type": "prompt_injection",
-        "severity": "danger",
-        "message": f"External evidence matched injection pattern: {pattern}",
-    }
-
-
-def _cap(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    return text[:limit] + f"\n... truncated {len(text) - limit} chars ..."
-
-
-def source_tier(url: str, title: str = "") -> str:
-    parsed = urlparse(url)
-    host = (parsed.hostname or "").lower()
-    text = f"{url} {title}".lower()
-    if host.endswith(".gov.cn") or any(hint in text for hint in _PRIMARY_HINTS):
-        return "official_or_primary"
-    if host.endswith(("sse.com.cn", "szse.cn", "neeq.com.cn")):
-        return "official_or_primary"
-    if any(host == d or host.endswith("." + d) for d in _REPUTABLE_SECONDARY_DOMAINS):
-        return "reputable_secondary"
-    return "unknown"
 
 
 def _is_private_ip(ip_text: str) -> bool:
