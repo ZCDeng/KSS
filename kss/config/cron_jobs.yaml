@@ -16,6 +16,7 @@ category_order:
   - 数据更新
   - 扫描选股
   - 板块复盘
+  - 舆情热点
   - 盘中快讯
   - 纸交易
   - 校验回测
@@ -93,6 +94,22 @@ jobs:
     schedule: {hour: 17, minute: 50, weekdays: [1, 2, 3, 4, 5]}
     title: 板块热点轮动归档
     category: 板块复盘
+    catchup: true
+    enabled: true
+
+  - suffix: news_digest_premarket
+    wrapper: scripts/run_news_digest_premarket.sh
+    schedule: {hour: 8, minute: 40, weekdays: [1, 2, 3, 4, 5]}
+    title: 舆情热点·盘前
+    category: 舆情热点
+    catchup: true
+    enabled: true
+
+  - suffix: news_digest_postclose
+    wrapper: scripts/run_news_digest_postclose.sh
+    schedule: {hour: 17, minute: 35, weekdays: [1, 2, 3, 4, 5]}
+    title: 舆情热点·盘后
+    category: 舆情热点
     catchup: true
     enabled: true
 
