@@ -17,8 +17,13 @@ INFO_PLIST="$APP_CONTENTS/Info.plist"
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 
 cd "$ROOT_DIR"
-swift build
-BUILD_BIN_PATH="$(swift build --show-bin-path)"
+# 强制 SwiftPM 原生 build-system:本机默认可能走 Xcode build-system(产物落
+# .build/out/Products/Debug,Xcode 资源布局),而下面按 SwiftPM 布局把资源 bundle
+# 放到 Contents/MacOS/ 旁边 → Bundle.module 找不到、启动即 SIGTRAP(崩在 AppHeader
+# logo)。--build-system native 让产物落 .build/<triple>/debug、布局与本脚本一致。
+SWIFT_BUILD_FLAGS="--build-system native"
+swift build $SWIFT_BUILD_FLAGS
+BUILD_BIN_PATH="$(swift build $SWIFT_BUILD_FLAGS --show-bin-path)"
 BUILD_BINARY="$BUILD_BIN_PATH/$APP_NAME"
 
 rm -rf "$APP_BUNDLE"
