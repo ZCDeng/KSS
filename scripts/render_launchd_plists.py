@@ -185,16 +185,48 @@ def _to_xml(pl: dict) -> bytes:
     return text.encode("utf-8")
 
 
-def render(project_root: str, job: CronJob, output: Path, state_root: str | None = None) -> dict:
-    """构造 + 校验 + 原子写单任务 plist。校验失败 raise RenderError（不写文件）。"""
+def build_validated_plist(
+    project_root: str,
+    job: CronJob,
+    output: Path,
+    state_root: str | None = None,
+) -> dict:
+    """构造 + 校验单任务 plist（纯内存，不写文件）。"""
     pl = build_plist(project_root, job, state_root=state_root)
     _validate(pl, output)
+    return pl
 
+
+def render(project_root: str, job: CronJob, output: Path, state_root: str | None = None) -> dict:
+    """构造 + 校验 + 原子写单任务 plist。校验失败 raise RenderError（不写文件）。"""
+    pl = build_validated_plist(project_root, job, output, state_root=state_root)
     output.parent.mkdir(parents=True, exist_ok=True)
     tmp = output.with_suffix(output.suffix + ".tmp")
     tmp.write_bytes(_to_xml(pl))
     tmp.replace(output)
     return pl
+
+
+def build_all_plists(
+    project_root: str,
+    *,
+    output_dir: Path | None = None,
+    state_root: str | None = None,
+    manifest_path: Path | str | None = None,
+) -> dict[str, dict]:
+    """构造并校验清单全部任务，返回 ``{suffix: plist_dict}``（纯内存）。"""
+    manifest = load_manifest(manifest_path)
+    rendered: dict[str, dict] = {}
+    for job in manifest.jobs:
+        output = (
+            Path(output_dir) / f"{job.label}.plist"
+            if output_dir is not None
+            else Path(f"{job.label}.plist")
+        )
+        rendered[job.suffix] = build_validated_plist(
+            project_root, job, output, state_root=state_root
+        )
+    return rendered
 
 
 def render_all(
@@ -209,12 +241,18 @@ def render_all(
     返回 ``{suffix: plist_dict}``。任一任务校验失败即 raise（fail-loud，不静默跳过）。
     """
     manifest = load_manifest(manifest_path)
-    rendered: dict[str, dict] = {}
+    rendered = build_all_plists(
+        project_root,
+        output_dir=output_dir,
+        state_root=state_root,
+        manifest_path=manifest_path,
+    )
     for job in manifest.jobs:
         output = Path(output_dir) / f"{job.label}.plist"
-        rendered[job.suffix] = render(
-            project_root, job, output, state_root=state_root
-        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        tmp = output.with_suffix(output.suffix + ".tmp")
+        tmp.write_bytes(_to_xml(rendered[job.suffix]))
+        tmp.replace(output)
     return rendered
 
 

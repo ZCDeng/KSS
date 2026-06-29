@@ -33,7 +33,7 @@ struct NetworkSettingsView: View {
             field("Telegram API URL（自建中继，可选）", text: $telegramApiUrl, secure: false)
 
             Divider().padding(.vertical, 2)
-            Text("AI 复盘助手")
+            Text("Seesaw")
                 .font(.system(size: 13, weight: .bold)).foregroundStyle(theme.textPrimary)
             Text("二选一填 key（优先 OpenAI；都填以 OpenAI 为准）。保存后自动重启 sidecar 生效。")
                 .font(.system(size: 11)).foregroundStyle(theme.textSecondary)

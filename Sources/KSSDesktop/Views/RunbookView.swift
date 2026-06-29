@@ -268,7 +268,7 @@ struct ScheduledJobRow: View {
         HStack(spacing: 12) {
             Image(systemName: job.running ? "arrow.triangle.2.circlepath" : "clock.arrow.circlepath")
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(job.stale ? theme.ma5 : theme.accent)
+                .foregroundStyle(job.needsInstall == true || job.stale ? theme.ma5 : theme.accent)
                 .frame(width: 22)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -297,7 +297,11 @@ struct ScheduledJobRow: View {
                             .foregroundStyle(theme.textSecondary)
                     }
                 }
-                if job.stale {
+                if job.needsInstall == true {
+                    Text("需同步 LaunchAgent 后才能调度")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(theme.ma5)
+                } else if job.stale {
                     Text("漏跑 \(job.missedCycles) 次" + (job.expectedAt.map { "，应跑于 \($0)" } ?? ""))
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(theme.ma5)
@@ -324,8 +328,10 @@ struct ScheduledJobRow: View {
                 }
             }
             .buttonStyle(.bordered)
-            .disabled(busy || !job.enabled)
-            .help(job.enabled ? "立即重跑" : "已停用，先启用再重跑")
+            .disabled(busy || !job.enabled || job.needsInstall == true)
+            .help(job.needsInstall == true
+                  ? "需先同步 LaunchAgent"
+                  : (job.enabled ? "立即重跑" : "已停用，先启用再重跑"))
 
             Toggle("", isOn: Binding(
                 get: { job.enabled },
@@ -334,8 +340,10 @@ struct ScheduledJobRow: View {
             .labelsHidden()
             .toggleStyle(.switch)
             .tint(theme.accent)
-            .disabled(busy)
-            .help(job.enabled ? "点按停用（下次调度不再触发）" : "点按启用")
+            .disabled(busy || job.needsInstall == true)
+            .help(job.needsInstall == true
+                  ? "需先同步 LaunchAgent"
+                  : (job.enabled ? "点按停用（下次调度不再触发）" : "点按启用"))
         }
         .padding(.horizontal, 14).padding(.vertical, 11)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -353,7 +361,7 @@ struct ScheduledJobRow: View {
         case .running:
             return StatusBadge(icon: "arrow.triangle.2.circlepath", text: "运行中", tint: theme.accent, emphasized: true)
         case .needsInstall:
-            return StatusBadge(icon: "arrow.down.circle.fill", text: "待安装", tint: theme.ma5, emphasized: true)
+            return StatusBadge(icon: "arrow.down.doc.fill", text: "需同步", tint: theme.ma5, emphasized: true)
         case .stale:
             return StatusBadge(icon: "exclamationmark.triangle.fill", text: "漏跑\(job.missedCycles)", tint: theme.ma5, emphasized: true)
         case .failed:

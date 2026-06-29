@@ -160,3 +160,53 @@ def test_catchup_eligible_drives_catchup_exclusion(manifest_at_tmp, monkeypatch)
     assert "collect_intraday" not in kicked_suffixes, "catchup:false 任务不应被补跑"
     assert "update_data_daily" in kicked_suffixes, "catchup:true 任务应被补跑"
     assert "com.zcdeng.kss.collect_intraday" in res["skipped"]
+
+
+def test_rerun_many_empty_labels_uses_manifest_enabled_jobs(
+    manifest_at_tmp, monkeypatch
+):
+    """全部重跑的候选集来自 manifest enabled jobs，而不是 deploy plist glob。"""
+    data = _base_manifest()
+    data["jobs"].append({
+        "suffix": "disabled_job",
+        "wrapper": "scripts/run_update_data_daily.sh",
+        "schedule": {"hour": 7, "minute": 0},
+        "title": "停用任务",
+        "category": "系统",
+        "catchup": True,
+        "enabled": False,
+    })
+    manifest_at_tmp(data)
+    monkeypatch.setattr(b, "_disabled_labels", lambda uid: set())
+    monkeypatch.setattr(
+        b,
+        "_scheduled_job",
+        lambda label, path, uid, disabled, **kw: {
+            "label": label, "title": label, "enabled": True, "stale": False,
+        },
+    )
+    kicked: list[str] = []
+
+    def _fake_launchctl(args):
+        if args and args[0] == "kickstart":
+            kicked.append(args[-1])
+        return (0, "", "")
+
+    monkeypatch.setattr(b, "_run_launchctl", _fake_launchctl)
+    monkeypatch.setattr(
+        b,
+        "_launchd_plists",
+        lambda: {
+            "com.zcdeng.kss.update_data_daily": _REPO / "deploy" / "launchd" / "com.zcdeng.kss.update_data_daily.plist",
+            "com.zcdeng.kss.collect_intraday": _REPO / "deploy" / "launchd" / "com.zcdeng.kss.collect_intraday.plist",
+            "com.zcdeng.kss.deploy_only_stale": _REPO / "deploy" / "launchd" / "com.zcdeng.kss.deploy_only_stale.plist",
+            "com.zcdeng.kss.disabled_job": _REPO / "deploy" / "launchd" / "com.zcdeng.kss.disabled_job.plist",
+        },
+    )
+
+    res = b._cron_rerun_many([])
+    kicked_labels = {k.split("/")[-1] for k in kicked}
+    assert kicked_labels == {"com.zcdeng.kss.update_data_daily"}
+    assert "com.zcdeng.kss.deploy_only_stale" not in res["skipped"]
+    assert "com.zcdeng.kss.collect_intraday" in res["skipped"]
+    assert "com.zcdeng.kss.disabled_job" not in kicked_labels

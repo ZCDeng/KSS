@@ -66,6 +66,13 @@ class _FakeClient:
 @pytest.fixture
 def state(tmp_path, monkeypatch):
     monkeypatch.setattr(uc, "_KSS_STATE", tmp_path)
+    monkeypatch.setattr(
+        uc,
+        "_NAME_INDEX_PATH",
+        tmp_path / "storage" / "macro" / "stock_name_index.json",
+    )
+    monkeypatch.setattr(uc, "_NAME_META_CACHE", None)
+    monkeypatch.setattr(uc, "_NAME_INDEX_WARNED", False)
     return tmp_path
 
 
@@ -145,6 +152,25 @@ def test_update_one_fallback_when_ts_code_malformed(state):
     client = _FakeClient()
     uc.update_one(csv, client, end_date="20210106")
     assert client.daily_calls[0][0] == "300750.SZ"  # 文件名推断兜底 300→SZ
+
+
+def test_kind_for_infers_fund_and_index_without_name_index(state):
+    uc._NAME_META_CACHE = None
+    uc._NAME_INDEX_WARNED = False
+    uc._NAME_INDEX_PATH = state / "storage" / "macro" / "stock_name_index.json"
+    assert uc._kind_for("510150.SH") == "fund"
+    assert uc._kind_for("588000.SH") == "fund"
+    assert uc._kind_for("899050.BJ") == "index"
+    assert uc._kind_for("688322.SH") == "stock"
+
+
+def test_kind_for_prefers_name_index_when_present(state):
+    uc._NAME_META_CACHE = {
+        "510150.SH": {"kind": "stock"},
+        "000688.SH": {"kind": "index"},
+    }
+    assert uc._kind_for("510150.SH") == "stock"
+    assert uc._kind_for("000688.SH") == "index"
 
 
 def test_list_date_falls_back_when_basic_fails(state):

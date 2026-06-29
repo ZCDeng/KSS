@@ -35,12 +35,28 @@ env/
 !.claude/skills/
 
 # 数据（由 scripts/update_cs_data.py 重建，体积大）
+# 根目录 cs_data_*.csv 里已有入库股票池视作历史种子；新增日更/ETF/指数 csv 默认
+# 运行态处理，避免每日任务把工作区刷成脏状态。确需纳入种子池时用 git add -f 明确加入。
+/cs_data_*.csv
 storage/*.db
 storage/*.db-journal
 storage/*.db-wal
+storage/*.db-shm
+storage/**/*.db-journal
+storage/**/*.db-wal
+storage/**/*.db-shm
 
 # 审计底稿例外：storage/daily_review/ 与 storage/etf_radar/ 是预测校验
 # (validate_predictions.py) 的依据，纳入版本控制；周五校验 cron 自动 commit
+# 同类日级归档还包括 storage/sector_rotation/*.json、storage/paper_trade/*.json
+# 与人工/研究报告 storage/reports/。这些路径不要用 storage/** 一刀切忽略。
+# LLM commentary 边车、探针样本、本地状态和可重建 macro/cache 则属于运行态。
+storage/etf_radar/.morning_alert_state
+storage/etf_radar/*.commentary.md
+storage/sector_rotation/probe/
+storage/app_runs/
+storage/macro/
+storage/reports/.claude/
 
 # 日志 / 临时
 *.log
@@ -88,6 +104,9 @@ storage/prediction_ledger/
 storage/factor_health/
 storage/cpcv_cache/
 storage/pipeline_alpha/
+
+# eval harness: cases/scorers/reports 可入库；逐次运行 trace 可重建
+evals/**/traces/
 
 # U5 sidecar socket (dev: repo/run/)
 /run/
