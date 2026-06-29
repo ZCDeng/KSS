@@ -873,9 +873,13 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     /// 永久置顶、不参与排序的 section。
     static let pinned: [WorkspaceSection] = [.dashboard]
 
-    /// 可被用户拖拽重排的 section（enum 原序，去掉置顶项）。
+    /// 暂时隐藏的 section：代码保留、不上侧栏。舆情 digest 未达预期,等改进方案定了再恢复
+    /// （从本数组移除即重新显示）。enum case / NewsDigestView / ContentView 路由均完整保留。
+    static let hidden: [WorkspaceSection] = [.newsDigest]
+
+    /// 可被用户拖拽重排的 section（enum 原序，去掉置顶项与隐藏项）。
     static var reorderable: [WorkspaceSection] {
-        allCases.filter { !pinned.contains($0) }
+        allCases.filter { !pinned.contains($0) && !hidden.contains($0) }
     }
 
     /// 把已存顺序（rawValue 逗号串）解析成完整有序 section 列表。
@@ -892,6 +896,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         for raw in savedRaw {
             guard let section = WorkspaceSection(rawValue: raw),
                   !pinned.contains(section),
+                  !hidden.contains(section),
                   !seen.contains(section) else { continue }
             result.append(section)
             seen.insert(section)
