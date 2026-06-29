@@ -107,15 +107,20 @@ class SyncPlan:
 
 
 def _semantic_signature(pl: dict) -> tuple:
-    """plist 的语义指纹：schedule + wrapper + 日志目录（与金标闸同维度）。
+    """plist 的运行时指纹：launchd 实际执行所依赖的语义字段。
 
-    比语义而非字节：避免「生成头注释 / 字典键序」这类无关差异误判为 update。
-    复用 U2 渲染器导出的签名函数（单一真源，不本地另写）。
+    对账 update 必须比金标闸更严格：金标闸守护「调度/wrapper 是否被有意改变」，
+    这里则要发现 repo 路径、state root、env、日志路径等运行态漂移，避免 launchd
+    继续执行旧仓库/旧状态根。
     """
+    env = pl.get("EnvironmentVariables") or {}
     return (
         tuple(render_mod.schedule_signature(pl)),
-        render_mod.wrapper_signature(pl),
-        render_mod.log_signature(pl),
+        tuple(pl.get("ProgramArguments") or ()),
+        str(pl.get("WorkingDirectory", "")),
+        tuple(sorted((str(k), str(v)) for k, v in env.items())),
+        str(pl.get("StandardOutPath", "")),
+        str(pl.get("StandardErrorPath", "")),
     )
 
 
@@ -205,15 +210,18 @@ def build_target(
     state_root: str | None = None,
     manifest_path: Path | str | None = None,
 ) -> dict[str, dict]:
-    """渲染清单 enabled 任务到 ``deploy_dir``，返回 ``{label: plist_dict}``（目标态）。
+    """构造清单 enabled 任务目标态，返回 ``{label: plist_dict}``（纯内存）。
 
-    复用 U2 ``render_all``（写文件 + 校验），再按 enabled 过滤。渲染本身会写 deploy_dir
-    （入库生成物），但 ``~/Library/LaunchAgents`` / launchctl 一律走注入 runner。
+    复用 U2 ``build_all_plists`` 校验逻辑，但不写 ``deploy_dir``。``--apply`` 会在
+    金标闸通过后再写 deploy，避免未安装任务的基线被提前覆盖。
     """
     manifest = load_manifest(manifest_path)
     enabled_suffixes = {j.suffix for j in manifest.jobs if j.enabled}
-    rendered_all = render_mod.render_all(
-        project_root, deploy_dir, state_root=state_root, manifest_path=manifest_path
+    rendered_all = render_mod.build_all_plists(
+        project_root,
+        output_dir=deploy_dir,
+        state_root=state_root,
+        manifest_path=manifest_path,
     )
     return {
         f"{_LABEL_PREFIX}{suffix}": pl
@@ -302,7 +310,7 @@ def run_sync(
 ) -> tuple[SyncPlan, list[str]]:
     """主流程（dry-run 默认）。返回 (plan, notices)。
 
-    dry-run（apply=False）：渲染目标态 + 算 diff + 打印，**不碰 launchctl / LaunchAgents**。
+    dry-run（apply=False）：构造目标态 + 算 diff + 打印，**零文件/launchctl 副作用**。
     apply=True：先过金标闸（除非 acknowledge），再 :func:`apply_plan` 落地。
     """
     runner = runner or SyncRunner()
@@ -325,6 +333,13 @@ def run_sync(
         assert_golden_gate(
             rendered_by_suffix, agents_dir=agents_dir, deploy_dir=deploy_dir
         )
+
+    render_mod.render_all(
+        project_root,
+        deploy_dir,
+        state_root=state_root,
+        manifest_path=manifest_path,
+    )
 
     notices = apply_plan(
         plan, target, runner=runner, agents_dir=agents_dir, prune=prune

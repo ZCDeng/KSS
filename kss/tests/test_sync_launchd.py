@@ -139,6 +139,24 @@ def test_compute_plan_update_on_schedule_change(project_root):
     assert plan.stale == ()
 
 
+def test_compute_plan_update_on_runtime_path_change(tmp_path):
+    """变化：wrapper/working-dir/env/log 绝对路径漂移 → 进 update 集。"""
+    suffix = "scanner"
+    old_root = tmp_path / "old-root"
+    new_root = tmp_path / "new-root"
+    old_root.mkdir()
+    new_root.mkdir()
+    label = f"{_LABEL_PREFIX}{suffix}"
+    target = _target(new_root, [suffix])
+    installed = {label: _plist_bytes(old_root, suffix)}
+
+    plan = sync_mod.compute_plan(target, installed)
+
+    assert plan.update == (label,)
+    assert plan.install == ()
+    assert plan.stale == ()
+
+
 def test_compute_plan_idempotent_when_aligned(project_root):
     """幂等：已装内容 == 目标 → 三集皆空，全部 aligned。"""
     suffixes = ["scanner", "selfcheck", "update_data_daily"]
@@ -233,27 +251,28 @@ def test_apply_stale_removed_with_prune(project_root, tmp_path):
 # --------------------------------------------------------------------------- #
 # dry-run：零副作用（注入替身记录为空）
 # --------------------------------------------------------------------------- #
-def test_dry_run_zero_side_effects(project_root, tmp_path, monkeypatch):
-    """--dry-run：注入 fake 记录 ZERO launchctl + ZERO fs 改动。"""
-    suffixes = ["scanner", "selfcheck"]
-    target = _target(project_root, suffixes)
-    # 注入 build_target 避免真渲染写盘 / 读真清单形态外的东西。
-    monkeypatch.setattr(sync_mod, "build_target", lambda **kw: target)
+def test_dry_run_zero_side_effects(project_root, tmp_path):
+    """--dry-run：真实 build_target 也不得写 deploy/LaunchAgents/launchctl。"""
     runner = FakeRunner(uid=501, installed={})
+    deploy = tmp_path / "deploy"
+    agents = tmp_path / "LaunchAgents"
     plan, notices = sync_mod.run_sync(
         project_root=str(project_root),
-        agents_dir=tmp_path / "LaunchAgents",
-        deploy_dir=tmp_path / "deploy",
+        agents_dir=agents,
+        deploy_dir=deploy,
         apply=False,
         prune=False,
         acknowledge_schedule_change=False,
         runner=runner,
     )
-    assert set(plan.install) == set(target)
+    suffixes = [j.suffix for j in load_manifest().jobs if j.enabled]
+    assert set(plan.install) == {f"{_LABEL_PREFIX}{s}" for s in suffixes}
     # dry-run 铁律：零 launchctl、零写、零删。
     assert runner.calls == []
     assert runner.writes == []
     assert runner.removes == []
+    assert not deploy.exists()
+    assert not agents.exists()
     assert notices == []
 
 
@@ -356,3 +375,38 @@ def test_golden_gate_bypassed_with_acknowledge(project_root, tmp_path, monkeypat
         ["bootout", f"{d}/{label}"],
         ["bootstrap", d, str(agents / f"{label}.plist")],
     ]
+
+
+def test_golden_gate_uses_preexisting_deploy_baseline_for_uninstalled_job(
+    project_root, tmp_path, monkeypatch
+):
+    """未安装任务的 deploy 金标必须在 sync 写入任何 target 前被读取。"""
+    suffix = "data_catalog_daily"
+    target = _target(project_root, [suffix])
+    monkeypatch.setattr(sync_mod, "build_target", lambda **kw: target)
+
+    deploy = tmp_path / "deploy"
+    deploy.mkdir()
+    baseline_pl = render_mod.build_plist(str(project_root), load_manifest().job(suffix))
+    sci = baseline_pl["StartCalendarInterval"]
+    entries = sci if isinstance(sci, list) else [sci]
+    for e in entries:
+        e["Hour"] = (int(e.get("Hour", 0)) + 7) % 24
+    (deploy / f"{_LABEL_PREFIX}{suffix}.plist").write_bytes(
+        plistlib.dumps(baseline_pl)
+    )
+
+    runner = FakeRunner(uid=501, installed={})
+
+    with pytest.raises(RenderError):
+        sync_mod.run_sync(
+            project_root=str(project_root),
+            agents_dir=tmp_path / "LaunchAgents",
+            deploy_dir=deploy,
+            apply=True,
+            prune=False,
+            acknowledge_schedule_change=False,
+            runner=runner,
+        )
+    assert runner.calls == []
+    assert runner.writes == []

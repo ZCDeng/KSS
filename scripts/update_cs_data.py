@@ -126,15 +126,58 @@ def ensure_history(
 
 _NAME_INDEX_PATH = _KSS_STATE / "storage" / "macro" / "stock_name_index.json"
 _NAME_META_CACHE: dict | None = None
+_NAME_INDEX_WARNED = False
+
+
+def _infer_kind_from_code(ts_code: str) -> str:
+    """名称索引不可用时的保守证券类型兜底。
+
+    股票前缀优先按 stock；常见沪深 ETF/基金前缀按 fund；沪深京指数前缀按 index。
+    不能识别的代码仍回退 stock，避免对普通股票误走基金/指数 API。
+    """
+    code, _, exch = ts_code.partition(".")
+    exch = exch.upper()
+    if len(code) != 6 or exch not in {"SH", "SZ", "BJ"}:
+        return "stock"
+
+    if exch == "SH":
+        if code.startswith(("600", "601", "603", "605", "688", "689")):
+            return "stock"
+        if code.startswith((
+            "510", "511", "512", "513", "515", "516", "517", "518", "519",
+            "520", "522", "560", "561", "562", "563", "588", "589",
+        )):
+            return "fund"
+        if code.startswith(("000", "880", "881", "882", "883", "884", "885", "886")):
+            return "index"
+    elif exch == "SZ":
+        if code.startswith(("000", "001", "002", "003", "300", "301")):
+            return "stock"
+        if code.startswith((
+            "150", "159", "160", "161", "162", "163", "164", "165", "166",
+            "167", "168", "169", "184",
+        )):
+            return "fund"
+        if code.startswith(("399", "980")):
+            return "index"
+    elif exch == "BJ":
+        if code.startswith("899"):
+            return "index"
+        if code.startswith((
+            "430", "830", "831", "832", "833", "834", "835", "836", "837",
+            "838", "839", "870", "871", "872", "873", "920",
+        )):
+            return "stock"
+    return "stock"
 
 
 def _kind_for(ts_code: str) -> str:
-    """从名称索引取证券类型 (stock/fund/index)，缺失默认 stock。
+    """从名称索引取证券类型 (stock/fund/index)，缺失时按代码段保守推断。
 
     决定增量取数走 daily(+daily_basic) / fund_daily / index_daily：ETF/基金与指数
     在 Tushare 不走 `daily`（返回空），且无 daily_basic 的 pe/pb/换手。
     """
-    global _NAME_META_CACHE
+    global _NAME_META_CACHE, _NAME_INDEX_WARNED
     if _NAME_META_CACHE is None:
         import json
 
@@ -144,7 +187,16 @@ def _kind_for(ts_code: str) -> str:
             ).get("meta", {})
         except Exception:  # noqa: BLE001
             _NAME_META_CACHE = {}
-    return (_NAME_META_CACHE.get(ts_code) or {}).get("kind", "stock")
+            if not _NAME_INDEX_WARNED:
+                logger.warning(
+                    "名称索引不可用，按代码段推断证券类型: %s",
+                    _NAME_INDEX_PATH,
+                )
+                _NAME_INDEX_WARNED = True
+    indexed = (_NAME_META_CACHE.get(ts_code) or {}).get("kind")
+    if indexed in {"stock", "fund", "index"}:
+        return indexed
+    return _infer_kind_from_code(ts_code)
 
 
 def update_one(

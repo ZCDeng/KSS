@@ -173,6 +173,14 @@ def test_render_all_writes_every_job(project_root, tmp_path):
         assert (out_dir / f"{j.label}.plist").exists()
 
 
+def test_build_all_plists_does_not_write(project_root, tmp_path):
+    out_dir = tmp_path / "deploy"
+    rendered = render_mod.build_all_plists(str(project_root), output_dir=out_dir)
+    manifest = load_manifest()
+    assert set(rendered) == {j.suffix for j in manifest.jobs}
+    assert not out_dir.exists()
+
+
 def test_generated_header_present(project_root, tmp_path):
     out = tmp_path / "com.zcdeng.kss.scanner.plist"
     render_mod.render(str(project_root), _job("scanner"), out)

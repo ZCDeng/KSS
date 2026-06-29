@@ -665,7 +665,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .reviews: return "AI复盘"
         case .backtests: return "AI回测"
         case .stocks: return "股票池"
-        case .aiChat: return "AI复盘助手"
+        case .aiChat: return "Seesaw"
         case .architecture: return "架构"
         }
     }
@@ -681,7 +681,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .reviews: return "doc.text.magnifyingglass"
         case .backtests: return "chart.xyaxis.line"
         case .stocks: return "list.bullet.rectangle"
-        case .aiChat: return "bubble.left.and.text.bubble.right"
+        case .aiChat: return "scale.3d"
         case .architecture: return "circle.hexagongrid"
         }
     }
