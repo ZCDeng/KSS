@@ -39,6 +39,12 @@ _KSS_STATE = Path(__import__("os").environ.get("KSS_STATE_ROOT") or PROJECT_ROOT
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from kss.notifications.manager import CHANNEL_CHOICES, send_to_channels  # noqa: E402
+from kss.memory.review_recall import (  # noqa: E402
+    build_history_recap,
+    sanitize_validator_anchors,
+    today_features_from_stock,
+)
+from kss.memory.temporal_decay import timestamp_ms_for_date  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -899,6 +905,11 @@ def render(stocks: list[dict], idx_dfs: dict, today_str: str, t1_str: str,
                 lines.append(f"  _情形分布: 历史仅 {s.get('history_len', 0)} 日 (< {SCENARIO_MIN_HISTORY}), 次新股样本不足, 略_")
             lines.append("")
 
+        history_recap = s.get('history_recap') or []
+        if history_recap:
+            lines.extend(sanitize_validator_anchors(line) for line in history_recap)
+            lines.append("")
+
         # 操作建议
         lines.extend(_advice_block(s))
         chunks.append("\n".join(lines))
@@ -945,6 +956,9 @@ def main():
     stocks_data = []
     ts_codes: list[str] = []  # 与 stocks_data 同序, 用于按股归档命名
     stale_through: str | None = None  # 实时源失败退化到缓存时的最早数据截止日
+    archive_dir = _KSS_STATE / "storage" / 'daily_review'
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    now_ms = timestamp_ms_for_date(today_str)
     for sym, exch, category in symbols:
         _ensure_history_for(sym, exch)  # U4: 新股缺 cs_data 时先全量回填 (no-op if 已存在)
         name = resolve_name(sym, exch)
@@ -965,8 +979,16 @@ def main():
         s = stock_section(sym, name, df, mf_today, regime=regime)
         s['_df'] = df
         s['category'] = category
+        ts_code = f'{sym}.{exch}'
+        s['history_recap'] = build_history_recap(
+            ts_code,
+            today_features_from_stock(s),
+            archive_dir,
+            now_ms=now_ms,
+            exclude_date=today_str,
+        )
         stocks_data.append(s)
-        ts_codes.append(f'{sym}.{exch}')
+        ts_codes.append(ts_code)
 
     chunks = render(stocks_data, idx_dfs, today_str, t1_str, stale_through=stale_through)
     # chunks 结构: [大盘背景, 个股1, 个股2, ..., footer]
@@ -978,8 +1000,6 @@ def main():
     # 每文件自含 [大盘背景 + 该股 + footer], 即时单只生成不覆盖其他股当日产物。
     # dry-run 不覆盖已存在档案——存档是 validate_predictions.py 审计底稿,
     # 回放旧日期重新生成 (数据修订) 会静默改写历史预测记录。
-    archive_dir = _KSS_STATE / "storage" / 'daily_review'
-    archive_dir.mkdir(parents=True, exist_ok=True)
     header = f"# KSS {today_str} 复盘 / {t1_str} 预测\n\n"
     for ts_code, stock_chunk in zip(ts_codes, stock_chunks):
         archive_path = archive_dir / f'{today_str}_{ts_code}.md'

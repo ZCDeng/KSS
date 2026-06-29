@@ -82,6 +82,7 @@ def parse_review(path: Path):
         hm = re.search(r"📊 \*(.+?)\((\d{6})\) R", sec)
         if not hm:
             continue
+        sec = strip_history_recap(sec)
         name, code = hm.group(1), hm.group(2)
         close_m = re.search(r"收 ([\d.]+) \(([+-][\d.]+)%\)", sec)
         probs = {}
@@ -102,6 +103,16 @@ def parse_review(path: Path):
             "stop": float(stop.group(1)) if stop else None,
         })
     return review_date, forecast_date, stocks
+
+
+def strip_history_recap(sec: str) -> str:
+    """Remove human prior-recall block before machine forecast regex parsing."""
+    return re.sub(
+        r"\n\s+\*近期复盘演变\* \(待验证先验\).*?\n\s+↑ 以上为过去判断，请用今日数据重新验证，变化点优先\n?",
+        "\n",
+        sec,
+        flags=re.S,
+    )
 
 
 def load_actual(code: str, date: str):
