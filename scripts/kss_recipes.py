@@ -95,7 +95,24 @@ def _sector_context(call: Callable, date: str = "") -> dict:
     })
 
 
+def _news_collect(call: Callable, scene: str = "盘前") -> dict:
+    """舆情采集:多源(微博/雪球/财联社/格隆汇/X)→ 带 provenance 的结构化证据。
+
+    走 seek HTTP MCP(非 bridge),故不用注入的 ``call``;**不调 LLM**(R2)。
+    采集真值交下游 pipeline(去重→集中度→情绪/催化→渲染)。延迟 import 避免
+    把 fastmcp 常驻进 recipe 模块(本模块保持轻)。"""
+    from kss.news.collect import collect_news
+
+    return collect_news(scene)
+
+
 RECIPES: dict[str, dict] = {
+    "news_collect": {
+        "desc": "舆情采集:微博/雪球/财联社/格隆汇/X → 带 provenance 的结构化证据(不调 LLM)",
+        "write": False,
+        "args": ["scene"],
+        "fn": _news_collect,
+    },
     "explain_stock_today": {
         "desc": "解释这只今天为什么上榜:个股+板块上下文+主题龙头+发现候选命中(含 reason/score)",
         "write": False,

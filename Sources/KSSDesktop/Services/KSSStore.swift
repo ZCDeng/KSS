@@ -10,6 +10,8 @@ final class KSSStore: ObservableObject {
     @Published var stockDetail: StockDetail?
     @Published var sectorRotationDetail: HotspotRotationSnapshot?
     @Published var isLoadingSectorRotation = false
+    @Published var newsDigest: NewsDigestResponse?
+    @Published var isLoadingNewsDigest = false
 
     @Published var isLoading = false
     @Published var isLoadingReport = false
@@ -308,6 +310,25 @@ final class KSSStore: ObservableObject {
             errorMessage = error.localizedDescription
         }
         isLoadingSectorRotation = false
+    }
+
+    /// 舆情热点 digest：无参（空串）= 最新档；指定 date/scene 拉某档。
+    func loadNewsDigest(date: String? = nil, scene: String? = nil) async {
+        guard let bridge else {
+            errorMessage = "Cannot locate KSS project root"
+            return
+        }
+        isLoadingNewsDigest = true
+        errorMessage = nil
+        do {
+            let resp = try await Task.detached {
+                try bridge.newsDigest(date: date, scene: scene)
+            }.value
+            self.newsDigest = resp
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isLoadingNewsDigest = false
     }
 
     /// 解析自由文本（名称/代码/OCR 结果）为 ts_code。

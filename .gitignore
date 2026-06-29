@@ -113,3 +113,6 @@ evals/**/traces/
 
 # bundle-mode 双击便利：state-root venv 软链(本机 dev)
 /venv
+
+# 舆情热点 digest 运行时归档(每场重生成,不入库)
+storage/news_digest/

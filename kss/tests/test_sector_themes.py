@@ -119,8 +119,13 @@ def test_load_duplicate_concept_name_across_themes_allowed(tmp_path: Path) -> No
 
 
 def test_load_real_default_yaml_exists() -> None:
-    """仓库内 storage/themes_15th_5y.yaml 真实加载得到 7 个主题（防止 PR 引入回归）."""
+    """仓库内 storage/themes_15th_5y.yaml 真实加载（防 PR 回归）。
+
+    舆情 digest 的 R15 把题材库从 7 个十五五科技主题扩域到含宏观/商品/消费域;
+    其中 降息受益 无对应 board(industries/concepts 均空)被 load_themes 跳过,
+    故实际加载 20 个。原 7 个科技主题须仍在(不被扩域挤掉)。"""
     themes = load_themes()
-    assert len(themes) == 7
-    expected = {"半导体", "AI算力", "新能源储能", "生物医药", "具身智能", "工业母机·低空·航天", "数字经济"}
-    assert set(themes.keys()) == expected
+    assert len(themes) == 20  # 21 定义 − 1 个空主题(降息受益,R8 降级案)
+    original_seven = {"半导体", "AI算力", "新能源储能", "生物医药", "具身智能", "工业母机·低空·航天", "数字经济"}
+    assert original_seven <= set(themes.keys())
+    assert {"贵金属", "能源", "房地产"} <= set(themes.keys())  # 扩域新主题抽样在位
