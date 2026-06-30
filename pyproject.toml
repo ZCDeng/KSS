@@ -65,6 +65,7 @@ dependencies = [
     "xlrd==2.0.2",
     "fastmcp==3.3.1",
     "openai==2.43.0",
+    "yfinance==1.5.1",
 ]
 
 [dependency-groups]
