@@ -378,7 +378,11 @@ struct PerillaEnrichmentCard: View {
         var parts: [String] = []
         if let t = inst.top10, t.status == "ok" {
             let dir = ["increasing": "整体增持", "decreasing": "整体减持", "flat": "增减相当"][t.netDirection ?? ""] ?? ""
-            parts.append("前十大流通股东\(t.latestPeriod.map { " " + $0 } ?? "")：增 \(t.nIncreasing ?? 0) / 减 \(t.nDecreasing ?? 0) \(dir)")
+            var line = "前十大流通股东\(t.latestPeriod.map { " " + $0 } ?? "")："
+            if let inst = t.instRatio { line += String(format: "机构持仓 %.1f%% · ", inst) }
+            if let all = t.top10Ratio { line += String(format: "合计 %.1f%% · ", all) }
+            line += "增 \(t.nIncreasing ?? 0) / 减 \(t.nDecreasing ?? 0) \(dir)"
+            parts.append(line)
         }
         if let nb = inst.northbound, nb.status == "ok", let r = nb.holdRatio {
             let dir = ["increasing": "↑", "decreasing": "↓", "flat": "→"][nb.direction ?? ""] ?? ""

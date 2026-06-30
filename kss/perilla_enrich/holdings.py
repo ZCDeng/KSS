@@ -15,6 +15,9 @@ from typing import Any
 import pandas as pd
 
 _HK_HOLDER = "香港中央结算"
+# 机构类持有人(算"机构持仓比例"时计入); 一般企业(战投/控股方)与北向单列, 不计入.
+_INST_TYPES = {"开放式投资基金", "风险投资公司", "投资公司", "基金", "证券公司",
+               "保险公司", "社保", "信托公司", "封闭式投资基金", "QFII"}
 
 
 def _num(v: Any) -> float | None:
@@ -41,17 +44,26 @@ def top10_dynamics(df: pd.DataFrame | None) -> dict[str, Any]:
     latest = df["end_date"].max()
     cur = df[df["end_date"] == latest]
     inc = dec = 0
+    top10_ratio = 0.0       # 前十大流通股东合计占比
+    inst_ratio = 0.0        # 机构类(基金/创投/投资公司等)合计占比
     movers: list[dict[str, Any]] = []
     for _, r in cur.iterrows():
         chg = _num(r.get("hold_change"))
         ratio = _num(r.get("hold_ratio"))
+        htype = str(r.get("holder_type", ""))
+        name = str(r.get("holder_name", ""))
         if chg is not None and chg > 0:
             inc += 1
         elif chg is not None and chg < 0:
             dec += 1
+        if ratio is not None:
+            top10_ratio += ratio
+            # 机构持仓比例: 计机构类型, 排除一般企业(战投/控股)与北向通道.
+            if htype in _INST_TYPES and _HK_HOLDER not in name:
+                inst_ratio += ratio
         movers.append({
-            "name": str(r.get("holder_name", "")),
-            "type": str(r.get("holder_type", "")),
+            "name": name,
+            "type": htype,
             "hold_ratio": ratio,
             "change_shares": chg,
         })
@@ -71,6 +83,8 @@ def top10_dynamics(df: pd.DataFrame | None) -> dict[str, Any]:
         "n_increasing": inc,
         "n_decreasing": dec,
         "net_direction": net,
+        "top10_ratio": round(top10_ratio, 2),     # 前十大流通股东合计占流通股 %
+        "inst_ratio": round(inst_ratio, 2),        # 机构类合计占流通股 %
         "movers": movers,
     }
 

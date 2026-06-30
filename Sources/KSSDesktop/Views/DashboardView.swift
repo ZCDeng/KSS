@@ -300,13 +300,13 @@ struct PerillaPicksTable: View {
     @State private var ascending = false
     @State private var tab: PerillaTier = .core
 
-    private let wName: CGFloat = 124
-    private let wRet: CGFloat = 58
-    private let wPe: CGFloat = 60
-    private let wInst: CGFloat = 120   // 机构持仓动态
-    private let wPeer: CGFloat = 96    // 对标美股(代码+PE)
-    private let wMv: CGFloat = 80
-    private let wScore: CGFloat = 52
+    private let wName: CGFloat = 116
+    private let wRet: CGFloat = 54
+    private let wPe: CGFloat = 56
+    private let wInst: CGFloat = 168   // 机构持仓动态(机构占比+增减+北向, 较长)
+    private let wPeer: CGFloat = 92    // 对标美股(代码+PE)
+    private let wMv: CGFloat = 72
+    private let wScore: CGFloat = 46
     private let colSpacing: CGFloat = 10
     private let rowPadH: CGFloat = 14
 
@@ -395,6 +395,13 @@ struct PerillaPicksTable: View {
             SortHeaderCell(title: "产业链 / 层级·护城河", key: PerillaSort.chains, selection: $sortKey, ascending: $ascending,
                            alignment: .leading)
             Text("机构持仓").frame(width: wInst, alignment: .leading)
+            SortHeaderCell(title: "PE", key: PerillaSort.pe, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: wPe)
+            Text("对标美股").frame(width: wPeer, alignment: .leading)
+            SortHeaderCell(title: "流通市值", key: PerillaSort.mv, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: wMv)
+            SortHeaderCell(title: "评分", key: PerillaSort.score, selection: $sortKey, ascending: $ascending,
+                           alignment: .trailing, width: wScore)
             SortHeaderCell(title: "日", key: PerillaSort.ret1d, selection: $sortKey, ascending: $ascending,
                            alignment: .trailing, width: wRet)
             SortHeaderCell(title: "周", key: PerillaSort.ret5d, selection: $sortKey, ascending: $ascending,
@@ -403,13 +410,6 @@ struct PerillaPicksTable: View {
                            alignment: .trailing, width: wRet)
             SortHeaderCell(title: "年", key: PerillaSort.retYear, selection: $sortKey, ascending: $ascending,
                            alignment: .trailing, width: wRet)
-            SortHeaderCell(title: "PE", key: PerillaSort.pe, selection: $sortKey, ascending: $ascending,
-                           alignment: .trailing, width: wPe)
-            Text("对标美股").frame(width: wPeer, alignment: .leading)
-            SortHeaderCell(title: "流通市值", key: PerillaSort.mv, selection: $sortKey, ascending: $ascending,
-                           alignment: .trailing, width: wMv)
-            SortHeaderCell(title: "评分", key: PerillaSort.score, selection: $sortKey, ascending: $ascending,
-                           alignment: .trailing, width: wScore)
         }
         .font(.system(size: 10.5, weight: .medium))
         .tracking(0.3)
@@ -453,17 +453,8 @@ struct PerillaPicksTable: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            // 机构持仓动态（机构增减 + 北向）
-            Text((item.instHolding?.isEmpty == false) ? item.instHolding! : "—")
-                .font(.system(size: 11))
-                .foregroundStyle(theme.textBody)
-                .lineLimit(2)
-                .frame(width: wInst, alignment: .leading)
-
-            retCell(item.ret1d)
-            retCell(item.ret5d)
-            retCell(item.ret20d)
-            retCell(item.retYear)
+            // 机构持仓动态（机构占比 + 增减 + 北向）
+            instCell(item)
 
             Text(numText(item.pe))
                 .font(.system(size: 12, design: .monospaced))
@@ -485,6 +476,11 @@ struct PerillaPicksTable: View {
                 .foregroundStyle(theme.accent)
                 .lineLimit(1)
                 .frame(width: wScore, alignment: .trailing)
+
+            retCell(item.ret1d)
+            retCell(item.ret5d)
+            retCell(item.ret20d)
+            retCell(item.retYear)
         }
         .contentShape(Rectangle())
         .padding(.horizontal, rowPadH)
@@ -497,6 +493,36 @@ struct PerillaPicksTable: View {
             .foregroundStyle(value == nil ? theme.textSecondary : theme.signColor(value!))
             .lineLimit(1)
             .frame(width: wRet, alignment: .trailing)
+    }
+
+    // 机构持仓：第一行「机构 X%」(强调)，第二行「增减 · 北向」。缓存未命中=「—」。
+    @ViewBuilder
+    private func instCell(_ item: PerillaPick) -> some View {
+        let s = item.instHolding ?? ""
+        if s.isEmpty {
+            Text("—")
+                .font(.system(size: 11))
+                .foregroundStyle(theme.textSecondary)
+                .frame(width: wInst, alignment: .leading)
+        } else {
+            // 串形如「机构49.0% · 减持 · 北向2.3%↓」，首段=机构占比，其余=动态。
+            let segs = s.components(separatedBy: " · ")
+            let head = segs.first ?? s
+            let tail = segs.dropFirst().joined(separator: " · ")
+            VStack(alignment: .leading, spacing: 1) {
+                Text(head)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(theme.textBody)
+                    .lineLimit(1)
+                if !tail.isEmpty {
+                    Text(tail)
+                        .font(.system(size: 10))
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(width: wInst, alignment: .leading)
+        }
     }
 
     @ViewBuilder

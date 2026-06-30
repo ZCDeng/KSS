@@ -335,7 +335,8 @@ struct PerillaPick: Codable, Identifiable, Hashable {
     var pb: Double?
     var circMvYi: Double?   // 流通市值（亿元）；缺失时回退总市值
     var mvIsFloat: Bool?    // true=流通市值, false=回退总市值
-    var instHolding: String?   // 机构持仓动态(机构增减+北向)；缓存未命中=空
+    var instHolding: String?   // 机构持仓动态(机构占比+增减+北向)；缓存未命中=空
+    var instRatio: Double?     // 机构类合计持仓占比 %；缺=null
     var usPeerTicker: String?  // 对标美股代码(如 LRCX)；空=无对标
     var usPeerName: String?    // 对标美股名
     var usPeerPe: Double?      // 对标美股 PE(缓存)；缺=null
@@ -374,6 +375,8 @@ struct PerillaTop10: Codable, Hashable {
     var nIncreasing: Int?
     var nDecreasing: Int?
     var netDirection: String?
+    var top10Ratio: Double?   // 前十大流通股东合计占比 %
+    var instRatio: Double?    // 机构类合计占比 %
 
     enum CodingKeys: String, CodingKey {
         case status
@@ -382,6 +385,8 @@ struct PerillaTop10: Codable, Hashable {
         case nIncreasing = "n_increasing"
         case nDecreasing = "n_decreasing"
         case netDirection = "net_direction"
+        case top10Ratio = "top10_ratio"
+        case instRatio = "inst_ratio"
     }
 }
 

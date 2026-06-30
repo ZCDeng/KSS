@@ -34,6 +34,19 @@ def test_top10_classifies_movers() -> None:
     assert out["movers"][0]["name"] == "B风投"
 
 
+def test_top10_inst_and_total_ratio() -> None:
+    # 机构占比只计机构类型, 排除一般企业与北向通道; top10_ratio 为合计.
+    df = _df([
+        {"end_date": "20260331", "holder_name": "某基金", "hold_ratio": 5.0, "hold_change": 0, "holder_type": "开放式投资基金"},
+        {"end_date": "20260331", "holder_name": "某创投", "hold_ratio": 8.0, "hold_change": 0, "holder_type": "风险投资公司"},
+        {"end_date": "20260331", "holder_name": "控股集团", "hold_ratio": 20.0, "hold_change": 0, "holder_type": "一般企业"},
+        {"end_date": "20260331", "holder_name": "香港中央结算有限公司", "hold_ratio": 10.0, "hold_change": 0, "holder_type": "一般企业"},
+    ])
+    out = top10_dynamics(df)
+    assert out["inst_ratio"] == 13.0    # 5 + 8 (基金+创投); 一般企业/北向不计
+    assert out["top10_ratio"] == 43.0   # 全部合计
+
+
 def test_top10_net_increasing() -> None:
     df = _df([
         {"end_date": "20260331", "holder_name": "A", "hold_ratio": 5.0, "hold_change": 1.0, "holder_type": "基金"},
