@@ -188,6 +188,15 @@ class ChainRegistry:
             return 0.0
         return compute_perilla_score(info, self._config)
 
+    def tier(self, ts_code: str) -> str:
+        """结构性分层 core / main / watch; 未标注 → none. 见 scoring.perilla_tier."""
+        from kss.supply_chain.scoring import perilla_tier
+
+        info = self.get(ts_code)
+        if info is None:
+            return "none"
+        return perilla_tier(info)
+
     def candidates(self, min_score: float = 0.4) -> list[tuple[str, float]]:
         """返回所有 perilla_score ≥ min_score 的 (ts_code, score) 列表, 降序."""
         results = []

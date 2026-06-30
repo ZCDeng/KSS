@@ -16,7 +16,37 @@ from kss.supply_chain.scoring import (
     _coverage_gap_score,
     compute_perilla_score,
     explain_score,
+    perilla_tier,
 )
+
+
+class TestPerillaTier:
+    """结构性分层 core / main / watch（精不是多）."""
+
+    def test_core_duopoly_deep_locked(self) -> None:
+        # 全球≤2 + L≥4 + 国内独家 + 锁定 → 核心
+        s = _make_stock(n_competitors_global=2, chain_layer=4,
+                        n_competitors_domestic=1, demand_locked=True)
+        assert perilla_tier(s) == "core"
+
+    def test_main_three_global_deep_locked(self) -> None:
+        # 全球三家寡头 + L≥4 + 锁定 → 国产替代主线
+        s = _make_stock(n_competitors_global=3, chain_layer=4, demand_locked=True)
+        assert perilla_tier(s) == "main"
+
+    def test_watch_shallow_layer(self) -> None:
+        # 链层不足（L3）即便双寡头也只是观察
+        s = _make_stock(n_competitors_global=2, chain_layer=3, demand_locked=True)
+        assert perilla_tier(s) == "watch"
+
+    def test_watch_not_locked(self) -> None:
+        s = _make_stock(n_competitors_global=2, chain_layer=4, demand_locked=False)
+        assert perilla_tier(s) == "watch"
+
+    def test_watch_wide_moat(self) -> None:
+        # 全球≥4 家 moat 不足 → 观察
+        s = _make_stock(n_competitors_global=5, chain_layer=5, demand_locked=True)
+        assert perilla_tier(s) == "watch"
 
 
 # ────────────────────────────────────────────────────────────────

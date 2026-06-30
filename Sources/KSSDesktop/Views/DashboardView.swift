@@ -46,7 +46,7 @@ struct DashboardView: View {
                     mainRow(contentW: contentW)
 
                     if let picks = snapshot.perillaPicks, !picks.isEmpty {
-                        SectionHeader("紫苏叶选股", caption: "🌿 供应链护城河评分 Top · 按 perilla_score 排序 · 点击看个股")
+                        SectionHeader("紫苏叶选股", caption: "🌿 供应链护城河 · 核心(全球≤2家) / 国产替代主线(三家寡头) 分层 · 点击看个股")
                         PerillaPicksTable(items: picks, onSelect: onSelectSymbol)
                     }
 
@@ -282,6 +282,14 @@ enum PerillaSort: Hashable {
     case none, name, chains, ret1d, ret5d, ret20d, retYear, pe, pb, mv, score
 }
 
+/// 紫苏叶分层 Tab：core=核心垄断/双寡头 · main=国产替代主线（三家寡头深链）。
+enum PerillaTier: String, CaseIterable, Identifiable {
+    case core = "核心"
+    case main = "国产替代主线"
+    var id: String { rawValue }
+    var key: String { self == .core ? "core" : "main" }
+}
+
 struct PerillaPicksTable: View {
     @Environment(\.kssTheme) private var theme
     var items: [PerillaPick]
@@ -290,6 +298,7 @@ struct PerillaPicksTable: View {
     // 默认 .none = 保持 bridge 返回的原始顺序（不打乱当前视觉）
     @State private var sortKey: PerillaSort = .none
     @State private var ascending = false
+    @State private var tab: PerillaTier = .core
 
     private let wName: CGFloat = 124
     private let wRet: CGFloat = 58
@@ -310,8 +319,14 @@ struct PerillaPicksTable: View {
         }
     }
 
+    // 当前 Tab 过滤后的标的（tier 缺失兜底归 core，兼容旧 payload）。
+    private var tabFiltered: [PerillaPick] {
+        items.filter { ($0.tier ?? "core") == tab.key }
+    }
+
     private var sortedItems: [PerillaPick] {
         let asc = ascending
+        let items = tabFiltered
         switch sortKey {
         case .none:
             return items
@@ -337,6 +352,25 @@ struct PerillaPicksTable: View {
     }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Picker("", selection: $tab) {
+                    ForEach(PerillaTier.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                Text(tab == .core
+                     ? "全球供应商≤2家·垄断/双寡头·深链锁定"
+                     : "全球三家寡头·深链锁定·国产替代赛道")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(theme.textSecondary)
+            }
+            card
+        }
+    }
+
+    private var card: some View {
         VStack(spacing: 0) {
             header
             Divider().overlay(theme.hairline)

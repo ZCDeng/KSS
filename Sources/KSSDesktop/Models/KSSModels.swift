@@ -324,6 +324,7 @@ struct PerillaPick: Codable, Identifiable, Hashable {
     var role: String
     var moat: String
     var locked: Bool
+    var tier: String?   // core=核心垄断/双寡头 · main=国产替代主线(三家寡头深链)
     var score: Double
     // 行情 / 估值（cs_data + daily_basic 切片）
     var ret1d: Double?

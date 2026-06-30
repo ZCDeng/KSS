@@ -74,6 +74,26 @@ def compute_perilla_score(info: StockChainInfo, config: ChainConfig) -> float:
     return max(0.0, min(score, 1.0))
 
 
+def perilla_tier(info: StockChainInfo) -> str:
+    """结构性分层（精不是多: 由结构字段确定性裁定, 非分数线）.
+
+    - ``core`` — 真·紫苏叶核心: 深链(L≥4) + 全球供应商≤2(垄断/双寡头) +
+      国内独家 + 需求锁定. 不可替代的卡脖子.
+    - ``main`` — 国产替代主线(Tier A): 深链(L≥4) + 全球三家寡头 + 需求锁定.
+      有定价权但非垄断, 多为半导体设备/材料的国产替代赛道.
+    - ``watch`` — 其余(链层不足 / moat 靠分项补 / 需求未锁定), 不入正式列表.
+
+    Returns:
+        ``"core"`` / ``"main"`` / ``"watch"``.
+    """
+    if info.chain_layer >= 4 and info.demand_locked:
+        if info.n_competitors_global <= 2 and info.n_competitors_domestic <= 1:
+            return "core"
+        if info.n_competitors_global == 3:
+            return "main"
+    return "watch"
+
+
 def explain_score(info: StockChainInfo, config: ChainConfig) -> dict[str, float]:
     """返回各分项明细, 用于调试 / 报告.
 

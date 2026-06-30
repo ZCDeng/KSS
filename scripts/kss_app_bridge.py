@@ -2083,11 +2083,15 @@ def _latest_sector_rotation(limit_boards: int = 6, limit_leaders: int = 5) -> di
     }
 
 
-def _perilla_picks(top_n: int = 12, min_score: float = 0.4) -> list[dict[str, Any]]:
+def _perilla_picks(top_n: int = 20, min_score: float = 0.4) -> list[dict[str, Any]]:
     """紫苏叶（供应链护城河）选股：按 perilla_score 排序的注册表标的。
 
     数据源 = kss/config/supply_chain.yaml（curated）+ ChainRegistry 评分。
     每条返回结构化列字段，供前端表格直接渲染（不依赖展示字符串解析）。
+
+    精不是多：仅返回结构性达标的 ``core``（核心垄断/双寡头）与 ``main``
+    （国产替代主线·三家寡头深链）两层；moat 不足靠分项补分挤进分数线的
+    ``watch`` 票不入表。每条带 ``tier`` 字段供前端分 Tab 渲染。
     """
     try:
         import sys
@@ -2104,10 +2108,15 @@ def _perilla_picks(top_n: int = 12, min_score: float = 0.4) -> list[dict[str, An
 
     daily_basic = _load_dailybasic_cache()
     picks: list[dict[str, Any]] = []
-    for code, score in candidates[:top_n]:
+    for code, score in candidates:
         info = reg.get(code)
         if info is None:
             continue
+        tier = reg.tier(code)
+        if tier not in ("core", "main"):
+            continue
+        if len(picks) >= top_n:
+            break
         if info.n_competitors_domestic <= 1:
             moat = f"全球{info.n_competitors_global}家国内独家"
         else:
@@ -2129,6 +2138,7 @@ def _perilla_picks(top_n: int = 12, min_score: float = 0.4) -> list[dict[str, An
             "role": info.chain_role or "",
             "moat": moat,
             "locked": bool(info.demand_locked),
+            "tier": tier,
             "score": round(float(score), 3),
             "ret1d": metrics.get("ret1d"),
             "ret5d": metrics.get("ret5d"),
