@@ -81,6 +81,14 @@ jobs:
     catchup: true
     enabled: true
 
+  - suffix: perilla_enrich_daily
+    wrapper: scripts/run_perilla_enrich_daily.sh
+    schedule: {hour: 18, minute: 10, weekdays: [1, 2, 3, 4, 5]}
+    title: 紫苏叶个股富化预热
+    category: 数据更新
+    catchup: false
+    enabled: false   # 默认停用; 启用需 sync_launchd.py --apply(先 dry-run 看 diff)
+
   - suffix: sector_review_daily
     wrapper: scripts/run_sector_review_daily.sh
     schedule: {hour: 17, minute: 30, weekdays: [1, 2, 3, 4, 5]}
