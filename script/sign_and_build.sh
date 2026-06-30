@@ -39,8 +39,12 @@ echo "签名身份：$SIGN_IDENTITY"
 
 cd "$ROOT_DIR"
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
-swift build -c release
-BUILD_BIN_PATH="$(swift build -c release --show-bin-path)"
+# 强制 swiftpm 原生 build-system（与 build_and_run.sh 一致）：默认 build system
+# 产出 Contents/ 布局的资源包，运行时 Bundle.module 定位不到 →
+# resource_bundle_accessor.swift 启动即 SIGTRAP。native 落平铺资源包，布局可被找到。
+SWIFT_BUILD_FLAGS="-c release --build-system native"
+swift build $SWIFT_BUILD_FLAGS
+BUILD_BIN_PATH="$(swift build $SWIFT_BUILD_FLAGS --show-bin-path)"
 
 # ---- 组装 bundle ----
 rm -rf "$APP_BUNDLE"
