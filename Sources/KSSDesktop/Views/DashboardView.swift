@@ -279,7 +279,7 @@ struct TodayPicksList: View {
 /// 紫苏叶选股表：供应链护城河评分 + 日/周/月/年涨幅 + PE/PB + 流通市值（全宽）。
 /// 名称下挂代码、产业链下挂层级·护城河，省出横向空间给行情/估值列。
 enum PerillaSort: Hashable {
-    case none, name, chains, ret1d, ret5d, ret20d, retYear, pe, pb, mv, score
+    case none, name, chains, ret1d, ret5d, ret20d, retYear, pe, mv, score
 }
 
 /// 紫苏叶分层 Tab：core=核心垄断/双寡头 · main=国产替代主线（三家寡头深链）。
@@ -303,7 +303,8 @@ struct PerillaPicksTable: View {
     private let wName: CGFloat = 124
     private let wRet: CGFloat = 58
     private let wPe: CGFloat = 60
-    private let wPb: CGFloat = 50
+    private let wInst: CGFloat = 120   // 机构持仓动态
+    private let wPeer: CGFloat = 96    // 对标美股(代码+PE)
     private let wMv: CGFloat = 80
     private let wScore: CGFloat = 52
     private let colSpacing: CGFloat = 10
@@ -345,7 +346,6 @@ struct PerillaPicksTable: View {
         case .ret20d: return items.sorted { byNumber($0.ret20d, $1.ret20d, asc: asc) }
         case .retYear: return items.sorted { byNumber($0.retYear, $1.retYear, asc: asc) }
         case .pe:     return items.sorted { byNumber($0.pe, $1.pe, asc: asc) }
-        case .pb:     return items.sorted { byNumber($0.pb, $1.pb, asc: asc) }
         case .mv:     return items.sorted { byNumber($0.circMvYi, $1.circMvYi, asc: asc) }
         case .score:  return items.sorted { asc ? $0.score < $1.score : $0.score > $1.score }
         }
@@ -394,6 +394,7 @@ struct PerillaPicksTable: View {
                            alignment: .leading, width: wName)
             SortHeaderCell(title: "产业链 / 层级·护城河", key: PerillaSort.chains, selection: $sortKey, ascending: $ascending,
                            alignment: .leading)
+            Text("机构持仓").frame(width: wInst, alignment: .leading)
             SortHeaderCell(title: "日", key: PerillaSort.ret1d, selection: $sortKey, ascending: $ascending,
                            alignment: .trailing, width: wRet)
             SortHeaderCell(title: "周", key: PerillaSort.ret5d, selection: $sortKey, ascending: $ascending,
@@ -404,8 +405,7 @@ struct PerillaPicksTable: View {
                            alignment: .trailing, width: wRet)
             SortHeaderCell(title: "PE", key: PerillaSort.pe, selection: $sortKey, ascending: $ascending,
                            alignment: .trailing, width: wPe)
-            SortHeaderCell(title: "PB", key: PerillaSort.pb, selection: $sortKey, ascending: $ascending,
-                           alignment: .trailing, width: wPb)
+            Text("对标美股").frame(width: wPeer, alignment: .leading)
             SortHeaderCell(title: "流通市值", key: PerillaSort.mv, selection: $sortKey, ascending: $ascending,
                            alignment: .trailing, width: wMv)
             SortHeaderCell(title: "评分", key: PerillaSort.score, selection: $sortKey, ascending: $ascending,
@@ -453,6 +453,13 @@ struct PerillaPicksTable: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
+            // 机构持仓动态（机构增减 + 北向）
+            Text((item.instHolding?.isEmpty == false) ? item.instHolding! : "—")
+                .font(.system(size: 11))
+                .foregroundStyle(theme.textBody)
+                .lineLimit(2)
+                .frame(width: wInst, alignment: .leading)
+
             retCell(item.ret1d)
             retCell(item.ret5d)
             retCell(item.ret20d)
@@ -463,11 +470,10 @@ struct PerillaPicksTable: View {
                 .foregroundStyle(theme.textBody)
                 .lineLimit(1)
                 .frame(width: wPe, alignment: .trailing)
-            Text(numText(item.pb))
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(theme.textBody)
-                .lineLimit(1)
-                .frame(width: wPb, alignment: .trailing)
+
+            // 对标美股（代码 + PE）
+            peerCell(item)
+
             Text(mvText(item.circMvYi))
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundStyle(theme.textBody)
@@ -491,6 +497,28 @@ struct PerillaPicksTable: View {
             .foregroundStyle(value == nil ? theme.textSecondary : theme.signColor(value!))
             .lineLimit(1)
             .frame(width: wRet, alignment: .trailing)
+    }
+
+    @ViewBuilder
+    private func peerCell(_ item: PerillaPick) -> some View {
+        let ticker = item.usPeerTicker ?? ""
+        VStack(alignment: .leading, spacing: 1) {
+            if ticker.isEmpty {
+                Text("无对标")
+                    .font(.system(size: 11))
+                    .foregroundStyle(theme.textSecondary)
+            } else {
+                Text(ticker)
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(theme.textBody)
+                    .lineLimit(1)
+                Text(item.usPeerPe.map { String(format: "PE %.1f", $0) } ?? "PE —")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary)
+                    .lineLimit(1)
+            }
+        }
+        .frame(width: wPeer, alignment: .leading)
     }
 
     private func numText(_ v: Double?) -> String {

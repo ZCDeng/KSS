@@ -82,6 +82,7 @@ def fetch_us_peer(
     max_age_days: int = 1,
     cache_dir: Path | None = None,
     today: _date | None = None,
+    cache_only: bool = False,
 ) -> dict[str, Any]:
     """取美股对标估值, 带缓存 + 降级.
 
@@ -90,6 +91,7 @@ def fetch_us_peer(
         max_age_days: 缓存有效天数; 超过则重新拉.
         cache_dir: 覆盖缓存目录(测试用).
         today: 覆盖"今天"(测试用).
+        cache_only: 只读缓存、绝不触网; 未命中 → unavailable(reason=cache_miss).
 
     Returns:
         dict, 必含 ``status`` ∈ {``ok``, ``no_peer``, ``unavailable``}.
@@ -108,6 +110,9 @@ def fetch_us_peer(
         age = _age_days(cached.get("as_of"), today)
         if age is not None and age <= max_age_days:
             return cached
+
+    if cache_only:
+        return {"status": "unavailable", "reason": "cache_miss"}
 
     # 2) 实时拉; 失败 → 降级(若有旧缓存则回退旧缓存 + stale 标记).
     try:
@@ -133,13 +138,15 @@ def fetch_usdcny(
     max_age_days: int = 1,
     cache_dir: Path | None = None,
     today: _date | None = None,
+    cache_only: bool = False,
 ) -> float | None:
     """USD→CNY 汇率(yFinance ``CNY=X``)，用于 A 股/美股市值倍数换算.
 
     复用 us_peer 的缓存与降级路径；不可达时返回 None（市值倍数随之降级，
     但 PE 对比无需汇率不受影响）。
     """
-    r = fetch_us_peer("CNY=X", max_age_days=max_age_days, cache_dir=cache_dir, today=today)
+    r = fetch_us_peer("CNY=X", max_age_days=max_age_days, cache_dir=cache_dir,
+                      today=today, cache_only=cache_only)
     if r.get("status") == "ok":
         return _num(r.get("price"))
     return None

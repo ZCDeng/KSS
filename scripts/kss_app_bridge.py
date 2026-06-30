@@ -2130,6 +2130,9 @@ def _perilla_picks(top_n: int = 20, min_score: float = 0.4) -> list[dict[str, An
         # 流通市值优先；缺失时回退 cs_data 总市值
         mv_wan = circ_mv_wan if circ_mv_wan is not None else metrics.get("totalMv")
 
+        # 机构持仓 + 对标美股 PE：只读富化缓存（cron/详情页已预热），不触网，缺则降级。
+        inst_holding, peer_pe = _perilla_pick_enrich(code, reg)
+
         picks.append({
             "symbol": code,
             "name": info.name or code,
@@ -2148,8 +2151,41 @@ def _perilla_picks(top_n: int = 20, min_score: float = 0.4) -> list[dict[str, An
             "pb": round(pb, 2) if isinstance(pb, (int, float)) else None,
             "circMvYi": round(mv_wan / 10000.0, 1) if isinstance(mv_wan, (int, float)) else None,
             "mvIsFloat": circ_mv_wan is not None,
+            "instHolding": inst_holding,             # 机构持仓动态(机构增减+北向)；缓存未命中=""
+            "usPeerTicker": info.us_peer_ticker or "",
+            "usPeerName": info.us_peer_name or "",
+            "usPeerPe": round(peer_pe, 1) if isinstance(peer_pe, (int, float)) else None,
         })
     return picks
+
+
+def _perilla_pick_enrich(code: str, reg: Any) -> tuple[str, float | None]:
+    """读富化缓存(cache_only, 不触网)→ (机构持仓动态串, 对标美股PE)。
+
+    缓存未命中(cron 未跑/未开过该股详情)→ ("", None)，前端显示「—」。
+    """
+    try:
+        from kss.perilla_enrich import aggregate
+        e = aggregate.enrich(code, registry=reg, cache_dir=aggregate.CACHE_DIR, cache_only=True)
+    except Exception:
+        return "", None
+
+    inst = e.get("institutional", {}) if isinstance(e, dict) else {}
+    top = inst.get("top10", {}) if isinstance(inst, dict) else {}
+    nb = inst.get("northbound", {}) if isinstance(inst, dict) else {}
+    parts: list[str] = []
+    if isinstance(top, dict) and top.get("status") == "ok":
+        zh = {"increasing": "增持", "decreasing": "减持", "flat": "中性"}.get(top.get("net_direction"))
+        if zh:
+            parts.append(zh)
+    if isinstance(nb, dict) and nb.get("status") == "ok" and nb.get("hold_ratio") is not None:
+        arrow = {"increasing": "↑", "decreasing": "↓", "flat": "→"}.get(nb.get("direction"), "")
+        parts.append(f"北向{float(nb['hold_ratio']):.1f}%{arrow}")
+    inst_holding = " · ".join(parts)
+
+    up = e.get("us_peer", {}) if isinstance(e, dict) else {}
+    peer_pe = up.get("peer_pe") if isinstance(up, dict) and up.get("status") == "ok" else None
+    return inst_holding, peer_pe
 
 
 def _perilla_enrich(symbol: str) -> dict[str, Any]:

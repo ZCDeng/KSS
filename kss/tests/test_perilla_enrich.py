@@ -119,6 +119,25 @@ def test_tushare_failure_isolated(monkeypatch) -> None:
     assert out["status"] == "ok"                              # 整体不抛
 
 
+def test_cache_only_never_touches_network(monkeypatch, tmp_path) -> None:
+    # cache_only=True: 缓存空 → 各块 unavailable, 且绝不调 client/yfinance
+    reg = _reg()
+    sym = _a_perilla_symbol_with_peer(reg)
+
+    def boom_client(*a, **k):
+        raise AssertionError("cache_only must not hit tushare")
+
+    monkeypatch.setattr(aggregate._us, "fetch_us_peer",
+                        lambda *a, **k: pytest.fail("cache_only must not hit yfinance")
+                        if not k.get("cache_only") else {"status": "unavailable", "reason": "cache_miss"})
+    out = aggregate.enrich(sym, registry=reg, today=TODAY, cache_dir=tmp_path,
+                           client=_FakeClient(raise_on={"holders", "pe"}), cache_only=True)
+    assert out["status"] == "ok"  # 整体不抛
+    assert out["institutional"]["top10"]["status"] == "unavailable"
+    assert out["valuation_pe"]["status"] == "unavailable"
+    assert out["us_peer"]["status"] == "unavailable"
+
+
 def test_fx_unavailable_keeps_pe_compare(monkeypatch) -> None:
     reg = _reg()
     sym = _a_perilla_symbol_with_peer(reg)

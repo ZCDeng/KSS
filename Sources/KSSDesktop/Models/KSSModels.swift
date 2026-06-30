@@ -335,6 +335,10 @@ struct PerillaPick: Codable, Identifiable, Hashable {
     var pb: Double?
     var circMvYi: Double?   // 流通市值（亿元）；缺失时回退总市值
     var mvIsFloat: Bool?    // true=流通市值, false=回退总市值
+    var instHolding: String?   // 机构持仓动态(机构增减+北向)；缓存未命中=空
+    var usPeerTicker: String?  // 对标美股代码(如 LRCX)；空=无对标
+    var usPeerName: String?    // 对标美股名
+    var usPeerPe: Double?      // 对标美股 PE(缓存)；缺=null
 }
 
 // MARK: - 紫苏叶个股富化（机构持仓 / PE 分位 / 美股对标，bridge perilla-enrichment）

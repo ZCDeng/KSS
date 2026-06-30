@@ -38,8 +38,13 @@ def enrich(
     client: Any | None = None,
     cache_dir: Path | None = None,
     today: _date | None = None,
+    cache_only: bool = False,
 ) -> dict[str, Any]:
-    """单票富化。返回每块带 ``status`` 的结构化 dict；任意单源失败不抛。"""
+    """单票富化。返回每块带 ``status`` 的结构化 dict；任意单源失败不抛。
+
+    ``cache_only=True``：只读本地缓存、绝不触网（dashboard 表热路径用，缓存未命中
+    则对应块降级 unavailable）。
+    """
     reg = registry or ChainRegistry.from_yaml()
     info = reg.get(symbol)
     if info is None or reg.tier(symbol) not in ("core", "main"):
@@ -70,7 +75,7 @@ def enrich(
         start = (today - timedelta(days=_HOLDER_LOOKBACK_DAYS)).strftime("%Y%m%d")
         df = _cached_df("holders", info.ts_code, end,
                         lambda: _client().fetch_top10_floatholders(info.ts_code, start, end),
-                        cache_dir, today)
+                        cache_dir, today, cache_only=cache_only)
         result["institutional"] = {
             "top10": _h.top10_dynamics(df),
             "northbound": _h.northbound_trend(df),
@@ -84,7 +89,7 @@ def enrich(
         start = (today - timedelta(days=_PE_LOOKBACK_DAYS)).strftime("%Y%m%d")
         df = _cached_df("pe", info.ts_code, end,
                         lambda: _client().fetch_daily_basic_history(info.ts_code, start, end),
-                        cache_dir, today)
+                        cache_dir, today, cache_only=cache_only)
         result["valuation_pe"] = _v.pe_dynamics(df)
         if df is not None and not df.empty and "total_mv" in df:
             mv = pd.to_numeric(df.sort_values("trade_date")["total_mv"], errors="coerce").dropna()
@@ -97,7 +102,8 @@ def enrich(
     # ── 块3: 美股对标 ──
     try:
         result["us_peer"] = _us_peer_block(info, a_share_total_mv_wan,
-                                           result.get("valuation_pe"), cache_dir, today)
+                                           result.get("valuation_pe"), cache_dir, today,
+                                           cache_only=cache_only)
     except Exception as exc:  # noqa: BLE001
         logger.warning("enrich %s us_peer 失败: %s", symbol, exc)
         result["us_peer"] = {"status": "unavailable", "reason": str(exc)[:120]}
@@ -111,9 +117,11 @@ def _us_peer_block(
     valuation_pe: dict[str, Any] | None,
     cache_dir: Path | None,
     today: _date,
+    cache_only: bool = False,
 ) -> dict[str, Any]:
     """美股对标块：取对标估值 + 算 PE 对比(无需汇率) + 市值倍数(需汇率)."""
-    peer = _us.fetch_us_peer(info.us_peer_ticker or None, cache_dir=cache_dir, today=today)
+    peer = _us.fetch_us_peer(info.us_peer_ticker or None, cache_dir=cache_dir,
+                             today=today, cache_only=cache_only)
     if peer.get("status") != "ok":
         return peer  # no_peer / unavailable 原样返回
 
@@ -134,7 +142,7 @@ def _us_peer_block(
     # 市值倍数(需汇率): 对标市值 / A股市值, >10 → 印证"市值<龙头1/10"
     peer_usd = peer.get("market_cap")
     if a_share_total_mv_wan and peer_usd:
-        usdcny = _us.fetch_usdcny(cache_dir=cache_dir, today=today)
+        usdcny = _us.fetch_usdcny(cache_dir=cache_dir, today=today, cache_only=cache_only)
         if usdcny:
             a_share_usd = a_share_total_mv_wan * 1.0e4 / usdcny  # 万元→元→USD
             block["a_share_market_cap_usd"] = round(a_share_usd, 0)
@@ -152,10 +160,14 @@ def _cached_df(
     cache_dir: Path | None,
     today: _date,
     max_age_days: int = 1,
+    cache_only: bool = False,
 ) -> pd.DataFrame | None:
-    """带本地 CSV 缓存的 df 取数。cache_dir=None → 直取不缓存(测试用)。"""
+    """带本地 CSV 缓存的 df 取数。cache_dir=None → 直取不缓存(测试用)。
+
+    ``cache_only=True``：仅读缓存，命中返回、未命中返回 None（绝不触网）。
+    """
     if cache_dir is None:
-        return fetch_fn()
+        return None if cache_only else fetch_fn()
 
     path = Path(cache_dir) / f"{ts_code}_{kind}.csv"
     if path.exists():
@@ -165,6 +177,9 @@ def _cached_df(
                 return pd.read_csv(path, dtype={"end_date": str, "trade_date": str})
             except (OSError, pd.errors.ParserError):
                 pass
+
+    if cache_only:
+        return None
 
     df = fetch_fn()
     if df is not None and not df.empty:
