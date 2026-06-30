@@ -303,8 +303,8 @@ struct PerillaPicksTable: View {
     private let wName: CGFloat = 116
     private let wRet: CGFloat = 54
     private let wPe: CGFloat = 56
-    private let wInst: CGFloat = 168   // 机构持仓动态(机构占比+增减+北向, 较长)
-    private let wPeer: CGFloat = 92    // 对标美股(代码+PE)
+    private let wInst: CGFloat = 126   // 机构持仓动态(机构占比+增减·北向, 两行)
+    private let wPeer: CGFloat = 76    // 对标美股(代码+PE)
     private let wMv: CGFloat = 72
     private let wScore: CGFloat = 46
     private let colSpacing: CGFloat = 10
@@ -390,6 +390,8 @@ struct PerillaPicksTable: View {
 
     private var header: some View {
         HStack(spacing: colSpacing) {
+            SortHeaderCell(title: "评分", key: PerillaSort.score, selection: $sortKey, ascending: $ascending,
+                           alignment: .leading, width: wScore)
             SortHeaderCell(title: "名称 / 代码", key: PerillaSort.name, selection: $sortKey, ascending: $ascending,
                            alignment: .leading, width: wName)
             SortHeaderCell(title: "产业链 / 层级·护城河", key: PerillaSort.chains, selection: $sortKey, ascending: $ascending,
@@ -400,8 +402,6 @@ struct PerillaPicksTable: View {
             Text("对标美股").frame(width: wPeer, alignment: .leading)
             SortHeaderCell(title: "流通市值", key: PerillaSort.mv, selection: $sortKey, ascending: $ascending,
                            alignment: .trailing, width: wMv)
-            SortHeaderCell(title: "评分", key: PerillaSort.score, selection: $sortKey, ascending: $ascending,
-                           alignment: .trailing, width: wScore)
             SortHeaderCell(title: "日", key: PerillaSort.ret1d, selection: $sortKey, ascending: $ascending,
                            alignment: .trailing, width: wRet)
             SortHeaderCell(title: "周", key: PerillaSort.ret5d, selection: $sortKey, ascending: $ascending,
@@ -420,6 +420,12 @@ struct PerillaPicksTable: View {
 
     private func row(_ item: PerillaPick) -> some View {
         HStack(spacing: colSpacing) {
+            Text(String(format: "%.2f", item.score))
+                .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                .foregroundStyle(theme.accent)
+                .lineLimit(1)
+                .frame(width: wScore, alignment: .leading)
+
             // 名称 + 代码
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name)
@@ -470,12 +476,6 @@ struct PerillaPicksTable: View {
                 .foregroundStyle(theme.textBody)
                 .lineLimit(1)
                 .frame(width: wMv, alignment: .trailing)
-
-            Text(String(format: "%.2f", item.score))
-                .font(.system(size: 13, weight: .heavy, design: .monospaced))
-                .foregroundStyle(theme.accent)
-                .lineLimit(1)
-                .frame(width: wScore, alignment: .trailing)
 
             retCell(item.ret1d)
             retCell(item.ret5d)
