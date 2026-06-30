@@ -1395,7 +1395,9 @@ stocks:
     demand_locked: false
     analyst_count: 15
     analyst_notes: '[补标2026-06-30待审] 电动平衡车/两轮车/割草机器人终端,消费品竞争充分,非卡脖子'
-  # ── 北证 BJ50 紫苏叶筛选 2026-06-30 (结构性卡位标注, 待人工审核) ──
+  # ── 北证 BJ50 紫苏叶筛选 2026-06-30 (精不是多: 仅留唯一通过结构审核的深链材料) ──
+  # 全审 BJ50 50 只: 47 只为终端/平台/价格战赛道; 锦波生物(L3终端原料,moat虚高)/
+  # 吉林碳谷(深链但需求未锁定+原丝价格战) 经精审剔除; 仅民士达保留为 Tier A 观察(非核心)
   920394.BJ:
     name: 民士达
     demand_chains:
@@ -1408,31 +1410,4 @@ stocks:
     expansion_cycle_years: 3.0
     demand_locked: true
     analyst_count: 6
-    analyst_notes: '[补标2026-06-30待审] 芳纶纸全球三家(DuPont Nomex/Teijin/民士达),国内唯一量产,航空航天蜂窝芯材+5G介质+电气绝缘,扩产周期长需求锁定'
-  920982.BJ:
-    name: 锦波生物
-    demand_chains:
-    - 生物医药
-    chain_layer: 3
-    chain_role: material
-    n_competitors_global: 2
-    n_competitors_domestic: 1
-    substitutability: low
-    expansion_cycle_years: 2.0
-    demand_locked: true
-    analyst_count: 8
-    analyst_notes: '[补标2026-06-30待审] 重组人源化III型胶原蛋白医用级,国内双寡头(锦波/巨子),专利+NMPA三类证壁垒,医美刚需,毛利84%'
-  920077.BJ:
-    name: 吉林碳谷
-    demand_chains:
-    - 工业母机·低空·航天
-    - 新能源储能
-    chain_layer: 5
-    chain_role: material
-    n_competitors_global: 5
-    n_competitors_domestic: 2
-    substitutability: low
-    expansion_cycle_years: 3.0
-    demand_locked: false
-    analyst_count: 8
-    analyst_notes: '[补标2026-06-30待审] 碳纤维原丝(PAN precursor)国内独立供应商龙头,但全球大厂多自供(Toray/三菱)+原丝价格战(毛利17%),深链但需求未锁定→不达标(对照样本)'
+    analyst_notes: '[补标2026-06-30待审] 芳纶纸全球三家(DuPont Nomex/Teijin/民士达),国内唯一量产,航空蜂窝芯材+5G介质+电气绝缘,需求锁定; 但全球三家=寡头非双寡头, 属Tier A观察非核心紫苏叶'
