@@ -337,6 +337,101 @@ struct PerillaPick: Codable, Identifiable, Hashable {
     var mvIsFloat: Bool?    // true=流通市值, false=回退总市值
 }
 
+// MARK: - 紫苏叶个股富化（机构持仓 / PE 分位 / 美股对标，bridge perilla-enrichment）
+
+/// 顶层富化 payload。``status`` ∈ {ok, not_in_perilla_list, unavailable, invalid_symbol}。
+struct PerillaEnrichment: Codable, Hashable {
+    var symbol: String
+    var name: String?
+    var tier: String?
+    var status: String
+    var institutional: PerillaInstitutional?
+    var valuationPe: PerillaPE?
+    var usPeer: PerillaUsPeer?
+
+    enum CodingKeys: String, CodingKey {
+        case symbol, name, tier, status, institutional
+        case valuationPe = "valuation_pe"
+        case usPeer = "us_peer"
+    }
+}
+
+/// 机构持仓块；整块失败时仅有 status，成功时挂 top10 / northbound。
+struct PerillaInstitutional: Codable, Hashable {
+    var status: String?
+    var top10: PerillaTop10?
+    var northbound: PerillaNorthbound?
+}
+
+struct PerillaTop10: Codable, Hashable {
+    var status: String
+    var latestPeriod: String?
+    var nHolders: Int?
+    var nIncreasing: Int?
+    var nDecreasing: Int?
+    var netDirection: String?
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case latestPeriod = "latest_period"
+        case nHolders = "n_holders"
+        case nIncreasing = "n_increasing"
+        case nDecreasing = "n_decreasing"
+        case netDirection = "net_direction"
+    }
+}
+
+struct PerillaNorthbound: Codable, Hashable {
+    var status: String
+    var latestPeriod: String?
+    var holdRatio: Double?
+    var qoqChange: Double?
+    var direction: String?
+
+    enum CodingKeys: String, CodingKey {
+        case status, direction
+        case latestPeriod = "latest_period"
+        case holdRatio = "hold_ratio"
+        case qoqChange = "qoq_change"
+    }
+}
+
+struct PerillaPE: Codable, Hashable {
+    var status: String
+    var peTtm: Double?
+    var percentile: Double?
+    var nPoints: Int?
+    var asOf: String?
+
+    enum CodingKeys: String, CodingKey {
+        case status, percentile
+        case peTtm = "pe_ttm"
+        case nPoints = "n_points"
+        case asOf = "as_of"
+    }
+}
+
+/// 美股对标块；``status`` ∈ {ok, no_peer, unavailable}。
+struct PerillaUsPeer: Codable, Hashable {
+    var status: String
+    var ticker: String?
+    var name: String?
+    var peerPe: Double?
+    var peerMarketCapUsd: Double?
+    var peRatioAOverPeer: Double?
+    var peerToAMcapMultiple: Double?
+    var mcapMultipleStatus: String?
+
+    enum CodingKeys: String, CodingKey {
+        case status, ticker, name
+        case peerPe = "peer_pe"
+        case peerMarketCapUsd = "peer_market_cap_usd"
+        case peRatioAOverPeer = "pe_ratio_a_over_peer"
+        case peerToAMcapMultiple = "peer_to_a_mcap_multiple"
+        case mcapMultipleStatus = "mcap_multiple_status"
+    }
+}
+
 /// 总览第一行市场速览：A500ETF 当日行情 + 北向资金净流入。
 struct MarketStrip: Codable, Hashable {
     var date: String?

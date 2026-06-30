@@ -2152,6 +2152,28 @@ def _perilla_picks(top_n: int = 20, min_score: float = 0.4) -> list[dict[str, An
     return picks
 
 
+def _perilla_enrich(symbol: str) -> dict[str, Any]:
+    """紫苏叶个股富化（机构持仓动态 / PE 分位 / 美股对标）。
+
+    数据源 = Tushare(机构+PE) + yFinance(美股对标)，每块独立优雅降级。
+    见 ``kss/perilla_enrich/aggregate.py``。本封装只负责接线 + 缓存目录。
+    """
+    symbol = (symbol or "").strip()
+    if not symbol:
+        return {"status": "invalid_symbol"}
+    try:
+        import sys
+        if str(PROJECT_ROOT) not in sys.path:
+            sys.path.insert(0, str(PROJECT_ROOT))
+        from kss.perilla_enrich import aggregate
+    except Exception as exc:  # noqa: BLE001
+        return {"symbol": symbol, "status": "unavailable", "reason": str(exc)[:120]}
+    try:
+        return aggregate.enrich(symbol, cache_dir=aggregate.CACHE_DIR)
+    except Exception as exc:  # noqa: BLE001
+        return {"symbol": symbol, "status": "unavailable", "reason": str(exc)[:120]}
+
+
 # ===================================================================== #
 # U6 截 1 —— 统一发现管道合并 + 去重 + 共识溢价（相关性预检门控）
 #
@@ -3228,6 +3250,7 @@ COMMANDS = {
     "run": {"desc": "执行数据任务(白名单)", "args": ["TASK", "..."]},
     "theme-leaders": {"desc": "主题龙头梯队", "args": []},
     "get-discovery-candidates": {"desc": "潜力股发现候选", "args": []},
+    "perilla-enrichment": {"desc": "紫苏叶个股富化(机构/PE/美股对标)", "args": ["SYMBOL"]},
     "cron-list": {"desc": "计划任务及状态", "args": []},
     "cron-rerun": {"desc": "重跑计划任务", "args": ["LABEL"]},
     "cron-enable": {"desc": "启用计划任务", "args": ["LABEL"]},
@@ -3435,6 +3458,8 @@ def dispatch(command: str, args: list[str]) -> Any:
         return _theme_leaders()
     if command == "get-discovery-candidates":
         return _discovery_merge()
+    if command == "perilla-enrichment":
+        return _perilla_enrich(args[0] if args else "")
     if command == "cron-list":
         # 任务列表 + 分类排序（categoryOrder 供任务页分组，U5 读此值替代 Swift 硬编码）。
         return {

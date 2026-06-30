@@ -15,6 +15,7 @@ struct StockBrowserView: View {
     var stocks: [StockSummary]
     var selectedSymbol: String?
     var detail: StockDetail?
+    var enrichment: PerillaEnrichment?
     var watchlist: [String]
     @Binding var searchText: String
     var onSelect: (String) -> Void
@@ -136,6 +137,7 @@ struct StockBrowserView: View {
                 if let detail {
                     StockDetailView(
                         detail: detail,
+                        enrichment: enrichment?.symbol == detail.symbol ? enrichment : nil,
                         isWatched: watchlist.contains(detail.symbol),
                         onToggleWatchlist: { onToggleWatchlist(detail.symbol) },
                         onZoom: { showChartFullscreen = true }
@@ -169,6 +171,7 @@ struct StockBrowserView: View {
 struct StockDetailView: View {
     @Environment(\.kssTheme) private var theme
     var detail: StockDetail
+    var enrichment: PerillaEnrichment?
     var isWatched: Bool
     var onToggleWatchlist: () -> Void
     var onZoom: () -> Void
@@ -208,6 +211,10 @@ struct StockDetailView: View {
 
                 if let review = detail.reviewConclusion {
                     StockReviewCard(review: review)
+                }
+
+                if let enrichment {
+                    PerillaEnrichmentCard(data: enrichment)
                 }
 
                 SectionHeader("分析指标")
@@ -320,6 +327,85 @@ struct StockReviewCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .kssCard(padding: 16)
+    }
+}
+
+/// 紫苏叶个股富化卡：机构持仓动态 / PE 分位 / 美股对标。缺失项显示「暂不可用」。
+struct PerillaEnrichmentCard: View {
+    @Environment(\.kssTheme) private var theme
+    var data: PerillaEnrichment
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text("🌿 紫苏叶富化")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(theme.textPrimary)
+                if let tier = data.tier {
+                    Text(tier == "core" ? "核心" : "国产替代主线")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(theme.onAccent)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(theme.accent, in: Capsule())
+                }
+                Spacer()
+            }
+
+            row("机构持仓动态", institutionalText)
+            row("PE 估值", peText)
+            row("美股对标", usPeerText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .kssCard(padding: 16)
+    }
+
+    private func row(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(theme.textSecondary)
+            Text(value)
+                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                .foregroundStyle(theme.textBody)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private static let unavailable = "暂不可用"
+
+    private var institutionalText: String {
+        guard let inst = data.institutional else { return Self.unavailable }
+        var parts: [String] = []
+        if let t = inst.top10, t.status == "ok" {
+            let dir = ["increasing": "整体增持", "decreasing": "整体减持", "flat": "增减相当"][t.netDirection ?? ""] ?? ""
+            parts.append("前十大流通股东\(t.latestPeriod.map { " " + $0 } ?? "")：增 \(t.nIncreasing ?? 0) / 减 \(t.nDecreasing ?? 0) \(dir)")
+        }
+        if let nb = inst.northbound, nb.status == "ok", let r = nb.holdRatio {
+            let dir = ["increasing": "↑", "decreasing": "↓", "flat": "→"][nb.direction ?? ""] ?? ""
+            let qoq = nb.qoqChange.map { String(format: " 环比%+.2f", $0) } ?? ""
+            parts.append(String(format: "北向 %.2f%% %@%@", r, dir, qoq))
+        }
+        return parts.isEmpty ? Self.unavailable : parts.joined(separator: "\n")
+    }
+
+    private var peText: String {
+        guard let pe = data.valuationPe, pe.status == "ok", let v = pe.peTtm else { return Self.unavailable }
+        let pct = pe.percentile.map { String(format: " · 历史分位 %.0f%%", $0 * 100) } ?? ""
+        return String(format: "PE_TTM %.1f%@", v, pct)
+    }
+
+    private var usPeerText: String {
+        guard let up = data.usPeer else { return Self.unavailable }
+        switch up.status {
+        case "no_peer": return "无干净美股对标"
+        case "ok":
+            var s = "\(up.ticker ?? "")\(up.name.map { " " + $0 } ?? "")"
+            if let p = up.peerPe { s += String(format: " · 对标PE %.1f", p) }
+            if let m = up.peerToAMcapMultiple { s += String(format: " · 对标市值 %.1f×A股", m) }
+            if let r = up.peRatioAOverPeer { s += String(format: " · A/对标PE %.2f", r) }
+            return s
+        default: return Self.unavailable
+        }
     }
 }
 

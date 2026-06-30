@@ -74,6 +74,16 @@ def get_discovery_candidates() -> dict:
 
 
 @mcp.tool
+def get_perilla_enrichment(symbol: str) -> dict:
+    """紫苏叶个股富化：机构持仓动态 + PE 历史分位 + 美股对标估值。
+
+    symbol 形如 688012.SH，须在紫苏叶列表(core/main)内；否则返回
+    not_in_perilla_list。各数据源独立降级（缺失标 unavailable/no_peer）。
+    """
+    return _call("perilla-enrichment", [symbol])
+
+
+@mcp.tool
 def get_paper_summary() -> dict:
     """模拟盘推荐跟踪汇总。"""
     return _call("paper-summary")

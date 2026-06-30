@@ -8,6 +8,8 @@ final class KSSStore: ObservableObject {
     @Published var selectedReportPath: String?
     @Published var reportDetail: ReportDetail?
     @Published var stockDetail: StockDetail?
+    @Published var perillaEnrichment: PerillaEnrichment?   // 紫苏叶个股富化（仅 core/main 票有内容）
+    @Published var isLoadingPerilla = false
     @Published var sectorRotationDetail: HotspotRotationSnapshot?
     @Published var isLoadingSectorRotation = false
     @Published var newsDigest: NewsDigestResponse?
@@ -180,6 +182,7 @@ final class KSSStore: ObservableObject {
     func loadStock(symbol: String) async {
         guard let bridge else { return }
         selectedSymbol = symbol
+        perillaEnrichment = nil   // 清旧票富化，避免串台
         do {
             let detail = try await Task.detached {
                 try bridge.stock(symbol: symbol)
@@ -187,6 +190,25 @@ final class KSSStore: ObservableObject {
             self.stockDetail = detail
         } catch {
             errorMessage = error.localizedDescription
+        }
+        // 富化走外网较慢，fire-and-forget 异步加载，不阻塞个股明细渲染/caller。
+        Task { await self.loadPerillaEnrichment(symbol: symbol) }
+    }
+
+    /// 紫苏叶个股富化（机构/PE/美股对标）。非紫苏叶票静默置空，不报错。
+    func loadPerillaEnrichment(symbol: String) async {
+        guard let bridge else { return }
+        isLoadingPerilla = true
+        defer { isLoadingPerilla = false }
+        let result = try? await Task.detached {
+            try bridge.perillaEnrichment(symbol: symbol)
+        }.value
+        // 仅当仍停留在同一票时落数据（防快速切票串台）。
+        guard selectedSymbol == symbol else { return }
+        if let result, result.status == "ok" {
+            perillaEnrichment = result
+        } else {
+            perillaEnrichment = nil
         }
     }
 
