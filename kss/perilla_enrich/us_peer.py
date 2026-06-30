@@ -128,6 +128,23 @@ def fetch_us_peer(
     return result
 
 
+def fetch_usdcny(
+    *,
+    max_age_days: int = 1,
+    cache_dir: Path | None = None,
+    today: _date | None = None,
+) -> float | None:
+    """USD→CNY 汇率(yFinance ``CNY=X``)，用于 A 股/美股市值倍数换算.
+
+    复用 us_peer 的缓存与降级路径；不可达时返回 None（市值倍数随之降级，
+    但 PE 对比无需汇率不受影响）。
+    """
+    r = fetch_us_peer("CNY=X", max_age_days=max_age_days, cache_dir=cache_dir, today=today)
+    if r.get("status") == "ok":
+        return _num(r.get("price"))
+    return None
+
+
 def _read_cache(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
