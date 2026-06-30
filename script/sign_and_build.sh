@@ -82,7 +82,13 @@ PLIST
 # 先签内嵌资源 bundle（若有），再签顶层 .app。
 # SwiftPM 资源包是平铺目录（无 Info.plist）→ codesign 拒签；补最小 Info.plist 使其成合法 bundle。
 if [ -d "$APP_MACOS/$RESOURCE_BUNDLE" ]; then
-  cat >"$APP_MACOS/$RESOURCE_BUNDLE/Info.plist" <<RESPLIST
+  # SwiftPM 资源包布局二选一，决定是否补 Info.plist：
+  #  - 旧(flat / --build-system native)：平铺目录无 Info.plist → codesign 拒签，
+  #    补根级最小 Info.plist 使其成合法 bundle。
+  #  - 新(swiftpm 默认 build system)：已是 Contents/Info.plist 标准 bundle → 直接签；
+  #    若再往根目录塞 Info.plist 反而触发「unsealed contents present in the bundle root」。
+  if [ ! -f "$APP_MACOS/$RESOURCE_BUNDLE/Contents/Info.plist" ]; then
+    cat >"$APP_MACOS/$RESOURCE_BUNDLE/Info.plist" <<RESPLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -94,6 +100,7 @@ if [ -d "$APP_MACOS/$RESOURCE_BUNDLE" ]; then
 </dict>
 </plist>
 RESPLIST
+  fi
   codesign --force --options runtime --timestamp \
     --sign "$SIGN_IDENTITY" "$APP_MACOS/$RESOURCE_BUNDLE"
 fi
