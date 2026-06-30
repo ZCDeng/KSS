@@ -454,3 +454,64 @@ class TushareClient:
             ),
             f"fetch_report_rc ({ts_code} {start_date}-{end_date})",
         )
+
+    def fetch_top10_floatholders(
+        self,
+        ts_code: str,
+        start_date: str,
+        end_date: str,
+    ) -> pd.DataFrame | None:
+        """前十大流通股东（``top10_floatholders``，含机构类型与环比变动）.
+
+        紫苏叶机构持仓动态的主数据源：一次取数同时覆盖
+        (a) 机构持仓结构（``holder_type`` 区分风投/基金/一般企业等）与环比
+        增减仓（``hold_change``），以及 (b) 北向（陆股通）——北向持股以
+        "香港中央结算有限公司" 名义出现在本表中，故无需单独的 ``hk_hold``
+        端点（该端点本账号无访问权限，实测返回空）。
+
+        Args:
+            ts_code: 股票代码，如 ``688012.SH``.
+            start_date: 起始日期 ``YYYYMMDD``.
+            end_date: 截止日期 ``YYYYMMDD``.
+
+        Returns:
+            DataFrame（含 ``end_date`` / ``holder_name`` / ``hold_ratio`` /
+            ``hold_float_ratio`` / ``hold_change`` / ``holder_type`` 等）；失败 ``None``.
+        """
+        return _fetch_with_retry(
+            lambda: self._pro.top10_floatholders(
+                ts_code=ts_code,
+                start_date=start_date,
+                end_date=end_date,
+            ),
+            f"fetch_top10_floatholders ({ts_code} {start_date}-{end_date})",
+        )
+
+    def fetch_daily_basic_history(
+        self,
+        ts_code: str,
+        start_date: str,
+        end_date: str,
+    ) -> pd.DataFrame | None:
+        """单票 ``daily_basic`` 历史窗口（用于 PE_TTM 历史分位）.
+
+        与单日切片 ``fetch_daily_basic`` 不同，本方法按日期区间取一只票的
+        时间序列，供紫苏叶估值层计算 PE_TTM 历史分位。
+
+        Args:
+            ts_code: 股票代码，如 ``688012.SH``.
+            start_date: 起始日期 ``YYYYMMDD``.
+            end_date: 截止日期 ``YYYYMMDD``.
+
+        Returns:
+            DataFrame（含 ``trade_date`` / ``pe_ttm`` / ``total_mv`` / ``circ_mv``）；失败 ``None``.
+        """
+        return _fetch_with_retry(
+            lambda: self._pro.daily_basic(
+                ts_code=ts_code,
+                start_date=start_date,
+                end_date=end_date,
+                fields="ts_code,trade_date,pe,pe_ttm,total_mv,circ_mv",
+            ),
+            f"fetch_daily_basic_history ({ts_code} {start_date}-{end_date})",
+        )
