@@ -87,6 +87,7 @@ stocks:
     demand_locked: true
     analyst_count: 20
     analyst_notes: CCP刻蚀全球前三(Lam/TEL/中微),国产替代不可逆
+    us_peer: {ticker: LRCX, name: Lam Research}
   688017.SH:
     name: 绿的谐波
     demand_chains:
@@ -177,6 +178,7 @@ stocks:
     demand_locked: true
     analyst_count: 15
     analyst_notes: CVD/ALD全球三家(AMAT/TEL/拓荆),国产替代确定
+    us_peer: {ticker: AMAT, name: Applied Materials}
   688082.SH:
     name: 盛美上海
     demand_chains:
@@ -190,6 +192,7 @@ stocks:
     demand_locked: true
     analyst_count: 15
     analyst_notes: 单片清洗全球前三(DNS/LAM/盛美)
+    us_peer: {ticker: ACMR, name: ACM Research}
   688099.SH:
     name: 晶晨股份
     demand_chains: []
@@ -227,6 +230,7 @@ stocks:
     demand_locked: true
     analyst_count: 12
     analyst_notes: CMP全球双寡头(AMAT/华海清科),晶圆厂必配
+    us_peer: {ticker: AMAT, name: Applied Materials}
   688122.SH:
     name: 西部超导
     demand_chains:
@@ -240,6 +244,7 @@ stocks:
     demand_locked: true
     analyst_count: 12
     analyst_notes: 航空钛合金+低温超导线材,国内独家量产
+    us_peer: {ticker: ATI, name: ATI Inc}
   688126.SH:
     name: 沪硅产业
     demand_chains:
@@ -355,6 +360,7 @@ stocks:
     demand_locked: true
     analyst_count: 10
     analyst_notes: SiC衬底全球前三(Wolfspeed/Coherent/天岳),第三代半导体核心
+    us_peer: {ticker: WOLF, name: Wolfspeed}
   688249.SH:
     name: 晶合集成
     demand_chains:
@@ -472,6 +478,7 @@ stocks:
     demand_locked: true
     analyst_count: 8
     analyst_notes: 晶圆光学检测全球双寡头(KLA/中科飞测),晶圆厂良率必配
+    us_peer: {ticker: KLAC, name: KLA Corp}
   688375.SH:
     name: 国博电子
     demand_chains:
@@ -1008,6 +1015,7 @@ stocks:
     demand_locked: true
     analyst_count: 15
     analyst_notes: 光无源器件(准直器/隔离器/适配器)全球双寡头(天孚/Hoya Senko),光模块必配零件,AI算力产业链深层卡脖子
+    us_peer: {ticker: COHR, name: Coherent}
   300395.SZ:
     name: 菲利华
     demand_chains:
@@ -1174,6 +1182,7 @@ stocks:
     demand_locked: true
     analyst_count: 12
     analyst_notes: 半导体测试设备(探针台+分选机),全球前三(Teradyne/Advantest/长川),国内独家量产
+    us_peer: {ticker: TER, name: Teradyne}
   300724.SZ:
     name: 捷佳伟创
     demand_chains:
@@ -1201,6 +1210,7 @@ stocks:
     demand_locked: true
     analyst_count: 12
     analyst_notes: 高性能稀土永磁材料,全球前三(金力/中科三环/日立金属),电机核心材料,新能源车+机器人双需求链
+    us_peer: {ticker: MP, name: MP Materials}
   300750.SZ:
     name: 宁德时代
     demand_chains:
@@ -1411,3 +1421,4 @@ stocks:
     demand_locked: true
     analyst_count: 6
     analyst_notes: '[补标2026-06-30待审] 芳纶纸全球三家(DuPont Nomex/Teijin/民士达),国内唯一量产,航空蜂窝芯材+5G介质+电气绝缘,需求锁定; 但全球三家=寡头非双寡头, 属Tier A观察非核心紫苏叶'
+    us_peer: {ticker: DD, name: DuPont}

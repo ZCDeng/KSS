@@ -35,6 +35,8 @@ class StockChainInfo:
     demand_locked: bool
     analyst_count: int
     analyst_notes: str
+    us_peer_ticker: str = ""        # 美股对标代码(如 LRCX); 空=无干净对标
+    us_peer_name: str = ""          # 美股对标名(如 Lam Research)
 
     def as_dict(self) -> dict[str, Any]:
         """转字典（Telegram / banner 用）."""
@@ -50,6 +52,8 @@ class StockChainInfo:
             "expansion_cycle_years": self.expansion_cycle_years,
             "demand_locked": self.demand_locked,
             "analyst_count": self.analyst_count,
+            "us_peer_ticker": self.us_peer_ticker,
+            "us_peer_name": self.us_peer_name,
         }
 
 
@@ -133,6 +137,8 @@ class ChainRegistry:
         stocks: dict[str, StockChainInfo] = {}
         for ts_code, info in (raw.get("stocks") or {}).items():
             ts_code = str(ts_code).strip()
+            up = info.get("us_peer")
+            up = up if isinstance(up, dict) else {}
             try:
                 stocks[ts_code] = StockChainInfo(
                     ts_code=ts_code,
@@ -147,6 +153,8 @@ class ChainRegistry:
                     demand_locked=bool(info.get("demand_locked", False)),
                     analyst_count=int(info.get("analyst_count", 0)),
                     analyst_notes=str(info.get("analyst_notes", "")),
+                    us_peer_ticker=str(up.get("ticker", "")).strip(),
+                    us_peer_name=str(up.get("name", "")).strip(),
                 )
             except (ValueError, TypeError) as exc:
                 logger.warning("解析 %s 失败: %s, 跳过", ts_code, exc)

@@ -49,6 +49,47 @@ class TestPerillaTier:
         assert perilla_tier(s) == "watch"
 
 
+class TestUsPeerField:
+    """U2: us_peer 字段解析(向后兼容 + 容错)."""
+
+    def _load(self, tmp_path, stock_block: dict):
+        raw = {
+            "scoring_weights": {"layer": 0.25, "moat": 0.35, "lock": 0.25, "coverage_gap": 0.15},
+            "moat_tiers": {1: 1.0, 2: 0.7, 3: 0.3, "default": 0.0},
+            "stocks": {"688012.SH": {
+                "name": "中微公司", "demand_chains": ["半导体"], "chain_layer": 4,
+                "chain_role": "equipment", "n_competitors_global": 3, "n_competitors_domestic": 1,
+                "substitutability": "medium", "expansion_cycle_years": 3.0, "demand_locked": True,
+                "analyst_count": 20, "analyst_notes": "x", **stock_block,
+            }},
+        }
+        p = tmp_path / "sc.yaml"
+        p.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+        return ChainRegistry.from_yaml(p).get("688012.SH")
+
+    def test_us_peer_parsed(self, tmp_path) -> None:
+        info = self._load(tmp_path, {"us_peer": {"ticker": "LRCX", "name": "Lam Research"}})
+        assert info.us_peer_ticker == "LRCX"
+        assert info.us_peer_name == "Lam Research"
+
+    def test_us_peer_absent_backward_compat(self, tmp_path) -> None:
+        info = self._load(tmp_path, {})
+        assert info.us_peer_ticker == ""  # 旧 YAML 无字段 → 空, 不崩
+
+    def test_us_peer_malformed_degrades(self, tmp_path) -> None:
+        info = self._load(tmp_path, {"us_peer": "LRCX"})  # 非 dict
+        assert info.us_peer_ticker == ""
+
+    def test_real_registry_peer_coverage(self) -> None:
+        # 真注册表: core+main 至少 10 只有非空对标 (R3)
+        reg = ChainRegistry.from_yaml()
+        with_peer = [
+            c for c in reg._stocks
+            if reg.tier(c) in ("core", "main") and reg.get(c).us_peer_ticker
+        ]
+        assert len(with_peer) >= 10
+
+
 # ────────────────────────────────────────────────────────────────
 # Fixtures
 # ────────────────────────────────────────────────────────────────
