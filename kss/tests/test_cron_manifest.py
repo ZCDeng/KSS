@@ -85,6 +85,21 @@ def test_metadata_backfilled_jobs_not_other() -> None:
         assert by[s].title
 
 
+def test_scanner_wrapper_uses_launchd_log_path() -> None:
+    """scanner wrapper 的内层日志必须与 launchd StandardOutPath 对齐。"""
+    with (_DEPLOY / "com.zcdeng.kss.scanner.plist").open("rb") as fh:
+        pl = plistlib.load(fh)
+    expected = pl["StandardOutPath"].replace(str(_REPO), "$PROJECT_DIR")
+    wrapper = (_REPO / "run_scanner.sh").read_text(encoding="utf-8")
+    assert f'LOG_FILE="{expected}"' in wrapper
+
+
+def test_signed_package_includes_root_scanner_wrapper() -> None:
+    """bundle-mode 的 PROJECT_ROOT=Resources，必须带根级 run_scanner.sh。"""
+    script = (_REPO / "script" / "sign_and_build.sh").read_text(encoding="utf-8")
+    assert "run_scanner.sh" in script
+
+
 def test_collect_intraday_catchup_false() -> None:
     m = load_manifest()
     by = {j.suffix: j for j in m.jobs}

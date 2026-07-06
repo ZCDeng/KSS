@@ -57,7 +57,7 @@ RESOURCE_BUNDLE="${APP_NAME}_${APP_NAME}.bundle"
 
 # ---- 代码 baseline 进 Resources（bundle-mode 的签名内脚本源；KTD7 第三层兜底）----
 # 运行时 venv 不拷（U2 bootstrap 到 state root）；仅拷代码 + 依赖清单。
-for item in scripts kss pyproject.toml uv.lock backtest_etf_radar.py; do
+for item in scripts kss pyproject.toml uv.lock backtest_etf_radar.py run_scanner.sh; do
   if [ -e "$ROOT_DIR/$item" ]; then
     cp -R "$ROOT_DIR/$item" "$APP_RESOURCES/$item"
   fi
