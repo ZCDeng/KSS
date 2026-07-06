@@ -51,11 +51,11 @@ def _doc(jobs: list[dict], order: list[str] | None = None) -> dict:
 # --------------------------------------------------------------------------- #
 # happy：真实清单
 # --------------------------------------------------------------------------- #
-def test_real_manifest_loads_19_jobs() -> None:
+def test_real_manifest_loads_20_jobs() -> None:
     m = load_manifest()  # 默认读 kss/config/cron_jobs.yaml
-    assert len(m.jobs) == 19
+    assert len(m.jobs) == 20
     suffixes = {j.suffix for j in m.jobs}
-    assert len(suffixes) == 19  # 全唯一
+    assert len(suffixes) == 20  # 全唯一
     # 舆情热点两场已注册
     assert {"news_digest_premarket", "news_digest_postclose"} <= suffixes
     # 紫苏叶富化预热已注册（默认停用）

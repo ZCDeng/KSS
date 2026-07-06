@@ -32,6 +32,15 @@ jobs:
     catchup: true
     enabled: true
 
+  - suffix: update_data_daily_eod
+    wrapper: scripts/run_update_data_daily.sh
+    args: ["--post-close"]
+    schedule: {hour: 18, minute: 5, weekdays: [1, 2, 3, 4, 5]}
+    title: 股票池日线盘后更新
+    category: 数据更新
+    catchup: true
+    enabled: true
+
   - suffix: macro_daily
     wrapper: scripts/run_update_macro_daily.sh
     schedule: {hour: 8, minute: 35, weekdays: [1, 2, 3, 4, 5]}
