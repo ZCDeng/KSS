@@ -440,6 +440,35 @@ final class KSSStore: ObservableObject {
         await runScheduledBatch { bridge in try bridge.rerunJobs(labels) }
     }
 
+    /// 同步 LaunchAgent 到清单声明（用于 needsInstall 任务修复）。
+    /// 同步成功后刷新任务清单并保留可见状态提示。
+    func syncScheduledJobs(_ label: String) async {
+        guard let bridge else { return }
+        scheduledBusy.insert(label)
+        defer { scheduledBusy.remove(label) }
+        do {
+            let result = try await Task.detached { try bridge.syncCronJobs() }.value
+            if !result.ok {
+                errorMessage = result.error ?? "定时任务同步失败"
+                return
+            }
+
+            if let jobs = result.jobs {
+                scheduledJobs = jobs
+            } else {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                await loadScheduledJobs()
+            }
+
+            if let order = result.categoryOrder, !order.isEmpty {
+                cronCategoryOrder = order
+            }
+            scheduledBatchNote = Self.formatCronSyncNote(result)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     private func runScheduledBatch(_ action: @escaping (BridgeClient) throws -> CronBatchResult) async {
         guard let bridge, !scheduledBatchBusy else { return }
         scheduledBatchBusy = true
@@ -460,6 +489,24 @@ final class KSSStore: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private static func formatCronSyncNote(_ response: CronSyncResponse) -> String {
+        if let notices = response.notices, !notices.isEmpty {
+            return notices.joined(separator: "；")
+        }
+
+        if let plan = response.plan {
+            let parts = [
+                "install:\(plan.install.count)",
+                "update:\(plan.update.count)",
+                "stale:\(plan.stale.count)",
+                "aligned:\(plan.aligned.count)",
+            ]
+            return "LaunchAgent 对账完成（\(parts.joined(separator: ", "))）"
+        }
+
+        return "LaunchAgent 已同步"
     }
 
     private func runScheduledAction(_ label: String, _ action: @escaping (BridgeClient) throws -> CronActionResult) async {

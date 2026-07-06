@@ -203,6 +203,7 @@ struct ContentView: View {
                     onLoadSchedules: { Task { await store.loadScheduledJobs() } },
                     onRerunSchedule: { label in Task { await store.rerunScheduledJob(label) } },
                     onToggleSchedule: { label, enabled in Task { await store.toggleScheduledJob(label, enabled: enabled) } },
+                    onSyncSchedule: { label in Task { await store.syncScheduledJobs(label) } },
                     onCatchUp: { Task { await store.catchUpStaleJobs() } },
                     onRerunMany: { labels in Task { await store.rerunScheduledJobs(labels) } },
                     onDismissBatchNote: { store.scheduledBatchNote = nil }

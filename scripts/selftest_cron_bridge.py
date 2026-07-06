@@ -44,6 +44,8 @@ def main() -> int:
     # 白名单由 plist 文件名派生，前缀受限
     check("whitelist-nonempty", len(labels) >= 9, True)
     check("whitelist-prefix", all(k.startswith("com.zcdeng.kss.") for k in labels), True)
+    check("cron-sync-in-write", "cron-sync" in b.WRITE_COMMANDS, True)
+    check("cron-sync-in-commands", "cron-sync" in b.COMMANDS, True)
 
     # ---- 漏跑判定（_fire_times / _missed_cycles）：固定 now，不依赖真实时间 ----
     from datetime import datetime

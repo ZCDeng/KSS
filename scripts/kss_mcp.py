@@ -176,6 +176,13 @@ if _LIVE:
             return {"error": "live_write_requires_confirm", "hint": "传 confirm=True"}
         return _call(f"cron-{action}", [label])
 
+    @mcp.tool
+    def cron_sync(confirm: bool = False) -> dict:
+        """把清单与 LaunchAgents 同步（会执行 launchctl bootstrap）。须 confirm=True。"""
+        if not confirm:
+            return {"error": "live_write_requires_confirm", "hint": "传 confirm=True"}
+        return _call("cron-sync")
+
 
 if __name__ == "__main__":
     mcp.run()

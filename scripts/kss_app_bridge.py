@@ -3002,6 +3002,50 @@ def _scheduled_jobs() -> list[dict[str, Any]]:
     return jobs
 
 
+def _cron_sync() -> dict[str, Any]:
+    """重算 launchd 对账并落地到 ~/Library/LaunchAgents（无 prune）。
+
+    返回同步结果与刷新后的任务清单，供前端在单次调用后重建状态。
+    """
+    try:
+        from sync_launchd import run_sync
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"failed to load sync launcher: {exc}"}
+
+    try:
+        plan, notices = run_sync(
+            project_root=str(PROJECT_ROOT),
+            agents_dir=LAUNCHAGENTS_DIR,
+            deploy_dir=LAUNCHD_DIR,
+            apply=True,
+            prune=False,
+            acknowledge_schedule_change=False,
+            state_root=str(STATE_ROOT),
+            manifest_path=str(PROJECT_ROOT / "kss" / "config" / "cron_jobs.yaml"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc), "notices": [str(exc)]}
+
+    response: dict[str, Any] = {
+        "ok": True,
+        "notices": notices,
+        "categoryOrder": list(_cron_manifest().category_order()),
+        "jobs": _scheduled_jobs(),
+        "plan": {
+            "install": list(plan.install),
+            "update": list(plan.update),
+            "stale": list(plan.stale),
+            "aligned": list(plan.aligned),
+        },
+    }
+
+    if not notices:
+        response["notices"] = [
+            f"无需动作：install={len(plan.install)}, update={len(plan.update)}, stale={len(plan.stale)}"
+        ]
+    return response
+
+
 def _cron_action(label: str, action: str) -> dict[str, Any]:
     """对单个 launchd 任务重跑/启用/停用。label 必须命中白名单。"""
     plists = _launchd_plists()
@@ -3269,7 +3313,7 @@ def _theme_leaders() -> list[dict[str, Any]]:
 # 写命令（产生副作用 / 修改状态）；U6 MCP 的 paper-only 闸据此分类。
 WRITE_COMMANDS = frozenset({
     "run", "import", "resolve",
-    "cron-rerun", "cron-enable", "cron-disable", "cron-catchup", "cron-rerun-many",
+    "cron-rerun", "cron-enable", "cron-disable", "cron-catchup", "cron-rerun-many", "cron-sync",
 })
 
 # ---------------------------------------------------------------------------
@@ -3296,6 +3340,7 @@ COMMANDS = {
     "cron-rerun": {"desc": "重跑计划任务", "args": ["LABEL"]},
     "cron-enable": {"desc": "启用计划任务", "args": ["LABEL"]},
     "cron-disable": {"desc": "停用计划任务", "args": ["LABEL"]},
+    "cron-sync": {"desc": "同步 LaunchAgents（使任务从清单进入可调度态）", "args": []},
     "cron-catchup": {"desc": "补跑漏跑任务", "args": []},
     "cron-rerun-many": {"desc": "批量重跑", "args": ["LABELS"]},
     "trends-month": {"desc": "趋势页某月日历", "args": ["YYYY-MM"]},
@@ -3507,6 +3552,8 @@ def dispatch(command: str, args: list[str]) -> Any:
             "jobs": _scheduled_jobs(),
             "categoryOrder": list(_cron_manifest().category_order()),
         }
+    if command == "cron-sync":
+        return _cron_sync()
     if command in {"cron-rerun", "cron-enable", "cron-disable"}:
         if not args:
             raise ValueError(f"{command} requires LABEL")
@@ -3568,7 +3615,7 @@ def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print(
             "usage: kss_app_bridge.py snapshot|stock SYMBOL|report PATH|paper-summary|run TASK"
-            "|cron-list|cron-rerun LABEL|cron-enable LABEL|cron-disable LABEL"
+            "|cron-list|cron-sync|cron-rerun LABEL|cron-enable LABEL|cron-disable LABEL"
             "|cron-catchup|cron-rerun-many LABEL,LABEL"
             "|research-search QUERY|research-fetch URL|research-bundle QUERY",
             file=sys.stderr,

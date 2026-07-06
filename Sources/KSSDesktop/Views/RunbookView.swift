@@ -14,6 +14,7 @@ struct RunbookView: View {
     var onLoadSchedules: () -> Void
     var onRerunSchedule: (String) -> Void
     var onToggleSchedule: (String, Bool) -> Void
+    var onSyncSchedule: (String) -> Void
     var onCatchUp: () -> Void
     var onRerunMany: ([String]) -> Void
     var onDismissBatchNote: () -> Void
@@ -50,6 +51,7 @@ struct RunbookView: View {
                         batchNote: scheduledBatchNote,
                         onRerun: onRerunSchedule,
                         onToggle: onToggleSchedule,
+                        onSync: onSyncSchedule,
                         onCatchUp: onCatchUp,
                         onRerunMany: onRerunMany,
                         onDismissBatchNote: onDismissBatchNote
@@ -90,6 +92,7 @@ struct ScheduledTasksSection: View {
     var batchNote: String?
     var onRerun: (String) -> Void
     var onToggle: (String, Bool) -> Void
+    var onSync: (String) -> Void
     var onCatchUp: () -> Void
     var onRerunMany: ([String]) -> Void
     var onDismissBatchNote: () -> Void
@@ -127,11 +130,13 @@ struct ScheduledTasksSection: View {
     // 健康汇总：正常 / 漏跑 / 失败 / 停用 计数。
     private var healthSummary: some View {
         let ok = jobs.filter { $0.health == .ok || $0.health == .running }.count
+        let needsSync = jobs.filter { $0.health == .needsInstall }.count
         let stale = jobs.filter { $0.health == .stale }.count
         let failed = jobs.filter { $0.health == .failed }.count
         let off = jobs.filter { $0.health == .disabled }.count
         return HStack(spacing: 10) {
             healthStat("正常", ok, theme.accent)
+            healthStat("待同步", needsSync, theme.ma5)
             healthStat("漏跑", stale, theme.ma5)
             healthStat("失败", failed, theme.up)
             healthStat("停用", off, theme.textSecondary)
@@ -250,7 +255,8 @@ struct ScheduledTasksSection: View {
                     job: job,
                     busy: busy.contains(job.label),
                     onRerun: { onRerun(job.label) },
-                    onToggle: { onToggle(job.label, $0) }
+                    onToggle: { onToggle(job.label, $0) },
+                    onSync: { onSync(job.label) }
                 )
             }
         }
@@ -263,6 +269,7 @@ struct ScheduledJobRow: View {
     var busy: Bool
     var onRerun: () -> Void
     var onToggle: (Bool) -> Void
+    var onSync: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -315,6 +322,21 @@ struct ScheduledJobRow: View {
             }
 
             Spacer(minLength: 8)
+
+            if job.needsInstall == true {
+                Button(action: onSync) {
+                    if busy {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("同步", systemImage: "arrow.down.doc.fill")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .labelStyle(.titleAndIcon)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(busy)
+                .help("立即同步 LaunchAgent")
+            }
 
             healthBadge(job.health)
 

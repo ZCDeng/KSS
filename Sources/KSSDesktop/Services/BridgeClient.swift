@@ -154,6 +154,10 @@ struct BridgeClient {
         try run(["cron-catchup"], as: CronBatchResult.self)
     }
 
+    func syncCronJobs() throws -> CronSyncResponse {
+        try run(["cron-sync"], as: CronSyncResponse.self)
+    }
+
     /// 批量重跑指定 label（空 = 全部启用项）；每个 label 仍走 bridge 白名单校验。
     func rerunJobs(_ labels: [String]) throws -> CronBatchResult {
         try run(["cron-rerun-many", labels.joined(separator: ",")], as: CronBatchResult.self)

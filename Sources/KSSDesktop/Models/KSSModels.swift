@@ -619,6 +619,23 @@ struct CronListResponse: Codable, Hashable {
     var categoryOrder: [String]
 }
 
+/// cron-sync 的返回。
+struct CronSyncResponse: Codable, Hashable {
+    var ok: Bool
+    var error: String?
+    var notices: [String]?
+    var jobs: [ScheduledJob]?
+    var categoryOrder: [String]?
+    var plan: CronSyncPlan?
+
+    struct CronSyncPlan: Codable, Hashable {
+        var install: [String]
+        var update: [String]
+        var stale: [String]
+        var aligned: [String]
+    }
+}
+
 /// cron-rerun / cron-enable / cron-disable 的返回。
 struct CronActionResult: Codable, Hashable {
     var ok: Bool
