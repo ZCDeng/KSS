@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 @MainActor
 final class KSSStore: ObservableObject {
@@ -41,6 +42,14 @@ final class KSSStore: ObservableObject {
     @Published var tradingHours: TradingHours?         // 交易时段门控（R13）
     @Published var realtimeAuthFailed = false          // auth_failed → 停定时刷新 + "实时源未连接"（R4）
     @Published var realtimeUpdatedAt: Date?            // 最近一次实时拉取成功时间（"更新于 HH:MM"）
+
+    // MARK: U5 Timer 基础设施（R9/R10/R13/R14）
+    @Published var refreshTimestamp: Date?             // 定时刷新 tick（紫苏叶/国产替代 Section 监听此值触发重算）
+    private var timerCancellable: AnyCancellable?
+    private var scenePhaseActive = false
+    private var lastDispatchCache: [String: Date] = [:]  // R14: coalescing cache (cmd:symbol → last dispatch)
+    private static let minIntervalSeconds: Double = 120  // R14: 最小间隔 2min
+    private static let coalesceSeconds: Double = 30     // R14: 同标的+同命令 30s 内复用
 
     // MARK: AI 复盘助手聊天态（#4 U4/U5）—— 会话历史归 store，section 切换不丢
     @Published var chatMessages: [ChatMessage] = []
@@ -261,6 +270,63 @@ final class KSSStore: ObservableObject {
     func attachChartToLastMessage(bars: ChartAttachment) {
         guard let idx = chatMessages.lastIndex(where: { $0.role == .assistant }) else { return }
         chatMessages[idx].chartAttachment = bars
+    }
+
+    // MARK: U5 Timer 生命周期（R9/R10/R13/R14）
+
+    /// Caller passes whether the scene/window is active (R14 gate).
+    func updateSceneActive(_ active: Bool) {
+        scenePhaseActive = active
+        if scenePhaseActive, tradingHours?.isTradingSession ?? false {
+            startRefreshTimer()
+        } else {
+            stopRefreshTimer()
+        }
+    }
+
+    /// 交易时段门控更新后重新评估 Timer（trading-hours 查询与 loadTradingHours 异步）。
+    func reevaluateTimer() {
+        guard scenePhaseActive, let hours = tradingHours, hours.isTradingSession else {
+            stopRefreshTimer()
+            return
+        }
+        startRefreshTimer()
+    }
+
+    func startRefreshTimer(intervalSeconds: Double = 300) {
+        stopRefreshTimer()
+        let effectiveInterval = max(intervalSeconds, Self.minIntervalSeconds)
+        timerCancellable = Timer.publish(every: effectiveInterval, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in self?.onRefreshTick() }
+    }
+
+    func stopRefreshTimer() {
+        timerCancellable?.cancel()
+        timerCancellable = nil
+    }
+
+    private func onRefreshTick() {
+        guard scenePhaseActive, tradingHours?.isTradingSession ?? false else { return }
+        // 跨页面 coalescing (R14): 最近一次 dispatch 在 30s 内 → 跳过此 tick
+        let now = Date()
+        let cacheKey = "refresh-tick"
+        if let last = lastDispatchCache[cacheKey], now.timeIntervalSince(last) < Self.coalesceSeconds {
+            return
+        }
+        lastDispatchCache[cacheKey] = now
+        refreshTimestamp = now
+    }
+
+    /// 检查 coalescing cache（R14）：同 command:symbol 30s 内跳过。
+    func shouldSkipDispatch(cmd: String, symbol: String) -> Bool {
+        let key = "\(cmd):\(symbol)"
+        let now = Date()
+        if let last = lastDispatchCache[key], now.timeIntervalSince(last) < Self.coalesceSeconds {
+            return true
+        }
+        lastDispatchCache[key] = now
+        return false
     }
 
     /// 紫苏叶个股富化（机构/PE/美股对标）。非紫苏叶票静默置空，不报错。
