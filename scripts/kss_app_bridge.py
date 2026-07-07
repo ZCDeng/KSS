@@ -3643,6 +3643,14 @@ def _intraday_snapshot_inner(symbol: str, interval_minutes: int = 1, asset_kind:
             ),
             **meta,
         }
+    if not res.rows:
+        return {
+            "symbol": meta["normalized_symbol"],
+            "interval_minutes": interval_minutes,
+            "bar": None, "error": "empty response",
+            "hint": "取数成功但无 bar（可能非交易时段）",
+            **meta,
+        }
     latest = res.rows[-1]  # fetch_bars 按时间升序，末行为最新
     result = {
         "symbol": meta["normalized_symbol"],

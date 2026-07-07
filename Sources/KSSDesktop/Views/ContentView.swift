@@ -195,7 +195,8 @@ struct ContentView: View {
                     watchlist: watchlist,
                     searchText: $searchText,
                     onSelect: { symbol in Task { await store.selectStock(symbol, navigate: false) } },
-                    onToggleWatchlist: toggleWatchlist
+                    onToggleWatchlist: toggleWatchlist,
+                    bridge: store.bridge
                 )
             case .runbook:
                 RunbookView(
@@ -272,7 +273,8 @@ struct ContentView: View {
                     watchlist: watchlist,
                     searchText: $searchText,
                     onSelect: { symbol in Task { await store.selectStock(symbol, navigate: false) } },
-                    onToggleWatchlist: toggleWatchlist
+                    onToggleWatchlist: toggleWatchlist,
+                    bridge: store.bridge
                 )
             case .aiChat:
                 AIChatView()

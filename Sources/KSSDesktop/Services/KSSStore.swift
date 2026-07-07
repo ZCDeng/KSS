@@ -59,7 +59,7 @@ final class KSSStore: ObservableObject {
     /// 当前阻塞中的 confirm 闸（后台流式线程持，UI tap 后 resolve）。
     private var activeConfirmGate: ChatConfirmGate?
 
-    private let bridge: BridgeClient?
+    let bridge: BridgeClient?
 
     init() {
         self.bridge = try? BridgeClient()
@@ -245,6 +245,8 @@ final class KSSStore: ObservableObject {
                 realtimeAuthFailed = true
             }
         }
+        // P0: Timer 需在 tradingHours 异步加载完成后启动（scenePhase 触发时 tradingHours 为 nil）。
+        reevaluateTimer()
     }
 
     /// 手动重试实时源（R4：avoid "未连接"状态永久滞留）。
@@ -262,7 +264,7 @@ final class KSSStore: ObservableObject {
         let quote = try? await Task.detached {
             try bridge.longbridgeQuote(symbol: "000001.SH")
         }.value
-        if let quote { realtimeQuote = quote; realtimeUpdatedAt = Date() }
+        if let quote, quote.isLive { realtimeQuote = quote; realtimeUpdatedAt = Date() }
     }
 
     /// U4: 将 intraday-snapshot 工具返回的 bar 数据存入 chat attachment（R8）。

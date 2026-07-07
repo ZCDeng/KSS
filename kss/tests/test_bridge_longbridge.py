@@ -284,11 +284,35 @@ def test_e2e_composite_longbridge_quote_error_path(monkeypatch):
     """U6 E2E composite: LB auth_failed → error 字段非空 → Swift 回退存量 + 标注。"""
     # 不 mock provider，不设凭据 → _ensure_context → auth_failed
     import os as _os
-    for k in ("LONGBRIDGE_APP_KEY", "LONGBRIDGE_APP_SECRET", "LONGBRIDGE_ACCESS_TOKEN"):
+    saved = {k: _os.environ.get(k) for k in (
+        "LONGBRIDGE_APP_KEY", "LONGBRIDGE_APP_SECRET", "LONGBRIDGE_ACCESS_TOKEN")}
+    for k in saved:
         _os.environ.pop(k, None)
-    out = b.dispatch("longbridge-quote", ["688008.SH"])
-    # error 路径：必有 error（auth_failed / no_realtime_snapshot），last_done 为 None
-    assert out.get("error") is not None or out.get("last_done") is None
+    try:
+        out = b.dispatch("longbridge-quote", ["688008.SH"])
+        # error 路径：必有 error（auth_failed / no_realtime_snapshot）
+        assert out.get("error") is not None and out.get("last_done") is None, (
+            f"expected error non-empty AND last_done=None, got error={out.get('error')} last_done={out.get('last_done')}"
+        )
+    finally:
+        # 恢复 env 避免污染后续测试
+        for k, v in saved.items():
+            if v is not None:
+                _os.environ[k] = v
+
+
+def test_intraday_bars_error_on_uncovered_symbol(monkeypatch):
+    """EC1: intraday-bars 对非覆盖标的（北交所）返回空序列 + error。"""
+    err = FetchResult(
+        rows=[], raw_columns=(), source_asof_ts=None,
+        status_code=None, latency_ms=5.0, error="unreachable",
+    )
+    import kss.data.intraday_client as ic
+    monkeypatch.setattr(ic, "EastmoneyAkshareProvider", lambda: _FakeEastmoney(bars=err))
+    out = b.dispatch("intraday-bars", ["830799.BJ"])
+    assert out["bars"] == []
+    assert out.get("error") is not None
+    assert out["routed_provider"] == "eastmoney_akshare"
 
 
 def test_e2e_composite_intraday_bars_full_round_trip(monkeypatch):

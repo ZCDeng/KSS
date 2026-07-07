@@ -20,6 +20,8 @@ struct StockBrowserView: View {
     @Binding var searchText: String
     var onSelect: (String) -> Void
     var onToggleWatchlist: (String) -> Void
+    /// P1: BridgeClient from store（不在 view 内构造第二条 sidecar）
+    var bridge: BridgeClient? = nil
 
     @State private var sort: StockSort = .symbol
     @State private var ascending = true
@@ -140,7 +142,8 @@ struct StockBrowserView: View {
                         enrichment: enrichment?.symbol == detail.symbol ? enrichment : nil,
                         isWatched: watchlist.contains(detail.symbol),
                         onToggleWatchlist: { onToggleWatchlist(detail.symbol) },
-                        onZoom: { showChartFullscreen = true }
+                        onZoom: { showChartFullscreen = true },
+                        bridge: bridge
                     )
                 } else {
                     Text("选择一只股票查看详情")
@@ -175,6 +178,8 @@ struct StockDetailView: View {
     var isWatched: Bool
     var onToggleWatchlist: () -> Void
     var onZoom: () -> Void
+    /// P1: BridgeClient 注入（不在 view 内构造——共用 store 的单桥模式）
+    var bridge: BridgeClient? = nil
     // U3 分钟 K 线模式（R7/R15）
     @State private var chartMode: ChartDataMode = .daily
     @State private var intradayBars: IntradayBars? = nil
@@ -587,7 +592,7 @@ extension StockDetailView {
         intradayLoading = true; intradayError = nil; intradayBars = nil
         defer { intradayLoading = false }
         let interval = mode == .m5 ? 5 : 1
-        guard let bridge = try? BridgeClient() else { intradayError = "无法定位 bridge"; return }
+        guard let bridge else { intradayError = "无法定位 bridge"; return }
         let bars = try? await Task.detached {
             try bridge.intradayBars(symbol: symbol, interval: interval)
         }.value
