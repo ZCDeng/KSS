@@ -1,0 +1,148 @@
+"""U4 测试：Longbridge 只读 bridge 命令（R5 / KTD3 / KTD4）.
+
+- 只读性钉死：两命令 ∉ WRITE_COMMANDS ⇒ 经 _make_read_only_call 不 raise。
+- 数字纪律：命令返回**真值字段**（非拼好的自然语言）。
+- 能力错配：longbridge-quote 对东财路由标的返回结构化 error。
+- 路由：按 route_provider 选源（mock provider，不 live）。
+跑：.venv/bin/python -m pytest kss/tests/test_bridge_longbridge.py -q
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+import kss_app_bridge as b  # noqa: E402
+
+from kss.data.intraday_client import FetchResult  # noqa: E402
+
+
+def _ok_quote_result():
+    return FetchResult(
+        rows=[{
+            "symbol": "688008.SH", "last_done": 253.2, "prev_close": 250.0,
+            "open": 251.0, "high": 254.0, "low": 250.5, "volume": 12345,
+            "turnover": 3.1e6, "timestamp": None, "trade_status": "Normal",
+        }],
+        raw_columns=("symbol", "last_done"),
+        source_asof_ts="2026-07-08T15:00:00+08:00",
+        status_code=200, latency_ms=10.0, error=None,
+    )
+
+
+def _ok_bar_result():
+    return FetchResult(
+        rows=[
+            {"timestamp": None, "open": 10.0, "high": 10.2, "low": 9.9, "close": 10.1, "volume": 1000, "turnover": 1e6},
+            {"timestamp": None, "open": 10.1, "high": 10.3, "low": 10.0, "close": 10.25, "volume": 1500, "turnover": 1.5e6},
+        ],
+        raw_columns=("timestamp", "open", "high", "low", "close", "volume", "turnover"),
+        source_asof_ts="2026-07-08T15:00:00+08:00",
+        status_code=200, latency_ms=12.0, error=None,
+    )
+
+
+class _FakeLongbridge:
+    name = "longbridge"
+
+    def __init__(self, *, quote=None, bars=None):
+        self._quote = quote
+        self._bars = bars
+
+    def fetch_quote(self, symbol):
+        return self._quote
+
+    def fetch_bars(self, symbol, *, interval_minutes, asset_kind, start=None, end=None):
+        return self._bars
+
+
+class _FakeEastmoney:
+    name = "eastmoney_akshare"
+
+    def __init__(self, *, bars=None):
+        self._bars = bars
+
+    def fetch_bars(self, symbol, *, interval_minutes, asset_kind, start=None, end=None):
+        return self._bars
+
+
+# --------------------------------------------------------------------------- #
+# 只读性 + 漂移守卫（KTD3）
+# --------------------------------------------------------------------------- #
+
+
+def test_new_commands_registered_and_not_write():
+    """两命令登记进 COMMANDS 且 ∉ WRITE_COMMANDS（只读性钉死）。"""
+    assert "longbridge-quote" in b.COMMANDS
+    assert "intraday-snapshot" in b.COMMANDS
+    assert "longbridge-quote" not in b.WRITE_COMMANDS
+    assert "intraday-snapshot" not in b.WRITE_COMMANDS
+
+
+def test_read_only_call_does_not_raise_on_new_commands(monkeypatch):
+    """经 _make_read_only_call 调新命令不 raise PermissionError（只读路径）。"""
+    monkeypatch.setattr(
+        b, "_longbridge_quote", lambda s: {"symbol": s, "last_done": 1.0}
+    )
+    call = b._make_read_only_call(b.dispatch)
+    out = call("longbridge-quote", ["688008.SH"])
+    assert out["last_done"] == 1.0
+
+
+# --------------------------------------------------------------------------- #
+# longbridge-quote：covered 走 longbridge、东财路由标的返回 error（能力错配）
+# --------------------------------------------------------------------------- #
+
+
+def test_longbridge_quote_covered_returns_true_value_fields(monkeypatch):
+    # 用 import 注入 fake（_longbridge_quote 内部 import LongbridgeProvider）。
+    import kss.data.intraday_client as ic
+    monkeypatch.setattr(ic, "LongbridgeProvider", lambda: _FakeLongbridge(quote=_ok_quote_result()))
+    out = b.dispatch("longbridge-quote", ["688008.SH"])
+    # 真值字段直接透传（number_guard 可核），非自然语言。
+    assert out["last_done"] == 253.2
+    assert out["symbol"] == "688008.SH"
+    assert out["eligibility"] == "forward_observed"
+    assert out["routed_provider"] == "longbridge"
+
+
+def test_longbridge_quote_eastmoney_routed_returns_error(monkeypatch):
+    """东财路由标的（北交所）→ 结构化 no_realtime_snapshot error（东财无 fetch_quote）。"""
+    out = b.dispatch("longbridge-quote", ["830799.BJ"])
+    assert out["error"] == "no_realtime_snapshot"
+    assert out["routed_provider"] == "eastmoney_akshare"
+
+
+def test_longbridge_quote_requires_symbol():
+    import pytest
+    with pytest.raises(ValueError):
+        b.dispatch("longbridge-quote", [])
+
+
+# --------------------------------------------------------------------------- #
+# intraday-snapshot：按路由选源，返回真值 bar 行
+# --------------------------------------------------------------------------- #
+
+
+def test_intraday_snapshot_covered_uses_longbridge(monkeypatch):
+    import kss.data.intraday_client as ic
+    monkeypatch.setattr(ic, "LongbridgeProvider", lambda: _FakeLongbridge(bars=_ok_bar_result()))
+    out = b.dispatch("intraday-snapshot", ["688008.SH"])
+    # 末行为最新 bar，整行真值透传。
+    assert out["bar"]["close"] == 10.25
+    assert out["routed_provider"] == "longbridge"
+    assert out["eligibility"] == "forward_observed"
+
+
+def test_intraday_snapshot_beijing_routes_eastmoney_honest_error(monkeypatch):
+    """北交所 → 东财源；东财本机不可达 → 诚实 error（无数据非错数据，KTD6）。"""
+    err = FetchResult(
+        rows=[], raw_columns=(), source_asof_ts=None,
+        status_code=None, latency_ms=5.0, error="unreachable",
+    )
+    import kss.data.intraday_client as ic
+    monkeypatch.setattr(ic, "EastmoneyAkshareProvider", lambda: _FakeEastmoney(bars=err))
+    out = b.dispatch("intraday-snapshot", ["830799.BJ"])
+    assert out["routed_provider"] == "eastmoney_akshare"
+    assert "error" in out
+    assert "不可达" in out["hint"]

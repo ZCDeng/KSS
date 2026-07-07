@@ -156,6 +156,27 @@ def research_bundle(query: str, limit: int = 3, max_chars_per_source: int = 3000
     return _call("research-bundle", [query, str(limit), str(max_chars_per_source)])
 
 
+@mcp.tool
+def get_longbridge_quote(symbol: str) -> dict:
+    """Longbridge 实时快照（ChinaConnect LV1，接受延迟）。symbol 形如 688008.SH。
+
+    仅覆盖**陆股通标的**（沪深主板/科创/创业/ETF/指数）；非覆盖或北交所标的返回
+    no_realtime_snapshot error。实时数据为 forward_observed（前向观察）、**非 PIT**，
+    只用于当日盘面解读，不作回测依据。北交所无实时路径。
+    """
+    return _call("longbridge-quote", [symbol])
+
+
+@mcp.tool
+def get_intraday_snapshot(symbol: str, interval_minutes: int = 1) -> dict:
+    """最新分钟 bar 快照（按覆盖自动选源 longbridge/东财，前向-only）。symbol 形如 688008.SH。
+
+    覆盖标的走 Longbridge 实时；北交所/非陆股通走东财（本机当前可能不可达 = 无数据，
+    非错数据）。返回真值 bar 字段（open/high/low/close/volume），forward_observed 非 PIT。
+    """
+    return _call("intraday-snapshot", [symbol, str(interval_minutes)])
+
+
 # ---- 写命令（paper-only：仅 KSS_MCP_LIVE=1 注册，且每调用须 confirm）----
 
 if _LIVE:

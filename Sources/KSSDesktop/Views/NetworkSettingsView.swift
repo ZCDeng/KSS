@@ -16,6 +16,10 @@ struct NetworkSettingsView: View {
     @State private var deepseekApiKey = ""
     @State private var llmModel = ""
     @State private var appLive = false
+    // Longbridge（U6）：实时行情凭据，注入 sidecar env 供 LongbridgeProvider 读。
+    @State private var longbridgeAppKey = ""
+    @State private var longbridgeAppSecret = ""
+    @State private var longbridgeAccessToken = ""
     @State private var saved = false
 
     var body: some View {
@@ -50,6 +54,15 @@ struct NetworkSettingsView: View {
                 }
             }
             .onChange(of: appLive) { _, _ in saved = false }
+
+            Divider().padding(.vertical, 2)
+            Text("Longbridge 实时行情")
+                .font(.system(size: 13, weight: .bold)).foregroundStyle(theme.textPrimary)
+            Text("ChinaConnect LV1 实时（陆股通池），注入 sidecar 供 LongbridgeProvider 使用。")
+                .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+            field("Longbridge App Key", text: $longbridgeAppKey, secure: true)
+            field("Longbridge App Secret", text: $longbridgeAppSecret, secure: true)
+            field("Longbridge Access Token", text: $longbridgeAccessToken, secure: true)
 
             HStack {
                 if saved {
@@ -104,6 +117,9 @@ struct NetworkSettingsView: View {
         deepseekApiKey = KeychainStore.read("DEEPSEEK_API_KEY") ?? ""
         llmModel = KeychainStore.read("KSS_LLM_MODEL") ?? ""
         appLive = KeychainStore.read("KSS_APP_LIVE") == "1"
+        longbridgeAppKey = KeychainStore.read("LONGBRIDGE_APP_KEY") ?? ""
+        longbridgeAppSecret = KeychainStore.read("LONGBRIDGE_APP_SECRET") ?? ""
+        longbridgeAccessToken = KeychainStore.read("LONGBRIDGE_ACCESS_TOKEN") ?? ""
     }
 
     private func save() {
@@ -116,6 +132,9 @@ struct NetworkSettingsView: View {
         KeychainStore.write("DEEPSEEK_API_KEY", deepseekApiKey)
         KeychainStore.write("KSS_LLM_MODEL", llmModel)
         KeychainStore.write("KSS_APP_LIVE", appLive ? "1" : "")
+        KeychainStore.write("LONGBRIDGE_APP_KEY", longbridgeAppKey)
+        KeychainStore.write("LONGBRIDGE_APP_SECRET", longbridgeAppSecret)
+        KeychainStore.write("LONGBRIDGE_ACCESS_TOKEN", longbridgeAccessToken)
         // 凭据/开关变更后重启常驻 sidecar，使新 env 生效（SIGHUP re-exec 留旧 env，须全杀重启）。
         BridgeClient.restartSidecarForEnvChange()
         saved = true

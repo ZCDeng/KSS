@@ -37,6 +37,7 @@ from kss.data.intraday_client import (  # noqa: E402
     Eligibility,
     FetchResult,
     IntradayProvider,
+    LongbridgeProvider,
     RepresentativeSymbol,
     classify_eligibility,
     schema_hash,
@@ -295,8 +296,8 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument(
         "--provider",
         default="eastmoney_akshare",
-        choices=["eastmoney_akshare"],
-        help="provider 名（U1 仅东财前向适配）",
+        choices=["eastmoney_akshare", "longbridge", "auto"],
+        help="provider 名（eastmoney_akshare / longbridge / auto）",
     )
     return p
 
@@ -306,6 +307,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.provider == "eastmoney_akshare":
         provider: IntradayProvider = EastmoneyAkshareProvider()
+    elif args.provider == "longbridge":
+        provider = LongbridgeProvider()
+    elif args.provider == "auto":
+        # 探针场景下 auto 退化为 eastmoney（probe 本身不需路由）
+        provider = EastmoneyAkshareProvider()
     else:  # pragma: no cover — choices 已约束
         print(f"[FATAL] 未知 provider: {args.provider}", file=sys.stderr)
         return 2

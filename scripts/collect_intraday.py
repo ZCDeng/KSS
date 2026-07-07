@@ -45,10 +45,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from kss.config.paths import INTRADAY_DB  # noqa: E402
 from kss.data.intraday_client import (  # noqa: E402
     EASTMOTNEY_1M_MAX_HISTORY_DAYS,
+    CapabilityResult,
     EastmoneyAkshareProvider,
     FetchResult,
     IntradayProvider,
+    LongbridgeProvider,
     classify_eligibility,
+)
+from kss.data.longbridge_coverage import (  # noqa: E402
+    PROVIDER_LONGBRIDGE,
+    route_provider,
 )
 from kss.data.intraday_store import (  # noqa: E402
     IntradayStore,
@@ -59,6 +65,71 @@ from kss.data.intraday_store import (  # noqa: E402
 logger = logging.getLogger(__name__)
 
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+
+class _AutoRoutedProvider:
+    """按 route_provider 选源的复合 provider（U3）.
+
+    - 每个 symbol 查 manifest 路由到 longbridge 或 eastmoney。
+    - 覆盖长桥失败降级东财（记 observability）；东财失败即失败（KTD6 诚实）。
+    - capability 保守取交集（1/5/15/30/60，stock/etf/index）。
+    - 兼容 IntradayProvider 协议（供 collect_* 直接传参）。
+    """
+
+    name = "auto"
+
+    def __init__(self) -> None:
+        self._lb = LongbridgeProvider()
+        self._em = EastmoneyAkshareProvider()
+        self.version = f"auto(lb={self._lb.version},em={self._em.version})"
+
+    def supported_intervals(self) -> tuple[int, ...]:
+        return (1, 5, 15, 30, 60)
+
+    def supported_assets(self) -> tuple[str, ...]:
+        return ("stock", "etf", "index")
+
+    def capability(self) -> CapabilityResult:
+        # 保守：任一不可达即整体不可达（不冒进）。
+        lb_cap = self._lb.capability()
+        em_cap = self._em.capability()
+        reachable = lb_cap.reachable or em_cap.reachable
+        elig = classify_eligibility(self.name, reachable=reachable)
+        return CapabilityResult(
+            provider=self.name,
+            version=self.version,
+            supported_intervals=self.supported_intervals(),
+            supported_assets=self.supported_assets(),
+            max_history_days=None,
+            eligibility=elig,
+            reachable=reachable,
+            notes=("auto-routed longbridge↔eastmoney",),
+        )
+
+    def fetch_bars(
+        self,
+        symbol: str,
+        *,
+        interval_minutes: int,
+        asset_kind: str,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> FetchResult:
+        prov_name = route_provider(symbol)
+        provider = self._lb if prov_name == PROVIDER_LONGBRIDGE else self._em
+        res = provider.fetch_bars(
+            symbol, interval_minutes=interval_minutes, asset_kind=asset_kind, start=start, end=end
+        )
+        # 覆盖长桥失败 → 降级东财（记 observability）；东财失败即失败。
+        if not res.ok and provider is self._lb:
+            logger.info(
+                "[auto] longbridge %s failed (%s) → fallback eastmoney",
+                symbol, res.error,
+            )
+            res = self._em.fetch_bars(
+                symbol, interval_minutes=interval_minutes, asset_kind=asset_kind, start=start, end=end
+            )
+        return res
 
 # ----- retention 硬限（KTD2；影子后由 U8 校准；env 可覆盖） ----- #
 INTRADAY_MAX_DB_BYTES: int = int(
@@ -692,6 +763,12 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--trade-date", default=None,
                    help="交易日 YYYY-MM-DD（默认今天；走 trade_cal 确认）")
     p.add_argument("--interval", type=int, default=1, help="分钟周期（默认 1）")
+    p.add_argument(
+        "--provider",
+        choices=["eastmoney_akshare", "longbridge", "auto"],
+        default="eastmoney_akshare",
+        help="provider 名（auto=按覆盖 manifest 路由 longbridge↔eastmoney）",
+    )
     p.add_argument("--profile-version", default=None,
                    help="已注册 session_profile 版本（缺则只落 blob 不 canonical）")
     p.add_argument("--contract-version", default=None,
@@ -707,7 +784,12 @@ def main(argv: list[str] | None = None) -> int:
     args = build_argparser().parse_args(argv)
     db_path = Path(args.db) if args.db else INTRADAY_DB
     store = IntradayStore(db_path)
-    provider = EastmoneyAkshareProvider()
+    if args.provider == "eastmoney_akshare":
+        provider: IntradayProvider = EastmoneyAkshareProvider()
+    elif args.provider == "longbridge":
+        provider = LongbridgeProvider()
+    else:
+        provider = _AutoRoutedProvider()
     trade_date = args.trade_date or _today_shanghai()
 
     if args.mode == "watch":

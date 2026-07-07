@@ -674,6 +674,10 @@ def _load_project_env() -> dict[str, str]:
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_CHAT_ID",
         "TELEGRAM_API_URL",
+        # Longbridge（U6）：dev .env 回退，生产仍由 Swift Keychain 注入。
+        "LONGBRIDGE_APP_KEY",
+        "LONGBRIDGE_APP_SECRET",
+        "LONGBRIDGE_ACCESS_TOKEN",
     }
     loaded: dict[str, str] = {}
     # U3：dev .env（代码根）+ bundle-mode network.env（state root，非敏感，非 iCloud）。
@@ -3353,6 +3357,8 @@ COMMANDS = {
     "research-fetch": {"desc": "外部 URL 证据抓取(只读,SSRF 护栏)", "args": ["URL", "[MAX_CHARS]"]},
     "research-bundle": {"desc": "外部证据搜索+抓取 bundle(只读)", "args": ["QUERY", "[LIMIT]", "[MAX_CHARS_PER_SOURCE]"]},
     "news-digest": {"desc": "舆情热点 digest(读 cron 归档,两段式:方向+催化)", "args": ["[DATE]", "[SCENE]"]},
+    "longbridge-quote": {"desc": "Longbridge 实时快照(ChinaConnect LV1,仅陆股通标的)", "args": ["SYMBOL"]},
+    "intraday-snapshot": {"desc": "最新分钟 bar 快照(按覆盖路由 longbridge/东财,前向-only)", "args": ["SYMBOL", "[INTERVAL]"]},
 }
 
 # run_task 白名单 —— orientation 报此清单。须与 run_task() if-chain 实际接受集合一致
@@ -3502,6 +3508,150 @@ def _run_recipe(name: str, json_args: str = "") -> dict:
     return meta["fn"](call, **parsed)
 
 
+# ---------------------------------------------------------------------------
+# Longbridge 只读实时命令（U4 / R5 / KTD3 / KTD4）—— 共享面。
+# **不入 WRITE_COMMANDS**：经 _make_read_only_call 自动走受限只读路径（碰写即 raise）。
+# 金融数字由**代码渲染**：命令返回**真值字段**（供上层 number_guard 核 + verbatim 引用），
+# 绝不返回拼好的自然语言（数字纪律，见 sector-truth-source-split 记忆）。
+# ---------------------------------------------------------------------------
+
+import time as _time  # noqa: E402  (retry helper)
+
+_RETRYABLE_ERRORS: frozenset[str] = frozenset({"unreachable", "fetch_failed"})
+
+
+def _call_with_retry(fn, *, max_attempts: int = 2, base_delay: float = 0.5) -> Any:
+    """薄 retry wrapper：仅对瞬态错误（unreachable / fetch_failed）重试最多一次。
+
+    auth_failed / empty / unsupported interval 不重试——那些不是瞬态。
+    """
+    last: Any = None
+    for n in range(max_attempts):
+        result = fn()
+        if isinstance(result, dict) and result.get("error") in _RETRYABLE_ERRORS and n + 1 < max_attempts:
+            _time.sleep(base_delay * (n + 1))
+            last = result
+            continue
+        return result
+    return last  # 重试耗尽，返回最后一次失败结果
+
+
+def _longbridge_coverage_meta(symbol: str) -> dict[str, Any]:
+    """标的路由 + manifest 陈旧标记（供命令附在响应里，让上层感知诚实语义）。"""
+    from kss.data.longbridge_coverage import (  # noqa: PLC0415
+        is_manifest_stale,
+        load_manifest,
+        normalize_symbol,
+        route_provider,
+    )
+
+    manifest = load_manifest()
+    return {
+        "normalized_symbol": normalize_symbol(symbol),
+        "routed_provider": route_provider(symbol, manifest),
+        "manifest_scanned_at": manifest.scanned_at,
+        "manifest_stale": is_manifest_stale(manifest),
+    }
+
+
+def _longbridge_quote(symbol: str) -> dict[str, Any]:
+    """实时快照（ChinaConnect LV1，接受延迟）。仅 covered（陆股通）标的.
+
+    能力错配处理（feasibility P2）：东财**无 fetch_quote**——非陆股通/北交所标的
+    返回结构化 ``error``（明说无实时快照），快照能力只保留给 covered 标的。
+    """
+    if not symbol:
+        raise ValueError("longbridge-quote requires SYMBOL")
+    # wrap in retry 薄层（REL-001）：瞬态网络错误（unreachable/fetch_failed）重试一次
+    return _call_with_retry(lambda: _longbridge_quote_inner(symbol))
+
+
+def _longbridge_quote_inner(symbol: str) -> dict[str, Any]:
+    """longbridge-quote 核心逻辑（不含 retry，见 _call_with_retry）。"""
+    from kss.data.longbridge_coverage import PROVIDER_LONGBRIDGE  # noqa: PLC0415
+
+    meta = _longbridge_coverage_meta(symbol)
+    if meta["routed_provider"] != PROVIDER_LONGBRIDGE:
+        return {
+            "symbol": meta["normalized_symbol"],
+            "error": "no_realtime_snapshot",
+            "hint": "该标的非陆股通/北交所，无实时快照；分钟 bar 请用 intraday-snapshot",
+            **meta,
+        }
+    from kss.data.intraday_client import LongbridgeProvider  # noqa: PLC0415
+
+    res = LongbridgeProvider().fetch_quote(symbol)
+    if not res.ok:
+        return {"symbol": meta["normalized_symbol"], "error": res.error or "empty", **meta}
+    row = res.rows[0]
+    # 真值字段：直接透传数值，不拼自然语言（number_guard 可核）。
+    return {
+        "symbol": meta["normalized_symbol"],
+        "last_done": row.get("last_done"),
+        "prev_close": row.get("prev_close"),
+        "open": row.get("open"),
+        "high": row.get("high"),
+        "low": row.get("low"),
+        "volume": row.get("volume"),
+        "turnover": row.get("turnover"),
+        "trade_status": row.get("trade_status"),
+        "source_asof_ts": res.source_asof_ts,
+        "eligibility": "forward_observed",  # 前向-only，非 PIT（红线）
+        **meta,
+    }
+
+
+def _intraday_snapshot(symbol: str, interval_minutes: int = 1, asset_kind: str = "stock") -> dict[str, Any]:
+    """最新分钟 bar 快照（OQ2 解：实时直取，最鲜；按 route_provider 选源）.
+
+    KTD6 诚实语义：covered → longbridge；其余 → 东财（本机当前不可达 = 无数据，
+    非错数据）。北交所今天**无可用实时路径**——响应显式带 routed_provider + 陈旧标记。
+    """
+    if not symbol:
+        raise ValueError("intraday-snapshot requires SYMBOL")
+    # wrap in retry 薄层（REL-001）：瞬态网络错误重试一次
+    return _call_with_retry(lambda: _intraday_snapshot_inner(symbol, interval_minutes, asset_kind))
+
+
+def _intraday_snapshot_inner(symbol: str, interval_minutes: int = 1, asset_kind: str = "stock") -> dict[str, Any]:
+    """intraday-snapshot 核心逻辑（不含 retry，见 _call_with_retry）。"""
+    from kss.data.intraday_client import (  # noqa: PLC0415
+        EastmoneyAkshareProvider,
+        LongbridgeProvider,
+    )
+    from kss.data.longbridge_coverage import PROVIDER_LONGBRIDGE  # noqa: PLC0415
+
+    meta = _longbridge_coverage_meta(symbol)
+    if meta["routed_provider"] == PROVIDER_LONGBRIDGE:
+        provider: Any = LongbridgeProvider()
+    else:
+        provider = EastmoneyAkshareProvider()
+    res = provider.fetch_bars(
+        symbol, interval_minutes=interval_minutes, asset_kind=asset_kind
+    )
+    if not res.ok:
+        return {
+            "symbol": meta["normalized_symbol"],
+            "interval_minutes": interval_minutes,
+            "error": res.error or "empty",
+            "hint": (
+                "东财备源本机当前不可达 = 无数据（非错数据，KTD6）"
+                if meta["routed_provider"] != PROVIDER_LONGBRIDGE
+                else "取数失败"
+            ),
+            **meta,
+        }
+    latest = res.rows[-1]  # fetch_bars 按时间升序，末行为最新
+    return {
+        "symbol": meta["normalized_symbol"],
+        "interval_minutes": interval_minutes,
+        "bar": latest,  # 真值字段整行透传（含 open/high/low/close/volume）
+        "source_asof_ts": res.source_asof_ts,
+        "eligibility": "forward_observed",
+        **meta,
+    }
+
+
 def dispatch(command: str, args: list[str]) -> Any:
     """命令 → payload（传给 _json_dump 的对象）。subprocess(main) 与 sidecar 共用。
     参数错误 raise ValueError；下游可能 raise SystemExit（如 report 路径护栏）——
@@ -3607,6 +3757,13 @@ def dispatch(command: str, args: list[str]) -> Any:
         return _news_digest(
             args[0] if len(args) > 0 else "",
             args[1] if len(args) > 1 else "",
+        )
+    if command == "longbridge-quote":
+        return _longbridge_quote(args[0] if args else "")
+    if command == "intraday-snapshot":
+        return _intraday_snapshot(
+            args[0] if args else "",
+            interval_minutes=_int_arg(args, 1, 1),
         )
     raise ValueError(f"unknown command: {command}")
 

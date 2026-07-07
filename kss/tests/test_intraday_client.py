@@ -18,9 +18,12 @@ import pytest
 from kss.data.intraday_client import (
     DEFAULT_PROBE_UNIVERSE,
     EASTMOTNEY_1M_MAX_HISTORY_DAYS,
+    FORWARD_ONLY_PROVIDERS,
     EastmoneyAkshareProvider,
     Eligibility,
     FetchResult,
+    IntradayProvider,
+    LongbridgeProvider,
     RepresentativeSymbol,
     classify_eligibility,
     schema_hash,
@@ -345,3 +348,248 @@ def test_default_universe_includes_thin_symbol():
     # 含科创/创业个股 + ETF + 指数四类。
     kinds = {s.asset_kind for s in DEFAULT_PROBE_UNIVERSE}
     assert {"stock", "etf", "index"} <= kinds
+
+
+# --------------------------------------------------------------------------- #
+# Longbridge provider（U1：强制 .com 网关 / 前向-only / 凭据脱敏 / 数据层不抛）
+# --------------------------------------------------------------------------- #
+
+
+class _FakeBar:
+    """模拟 SDK Candlestick（getattr 字段）。"""
+
+    def __init__(self, ts, o, h, low, c, vol, turnover):
+        self.timestamp = ts
+        self.open = o
+        self.high = h
+        self.low = low
+        self.close = c
+        self.volume = vol
+        self.turnover = turnover
+
+
+class _FakeSecurityQuote:
+    """模拟 SDK SecurityQuote。"""
+
+    def __init__(self, symbol, last_done, ts):
+        self.symbol = symbol
+        self.last_done = last_done
+        self.prev_close_price = last_done
+        self.open = last_done
+        self.high = last_done
+        self.low = last_done
+        self.volume = 1000
+        self.turnover = 100000.0
+        self.timestamp = ts
+        self.trade_status = "Normal"
+
+
+class _FakeQuoteContext:
+    """注入式 fake QuoteContext（绝不 live；按需抛异常）。"""
+
+    def __init__(self, *, bars=None, quotes=None, raise_on=None):
+        self._bars = bars if bars is not None else []
+        self._quotes = quotes if quotes is not None else []
+        self._raise_on = raise_on  # None | "candlesticks" | "quote"
+
+    def candlesticks(self, symbol, period, count, adjust_type, *a, **kw):
+        if self._raise_on == "candlesticks":
+            raise self._raise_on_exc()
+        return self._bars
+
+    def quote(self, symbols):
+        if self._raise_on == "quote":
+            raise self._raise_on_exc()
+        return self._quotes
+
+    def _raise_on_exc(self):
+        return getattr(self, "_exc", RuntimeError("boom"))
+
+
+def test_longbridge_in_forward_only_set_and_never_pit():
+    """红线钉死：longbridge ∈ FORWARD_ONLY，即便全证据也恒 forward_observed。"""
+    assert "longbridge" in FORWARD_ONLY_PROVIDERS
+    elig = classify_eligibility(
+        "longbridge",
+        reachable=True,
+        has_entitlement=True,
+        requested_history_ok=True,
+        correction_policy_known=True,
+        has_frozen_manifest_evidence=True,
+        has_availability_proxy=True,
+    )
+    assert elig is Eligibility.FORWARD_OBSERVED
+    assert elig is not Eligibility.PIT_BACKTEST_ELIGIBLE
+
+
+def test_longbridge_satisfies_intraday_provider_protocol():
+    """runtime_checkable：LongbridgeProvider 满足 IntradayProvider 协议。"""
+    prov = LongbridgeProvider(quote_context=_FakeQuoteContext())
+    assert isinstance(prov, IntradayProvider)
+
+
+def test_longbridge_init_forces_com_gateways(monkeypatch):
+    """KTD1：构造后三个 LONGPORT_* env 被固化为 .com 国际网关。"""
+    monkeypatch.delenv("LONGPORT_HTTP_URL", raising=False)
+    monkeypatch.delenv("LONGPORT_QUOTE_WS_URL", raising=False)
+    monkeypatch.delenv("LONGPORT_TRADE_WS_URL", raising=False)
+    LongbridgeProvider(quote_context=_FakeQuoteContext())
+    import os
+
+    assert os.environ["LONGPORT_HTTP_URL"] == "https://openapi.longportapp.com"
+    assert ".com" in os.environ["LONGPORT_QUOTE_WS_URL"]
+    assert ".com" in os.environ["LONGPORT_TRADE_WS_URL"]
+    # 防漂移：绝不残留 .cn 网关。
+    assert ".cn" not in os.environ["LONGPORT_HTTP_URL"]
+
+
+def test_longbridge_capability_forward_observed_when_reachable(monkeypatch):
+    """凭据齐 + 注入 ctx → capability 恒 forward_observed，绝不 pit。"""
+    for k in ("LONGBRIDGE_APP_KEY", "LONGBRIDGE_APP_SECRET", "LONGBRIDGE_ACCESS_TOKEN"):
+        monkeypatch.setenv(k, "x")
+    cap = LongbridgeProvider(quote_context=_FakeQuoteContext()).capability()
+    assert cap.eligibility in (Eligibility.FORWARD_OBSERVED, Eligibility.FAILED)
+    assert cap.eligibility is not Eligibility.PIT_BACKTEST_ELIGIBLE
+    assert cap.provider == "longbridge"
+
+
+def test_longbridge_missing_credentials_returns_error_not_raise(monkeypatch):
+    """缺凭据 → fetch_bars 返回 ok=False + error 非空、不抛（数据层契约）。"""
+    for k in ("LONGBRIDGE_APP_KEY", "LONGBRIDGE_APP_SECRET", "LONGBRIDGE_ACCESS_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    # 不注入 ctx → 走 env 凭据路径，缺凭据即 auth_failed。
+    res = LongbridgeProvider().fetch_bars("688008", interval_minutes=1, asset_kind="stock")
+    assert res.ok is False
+    assert res.error == "auth_failed"
+    assert res.rows == []
+
+
+def test_longbridge_credential_not_leaked_in_error():
+    """security-lens P2：SDK 异常含假 token → error 归一为安全类目、不含 token 子串。"""
+    sentinel = "LONGPORT_SECRET_deadbeefcafe1234567890"
+    ctx = _FakeQuoteContext(raise_on="candlesticks")
+    ctx._exc = RuntimeError(f"auth signature failed for token={sentinel}")
+    prov = LongbridgeProvider(quote_context=ctx)
+    res = prov.fetch_bars("688008", interval_minutes=1, asset_kind="stock")
+    assert res.ok is False
+    assert res.error == "auth_failed"  # 归一类目，非原文
+    assert sentinel not in (res.error or "")
+
+
+def test_longbridge_empty_response_marks_empty():
+    """SDK 返回空 → 空行 + error='empty response'。"""
+    prov = LongbridgeProvider(quote_context=_FakeQuoteContext(bars=[]))
+    res = prov.fetch_bars("688008", interval_minutes=1, asset_kind="stock")
+    assert res.rows == []
+    assert res.error == "empty response"
+    assert res.status_code == 200
+
+
+def test_longbridge_fetch_bars_happy_path():
+    """happy path：喂 5 根 bar → rows 长度 5、source_asof_ts = 最晚 bar。"""
+    base = datetime(2026, 6, 19, 14, 56, tzinfo=_SHANGHAI)
+    from datetime import timedelta
+
+    bars = [
+        _FakeBar(base + timedelta(minutes=i), 10.0, 10.2, 9.9, 10.1, 1000, 1e6)
+        for i in range(5)
+    ]
+    prov = LongbridgeProvider(quote_context=_FakeQuoteContext(bars=bars))
+    res = prov.fetch_bars("688008", interval_minutes=1, asset_kind="stock")
+    assert res.ok
+    assert len(res.rows) == 5
+    assert res.status_code == 200
+    # 最晚 bar = base + 4min = 15:00。
+    assert res.source_asof_ts == "2026-06-19T15:00:00+08:00"
+    assert res.error is None
+
+
+def test_longbridge_fetch_quote_happy_path():
+    """fetch_quote：喂 1 条快照 → rows[0] 含 last_done、source_asof_ts 定位。"""
+    ts = datetime(2026, 6, 19, 15, 0, tzinfo=_SHANGHAI)
+    q = _FakeSecurityQuote("688008.SH", 253.2, ts)
+    prov = LongbridgeProvider(quote_context=_FakeQuoteContext(quotes=[q]))
+    res = prov.fetch_quote("688008")
+    assert res.ok
+    assert res.rows[0]["last_done"] == 253.2
+    assert res.rows[0]["symbol"] == "688008.SH"
+    assert res.source_asof_ts == "2026-06-19T15:00:00+08:00"
+
+
+def test_longbridge_unsupported_interval_returns_error():
+    """未知 interval → 结构化 error，不抛。"""
+    prov = LongbridgeProvider(quote_context=_FakeQuoteContext())
+    res = prov.fetch_bars("688008", interval_minutes=7, asset_kind="stock")
+    assert res.ok is False
+    assert "unsupported interval" in (res.error or "")
+
+
+# --------------------------------------------------------------------------- #
+# error 分类器 + fetch_quote 边角（补 U1 测试覆盖缺口 — code-review #3, #4）
+# --------------------------------------------------------------------------- #
+
+
+def test_classify_error_unreachable_with_connection_refused():
+    """连接被拒 / DNS / 网络不可达 → 'unreachable'，不含凭据子串。"""
+    from kss.data.intraday_client import _classify_longbridge_error
+
+    for msg in ("Connection refused", "timed out", "dns resolve error", "Network reset"):
+        exc = RuntimeError(msg)
+        assert _classify_longbridge_error(exc) == "unreachable", f"msg={msg!r}"
+
+
+def test_classify_error_fetch_failed_as_catchall():
+    """非 auth/非网络异常 → 'fetch_failed'，不含凭据子串。"""
+    from kss.data.intraday_client import _classify_longbridge_error
+
+    events = [
+        RuntimeError("Unusual sdk internal error"),
+        ValueError("bad data shape"),
+    ]
+    for exc in events:
+        assert _classify_longbridge_error(exc) == "fetch_failed"
+
+
+def test_classify_error_never_contains_credential_substrings():
+    """security-lens P2：任何异常归一类目后绝不回显 LONGPORT_* 值。"""
+    from kss.data.intraday_client import _classify_longbridge_error
+
+    bad = RuntimeError("signature invalid LONGPORT_SECRET_deadbeefcafe")
+    cat = _classify_longbridge_error(bad)
+    assert cat in ("auth_failed", "unreachable", "fetch_failed")
+    assert "deadbeefcafe" not in cat
+    assert "LONGPORT" not in cat
+
+
+def test_fetch_quote_on_context_error_returns_error():
+    """_ensure_context 失败 → fetch_quote ok=False + error='auth_failed'。"""
+    # 不注入 ctx，不设凭据 → _ensure_context 返回 error。
+    from os import environ
+
+    for k in ("LONGBRIDGE_APP_KEY", "LONGBRIDGE_APP_SECRET", "LONGBRIDGE_ACCESS_TOKEN"):
+        environ.pop(k, None)
+    prov = LongbridgeProvider()
+    res = prov.fetch_quote("688008")
+    assert res.ok is False
+    assert res.error == "auth_failed"
+    assert res.rows == []
+
+
+def test_fetch_quote_on_sdk_exception_returns_error():
+    """SDK 抛异常 → fetch_quote 归一为安全类目，不抛。"""
+    ctx = _FakeQuoteContext(raise_on="quote")
+    ctx._exc = RuntimeError("Connection reset")
+    prov = LongbridgeProvider(quote_context=ctx)
+    res = prov.fetch_quote("688008")
+    assert res.ok is False
+    assert res.error == "unreachable"  # 'Connection reset' → network kw
+    assert res.rows == []
+
+
+def test_fetch_quote_empty_response_returns_empty():
+    """SDK 返回空 → error='empty response'。"""
+    prov = LongbridgeProvider(quote_context=_FakeQuoteContext(quotes=[]))
+    res = prov.fetch_quote("688008")
+    assert res.rows == []
+    assert res.error == "empty response"
+    assert res.status_code == 200
