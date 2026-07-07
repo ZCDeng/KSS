@@ -90,6 +90,10 @@
     let macdHist, difSeries, deaSeries, obvSeries;
     let pending = null;
     let rawBars = [];
+    // U3 日内模式（F008）：分钟 K 线独立渲染路径，时间键用 UNIX 秒（非日线 date）。
+    let intradayMode = false;
+    let intradayBars = [];
+    let pendingIntraday = null;
 
     // ---- 指标 ----
     function sma(values, period) {
@@ -373,6 +377,61 @@
       chart.timeScale().fitContent();
     }
 
+    // U3 日内渲染（F008）：分钟 K 线独立路径——UNIX 秒时间键 + timeVisible，无 resample，
+    // 无需日线级 MA/BOLL/MACD（分钟窗口 bar 数不足以稳定这些指标）。仅 candlestick + volume。
+    function parseIntradayTime(ts) {
+      // ts 可能是 ISO-8601（"2026-07-08T14:58:00+08:00"）或 UNIX 秒。lightweight-charts
+      // 日内用 UTCTimestamp（秒）。ISO → Date → 秒。
+      if (ts == null) return null;
+      if (typeof ts === "number") return ts;
+      const d = new Date(ts);
+      const s = Math.floor(d.getTime() / 1000);
+      return isNaN(s) ? null : s;
+    }
+    function setIntradayData(payload) {
+      intradayMode = true;
+      if (!chart && !buildChart()) { pendingIntraday = payload; return; }
+      intradayBars = (payload || []).filter(p => p && p.close != null);
+      renderIntraday();
+    }
+    function renderIntraday() {
+      if (!chart) return;
+      const el = document.getElementById("chart");
+      chart.applyOptions({
+        width: el.clientWidth, height: el.clientHeight,
+        timeScale: { timeVisible: true, secondsVisible: false, borderColor: COLORS.grid, rightOffset: 4 },
+      });
+      document.getElementById("empty").style.display = intradayBars.length ? "none" : "flex";
+      // 隐藏日线级指标 series（日内不渲染）。
+      [ma5Series, ma20Series, bbiSeries, bollUpper, bollMid, bollLower,
+       macdHist, difSeries, deaSeries, obvSeries].forEach(s => { if (s) s.setData([]); });
+      if (!intradayBars.length) {
+        candleSeries.setData([]); volumeSeries.setData([]);
+        return;
+      }
+      const candles = intradayBars.map(p => ({
+        time: parseIntradayTime(p.timestamp),
+        open: p.open != null ? p.open : p.close,
+        high: p.high != null ? p.high : p.close,
+        low: p.low != null ? p.low : p.close,
+        close: p.close,
+      })).filter(c => c.time != null);
+      const vols = intradayBars.map(p => ({
+        time: parseIntradayTime(p.timestamp),
+        value: p.volume != null ? p.volume : 0,
+        color: (p.close >= (p.open != null ? p.open : p.close)) ? COLORS.upFill : COLORS.downFill,
+      })).filter(v => v.time != null);
+      candleSeries.setData(candles);
+      volumeSeries.setData(vols);
+      if (candles.length) {
+        const last = candles[candles.length - 1];
+        document.getElementById("legend").textContent =
+          "分时 · O " + num(last.open) + " H " + num(last.high) +
+          " L " + num(last.low) + " C " + num(last.close);
+      }
+      chart.timeScale().fitContent();
+    }
+
     // 从原生 palette payload 应用主题：覆盖 COLORS + CSS 变量，并从缓存 rawBars 重建图表
     // （保留 currentTF 与 indState）。主题 API 与数据 API 分离，不依赖后续 kssSetData。
     function applyThemePayload(p) {
@@ -398,8 +457,9 @@
           .forEach(b => { b.style.borderRadius = p.shape.chip + "px"; });
       }
       // 用新配色重建（renderTF 从 rawBars 还原数据，applyIndVisibility 还原指标可见性）。
+      // U3：日内模式下从 intradayBars 重建，不走日线 renderTF。
       if (chart) { chart.remove(); chart = null; }
-      if (buildChart()) renderTF();
+      if (buildChart()) { intradayMode ? renderIntraday() : renderTF(); }
     }
 
     function wireTF() {
@@ -449,6 +509,14 @@
       } catch (e) { document.getElementById("legend").textContent = "chart error: " + e; }
     };
 
+    // U3 日内数据 API（F008）：分钟 K 线走独立渲染路径，不触日线 resample。
+    window.kssSetIntradayData = function (json) {
+      try {
+        const payload = typeof json === "string" ? JSON.parse(json) : json;
+        setIntradayData(payload);
+      } catch (e) { document.getElementById("legend").textContent = "chart error: " + e; }
+    };
+
     // 主题 API：只更新配色/字体并从缓存重绘，不需要新数据推送。
     window.kssSetTheme = function (payload) {
       try {
@@ -462,6 +530,7 @@
       wireTF();
       wireInd();
       if (pending) { setData(pending); pending = null; }
+      if (pendingIntraday) { setIntradayData(pendingIntraday); pendingIntraday = null; }
     });
   })();
   </script>

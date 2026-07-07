@@ -5,6 +5,13 @@ struct DashboardView: View {
     var snapshot: AppSnapshot
     var onSelectSymbol: (String) -> Void
     var onOpenSection: (WorkspaceSection) -> Void
+    // U2 实时接线：页面加载触发 Longbridge 实时拉取，展示新鲜度徽标。
+    var realtimeQuote: LongbridgeQuote? = nil
+    var tradingHours: TradingHours? = nil
+    var realtimeAuthFailed: Bool = false
+    var realtimeUpdatedAt: Date? = nil
+    var onLoadRealtime: () -> Void = {}
+    var onRetryRealtime: () -> Void = {}
 
     // Material 3 响应式栅格：统一外边距 / 沟槽，内容封顶居中，断点决定主区列数。
     private let margin: CGFloat = 24
@@ -20,7 +27,16 @@ struct DashboardView: View {
                     HStack(alignment: .top) {
                         PageTitle("今日总览", subtitle: "本地量化研究工作台 · log_mv 选股 / 紫苏叶供应链 / 北证扫描")
                         Spacer(minLength: 16)
-                        EditorialDateView()
+                        VStack(alignment: .trailing, spacing: 4) {
+                            EditorialDateView()
+                            RealtimeFreshnessBadge(
+                                quote: realtimeQuote,
+                                hours: tradingHours,
+                                authFailed: realtimeAuthFailed,
+                                updatedAt: realtimeUpdatedAt,
+                                onRetry: onRetryRealtime
+                            )
+                        }
                     }
 
                     // 第一行：市场速览（A500ETF ×2 + 北向资金）
@@ -68,6 +84,7 @@ struct DashboardView: View {
             .scrollContentBackground(.hidden)
             .background(theme.canvas)
         }
+        .onAppear { onLoadRealtime() }   // U2: 页面加载触发实时拉取（交易时段门控在 store 内）
     }
 
     /// 主区：今日推荐 | 纸交易跟踪。宽屏并排（推荐自适应 + 跟踪定宽），窄屏纵向堆叠。
@@ -1197,5 +1214,68 @@ struct LabeledMetric: View {
                 .foregroundStyle(tint ?? theme.textPrimary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// MARK: - U2 RealtimeFreshnessBadge
+
+/// 实时数据新鲜度指示（R4/R13）。
+/// - 交易时段 + 实时 OK: 绿色时钟 + "实时 · 更新于 HH:MM"
+/// - 交易时段 + 实时失败: 灰色时钟 + "非实时" + 重试按钮
+/// - auth_failed: 红色时钟 + "实时源未连接" + 重试按钮
+/// - 非交易时段: 灰色时钟 + "非交易时段"
+private struct RealtimeFreshnessBadge: View {
+    @Environment(\.kssTheme) private var theme
+    var quote: LongbridgeQuote?
+    var hours: TradingHours?
+    var authFailed: Bool
+    var updatedAt: Date?
+    var onRetry: () -> Void
+
+    var body: some View {
+        if let hours, !hours.isTradingSession {
+            HStack(spacing: 4) {
+                Image(systemName: "clock")
+                Text("非交易时段")
+            }
+            .font(.caption2)
+            .foregroundStyle(theme.textSecondary)
+        } else if authFailed {
+            Button(action: onRetry) {
+                HStack(spacing: 4) {
+                    Image(systemName: "clock.badge.exclamationmark")
+                    Text("实时源未连接")
+                    Text("重试").underline()
+                }
+                .font(.caption2)
+                .foregroundStyle(theme.down)
+            }
+            .buttonStyle(.plain)
+        } else if let q = quote, q.isLive {
+            HStack(spacing: 4) {
+                Image(systemName: "clock")
+                    .foregroundStyle(theme.up)
+                Text("实时")
+                    .foregroundStyle(theme.up)
+                if let ts = updatedAt {
+                    Text(formatted(ts))
+                        .foregroundStyle(theme.textSecondary)
+                }
+            }
+            .font(.caption2)
+        } else {
+            HStack(spacing: 4) {
+                Image(systemName: "clock")
+                Text("非实时")
+            }
+            .font(.caption2)
+            .foregroundStyle(theme.textSecondary)
+        }
+    }
+
+    private func formatted(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return "更新于 \(f.string(from: date))"
     }
 }

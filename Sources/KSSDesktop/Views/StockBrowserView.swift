@@ -20,6 +20,8 @@ struct StockBrowserView: View {
     @Binding var searchText: String
     var onSelect: (String) -> Void
     var onToggleWatchlist: (String) -> Void
+    /// P1: BridgeClient from store（不在 view 内构造第二条 sidecar）
+    var bridge: BridgeClient? = nil
 
     @State private var sort: StockSort = .symbol
     @State private var ascending = true
@@ -140,7 +142,8 @@ struct StockBrowserView: View {
                         enrichment: enrichment?.symbol == detail.symbol ? enrichment : nil,
                         isWatched: watchlist.contains(detail.symbol),
                         onToggleWatchlist: { onToggleWatchlist(detail.symbol) },
-                        onZoom: { showChartFullscreen = true }
+                        onZoom: { showChartFullscreen = true },
+                        bridge: bridge
                     )
                 } else {
                     Text("选择一只股票查看详情")
@@ -175,6 +178,13 @@ struct StockDetailView: View {
     var isWatched: Bool
     var onToggleWatchlist: () -> Void
     var onZoom: () -> Void
+    /// P1: BridgeClient 注入（不在 view 内构造——共用 store 的单桥模式）
+    var bridge: BridgeClient? = nil
+    // U3 分钟 K 线模式（R7/R15）
+    @State private var chartMode: ChartDataMode = .daily
+    @State private var intradayBars: IntradayBars? = nil
+    @State private var intradayLoading = false
+    @State private var intradayError: String? = nil
 
     private var analysis: StockAnalysis {
         StockAnalysis(points: detail.history, latest: detail.latest)
@@ -240,10 +250,50 @@ struct StockDetailView: View {
                     .tint(theme.accent)
                 }
                 VStack(alignment: .leading, spacing: 0) {
+                    // U3 分钟 K 线模式选择器
+                    Picker("", selection: $chartMode) {
+                        Text("日线").tag(ChartDataMode.daily)
+                        Text("1分钟").tag(ChartDataMode.m1)
+                        Text("5分钟").tag(ChartDataMode.m5)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 180)
+                    .onChange(of: chartMode) { _, newMode in
+                        if newMode != .daily {
+                            Task { await loadIntraday(symbol: detail.symbol, mode: newMode) }
+                        }
+                    }
                     ChartLegend()
-                    ChartWebView(points: detail.history)
-                        .frame(minHeight: 640)
+                    if chartMode == .daily {
+                        ChartWebView(points: detail.history)
+                            .frame(minHeight: 640)
+                    } else {
+                        // R15 四状态
+                        if intradayLoading {
+                            ProgressView("加载分钟线…")
+                                .frame(minHeight: 640)
+                        } else if let err = intradayError {
+                            VStack(spacing: 8) {
+                                Text("分钟线不可用")
+                                    .font(.caption).foregroundStyle(theme.textSecondary)
+                                Text(err)
+                                    .font(.caption2).foregroundStyle(theme.textSecondary)
+                                // 回退日线
+                                ChartWebView(points: detail.history)
+                                    .frame(minHeight: 320)
+                            }
+                            .frame(minHeight: 640)
+                        } else if let bars = intradayBars, bars.isRenderable {
+                            ChartWebView(points: detail.history, intradayBars: bars.bars)
+                                .frame(minHeight: 640)
+                        } else {
+                            Text("暂无成交数据")
+                                .font(.caption).foregroundStyle(theme.textSecondary)
+                                .frame(minHeight: 640)
+                        }
+                    }
                 }
+                .id(detail.symbol)  // 切换标的时重建 chart
                 .frame(height: 680)
                 .background(theme.chartSurface)
                 .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
@@ -526,6 +576,31 @@ struct ChartLegend: View {
         HStack(spacing: 5) {
             Circle().fill(color).frame(width: 7, height: 7)
             Text(label).foregroundStyle(theme.textSecondary)
+        }
+    }
+}
+
+// MARK: - U3 ChartDataMode
+
+enum ChartDataMode: Hashable {
+    case daily, m1, m5
+}
+
+extension StockDetailView {
+    /// 拉取日内分钟 bar 序列（U3/R2/R7/F006）。切到 1m/5m 时触发。
+    func loadIntraday(symbol: String, mode: ChartDataMode) async {
+        intradayLoading = true; intradayError = nil; intradayBars = nil
+        defer { intradayLoading = false }
+        let interval = mode == .m5 ? 5 : 1
+        guard let bridge else { intradayError = "无法定位 bridge"; return }
+        let bars = try? await Task.detached {
+            try bridge.intradayBars(symbol: symbol, interval: interval)
+        }.value
+        if let bars {
+            if bars.isRenderable { intradayBars = bars; intradayError = nil }
+            else { intradayError = bars.error ?? "暂无成交数据" }
+        } else {
+            intradayError = "bridge 调用失败"
         }
     }
 }

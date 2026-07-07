@@ -19,6 +19,10 @@ enum KeychainStore {
         "DEEPSEEK_API_KEY",
         "KSS_LLM_MODEL",
         "KSS_APP_LIVE",
+        // Longbridge（U6）：实时行情凭据，注入 sidecar env 供 LongbridgeProvider 读。
+        "LONGBRIDGE_APP_KEY",
+        "LONGBRIDGE_APP_SECRET",
+        "LONGBRIDGE_ACCESS_TOKEN",
     ]
 
     static func read(_ key: String) -> String? {

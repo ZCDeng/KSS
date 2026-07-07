@@ -35,8 +35,9 @@ class Eligibility(str, Enum):
 
 # 前向-only 实时层 provider 名集合：这些源**结构上**不可进 PIT 回测（红线）。
 # 任何此集合内的 provider，无论响应多完整，eligibility 上限都是 forward_observed。
+# ``longbridge``（券商实时推送）同理——realtime 快照本就不是 PIT 源（KTD2）。
 FORWARD_ONLY_PROVIDERS: frozenset[str] = frozenset(
-    {"eastmoney_akshare", "eastmoney_direct"}
+    {"eastmoney_akshare", "eastmoney_direct", "longbridge"}
 )
 
 # 东财 1m 分钟接口的已知上游限制：仅近 ~5 个交易日（与 akshare 上游一致）。
@@ -378,6 +379,336 @@ def _latest_bar_ts(rows: list[dict[str, Any]]) -> str | None:
     return _to_iso_shanghai(max(times))
 
 
+# --------------------------------------------------------------------------- #
+# Longbridge（长桥 / longbridge SDK）前向实时适配（U1）
+# --------------------------------------------------------------------------- #
+
+# KTD1：SDK 须经 .com 国际网关（.cn 本机不可达，叠 Clash 直连/代理均 000 失败）。
+# provider **自身**固化三个 gateway env（实测可达），不劳用户填。
+# 不设 = 复现东财同款「端点不可达」。
+# SDK 4.x 官方 env 名 = LONGBRIDGE_*（legacy LONGPORT_* 仍兼容但弃用）。
+_LONGPORT_COM_GATEWAY_ENV: dict[str, str] = {
+    "LONGBRIDGE_HTTP_URL": "https://openapi.longbridge.com",
+    "LONGBRIDGE_QUOTE_WS_URL": "wss://openapi-quote.longbridge.com/v2",
+    "LONGBRIDGE_TRADE_WS_URL": "wss://openapi-trade.longbridge.com/v2",
+}
+
+# 凭据 env 名（R7）；显式 from_apikey(...) 而非 from_env，故读 LONGBRIDGE_* 前缀。
+_LONGBRIDGE_CRED_ENV: tuple[str, str, str] = (
+    "LONGBRIDGE_APP_KEY",
+    "LONGBRIDGE_APP_SECRET",
+    "LONGBRIDGE_ACCESS_TOKEN",
+)
+
+# interval_minutes → SDK Period 名（延迟解析，避免 import 期依赖 SDK）。
+_LONGPORT_PERIOD_NAMES: dict[int, str] = {
+    1: "Min_1",
+    5: "Min_5",
+    15: "Min_15",
+    30: "Min_30",
+    60: "Min_60",
+}
+
+
+def _classify_longbridge_error(exc: Exception, *, category: str | None = None) -> str:
+    """把 SDK 异常归一为**安全类目串**（security-lens P2：绝不回显凭据）.
+
+    SDK 认证异常/签名 URL 常回显 token/secret，原样落 ``error`` 会经
+    observability 与 Seesaw loop 进 LLM 上下文（发到本机外）。故**只**返回固定
+    类目标签，绝不返回 ``str(exc)``。类目本身也用于区分 auth-过期 vs 瞬态可达性
+    （token 过期告警信号，见 Risk 表）。
+
+    Args:
+        exc: 原始异常（仅用于关键字分类，**不**进返回值）。
+        category: 显式类目（如缺凭据），给定则直接用。
+    """
+    if category is not None:
+        return category
+    blob = f"{type(exc).__name__} {exc}".lower()
+    auth_kw = (
+        "auth", "token", "signature", "unauthor", "401", "403",
+        "forbidden", "expired", "invalid_grant", "permission", "entitlement",
+    )
+    net_kw = (
+        "connect", "timeout", "timed out", "unreachable", "refused",
+        "dns", "resolve", "network", "reset", "ssl", "000",
+    )
+    if any(k in blob for k in auth_kw):
+        return "auth_failed"
+    if any(k in blob for k in net_kw):
+        return "unreachable"
+    return "fetch_failed"
+
+
+def _to_iso_shanghai_any(value: Any) -> str | None:
+    """把 SDK 时间戳（datetime / str / None）定位到 Asia/Shanghai ISO-8601。"""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=ZoneInfo(_SHANGHAI_TZ))
+        return dt.astimezone(ZoneInfo(_SHANGHAI_TZ)).isoformat()
+    # 字符串：复用东财裸串解析，失败原样返回（best-effort）。
+    text = str(value)
+    return _to_iso_shanghai(text) or text
+
+
+def _resolve_longbridge_symbol(symbol: str) -> str:
+    """归一为 Longbridge ``ticker.REGION`` 格式（如 ``688008.SH``）.
+
+    委托给 :func:`longbridge_coverage.normalize_symbol`（同规则单点维护）。
+    """
+    from kss.data.longbridge_coverage import normalize_symbol  # noqa: PLC0415
+
+    return normalize_symbol(symbol)
+
+
+# 保留本地原始实现（注释，便于审阅）：
+
+
+class LongbridgeProvider:
+    """长桥前向实时适配（经官方 ``longbridge`` SDK）。前向-only，永不 PIT.
+
+    权限口径 = **ChinaConnect LV1 Real-time**（陆股通池，实测科创/创业/沪深主板/
+    ETF/指数全通；北交所不覆盖，由路由层拦回东财）。强制 ``.com`` 国际网关
+    （KTD1）。数据层契约照旧：**失败不抛**，返回带 ``error`` 的 :class:`FetchResult`；
+    凭据绝不进 ``error``（归一为安全类目串）。
+
+    构造可注入 ``quote_context``（测试路径，免装 SDK）；否则从 env 凭据延迟构建。
+    """
+
+    name = "longbridge"
+
+    def __init__(self, *, quote_context: Any = None) -> None:
+        # KTD1：无条件固化 .com 三网关（强制覆盖，防 SDK 版本漂移回退 .cn）。
+        self._force_com_gateways()
+        self.version = self._resolve_version()
+        self._injected_ctx = quote_context
+        self._ctx: Any = quote_context
+        self._ctx_error: str | None = None
+        self._ctx_built = quote_context is not None
+
+    @staticmethod
+    def _force_com_gateways() -> None:
+        import os
+
+        for key, url in _LONGPORT_COM_GATEWAY_ENV.items():
+            os.environ[key] = url
+
+    @staticmethod
+    def _resolve_version() -> str:
+        try:
+            import longbridge  # noqa: PLC0415
+
+            return f"longbridge-{getattr(longbridge, '__version__', 'unknown')}"
+        except Exception:  # noqa: BLE001 — 缺包不致命，版本记 unavailable
+            return "longbridge-unavailable"
+
+    @staticmethod
+    def _read_credentials() -> tuple[str, str, str] | None:
+        """从 env 读三凭据；任一缺失返回 ``None``（走 auth_failed）。"""
+        import os
+
+        vals = tuple(os.environ.get(k, "").strip() for k in _LONGBRIDGE_CRED_ENV)
+        if all(vals):
+            return vals  # type: ignore[return-value]
+        return None
+
+    def _ensure_context(self) -> tuple[Any, str | None]:
+        """延迟构建 ``QuoteContext``（缓存首次结果）。失败归一为安全类目串。"""
+        if self._ctx_built:
+            return self._ctx, self._ctx_error
+        self._ctx_built = True
+        creds = self._read_credentials()
+        if creds is None:
+            self._ctx_error = "auth_failed"  # 缺凭据（不回显是哪个）
+            return None, self._ctx_error
+        try:
+            from longbridge.openapi import Config, QuoteContext  # noqa: PLC0415
+
+            config = Config.from_apikey(*creds)
+            self._ctx = QuoteContext(config)
+        except Exception as exc:  # noqa: BLE001 — 建连失败走 error，不抛
+            self._ctx = None
+            self._ctx_error = _classify_longbridge_error(exc)
+        return self._ctx, self._ctx_error
+
+    def supported_intervals(self) -> tuple[int, ...]:
+        return (1, 5, 15, 30, 60)
+
+    def supported_assets(self) -> tuple[str, ...]:
+        return ("stock", "etf", "index")
+
+    def capability(self) -> CapabilityResult:
+        """能力门控：可达性近似 = SDK 可 import 且凭据齐（真实触达在 fetch）。"""
+        reachable = (
+            self.version != "longbridge-unavailable"
+            and self._read_credentials() is not None
+        )
+        eligibility = classify_eligibility(self.name, reachable=reachable)
+        return CapabilityResult(
+            provider=self.name,
+            version=self.version,
+            supported_intervals=self.supported_intervals(),
+            supported_assets=self.supported_assets(),
+            max_history_days=None,  # 券商实时非历史回填源
+            eligibility=eligibility,
+            reachable=reachable,
+            notes=(
+                "ChinaConnect LV1 实时（陆股通池，北交所不覆盖）",
+                "强制 .com 国际网关",
+                "前向-only：结构上不可进 PIT 回测",
+            ),
+        )
+
+    def _resolve_period(self, interval_minutes: int) -> Any:
+        """interval → SDK Period 枚举；缺 SDK 时回退原值（fake ctx 忽略之）。"""
+        name = _LONGPORT_PERIOD_NAMES.get(interval_minutes)
+        if name is None:
+            return None
+        try:
+            from longbridge.openapi import Period  # noqa: PLC0415
+
+            return getattr(Period, name)
+        except Exception:  # noqa: BLE001
+            return interval_minutes
+
+    @staticmethod
+    def _no_adjust() -> Any:
+        try:
+            from longbridge.openapi import AdjustType  # noqa: PLC0415
+
+            return AdjustType.NoAdjust
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def fetch_bars(
+        self,
+        symbol: str,
+        *,
+        interval_minutes: int,
+        asset_kind: str,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> FetchResult:
+        """拉长桥分钟 bar（``ctx.candlesticks``）。异常吞为安全类目 error，不抛。"""
+        t0 = time.monotonic()
+        period = self._resolve_period(interval_minutes)
+        if period is None:
+            return FetchResult(
+                rows=[], raw_columns=(), source_asof_ts=None, status_code=None,
+                latency_ms=(time.monotonic() - t0) * 1000.0,
+                error=f"unsupported interval_minutes={interval_minutes!r}",
+            )
+        ctx, ctx_err = self._ensure_context()
+        if ctx is None:
+            return FetchResult(
+                rows=[], raw_columns=(), source_asof_ts=None, status_code=None,
+                latency_ms=(time.monotonic() - t0) * 1000.0,
+                error=ctx_err or "auth_failed",
+            )
+        lb_symbol = _resolve_longbridge_symbol(symbol)
+        count = 1000 if (start or end) else 240  # 近端窗口；PIT 回填非本源职责
+        try:
+            bars = ctx.candlesticks(lb_symbol, period, count, self._no_adjust())
+        except Exception as exc:  # noqa: BLE001 — 数据层不抛
+            return FetchResult(
+                rows=[], raw_columns=(), source_asof_ts=None, status_code=None,
+                latency_ms=(time.monotonic() - t0) * 1000.0,
+                error=_classify_longbridge_error(exc),
+            )
+        latency_ms = (time.monotonic() - t0) * 1000.0
+        rows = [_longbridge_bar_to_dict(b) for b in (bars or [])]
+        if not rows:
+            return FetchResult(
+                rows=[], raw_columns=_LONGBRIDGE_BAR_COLUMNS, source_asof_ts=None,
+                status_code=200, latency_ms=latency_ms, error="empty response",
+            )
+        source_asof_ts = _to_iso_shanghai_any(
+            max((r.get("timestamp") for r in rows if r.get("timestamp")), default=None)
+        )
+        return FetchResult(
+            rows=rows, raw_columns=_LONGBRIDGE_BAR_COLUMNS,
+            source_asof_ts=source_asof_ts, status_code=200,
+            latency_ms=latency_ms, error=None,
+        )
+
+    def fetch_quote(self, symbol: str) -> FetchResult:
+        """拉实时快照（``ctx.quote``）。异常吞为安全类目 error，不抛。"""
+        t0 = time.monotonic()
+        ctx, ctx_err = self._ensure_context()
+        if ctx is None:
+            return FetchResult(
+                rows=[], raw_columns=(), source_asof_ts=None, status_code=None,
+                latency_ms=(time.monotonic() - t0) * 1000.0,
+                error=ctx_err or "auth_failed",
+            )
+        lb_symbol = _resolve_longbridge_symbol(symbol)
+        try:
+            quotes = ctx.quote([lb_symbol])
+        except Exception as exc:  # noqa: BLE001
+            return FetchResult(
+                rows=[], raw_columns=(), source_asof_ts=None, status_code=None,
+                latency_ms=(time.monotonic() - t0) * 1000.0,
+                error=_classify_longbridge_error(exc),
+            )
+        latency_ms = (time.monotonic() - t0) * 1000.0
+        rows = [_longbridge_quote_to_dict(q) for q in (quotes or [])]
+        if not rows:
+            return FetchResult(
+                rows=[], raw_columns=_LONGBRIDGE_QUOTE_COLUMNS, source_asof_ts=None,
+                status_code=200, latency_ms=latency_ms, error="empty response",
+            )
+        source_asof_ts = _to_iso_shanghai_any(rows[0].get("timestamp"))
+        return FetchResult(
+            rows=rows, raw_columns=_LONGBRIDGE_QUOTE_COLUMNS,
+            source_asof_ts=source_asof_ts, status_code=200,
+            latency_ms=latency_ms, error=None,
+        )
+
+
+_LONGBRIDGE_BAR_COLUMNS: tuple[str, ...] = (
+    "timestamp", "open", "high", "low", "close", "volume", "turnover",
+)
+_LONGBRIDGE_QUOTE_COLUMNS: tuple[str, ...] = (
+    "symbol", "last_done", "prev_close", "open", "high", "low",
+    "volume", "turnover", "timestamp", "trade_status",
+)
+
+
+def _longbridge_bar_to_dict(bar: Any) -> dict[str, Any]:
+    """SDK Candlestick → canonical dict（getattr 兜底，容忍字段缺失）。"""
+    return {
+        "timestamp": getattr(bar, "timestamp", None),
+        "open": getattr(bar, "open", None),
+        "high": getattr(bar, "high", None),
+        "low": getattr(bar, "low", None),
+        "close": getattr(bar, "close", None),
+        "volume": getattr(bar, "volume", None),
+        "turnover": getattr(bar, "turnover", None),
+    }
+
+
+def _longbridge_quote_to_dict(quote: Any) -> dict[str, Any]:
+    """SDK SecurityQuote → canonical dict（getattr 兜底）。"""
+    return {
+        "symbol": getattr(quote, "symbol", None),
+        "last_done": getattr(quote, "last_done", None),
+        "prev_close": getattr(quote, "prev_close_price", None),
+        "open": getattr(quote, "open", None),
+        "high": getattr(quote, "high", None),
+        "low": getattr(quote, "low", None),
+        "volume": getattr(quote, "volume", None),
+        "turnover": getattr(quote, "turnover", None),
+        "timestamp": getattr(quote, "timestamp", None),
+        "trade_status": str(getattr(quote, "trade_status", "") or ""),
+    }
+
+
 def schema_hash(raw_columns: tuple[str, ...]) -> str:
     """对响应列名集合算 SHA-256（排序后），用于 U3 schema 漂移冻结对比。"""
     import hashlib
@@ -421,6 +752,7 @@ __all__ = [
     "CapabilityResult",
     "FetchResult",
     "IntradayProvider",
+    "LongbridgeProvider",
     "RepresentativeSymbol",
     "classify_eligibility",
     "schema_hash",

@@ -88,6 +88,28 @@ struct BridgeClient {
         try run(["perilla-enrichment", symbol], as: PerillaEnrichment.self)
     }
 
+    // MARK: Longbridge 实时（U1）—— 只读命令走 sidecar 热路径（不在 subprocessOnlyCommands）。
+
+    /// 实时快照（ChinaConnect LV1，仅陆股通标的）。R1/R11。
+    func longbridgeQuote(symbol: String) throws -> LongbridgeQuote {
+        try run(["longbridge-quote", symbol], as: LongbridgeQuote.self)
+    }
+
+    /// 最新分钟 bar 快照（按覆盖路由，前向-only）。R2。
+    func intradaySnapshot(symbol: String, interval: Int = 1) throws -> IntradaySnapshot {
+        try run(["intraday-snapshot", symbol, String(interval)], as: IntradaySnapshot.self)
+    }
+
+    /// 完整日内 bar 序列（K 线图渲染需全序列，F006）。R2/R6。
+    func intradayBars(symbol: String, interval: Int = 1) throws -> IntradayBars {
+        try run(["intraday-bars", symbol, String(interval)], as: IntradayBars.self)
+    }
+
+    /// 交易时段查询（门控实时拉取 / 定时器，F007）。R13。
+    func tradingHours() throws -> TradingHours {
+        try run(["trading-hours"], as: TradingHours.self)
+    }
+
     func paperSummary() throws -> TrackingSummary {
         try run(["paper-summary"], as: TrackingSummary.self)
     }

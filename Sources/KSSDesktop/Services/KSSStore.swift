@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 @MainActor
 final class KSSStore: ObservableObject {
@@ -36,6 +37,20 @@ final class KSSStore: ObservableObject {
     @Published var importingSymbol: String?   // 点击导入进行中的代码（行级/全局指示）
     @Published var errorMessage: String?
 
+    // MARK: Longbridge 实时（U1/U2）—— 页面加载时拉取，失败保持 nil（UI 回退存量 + 标注"非实时"）
+    @Published var realtimeQuote: LongbridgeQuote?     // Dashboard 指数/板块实时快照
+    @Published var tradingHours: TradingHours?         // 交易时段门控（R13）
+    @Published var realtimeAuthFailed = false          // auth_failed → 停定时刷新 + "实时源未连接"（R4）
+    @Published var realtimeUpdatedAt: Date?            // 最近一次实时拉取成功时间（"更新于 HH:MM"）
+
+    // MARK: U5 Timer 基础设施（R9/R10/R13/R14）
+    @Published var refreshTimestamp: Date?             // 定时刷新 tick（紫苏叶/国产替代 Section 监听此值触发重算）
+    private var timerCancellable: AnyCancellable?
+    private var scenePhaseActive = false
+    private var lastDispatchCache: [String: Date] = [:]  // R14: coalescing cache (cmd:symbol → last dispatch)
+    private static let minIntervalSeconds: Double = 120  // R14: 最小间隔 2min
+    private static let coalesceSeconds: Double = 30     // R14: 同标的+同命令 30s 内复用
+
     // MARK: AI 复盘助手聊天态（#4 U4/U5）—— 会话历史归 store，section 切换不丢
     @Published var chatMessages: [ChatMessage] = []
     @Published var isChatStreaming = false
@@ -44,7 +59,7 @@ final class KSSStore: ObservableObject {
     /// 当前阻塞中的 confirm 闸（后台流式线程持，UI tap 后 resolve）。
     private var activeConfirmGate: ChatConfirmGate?
 
-    private let bridge: BridgeClient?
+    let bridge: BridgeClient?
 
     init() {
         self.bridge = try? BridgeClient()
@@ -193,6 +208,127 @@ final class KSSStore: ObservableObject {
         }
         // 富化走外网较慢，fire-and-forget 异步加载，不阻塞个股明细渲染/caller。
         Task { await self.loadPerillaEnrichment(symbol: symbol) }
+    }
+
+    // MARK: - Longbridge 实时拉取（U2）
+
+    /// 交易时段门控查询（R13）。返回是否应拉取实时——非交易时段直接展示存量。
+    func loadTradingHours() async -> Bool {
+        guard let bridge else { return false }
+        let hours = try? await Task.detached { try bridge.tradingHours() }.value
+        self.tradingHours = hours
+        return hours?.isTradingSession ?? false
+    }
+
+    /// Dashboard onAppear 时拉取 Longbridge 实时快照（R1/R4/R13）。
+    /// 非交易时段跳过；失败保持 nil（UI 回退 cron 存量 + 标注"非实时"）。
+    /// auth_failed → 置 realtimeAuthFailed（停后续定时刷新，展示"实时源未连接"）。
+    func loadRealtimeData(symbol: String = "000001.SH") async {
+        guard let bridge else { return }
+        // 门控：非交易时段不拉实时（R13），直接用存量。
+        let inSession = await loadTradingHours()
+        guard inSession else {
+            realtimeQuote = nil
+            return
+        }
+        let quote = try? await Task.detached {
+            try bridge.longbridgeQuote(symbol: symbol)
+        }.value
+        if let quote, quote.isLive {
+            realtimeQuote = quote
+            realtimeAuthFailed = false
+            realtimeUpdatedAt = Date()
+        } else {
+            // 回退：保持 nil，UI 展示 cron 存量 + "非实时"。auth 失败额外标记。
+            realtimeQuote = nil
+            if let err = quote?.error, err == "auth_failed" {
+                realtimeAuthFailed = true
+            }
+        }
+        // P0: Timer 需在 tradingHours 异步加载完成后启动（scenePhase 触发时 tradingHours 为 nil）。
+        reevaluateTimer()
+    }
+
+    /// 手动重试实时源（R4：avoid "未连接"状态永久滞留）。
+    func retryRealtime() async {
+        realtimeAuthFailed = false
+        await loadRealtimeData()
+    }
+
+    /// U4: Seesaw 预温实时上下文（R3）——首轮 get_orientation 并行拉取快照，
+    /// 为 LLM 提供"今日盘面"索引数据。
+    func preheatRealtimeContext() async {
+        guard let bridge else { return }
+        _ = await loadTradingHours()
+        guard tradingHours?.isTradingSession ?? false else { return }
+        let quote = try? await Task.detached {
+            try bridge.longbridgeQuote(symbol: "000001.SH")
+        }.value
+        if let quote, quote.isLive { realtimeQuote = quote; realtimeUpdatedAt = Date() }
+    }
+
+    /// U4: 将 intraday-snapshot 工具返回的 bar 数据存入 chat attachment（R8）。
+    /// Seesaw loop 的 tool_done 帧检测到 intraday bar 数据后调用本方法。
+    func attachChartToLastMessage(bars: ChartAttachment) {
+        guard let idx = chatMessages.lastIndex(where: { $0.role == .assistant }) else { return }
+        chatMessages[idx].chartAttachment = bars
+    }
+
+    // MARK: U5 Timer 生命周期（R9/R10/R13/R14）
+
+    /// Caller passes whether the scene/window is active (R14 gate).
+    func updateSceneActive(_ active: Bool) {
+        scenePhaseActive = active
+        if scenePhaseActive, tradingHours?.isTradingSession ?? false {
+            startRefreshTimer()
+        } else {
+            stopRefreshTimer()
+        }
+    }
+
+    /// 交易时段门控更新后重新评估 Timer（trading-hours 查询与 loadTradingHours 异步）。
+    func reevaluateTimer() {
+        guard scenePhaseActive, let hours = tradingHours, hours.isTradingSession else {
+            stopRefreshTimer()
+            return
+        }
+        startRefreshTimer()
+    }
+
+    func startRefreshTimer(intervalSeconds: Double = 300) {
+        stopRefreshTimer()
+        let effectiveInterval = max(intervalSeconds, Self.minIntervalSeconds)
+        timerCancellable = Timer.publish(every: effectiveInterval, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in self?.onRefreshTick() }
+    }
+
+    func stopRefreshTimer() {
+        timerCancellable?.cancel()
+        timerCancellable = nil
+    }
+
+    private func onRefreshTick() {
+        guard scenePhaseActive, tradingHours?.isTradingSession ?? false else { return }
+        // 跨页面 coalescing (R14): 最近一次 dispatch 在 30s 内 → 跳过此 tick
+        let now = Date()
+        let cacheKey = "refresh-tick"
+        if let last = lastDispatchCache[cacheKey], now.timeIntervalSince(last) < Self.coalesceSeconds {
+            return
+        }
+        lastDispatchCache[cacheKey] = now
+        refreshTimestamp = now
+    }
+
+    /// 检查 coalescing cache（R14）：同 command:symbol 30s 内跳过。
+    func shouldSkipDispatch(cmd: String, symbol: String) -> Bool {
+        let key = "\(cmd):\(symbol)"
+        let now = Date()
+        if let last = lastDispatchCache[key], now.timeIntervalSince(last) < Self.coalesceSeconds {
+            return true
+        }
+        lastDispatchCache[key] = now
+        return false
     }
 
     /// 紫苏叶个股富化（机构/PE/美股对标）。非紫苏叶票静默置空，不报错。

@@ -1053,6 +1053,25 @@ struct ChatMessage: Identifiable, Equatable {
     var numbersUnverified: Bool = false
     /// 终态错误气泡样式（step-limit / 断连 等）。
     var isError: Bool = false
+    /// U4: 分钟 K 线附件（intraday-snapshot 工具返回后渲染 K 线 bubble）
+    var chartAttachment: ChartAttachment? = nil
+}
+
+/// U4: 聊天气泡内的分钟 K 线附件（R8: Seesaw 工具返回含 bar 数据时渲染 R6 组件）。
+struct ChartAttachment: Codable, Equatable {
+    var symbol: String?
+    var intervalMinutes: Int?
+    var bars: [OHLCBar]
+    var sourceAsofTs: String?
+    var eligibility: String?
+
+    enum CodingKeys: String, CodingKey {
+        case symbol
+        case intervalMinutes = "interval_minutes"
+        case bars
+        case sourceAsofTs = "source_asof_ts"
+        case eligibility
+    }
 }
 
 struct ChatEvidenceSummary: Codable, Equatable {
@@ -1154,4 +1173,119 @@ struct PendingWriteConfirm: Identifiable {
     let effect: String
     let argsText: String
     let contextLine: String      // loop 最近一句作上下文
+}
+
+// MARK: - Longbridge 实时（U1）—— bridge longbridge-quote / intraday-snapshot / intraday-bars / trading-hours 输出
+
+/// 实时快照（bridge `longbridge-quote`）。R1/R12——数字为 bridge 真值字段，直接渲染不经 LLM。
+/// 覆盖失败/非陆股通时 `error` 非空、数值字段 nil，UI 据此回退存量 + 标注"非实时"。
+struct LongbridgeQuote: Codable, Hashable {
+    var symbol: String?
+    var lastDone: Double?
+    var prevClose: Double?
+    var open: Double?
+    var high: Double?
+    var low: Double?
+    var volume: Double?
+    var turnover: Double?
+    var tradeStatus: String?
+    var sourceAsofTs: String?
+    var eligibility: String?
+    var routedProvider: String?
+    var manifestStale: Bool?
+    var error: String?
+    var hint: String?
+
+    enum CodingKeys: String, CodingKey {
+        case symbol
+        case lastDone = "last_done"
+        case prevClose = "prev_close"
+        case open, high, low, volume, turnover
+        case tradeStatus = "trade_status"
+        case sourceAsofTs = "source_asof_ts"
+        case eligibility
+        case routedProvider = "routed_provider"
+        case manifestStale = "manifest_stale"
+        case error, hint
+    }
+
+    /// 是否拿到实时（无 error 且有价）。UI 据此决定展示实时 vs 回退存量。
+    var isLive: Bool { error == nil && lastDone != nil }
+}
+
+/// 单根 OHLCV bar（intraday-snapshot 的 `bar` / intraday-bars 的 `bars[]` 元素）。
+struct OHLCBar: Codable, Hashable {
+    var timestamp: String?
+    var open: Double?
+    var high: Double?
+    var low: Double?
+    var close: Double?
+    var volume: Double?
+    var turnover: Double?
+}
+
+/// 最新分钟 bar 快照（bridge `intraday-snapshot`）。R2。
+struct IntradaySnapshot: Codable, Hashable {
+    var symbol: String?
+    var intervalMinutes: Int?
+    var bar: OHLCBar?
+    var sourceAsofTs: String?
+    var eligibility: String?
+    var routedProvider: String?
+    var manifestStale: Bool?
+    var error: String?
+    var hint: String?
+
+    enum CodingKeys: String, CodingKey {
+        case symbol
+        case intervalMinutes = "interval_minutes"
+        case bar
+        case sourceAsofTs = "source_asof_ts"
+        case eligibility
+        case routedProvider = "routed_provider"
+        case manifestStale = "manifest_stale"
+        case error, hint
+    }
+}
+
+/// 完整日内 bar 序列（bridge `intraday-bars`，K 线图渲染消费）。R2/R6/F006。
+struct IntradayBars: Codable, Hashable {
+    var symbol: String?
+    var intervalMinutes: Int?
+    var bars: [OHLCBar]
+    var sourceAsofTs: String?
+    var eligibility: String?
+    var routedProvider: String?
+    var manifestStale: Bool?
+    var error: String?
+    var hint: String?
+
+    enum CodingKeys: String, CodingKey {
+        case symbol
+        case intervalMinutes = "interval_minutes"
+        case bars
+        case sourceAsofTs = "source_asof_ts"
+        case eligibility
+        case routedProvider = "routed_provider"
+        case manifestStale = "manifest_stale"
+        case error, hint
+    }
+
+    /// K 线可渲染（无 error 且有序列）。R15 empty/error 状态据此判定。
+    var isRenderable: Bool { error == nil && !bars.isEmpty }
+}
+
+/// 交易时段查询（bridge `trading-hours`，门控实时拉取 / 定时器）。R13/F007。
+struct TradingHours: Codable, Hashable {
+    var isTradeDay: Bool
+    var isTradingSession: Bool
+    var sessionEnd: String?
+    var now: String?
+
+    enum CodingKeys: String, CodingKey {
+        case isTradeDay = "is_trade_day"
+        case isTradingSession = "is_trading_session"
+        case sessionEnd = "session_end"
+        case now
+    }
 }

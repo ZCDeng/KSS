@@ -289,6 +289,44 @@ def test_number_guard():
     assert "5.5%" in unv and "3.2" not in unv
 
 
+def test_longbridge_tools_schema_and_resolve():
+    """U5:两只读实时工具进 schema、resolve 正确、判为只读(非写)。"""
+    names = {t["function"]["name"] for t in loop.build_tools_schema()}
+    assert {"get_longbridge_quote", "get_intraday_snapshot"} <= names
+    cmd, pos = loop.resolve_tool("get_longbridge_quote", {"symbol": "688008.SH"})
+    assert cmd == "longbridge-quote" and pos == ["688008.SH"]
+    cmd, pos = loop.resolve_tool("get_intraday_snapshot", {"symbol": "688008.SH"})
+    assert cmd == "intraday-snapshot" and pos == ["688008.SH"]
+    # 只读路径:命令 ∉ WRITE_COMMANDS。
+    assert loop.is_write_command("longbridge-quote") is False
+    assert loop.is_write_command("intraday-snapshot") is False
+
+
+def test_longbridge_quote_read_path_no_write(monkeypatch):
+    """U5:实时工具走受限只读 call → dispatch 被调、绝不触 request_write。"""
+    monkeypatch.setattr(
+        bridge, "dispatch",
+        lambda cmd, args: {"symbol": args[0], "last_done": 253.2, "eligibility": "forward_observed"},
+    )
+    scripts = [
+        [_toolcall("get_longbridge_quote", {"symbol": "688008.SH"}),
+         {"type": "finish", "reason": "tool_calls"}],
+        [_text("688008 现价 253.2"), {"type": "finish", "reason": "stop"}],
+    ]
+    # default_rw 在 read 路径被调即 AssertionError → 证明未走写路径。
+    frames, chat = _drive(scripts)
+    assert any(f["type"] == "tool_done" for f in frames)
+    second = chat.calls[1]
+    assert any(m["role"] == "tool" and "253.2" in m["content"] for m in second)
+
+
+def test_system_prompt_has_realtime_vs_stored_guidance():
+    """U5:系统提示补了实时 vs 存量、forward_observed、北交所无实时。"""
+    prompt = loop.load_system_prompt()
+    assert "实时" in prompt and "forward_observed" in prompt
+    assert "北交所" in prompt
+
+
 def test_provenance_and_injection_scan(monkeypatch, caplog):
     """commentary 标 llm_prior;tool 结果含注入样式 → 扫描告警且完整透传(不截断)。"""
     big = "x" * 5000

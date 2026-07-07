@@ -6,6 +6,7 @@ struct ContentView: View {
     @Environment(\.kssTheme) private var theme
     @AppStorage("watchlistSymbols") private var watchlistSymbols = "688017.SH,688322.SH"
     @AppStorage("sidebarCollapsed") private var sidebarCollapsed = false
+    @Environment(\.scenePhase) private var scenePhase   // U5: Timer lifecycle gate (R14)
     @AppStorage("sidebarOrder") private var sidebarOrder = ""
     @State private var searchText = ""
     @State private var showNetworkSettings = false
@@ -94,6 +95,7 @@ struct ContentView: View {
             NetworkSettingsView()
         }
         .frame(minWidth: 1080, minHeight: 720)
+        .onChange(of: scenePhase) { _, phase in store.updateSceneActive(phase == .active) }   // U5: Timer lifecycle gate
         .overlay(alignment: .bottom) {
             if let sym = store.importingSymbol {
                 HStack(spacing: 10) {
@@ -171,7 +173,13 @@ struct ContentView: View {
                 DashboardView(
                     snapshot: snapshot,
                     onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } },
-                    onOpenSection: { section in store.selectedSection = section }
+                    onOpenSection: { section in store.selectedSection = section },
+                    realtimeQuote: store.realtimeQuote,
+                    tradingHours: store.tradingHours,
+                    realtimeAuthFailed: store.realtimeAuthFailed,
+                    realtimeUpdatedAt: store.realtimeUpdatedAt,
+                    onLoadRealtime: { Task { await store.loadRealtimeData() } },
+                    onRetryRealtime: { Task { await store.retryRealtime() } }
                 )
             case .recommendations:
                 RecommendationsView(snapshot: snapshot) { symbol in
@@ -187,7 +195,8 @@ struct ContentView: View {
                     watchlist: watchlist,
                     searchText: $searchText,
                     onSelect: { symbol in Task { await store.selectStock(symbol, navigate: false) } },
-                    onToggleWatchlist: toggleWatchlist
+                    onToggleWatchlist: toggleWatchlist,
+                    bridge: store.bridge
                 )
             case .runbook:
                 RunbookView(
@@ -264,7 +273,8 @@ struct ContentView: View {
                     watchlist: watchlist,
                     searchText: $searchText,
                     onSelect: { symbol in Task { await store.selectStock(symbol, navigate: false) } },
-                    onToggleWatchlist: toggleWatchlist
+                    onToggleWatchlist: toggleWatchlist,
+                    bridge: store.bridge
                 )
             case .aiChat:
                 AIChatView()

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "scanned_at": "2026-07-08T00:14:00+08:00",
+  "rescan_interval_days": 90,
+  "source": "docs/brainstorms/2026-07-08-longbridge-rt-data-feasibility.md 探针实测（收盘态，6 标的种子集）",
+  "notes": [
+    "ChinaConnect LV1 实时（陆股通池）；covered 为实测有返回的种子集，非全池",
+    "北交所（.BJ）静态归东财，不入本表",
+    "全池 coverage sweep（scripts/probe_longbridge_coverage.py）跑通后覆盖此文件",
+    "scanned_at 超 rescan_interval_days 视为可能陈旧（陆股通季度调整）"
+  ],
+  "covered": [
+    "688008.SH",
+    "300750.SZ",
+    "600519.SH",
+    "000001.SZ",
+    "588000.SH",
+    "000688.SH"
+  ],
+  "route_to_eastmoney": [
+    "830799.BJ",
+    "920819.BJ"
+  ]
+}

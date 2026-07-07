@@ -674,6 +674,10 @@ def _load_project_env() -> dict[str, str]:
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_CHAT_ID",
         "TELEGRAM_API_URL",
+        # Longbridge（U6）：dev .env 回退，生产仍由 Swift Keychain 注入。
+        "LONGBRIDGE_APP_KEY",
+        "LONGBRIDGE_APP_SECRET",
+        "LONGBRIDGE_ACCESS_TOKEN",
     }
     loaded: dict[str, str] = {}
     # U3：dev .env（代码根）+ bundle-mode network.env（state root，非敏感，非 iCloud）。
@@ -3353,6 +3357,10 @@ COMMANDS = {
     "research-fetch": {"desc": "外部 URL 证据抓取(只读,SSRF 护栏)", "args": ["URL", "[MAX_CHARS]"]},
     "research-bundle": {"desc": "外部证据搜索+抓取 bundle(只读)", "args": ["QUERY", "[LIMIT]", "[MAX_CHARS_PER_SOURCE]"]},
     "news-digest": {"desc": "舆情热点 digest(读 cron 归档,两段式:方向+催化)", "args": ["[DATE]", "[SCENE]"]},
+    "longbridge-quote": {"desc": "Longbridge 实时快照(ChinaConnect LV1,仅陆股通标的)", "args": ["SYMBOL"]},
+    "intraday-snapshot": {"desc": "最新分钟 bar 快照(按覆盖路由 longbridge/东财,前向-only)", "args": ["SYMBOL", "[INTERVAL]"]},
+    "intraday-bars": {"desc": "完整日内 bar 序列(K线图渲染,前向-only)", "args": ["SYMBOL", "[INTERVAL]"]},
+    "trading-hours": {"desc": "交易时段查询(是否交易日/交易时段,门控实时拉取)", "args": []},
 }
 
 # run_task 白名单 —— orientation 报此清单。须与 run_task() if-chain 实际接受集合一致
@@ -3502,6 +3510,281 @@ def _run_recipe(name: str, json_args: str = "") -> dict:
     return meta["fn"](call, **parsed)
 
 
+# ---------------------------------------------------------------------------
+# Longbridge 只读实时命令（U4 / R5 / KTD3 / KTD4）—— 共享面。
+# **不入 WRITE_COMMANDS**：经 _make_read_only_call 自动走受限只读路径（碰写即 raise）。
+# 金融数字由**代码渲染**：命令返回**真值字段**（供上层 number_guard 核 + verbatim 引用），
+# 绝不返回拼好的自然语言（数字纪律，见 sector-truth-source-split 记忆）。
+# ---------------------------------------------------------------------------
+
+import time as _time  # noqa: E402  (retry helper)
+
+_RETRYABLE_ERRORS: frozenset[str] = frozenset({"unreachable", "fetch_failed"})
+
+
+def _call_with_retry(fn, *, max_attempts: int = 2, base_delay: float = 0.5) -> Any:
+    """薄 retry wrapper：仅对瞬态错误（unreachable / fetch_failed）重试最多一次。
+
+    auth_failed / empty / unsupported interval 不重试——那些不是瞬态。
+    """
+    last: Any = None
+    for n in range(max_attempts):
+        result = fn()
+        if isinstance(result, dict) and result.get("error") in _RETRYABLE_ERRORS and n + 1 < max_attempts:
+            _time.sleep(base_delay * (n + 1))
+            last = result
+            continue
+        return result
+    return last  # 重试耗尽，返回最后一次失败结果
+
+
+def _longbridge_coverage_meta(symbol: str) -> dict[str, Any]:
+    """标的路由 + manifest 陈旧标记（供命令附在响应里，让上层感知诚实语义）。"""
+    from kss.data.longbridge_coverage import (  # noqa: PLC0415
+        is_manifest_stale,
+        load_manifest,
+        normalize_symbol,
+        route_provider,
+    )
+
+    manifest = load_manifest()
+    return {
+        "normalized_symbol": normalize_symbol(symbol),
+        "routed_provider": route_provider(symbol, manifest),
+        "manifest_scanned_at": manifest.scanned_at,
+        "manifest_stale": is_manifest_stale(manifest),
+    }
+
+
+def _longbridge_quote(symbol: str) -> dict[str, Any]:
+    """实时快照（ChinaConnect LV1，接受延迟）。仅 covered（陆股通）标的.
+
+    能力错配处理（feasibility P2）：东财**无 fetch_quote**——非陆股通/北交所标的
+    返回结构化 ``error``（明说无实时快照），快照能力只保留给 covered 标的。
+    """
+    if not symbol:
+        raise ValueError("longbridge-quote requires SYMBOL")
+    # wrap in retry 薄层（REL-001）：瞬态网络错误（unreachable/fetch_failed）重试一次
+    return _call_with_retry(lambda: _longbridge_quote_inner(symbol))
+
+
+def _longbridge_quote_inner(symbol: str) -> dict[str, Any]:
+    """longbridge-quote 核心逻辑（不含 retry，见 _call_with_retry）。"""
+    from kss.data.longbridge_coverage import PROVIDER_LONGBRIDGE  # noqa: PLC0415
+
+    meta = _longbridge_coverage_meta(symbol)
+    if meta["routed_provider"] != PROVIDER_LONGBRIDGE:
+        return {
+            "symbol": meta["normalized_symbol"],
+            "error": "no_realtime_snapshot",
+            "hint": "该标的非陆股通/北交所，无实时快照；分钟 bar 请用 intraday-snapshot",
+            **meta,
+        }
+    from kss.data.intraday_client import LongbridgeProvider  # noqa: PLC0415
+
+    res = LongbridgeProvider().fetch_quote(symbol)
+    if not res.ok:
+        return {"symbol": meta["normalized_symbol"], "error": res.error or "empty", **meta}
+    row = res.rows[0]
+    # 真值字段：直接透传数值，不拼自然语言（number_guard 可核）。
+    return {
+        "symbol": meta["normalized_symbol"],
+        "last_done": row.get("last_done"),
+        "prev_close": row.get("prev_close"),
+        "open": row.get("open"),
+        "high": row.get("high"),
+        "low": row.get("low"),
+        "volume": row.get("volume"),
+        "turnover": row.get("turnover"),
+        "trade_status": row.get("trade_status"),
+        "source_asof_ts": res.source_asof_ts,
+        "eligibility": "forward_observed",  # 前向-only，非 PIT（红线）
+        **meta,
+    }
+
+
+def _intraday_snapshot(symbol: str, interval_minutes: int = 1, asset_kind: str = "stock") -> dict[str, Any]:
+    """最新分钟 bar 快照（OQ2 解：实时直取，最鲜；按 route_provider 选源）.
+
+    KTD6 诚实语义：covered → longbridge；其余 → 东财（本机当前不可达 = 无数据，
+    非错数据）。北交所今天**无可用实时路径**——响应显式带 routed_provider + 陈旧标记。
+    """
+    if not symbol:
+        raise ValueError("intraday-snapshot requires SYMBOL")
+    # wrap in retry 薄层（REL-001）：瞬态网络错误重试一次
+    return _call_with_retry(lambda: _intraday_snapshot_inner(symbol, interval_minutes, asset_kind))
+
+
+def _intraday_snapshot_inner(symbol: str, interval_minutes: int = 1, asset_kind: str = "stock") -> dict[str, Any]:
+    """intraday-snapshot 核心逻辑（不含 retry，见 _call_with_retry）。"""
+    from kss.data.intraday_client import (  # noqa: PLC0415
+        EastmoneyAkshareProvider,
+        LongbridgeProvider,
+    )
+    from kss.data.longbridge_coverage import PROVIDER_LONGBRIDGE  # noqa: PLC0415
+
+    meta = _longbridge_coverage_meta(symbol)
+    if meta["routed_provider"] == PROVIDER_LONGBRIDGE:
+        provider: Any = LongbridgeProvider()
+    else:
+        provider = EastmoneyAkshareProvider()
+    res = provider.fetch_bars(
+        symbol, interval_minutes=interval_minutes, asset_kind=asset_kind
+    )
+    if not res.ok:
+        return {
+            "symbol": meta["normalized_symbol"],
+            "interval_minutes": interval_minutes,
+            "error": res.error or "empty",
+            "hint": (
+                "东财备源本机当前不可达 = 无数据（非错数据，KTD6）"
+                if meta["routed_provider"] != PROVIDER_LONGBRIDGE
+                else "取数失败"
+            ),
+            **meta,
+        }
+    if not res.rows:
+        return {
+            "symbol": meta["normalized_symbol"],
+            "interval_minutes": interval_minutes,
+            "bar": None, "error": "empty response",
+            "hint": "取数成功但无 bar（可能非交易时段）",
+            **meta,
+        }
+    latest = res.rows[-1]  # fetch_bars 按时间升序，末行为最新
+    result = {
+        "symbol": meta["normalized_symbol"],
+        "interval_minutes": interval_minutes,
+        "bar": latest,  # 真值字段整行透传（含 open/high/low/close/volume）
+        "source_asof_ts": res.source_asof_ts,
+        "eligibility": "forward_observed",
+        **meta,
+    }
+    # R5 落盘（F009）：页面拉取路径惰性写 intraday_store（不掺 cron run 空间）；
+    # 失败不影响返回（落盘是增量，取数成功即渲染）。
+    _persist_page_pull(meta["normalized_symbol"], provider.name, interval_minutes,
+                       asset_kind, res.rows)
+    return result
+
+
+def _intraday_bars(symbol: str, interval_minutes: int = 1, asset_kind: str = "stock") -> dict[str, Any]:
+    """完整日内 bar 序列（F006）：K 线图渲染需全序列，非单 bar.
+
+    与 `intraday-snapshot`（单 bar 快照）区分：本命令返回 `bars` 全 list，供
+    chart candlestick 渲染。按 route_provider 选源，KTD6 诚实语义同 snapshot。
+    """
+    if not symbol:
+        raise ValueError("intraday-bars requires SYMBOL")
+    return _call_with_retry(lambda: _intraday_bars_inner(symbol, interval_minutes, asset_kind))
+
+
+def _intraday_bars_inner(symbol: str, interval_minutes: int = 1, asset_kind: str = "stock") -> dict[str, Any]:
+    """intraday-bars 核心逻辑（不含 retry）。"""
+    from kss.data.intraday_client import (  # noqa: PLC0415
+        EastmoneyAkshareProvider,
+        LongbridgeProvider,
+    )
+    from kss.data.longbridge_coverage import PROVIDER_LONGBRIDGE  # noqa: PLC0415
+
+    meta = _longbridge_coverage_meta(symbol)
+    if meta["routed_provider"] == PROVIDER_LONGBRIDGE:
+        provider: Any = LongbridgeProvider()
+    else:
+        provider = EastmoneyAkshareProvider()
+    res = provider.fetch_bars(
+        symbol, interval_minutes=interval_minutes, asset_kind=asset_kind
+    )
+    if not res.ok:
+        return {
+            "symbol": meta["normalized_symbol"],
+            "interval_minutes": interval_minutes,
+            "bars": [],
+            "error": res.error or "empty",
+            "hint": (
+                "东财备源本机当前不可达 = 无数据（非错数据，KTD6）"
+                if meta["routed_provider"] != PROVIDER_LONGBRIDGE
+                else "取数失败"
+            ),
+            **meta,
+        }
+    _persist_page_pull(meta["normalized_symbol"], provider.name, interval_minutes,
+                       asset_kind, res.rows)
+    return {
+        "symbol": meta["normalized_symbol"],
+        "interval_minutes": interval_minutes,
+        "bars": res.rows,  # 全序列真值透传（chart candlestick 消费）
+        "source_asof_ts": res.source_asof_ts,
+        "eligibility": "forward_observed",
+        **meta,
+    }
+
+
+def _trading_hours() -> dict[str, Any]:
+    """交易时段查询（F007）：Swift 侧门控实时拉取/定时器，不在 Swift 内嵌日历.
+
+    复用既有 trade_cal 模块判断交易日 + 时段（9:25–15:05）。
+    """
+    from datetime import datetime  # noqa: PLC0415
+    from zoneinfo import ZoneInfo  # noqa: PLC0415
+
+    now = datetime.now(ZoneInfo("Asia/Shanghai"))
+    today = now.strftime("%Y%m%d")
+    is_trade_day = _is_trade_day(today)
+    # 交易时段窗口：9:25（集合竞价含）–15:05（尾盘含），R13。
+    minutes = now.hour * 60 + now.minute
+    in_window = (9 * 60 + 25) <= minutes <= (15 * 60 + 5)
+    is_trading_session = is_trade_day and in_window
+    return {
+        "is_trade_day": is_trade_day,
+        "is_trading_session": is_trading_session,
+        "session_end": "15:05",
+        "now": now.isoformat(timespec="seconds"),
+    }
+
+
+def _is_trade_day(yyyymmdd: str) -> bool:
+    """判断是否 A 股交易日（复用 tushare trade_cal；失败保守回退按周判断）。
+
+    Tushare 访问口径同 hotspot_rotation._load_trade_calendar：``get_pro().trade_cal``。
+    """
+    try:
+        from kss.data.tushare_client import TushareClient  # noqa: PLC0415
+
+        pro = TushareClient().get_pro()
+        df = pro.trade_cal(
+            exchange="SSE", start_date=yyyymmdd, end_date=yyyymmdd
+        )
+        if df is not None and not df.empty and "is_open" in df.columns:
+            return bool(int(df.iloc[0]["is_open"]) == 1)
+    except Exception:  # noqa: BLE001 — 交易日查询失败不致命
+        pass
+    # 保守回退：周一–周五视为交易日（可能误判节假日，但不阻断）。
+    from datetime import datetime  # noqa: PLC0415
+
+    try:
+        wd = datetime.strptime(yyyymmdd, "%Y%m%d").weekday()
+        return wd < 5
+    except ValueError:
+        return False
+
+
+def _persist_page_pull(symbol: str, provider: str, interval_minutes: int,
+                       asset_kind: str, rows: list[dict[str, Any]]) -> None:
+    """R5 落盘（F009）—— **采用 plan 预授权的降级路径：跳过 store 写入**.
+
+    执行期决策（plan U0 显式取舍）：`intraday_store.ingest_run` 是 PIT-careful 采集
+    契约——要求 instrument 注册（含 active_from 生效区间）、request_meta 脱敏、
+    availability_class / eligibility 分级、frozen schema/session/contract 版本、独立
+    run context。页面拉取是前向 forward_observed 的即时快照，语义上不匹配这套 PIT
+    机制，强行写入会用无正确 eligibility 上下文的 page-pull observation 污染 PIT 存储。
+
+    Plan 原文：「若 instrument 注册开销过大，implement 时可退化为『仅渲染 bridge JSON，
+    跳过 store 写入』（R5 降级为 nice-to-have）」。故此处 no-op；R5 落盘 defer 到未来
+    专门的 page-pull 存储路径（不复用 PIT ingest_run）。取数已成功，渲染优先。
+    """
+    return  # 降级路径：不落盘，仅渲染 bridge 返回值
+
+
 def dispatch(command: str, args: list[str]) -> Any:
     """命令 → payload（传给 _json_dump 的对象）。subprocess(main) 与 sidecar 共用。
     参数错误 raise ValueError；下游可能 raise SystemExit（如 report 路径护栏）——
@@ -3608,6 +3891,20 @@ def dispatch(command: str, args: list[str]) -> Any:
             args[0] if len(args) > 0 else "",
             args[1] if len(args) > 1 else "",
         )
+    if command == "longbridge-quote":
+        return _longbridge_quote(args[0] if args else "")
+    if command == "intraday-snapshot":
+        return _intraday_snapshot(
+            args[0] if args else "",
+            interval_minutes=_int_arg(args, 1, 1),
+        )
+    if command == "intraday-bars":
+        return _intraday_bars(
+            args[0] if args else "",
+            interval_minutes=_int_arg(args, 1, 1),
+        )
+    if command == "trading-hours":
+        return _trading_hours()
     raise ValueError(f"unknown command: {command}")
 
 

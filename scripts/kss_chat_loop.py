@@ -106,6 +106,13 @@ TOOL_SPECS: list[dict[str, Any]] = [
            "limit": {"type": "string", "description": "来源数,默认 3"},
            "max_chars_per_source": {"type": "string", "description": "每来源最大字符数,默认 3000"}},
           ["query", "limit", "max_chars_per_source"]),
+    # ---- Longbridge 只读实时(U5)：forward_observed,非 PIT;北交所无实时 ----
+    _spec("get_longbridge_quote", "longbridge-quote",
+          "实时快照(ChinaConnect LV1,接受延迟)。仅陆股通标的;非覆盖/北交所返回 error。symbol 如 688008.SH",
+          {"symbol": _STR}, ["symbol"]),
+    _spec("get_intraday_snapshot", "intraday-snapshot",
+          "最新分钟 bar 快照(按覆盖自动选源 longbridge/东财,前向-only)。symbol 如 688008.SH",
+          {"symbol": _STR}, ["symbol"]),
     # ---- 写工具:经 request_write,loop 不执行(KTD-4)----
     _spec("run_task", "run",
           "执行数据任务(白名单,如 update-cs-data / refresh-sector-rotation / paper-summary)。**写操作,须人工确认**",

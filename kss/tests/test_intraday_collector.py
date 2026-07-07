@@ -561,3 +561,104 @@ def test_watch_mode_shadow_only(store):
     assert store.list_coverage_assessments() == []
     # 仍喂 publication_delay 复核（M1）。
     assert any(a["alert"] == "publication_delay_exceeded" for a in summary["alerts"])
+
+
+# --------------------------------------------------------------------------- #
+# U3 provider 选择 + 路由（characterization + auto 路由）
+# --------------------------------------------------------------------------- #
+
+
+def test_collect_intraday_default_provider_is_eastmoney():
+    """--provider 默认 eastmoney_akshare（characterization，防重构漂移）。"""
+    # 仅验证默认参数解析行为，不跑全采集。
+    from scripts.collect_intraday import build_argparser
+
+    p = build_argparser()
+    args = p.parse_args([])
+    assert args.provider == "eastmoney_akshare"
+
+
+def test_auto_routed_provider_routes_by_manifest(monkeypatch):
+    """_AutoRoutedProvider 按 route_provider 选源（mock manifest）。"""
+    from scripts.collect_intraday import _AutoRoutedProvider
+    from kss.data.intraday_client import FetchResult
+
+    class _FakeLB:
+        name = "longbridge"
+
+        def fetch_bars(self, symbol, **kw):
+            return FetchResult(
+                rows=[{"symbol": symbol, "close": 1.0}],
+                raw_columns=("symbol", "close"),
+                source_asof_ts=None, status_code=200, latency_ms=1.0, error=None,
+            )
+
+    class _FakeEM:
+        name = "eastmoney_akshare"
+
+        def fetch_bars(self, symbol, **kw):
+            return FetchResult(
+                rows=[{"symbol": symbol, "close": 2.0}],
+                raw_columns=("symbol", "close"),
+                source_asof_ts=None, status_code=200, latency_ms=1.0, error=None,
+            )
+
+    prov = _AutoRoutedProvider()
+    prov._lb = _FakeLB()  # type: ignore[attr-defined]
+    prov._em = _FakeEM()  # type: ignore[attr-defined]
+
+    # mock route_provider: 688008 → longbridge，830799 → eastmoney。
+    monkeypatch.setattr(
+        "scripts.collect_intraday.route_provider",
+        lambda s: "longbridge" if s.startswith("688") else "eastmoney_akshare",
+    )
+    r1 = prov.fetch_bars("688008", interval_minutes=1, asset_kind="stock")
+    assert r1.rows[0]["close"] == 1.0  # longbridge
+    r2 = prov.fetch_bars("830799", interval_minutes=1, asset_kind="stock")
+    assert r2.rows[0]["close"] == 2.0  # eastmoney
+
+
+def test_auto_routed_fallback_longbridge_fails_then_eastmoney(monkeypatch):
+    """Longbridge 失败 → 降级东财（核心 fallback 路径）。"""
+    from scripts.collect_intraday import _AutoRoutedProvider
+    from kss.data.intraday_client import FetchResult
+
+    class _FailingLB:
+        name = "longbridge"
+        fetch_bars_called: list[str] = []
+
+        def fetch_bars(self, symbol, **kw):
+            self.fetch_bars_called.append(symbol)
+            return FetchResult(
+                rows=[], raw_columns=(), source_asof_ts=None,
+                status_code=None, latency_ms=1.0, error="unreachable",
+            )
+
+    class _OKEM:
+        name = "eastmoney_akshare"
+        fetch_bars_called: list[str] = []
+
+        def fetch_bars(self, symbol, **kw):
+            self.fetch_bars_called.append(symbol)
+            return FetchResult(
+                rows=[{"symbol": symbol, "close": 2.0}],
+                raw_columns=("symbol", "close"),
+                source_asof_ts=None, status_code=200, latency_ms=1.0, error=None,
+            )
+
+    prov = _AutoRoutedProvider()
+    lb = _FailingLB()
+    em = _OKEM()
+    prov._lb = lb  # type: ignore[attr-defined]
+    prov._em = em  # type: ignore[attr-defined]
+
+    # route_provider 返回 longbridge → _AutoRoutedProvider 走 lb → 失败 → 降级 em。
+    monkeypatch.setattr(
+        "scripts.collect_intraday.route_provider",
+        lambda s: "longbridge",
+    )
+    res = prov.fetch_bars("688008", interval_minutes=1, asset_kind="stock")
+    assert res.ok, f"expected fallback ok, got error={res.error}"
+    assert res.rows[0]["close"] == 2.0  # eastmoney 的返回值
+    assert len(lb.fetch_bars_called) == 1  # lb 被调了一次
+    assert len(em.fetch_bars_called) == 1  # em 被降级调了一次

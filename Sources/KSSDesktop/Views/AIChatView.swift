@@ -48,6 +48,7 @@ struct AIChatView: View {
                     }
                 }
             }
+            .onAppear { Task { await store.preheatRealtimeContext() } }   // U4: Seesaw 加载时预温实时上下文（R3）
         }
     }
 
@@ -256,6 +257,14 @@ struct AIChatView: View {
                     if msg.evidenceSummary.hasEvidence || msg.evidenceSummary.provider != nil {
                         EvidenceDrawerView(summary: msg.evidenceSummary, drawer: msg.evidenceDrawer)
                             .padding(.top, 2)
+                    }
+                    // U4: K 线附件 (R8) — intraday-snapshot 工具返回 bar 数据后渲染
+                    if let chart = msg.chartAttachment, !chart.bars.isEmpty {
+                        ChartWebView(points: [], intradayBars: chart.bars)
+                            .frame(height: 300)
+                            .background(theme.chartSurface)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .padding(.top, 6)
                     }
                 }
                 .padding(.horizontal, 14).padding(.vertical, 10)
