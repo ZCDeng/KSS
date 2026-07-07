@@ -3359,6 +3359,8 @@ COMMANDS = {
     "news-digest": {"desc": "舆情热点 digest(读 cron 归档,两段式:方向+催化)", "args": ["[DATE]", "[SCENE]"]},
     "longbridge-quote": {"desc": "Longbridge 实时快照(ChinaConnect LV1,仅陆股通标的)", "args": ["SYMBOL"]},
     "intraday-snapshot": {"desc": "最新分钟 bar 快照(按覆盖路由 longbridge/东财,前向-only)", "args": ["SYMBOL", "[INTERVAL]"]},
+    "intraday-bars": {"desc": "完整日内 bar 序列(K线图渲染,前向-only)", "args": ["SYMBOL", "[INTERVAL]"]},
+    "trading-hours": {"desc": "交易时段查询(是否交易日/交易时段,门控实时拉取)", "args": []},
 }
 
 # run_task 白名单 —— orientation 报此清单。须与 run_task() if-chain 实际接受集合一致
@@ -3642,7 +3644,7 @@ def _intraday_snapshot_inner(symbol: str, interval_minutes: int = 1, asset_kind:
             **meta,
         }
     latest = res.rows[-1]  # fetch_bars 按时间升序，末行为最新
-    return {
+    result = {
         "symbol": meta["normalized_symbol"],
         "interval_minutes": interval_minutes,
         "bar": latest,  # 真值字段整行透传（含 open/high/low/close/volume）
@@ -3650,6 +3652,129 @@ def _intraday_snapshot_inner(symbol: str, interval_minutes: int = 1, asset_kind:
         "eligibility": "forward_observed",
         **meta,
     }
+    # R5 落盘（F009）：页面拉取路径惰性写 intraday_store（不掺 cron run 空间）；
+    # 失败不影响返回（落盘是增量，取数成功即渲染）。
+    _persist_page_pull(meta["normalized_symbol"], provider.name, interval_minutes,
+                       asset_kind, res.rows)
+    return result
+
+
+def _intraday_bars(symbol: str, interval_minutes: int = 1, asset_kind: str = "stock") -> dict[str, Any]:
+    """完整日内 bar 序列（F006）：K 线图渲染需全序列，非单 bar.
+
+    与 `intraday-snapshot`（单 bar 快照）区分：本命令返回 `bars` 全 list，供
+    chart candlestick 渲染。按 route_provider 选源，KTD6 诚实语义同 snapshot。
+    """
+    if not symbol:
+        raise ValueError("intraday-bars requires SYMBOL")
+    return _call_with_retry(lambda: _intraday_bars_inner(symbol, interval_minutes, asset_kind))
+
+
+def _intraday_bars_inner(symbol: str, interval_minutes: int = 1, asset_kind: str = "stock") -> dict[str, Any]:
+    """intraday-bars 核心逻辑（不含 retry）。"""
+    from kss.data.intraday_client import (  # noqa: PLC0415
+        EastmoneyAkshareProvider,
+        LongbridgeProvider,
+    )
+    from kss.data.longbridge_coverage import PROVIDER_LONGBRIDGE  # noqa: PLC0415
+
+    meta = _longbridge_coverage_meta(symbol)
+    if meta["routed_provider"] == PROVIDER_LONGBRIDGE:
+        provider: Any = LongbridgeProvider()
+    else:
+        provider = EastmoneyAkshareProvider()
+    res = provider.fetch_bars(
+        symbol, interval_minutes=interval_minutes, asset_kind=asset_kind
+    )
+    if not res.ok:
+        return {
+            "symbol": meta["normalized_symbol"],
+            "interval_minutes": interval_minutes,
+            "bars": [],
+            "error": res.error or "empty",
+            "hint": (
+                "东财备源本机当前不可达 = 无数据（非错数据，KTD6）"
+                if meta["routed_provider"] != PROVIDER_LONGBRIDGE
+                else "取数失败"
+            ),
+            **meta,
+        }
+    _persist_page_pull(meta["normalized_symbol"], provider.name, interval_minutes,
+                       asset_kind, res.rows)
+    return {
+        "symbol": meta["normalized_symbol"],
+        "interval_minutes": interval_minutes,
+        "bars": res.rows,  # 全序列真值透传（chart candlestick 消费）
+        "source_asof_ts": res.source_asof_ts,
+        "eligibility": "forward_observed",
+        **meta,
+    }
+
+
+def _trading_hours() -> dict[str, Any]:
+    """交易时段查询（F007）：Swift 侧门控实时拉取/定时器，不在 Swift 内嵌日历.
+
+    复用既有 trade_cal 模块判断交易日 + 时段（9:25–15:05）。
+    """
+    from datetime import datetime  # noqa: PLC0415
+    from zoneinfo import ZoneInfo  # noqa: PLC0415
+
+    now = datetime.now(ZoneInfo("Asia/Shanghai"))
+    today = now.strftime("%Y%m%d")
+    is_trade_day = _is_trade_day(today)
+    # 交易时段窗口：9:25（集合竞价含）–15:05（尾盘含），R13。
+    minutes = now.hour * 60 + now.minute
+    in_window = (9 * 60 + 25) <= minutes <= (15 * 60 + 5)
+    is_trading_session = is_trade_day and in_window
+    return {
+        "is_trade_day": is_trade_day,
+        "is_trading_session": is_trading_session,
+        "session_end": "15:05",
+        "now": now.isoformat(timespec="seconds"),
+    }
+
+
+def _is_trade_day(yyyymmdd: str) -> bool:
+    """判断是否 A 股交易日（复用 tushare trade_cal；失败保守回退按周判断）。
+
+    Tushare 访问口径同 hotspot_rotation._load_trade_calendar：``get_pro().trade_cal``。
+    """
+    try:
+        from kss.data.tushare_client import TushareClient  # noqa: PLC0415
+
+        pro = TushareClient().get_pro()
+        df = pro.trade_cal(
+            exchange="SSE", start_date=yyyymmdd, end_date=yyyymmdd
+        )
+        if df is not None and not df.empty and "is_open" in df.columns:
+            return bool(int(df.iloc[0]["is_open"]) == 1)
+    except Exception:  # noqa: BLE001 — 交易日查询失败不致命
+        pass
+    # 保守回退：周一–周五视为交易日（可能误判节假日，但不阻断）。
+    from datetime import datetime  # noqa: PLC0415
+
+    try:
+        wd = datetime.strptime(yyyymmdd, "%Y%m%d").weekday()
+        return wd < 5
+    except ValueError:
+        return False
+
+
+def _persist_page_pull(symbol: str, provider: str, interval_minutes: int,
+                       asset_kind: str, rows: list[dict[str, Any]]) -> None:
+    """R5 落盘（F009）—— **采用 plan 预授权的降级路径：跳过 store 写入**.
+
+    执行期决策（plan U0 显式取舍）：`intraday_store.ingest_run` 是 PIT-careful 采集
+    契约——要求 instrument 注册（含 active_from 生效区间）、request_meta 脱敏、
+    availability_class / eligibility 分级、frozen schema/session/contract 版本、独立
+    run context。页面拉取是前向 forward_observed 的即时快照，语义上不匹配这套 PIT
+    机制，强行写入会用无正确 eligibility 上下文的 page-pull observation 污染 PIT 存储。
+
+    Plan 原文：「若 instrument 注册开销过大，implement 时可退化为『仅渲染 bridge JSON，
+    跳过 store 写入』（R5 降级为 nice-to-have）」。故此处 no-op；R5 落盘 defer 到未来
+    专门的 page-pull 存储路径（不复用 PIT ingest_run）。取数已成功，渲染优先。
+    """
+    return  # 降级路径：不落盘，仅渲染 bridge 返回值
 
 
 def dispatch(command: str, args: list[str]) -> Any:
@@ -3765,6 +3890,13 @@ def dispatch(command: str, args: list[str]) -> Any:
             args[0] if args else "",
             interval_minutes=_int_arg(args, 1, 1),
         )
+    if command == "intraday-bars":
+        return _intraday_bars(
+            args[0] if args else "",
+            interval_minutes=_int_arg(args, 1, 1),
+        )
+    if command == "trading-hours":
+        return _trading_hours()
     raise ValueError(f"unknown command: {command}")
 
 

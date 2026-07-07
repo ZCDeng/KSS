@@ -146,3 +146,77 @@ def test_intraday_snapshot_beijing_routes_eastmoney_honest_error(monkeypatch):
     assert out["routed_provider"] == "eastmoney_akshare"
     assert "error" in out
     assert "不可达" in out["hint"]
+
+
+# --------------------------------------------------------------------------- #
+# U0: intraday-bars（完整日内序列，F006）+ trading-hours（F007）+ 落盘降级（F009）
+# --------------------------------------------------------------------------- #
+
+
+def test_u0_new_commands_registered_and_not_write():
+    """U0 两命令登记 COMMANDS 且 ∉ WRITE_COMMANDS（只读性钉死）。"""
+    assert "intraday-bars" in b.COMMANDS
+    assert "trading-hours" in b.COMMANDS
+    assert "intraday-bars" not in b.WRITE_COMMANDS
+    assert "trading-hours" not in b.WRITE_COMMANDS
+
+
+def test_intraday_bars_returns_full_series(monkeypatch):
+    """F006：intraday-bars 返回**全序列**（非单 bar），K 线图可消费。"""
+    import kss.data.intraday_client as ic
+    monkeypatch.setattr(ic, "LongbridgeProvider", lambda: _FakeLongbridge(bars=_ok_bar_result()))
+    out = b.dispatch("intraday-bars", ["688008.SH"])
+    # 全序列：2 根 bar 都在（对比 intraday-snapshot 只返回末行）。
+    assert "bars" in out
+    assert len(out["bars"]) == 2
+    assert out["bars"][0]["close"] == 10.1
+    assert out["bars"][1]["close"] == 10.25
+    assert out["routed_provider"] == "longbridge"
+    assert out["eligibility"] == "forward_observed"
+
+
+def test_intraday_bars_beijing_empty_series(monkeypatch):
+    """北交所 → 东财不可达 → 空序列 + error（非覆盖诚实语义）。"""
+    err = FetchResult(
+        rows=[], raw_columns=(), source_asof_ts=None,
+        status_code=None, latency_ms=5.0, error="unreachable",
+    )
+    import kss.data.intraday_client as ic
+    monkeypatch.setattr(ic, "EastmoneyAkshareProvider", lambda: _FakeEastmoney(bars=err))
+    out = b.dispatch("intraday-bars", ["830799.BJ"])
+    assert out["bars"] == []
+    assert "error" in out
+    assert out["routed_provider"] == "eastmoney_akshare"
+
+
+def test_intraday_bars_requires_symbol():
+    import pytest
+    with pytest.raises(ValueError):
+        b.dispatch("intraday-bars", [])
+
+
+def test_trading_hours_shape(monkeypatch):
+    """trading-hours 返回门控三字段（is_trade_day / is_trading_session / session_end）。"""
+    # mock _is_trade_day 避免打真网（Tushare）。
+    monkeypatch.setattr(b, "_is_trade_day", lambda d: True)
+    out = b.dispatch("trading-hours", [])
+    assert "is_trade_day" in out
+    assert "is_trading_session" in out
+    assert out["session_end"] == "15:05"
+    assert out["is_trade_day"] is True
+
+
+def test_trading_hours_non_trade_day(monkeypatch):
+    """非交易日 → is_trading_session 必 False（即便在时段窗内）。"""
+    monkeypatch.setattr(b, "_is_trade_day", lambda d: False)
+    out = b.dispatch("trading-hours", [])
+    assert out["is_trade_day"] is False
+    assert out["is_trading_session"] is False
+
+
+def test_persist_page_pull_is_noop_degrade_path():
+    """F009：R5 落盘采用 plan 预授权降级路径——no-op，不抛，不写 store。"""
+    # 不应抛异常，且返回 None（降级：跳过落盘）。
+    result = b._persist_page_pull("688008.SH", "longbridge", 1, "stock",
+                                  [{"close": 10.0}])
+    assert result is None
