@@ -429,18 +429,18 @@ def test_longbridge_satisfies_intraday_provider_protocol():
 
 
 def test_longbridge_init_forces_com_gateways(monkeypatch):
-    """KTD1：构造后三个 LONGPORT_* env 被固化为 .com 国际网关。"""
-    monkeypatch.delenv("LONGPORT_HTTP_URL", raising=False)
-    monkeypatch.delenv("LONGPORT_QUOTE_WS_URL", raising=False)
-    monkeypatch.delenv("LONGPORT_TRADE_WS_URL", raising=False)
+    """KTD1：构造后三个 LONGBRIDGE_* env 被固化为 .com 国际网关。"""
+    monkeypatch.delenv("LONGBRIDGE_HTTP_URL", raising=False)
+    monkeypatch.delenv("LONGBRIDGE_QUOTE_WS_URL", raising=False)
+    monkeypatch.delenv("LONGBRIDGE_TRADE_WS_URL", raising=False)
     LongbridgeProvider(quote_context=_FakeQuoteContext())
     import os
 
-    assert os.environ["LONGPORT_HTTP_URL"] == "https://openapi.longportapp.com"
-    assert ".com" in os.environ["LONGPORT_QUOTE_WS_URL"]
-    assert ".com" in os.environ["LONGPORT_TRADE_WS_URL"]
+    assert os.environ["LONGBRIDGE_HTTP_URL"] == "https://openapi.longbridge.com"
+    assert ".com" in os.environ["LONGBRIDGE_QUOTE_WS_URL"]
+    assert ".com" in os.environ["LONGBRIDGE_TRADE_WS_URL"]
     # 防漂移：绝不残留 .cn 网关。
-    assert ".cn" not in os.environ["LONGPORT_HTTP_URL"]
+    assert ".cn" not in os.environ["LONGBRIDGE_HTTP_URL"]
 
 
 def test_longbridge_capability_forward_observed_when_reachable(monkeypatch):
@@ -466,7 +466,7 @@ def test_longbridge_missing_credentials_returns_error_not_raise(monkeypatch):
 
 def test_longbridge_credential_not_leaked_in_error():
     """security-lens P2：SDK 异常含假 token → error 归一为安全类目、不含 token 子串。"""
-    sentinel = "LONGPORT_SECRET_deadbeefcafe1234567890"
+    sentinel = "LONGBRIDGE_SECRET_deadbeefcafe1234567890"
     ctx = _FakeQuoteContext(raise_on="candlesticks")
     ctx._exc = RuntimeError(f"auth signature failed for token={sentinel}")
     prov = LongbridgeProvider(quote_context=ctx)

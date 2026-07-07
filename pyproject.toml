@@ -29,7 +29,7 @@ dependencies = [
     "jsonpath==0.82.2",
     "kiwisolver==1.5.0",
     "lightgbm==4.6.0",
-    "longport==4.3.3",
+    "longbridge==4.3.3",
     "lxml==6.1.1",
     "markdown-it-py==4.2.0",
     "markupsafe==3.0.3",

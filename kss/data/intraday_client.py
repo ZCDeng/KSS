@@ -380,16 +380,17 @@ def _latest_bar_ts(rows: list[dict[str, Any]]) -> str | None:
 
 
 # --------------------------------------------------------------------------- #
-# Longbridge（长桥 / longport SDK）前向实时适配（U1）
+# Longbridge（长桥 / longbridge SDK）前向实时适配（U1）
 # --------------------------------------------------------------------------- #
 
-# KTD1：SDK 默认 openapi.longport.cn 本机不可达（叠 Clash 直连/代理均 000 失败）。
-# provider **自身**固化 .com 国际网关三 env（实测 401=已触达），不劳用户填。
+# KTD1：SDK 须经 .com 国际网关（.cn 本机不可达，叠 Clash 直连/代理均 000 失败）。
+# provider **自身**固化三个 gateway env（实测可达），不劳用户填。
 # 不设 = 复现东财同款「端点不可达」。
+# SDK 4.x 官方 env 名 = LONGBRIDGE_*（legacy LONGPORT_* 仍兼容但弃用）。
 _LONGPORT_COM_GATEWAY_ENV: dict[str, str] = {
-    "LONGPORT_HTTP_URL": "https://openapi.longportapp.com",
-    "LONGPORT_QUOTE_WS_URL": "wss://openapi-quote.longportapp.com/v2",
-    "LONGPORT_TRADE_WS_URL": "wss://openapi-trade.longportapp.com/v2",
+    "LONGBRIDGE_HTTP_URL": "https://openapi.longbridge.com",
+    "LONGBRIDGE_QUOTE_WS_URL": "wss://openapi-quote.longbridge.com/v2",
+    "LONGBRIDGE_TRADE_WS_URL": "wss://openapi-trade.longbridge.com/v2",
 }
 
 # 凭据 env 名（R7）；显式 from_apikey(...) 而非 from_env，故读 LONGBRIDGE_* 前缀。
@@ -470,7 +471,7 @@ def _resolve_longbridge_symbol(symbol: str) -> str:
 
 
 class LongbridgeProvider:
-    """长桥前向实时适配（经官方 ``longport`` SDK）。前向-only，永不 PIT.
+    """长桥前向实时适配（经官方 ``longbridge`` SDK）。前向-only，永不 PIT.
 
     权限口径 = **ChinaConnect LV1 Real-time**（陆股通池，实测科创/创业/沪深主板/
     ETF/指数全通；北交所不覆盖，由路由层拦回东财）。强制 ``.com`` 国际网关
@@ -501,11 +502,11 @@ class LongbridgeProvider:
     @staticmethod
     def _resolve_version() -> str:
         try:
-            import longport  # noqa: PLC0415
+            import longbridge  # noqa: PLC0415
 
-            return f"longport-{getattr(longport, '__version__', 'unknown')}"
+            return f"longbridge-{getattr(longbridge, '__version__', 'unknown')}"
         except Exception:  # noqa: BLE001 — 缺包不致命，版本记 unavailable
-            return "longport-unavailable"
+            return "longbridge-unavailable"
 
     @staticmethod
     def _read_credentials() -> tuple[str, str, str] | None:
@@ -527,7 +528,7 @@ class LongbridgeProvider:
             self._ctx_error = "auth_failed"  # 缺凭据（不回显是哪个）
             return None, self._ctx_error
         try:
-            from longport.openapi import Config, QuoteContext  # noqa: PLC0415
+            from longbridge.openapi import Config, QuoteContext  # noqa: PLC0415
 
             config = Config.from_apikey(*creds)
             self._ctx = QuoteContext(config)
@@ -545,7 +546,7 @@ class LongbridgeProvider:
     def capability(self) -> CapabilityResult:
         """能力门控：可达性近似 = SDK 可 import 且凭据齐（真实触达在 fetch）。"""
         reachable = (
-            self.version != "longport-unavailable"
+            self.version != "longbridge-unavailable"
             and self._read_credentials() is not None
         )
         eligibility = classify_eligibility(self.name, reachable=reachable)
@@ -570,7 +571,7 @@ class LongbridgeProvider:
         if name is None:
             return None
         try:
-            from longport.openapi import Period  # noqa: PLC0415
+            from longbridge.openapi import Period  # noqa: PLC0415
 
             return getattr(Period, name)
         except Exception:  # noqa: BLE001
@@ -579,7 +580,7 @@ class LongbridgeProvider:
     @staticmethod
     def _no_adjust() -> Any:
         try:
-            from longport.openapi import AdjustType  # noqa: PLC0415
+            from longbridge.openapi import AdjustType  # noqa: PLC0415
 
             return AdjustType.NoAdjust
         except Exception:  # noqa: BLE001
