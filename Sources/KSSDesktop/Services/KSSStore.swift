@@ -36,6 +36,12 @@ final class KSSStore: ObservableObject {
     @Published var importingSymbol: String?   // 点击导入进行中的代码（行级/全局指示）
     @Published var errorMessage: String?
 
+    // MARK: Longbridge 实时（U1/U2）—— 页面加载时拉取，失败保持 nil（UI 回退存量 + 标注"非实时"）
+    @Published var realtimeQuote: LongbridgeQuote?     // Dashboard 指数/板块实时快照
+    @Published var tradingHours: TradingHours?         // 交易时段门控（R13）
+    @Published var realtimeAuthFailed = false          // auth_failed → 停定时刷新 + "实时源未连接"（R4）
+    @Published var realtimeUpdatedAt: Date?            // 最近一次实时拉取成功时间（"更新于 HH:MM"）
+
     // MARK: AI 复盘助手聊天态（#4 U4/U5）—— 会话历史归 store，section 切换不丢
     @Published var chatMessages: [ChatMessage] = []
     @Published var isChatStreaming = false
@@ -193,6 +199,49 @@ final class KSSStore: ObservableObject {
         }
         // 富化走外网较慢，fire-and-forget 异步加载，不阻塞个股明细渲染/caller。
         Task { await self.loadPerillaEnrichment(symbol: symbol) }
+    }
+
+    // MARK: - Longbridge 实时拉取（U2）
+
+    /// 交易时段门控查询（R13）。返回是否应拉取实时——非交易时段直接展示存量。
+    func loadTradingHours() async -> Bool {
+        guard let bridge else { return false }
+        let hours = try? await Task.detached { try bridge.tradingHours() }.value
+        self.tradingHours = hours
+        return hours?.isTradingSession ?? false
+    }
+
+    /// Dashboard onAppear 时拉取 Longbridge 实时快照（R1/R4/R13）。
+    /// 非交易时段跳过；失败保持 nil（UI 回退 cron 存量 + 标注"非实时"）。
+    /// auth_failed → 置 realtimeAuthFailed（停后续定时刷新，展示"实时源未连接"）。
+    func loadRealtimeData(symbol: String = "000001.SH") async {
+        guard let bridge else { return }
+        // 门控：非交易时段不拉实时（R13），直接用存量。
+        let inSession = await loadTradingHours()
+        guard inSession else {
+            realtimeQuote = nil
+            return
+        }
+        let quote = try? await Task.detached {
+            try bridge.longbridgeQuote(symbol: symbol)
+        }.value
+        if let quote, quote.isLive {
+            realtimeQuote = quote
+            realtimeAuthFailed = false
+            realtimeUpdatedAt = Date()
+        } else {
+            // 回退：保持 nil，UI 展示 cron 存量 + "非实时"。auth 失败额外标记。
+            realtimeQuote = nil
+            if let err = quote?.error, err == "auth_failed" {
+                realtimeAuthFailed = true
+            }
+        }
+    }
+
+    /// 手动重试实时源（R4：avoid "未连接"状态永久滞留）。
+    func retryRealtime() async {
+        realtimeAuthFailed = false
+        await loadRealtimeData()
     }
 
     /// 紫苏叶个股富化（机构/PE/美股对标）。非紫苏叶票静默置空，不报错。

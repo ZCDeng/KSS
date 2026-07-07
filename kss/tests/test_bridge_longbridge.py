@@ -220,3 +220,42 @@ def test_persist_page_pull_is_noop_degrade_path():
     result = b._persist_page_pull("688008.SH", "longbridge", 1, "stock",
                                   [{"close": 10.0}])
     assert result is None
+
+
+# --------------------------------------------------------------------------- #
+# U1: Swift Codable model ↔ bridge JSON 契约一致性（防字段漂移）
+# --------------------------------------------------------------------------- #
+
+
+def test_longbridge_quote_json_contract_matches_swift_model(monkeypatch):
+    """U1：longbridge-quote 返回 JSON 含 Swift LongbridgeQuote 期望的所有 key。"""
+    import kss.data.intraday_client as ic
+    monkeypatch.setattr(ic, "LongbridgeProvider", lambda: _FakeLongbridge(quote=_ok_quote_result()))
+    out = b.dispatch("longbridge-quote", ["688008.SH"])
+    # Swift LongbridgeQuote CodingKeys 期望的字段（snake_case）。
+    for key in ("symbol", "last_done", "prev_close", "open", "high", "low",
+                "volume", "turnover", "trade_status", "source_asof_ts",
+                "eligibility", "routed_provider", "manifest_stale"):
+        assert key in out, f"missing key expected by Swift model: {key}"
+
+
+def test_intraday_bars_json_contract_matches_swift_model(monkeypatch):
+    """U1：intraday-bars 返回 JSON 含 Swift IntradayBars 期望的 key（bars 全序列）。"""
+    import kss.data.intraday_client as ic
+    monkeypatch.setattr(ic, "LongbridgeProvider", lambda: _FakeLongbridge(bars=_ok_bar_result()))
+    out = b.dispatch("intraday-bars", ["688008.SH"])
+    for key in ("symbol", "interval_minutes", "bars", "source_asof_ts",
+                "eligibility", "routed_provider", "manifest_stale"):
+        assert key in out, f"missing key expected by Swift model: {key}"
+    # bars 元素含 OHLCBar 期望字段。
+    assert out["bars"], "bars should be non-empty"
+    for key in ("open", "high", "low", "close", "volume"):
+        assert key in out["bars"][0], f"OHLCBar missing: {key}"
+
+
+def test_trading_hours_json_contract_matches_swift_model(monkeypatch):
+    """U1：trading-hours 返回 JSON 含 Swift TradingHours 期望的 key。"""
+    monkeypatch.setattr(b, "_is_trade_day", lambda d: True)
+    out = b.dispatch("trading-hours", [])
+    for key in ("is_trade_day", "is_trading_session", "session_end"):
+        assert key in out, f"missing key expected by Swift model: {key}"
