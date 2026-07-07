@@ -171,7 +171,13 @@ struct ContentView: View {
                 DashboardView(
                     snapshot: snapshot,
                     onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } },
-                    onOpenSection: { section in store.selectedSection = section }
+                    onOpenSection: { section in store.selectedSection = section },
+                    realtimeQuote: store.realtimeQuote,
+                    tradingHours: store.tradingHours,
+                    realtimeAuthFailed: store.realtimeAuthFailed,
+                    realtimeUpdatedAt: store.realtimeUpdatedAt,
+                    onLoadRealtime: { Task { await store.loadRealtimeData() } },
+                    onRetryRealtime: { Task { await store.retryRealtime() } }
                 )
             case .recommendations:
                 RecommendationsView(snapshot: snapshot) { symbol in
