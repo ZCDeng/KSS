@@ -47,6 +47,7 @@ from kss.data.intraday_client import (  # noqa: E402
     EASTMOTNEY_1M_MAX_HISTORY_DAYS,
     CapabilityResult,
     EastmoneyAkshareProvider,
+    Eligibility,
     FetchResult,
     IntradayProvider,
     LongbridgeProvider,
@@ -90,11 +91,11 @@ class _AutoRoutedProvider:
         return ("stock", "etf", "index")
 
     def capability(self) -> CapabilityResult:
-        # 保守：任一不可达即整体不可达（不冒进）。
+        # 复合 provider 始终前向-only（两后备源均为前向源）。
         lb_cap = self._lb.capability()
         em_cap = self._em.capability()
-        reachable = lb_cap.reachable or em_cap.reachable
-        elig = classify_eligibility(self.name, reachable=reachable)
+        reachable = lb_cap.reachable or em_cap.reachable  # 任一可达即整体可达
+        elig = Eligibility.FORWARD_OBSERVED if reachable else Eligibility.FAILED
         return CapabilityResult(
             provider=self.name,
             version=self.version,
