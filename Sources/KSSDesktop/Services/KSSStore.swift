@@ -244,6 +244,25 @@ final class KSSStore: ObservableObject {
         await loadRealtimeData()
     }
 
+    /// U4: Seesaw 预温实时上下文（R3）——首轮 get_orientation 并行拉取快照，
+    /// 为 LLM 提供"今日盘面"索引数据。
+    func preheatRealtimeContext() async {
+        guard let bridge else { return }
+        _ = await loadTradingHours()
+        guard tradingHours?.isTradingSession ?? false else { return }
+        let quote = try? await Task.detached {
+            try bridge.longbridgeQuote(symbol: "000001.SH")
+        }.value
+        if let quote { realtimeQuote = quote; realtimeUpdatedAt = Date() }
+    }
+
+    /// U4: 将 intraday-snapshot 工具返回的 bar 数据存入 chat attachment（R8）。
+    /// Seesaw loop 的 tool_done 帧检测到 intraday bar 数据后调用本方法。
+    func attachChartToLastMessage(bars: ChartAttachment) {
+        guard let idx = chatMessages.lastIndex(where: { $0.role == .assistant }) else { return }
+        chatMessages[idx].chartAttachment = bars
+    }
+
     /// 紫苏叶个股富化（机构/PE/美股对标）。非紫苏叶票静默置空，不报错。
     func loadPerillaEnrichment(symbol: String) async {
         guard let bridge else { return }

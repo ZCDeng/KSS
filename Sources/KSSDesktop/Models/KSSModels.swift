@@ -1053,6 +1053,25 @@ struct ChatMessage: Identifiable, Equatable {
     var numbersUnverified: Bool = false
     /// 终态错误气泡样式（step-limit / 断连 等）。
     var isError: Bool = false
+    /// U4: 分钟 K 线附件（intraday-snapshot 工具返回后渲染 K 线 bubble）
+    var chartAttachment: ChartAttachment? = nil
+}
+
+/// U4: 聊天气泡内的分钟 K 线附件（R8: Seesaw 工具返回含 bar 数据时渲染 R6 组件）。
+struct ChartAttachment: Codable, Equatable {
+    var symbol: String?
+    var intervalMinutes: Int?
+    var bars: [OHLCBar]
+    var sourceAsofTs: String?
+    var eligibility: String?
+
+    enum CodingKeys: String, CodingKey {
+        case symbol
+        case intervalMinutes = "interval_minutes"
+        case bars
+        case sourceAsofTs = "source_asof_ts"
+        case eligibility
+    }
 }
 
 struct ChatEvidenceSummary: Codable, Equatable {
