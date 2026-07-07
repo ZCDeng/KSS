@@ -6,6 +6,8 @@ import WebKit
 /// `kssSetTheme` 更新配色并从缓存 bars 重绘，`kssSetData` 只更新数据。
 struct ChartWebView: NSViewRepresentable {
     var points: [PricePoint]
+    /// U3 日内模式（F008）：非空时渲染分钟 K 线（走 chart.html 的 kssSetIntradayData 路径）。
+    var intradayBars: [OHLCBar]? = nil
     @Environment(\.kssTheme) private var theme
     @Environment(\.kssWebTheme) private var webTheme
 
@@ -27,10 +29,21 @@ struct ChartWebView: NSViewRepresentable {
     func updateNSView(_ webView: WKWebView, context: Context) {
         let coord = context.coordinator
         coord.latestTheme = webTheme
-        let json = Self.encode(points)
-        if json != coord.latestJSON {
-            coord.latestJSON = json
-            coord.bumpContent()
+        if let bars = intradayBars {
+            // 日内模式：推分钟 bar 序列（F006 全序列）。
+            let json = Self.encodeBars(bars)
+            if json != coord.latestIntradayJSON || !coord.isIntraday {
+                coord.latestIntradayJSON = json
+                coord.isIntraday = true
+                coord.bumpContent()
+            }
+        } else {
+            let json = Self.encode(points)
+            if json != coord.latestJSON || coord.isIntraday {
+                coord.latestJSON = json
+                coord.isIntraday = false
+                coord.bumpContent()
+            }
         }
         webView.underPageBackgroundColor = theme.chartSurfaceNS
         coord.requestSync()
@@ -44,11 +57,24 @@ struct ChartWebView: NSViewRepresentable {
         return string
     }
 
+    private static func encodeBars(_ bars: [OHLCBar]) -> String {
+        guard let data = try? JSONEncoder().encode(bars),
+              let string = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return string
+    }
+
     final class Coordinator: BridgedWebCoordinator {
         var latestJSON = "[]"
+        var latestIntradayJSON = "[]"
+        var isIntraday = false
 
         override func contentScript() -> String? {
-            "window.kssSetData(\(latestJSON));"
+            if isIntraday {
+                return "window.kssSetIntradayData(\(latestIntradayJSON));"
+            }
+            return "window.kssSetData(\(latestJSON));"
         }
     }
 }
