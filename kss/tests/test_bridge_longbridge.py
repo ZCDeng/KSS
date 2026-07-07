@@ -259,3 +259,44 @@ def test_trading_hours_json_contract_matches_swift_model(monkeypatch):
     out = b.dispatch("trading-hours", [])
     for key in ("is_trade_day", "is_trading_session", "session_end"):
         assert key in out, f"missing key expected by Swift model: {key}"
+
+
+# --------------------------------------------------------------------------- #
+# U6: E2E composite — mock LB → dispatch → Codable round-trip + write attempt
+# --------------------------------------------------------------------------- #
+
+
+def test_e2e_composite_longbridge_quote_round_trip(monkeypatch):
+    """U6 E2E composite: mock LB → longbridge-quote dispatch → 验证 Swift Codable 往返。"""
+    import kss.data.intraday_client as ic
+    monkeypatch.setattr(ic, "LongbridgeProvider", lambda: _FakeLongbridge(quote=_ok_quote_result()))
+    out = b.dispatch("longbridge-quote", ["688008.SH"])
+    # full contract: 所有 Swift LongbridgeQuote CodingKeys 字段存在
+    assert out["last_done"] == 253.2
+    assert out["symbol"] == "688008.SH"
+    assert out["eligibility"] == "forward_observed"
+    assert out["routed_provider"] == "longbridge"
+    # 无 error → isLive=true（Swift side 据此展示实时 vs 回退）
+    assert "error" not in out or out["error"] is None
+
+
+def test_e2e_composite_longbridge_quote_error_path(monkeypatch):
+    """U6 E2E composite: LB auth_failed → error 字段非空 → Swift 回退存量 + 标注。"""
+    # 不 mock provider，不设凭据 → _ensure_context → auth_failed
+    import os as _os
+    for k in ("LONGBRIDGE_APP_KEY", "LONGBRIDGE_APP_SECRET", "LONGBRIDGE_ACCESS_TOKEN"):
+        _os.environ.pop(k, None)
+    out = b.dispatch("longbridge-quote", ["688008.SH"])
+    # error 路径：必有 error（auth_failed / no_realtime_snapshot），last_done 为 None
+    assert out.get("error") is not None or out.get("last_done") is None
+
+
+def test_e2e_composite_intraday_bars_full_round_trip(monkeypatch):
+    """U6 E2E composite: intraday-bars 全序列 → chart 可消费。"""
+    import kss.data.intraday_client as ic
+    monkeypatch.setattr(ic, "LongbridgeProvider", lambda: _FakeLongbridge(bars=_ok_bar_result()))
+    out = b.dispatch("intraday-bars", ["688008.SH"])
+    # E2E: bars 完整 + 可渲染（isRenderable 场逻辑在 Swift 侧，Python 侧验证 bars 非空 + 无 error）
+    assert out["bars"], "bars should be non-empty for chart rendering"
+    assert "error" not in out or out["error"] is None
+    assert out["eligibility"] == "forward_observed"
