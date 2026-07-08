@@ -2061,6 +2061,77 @@ def _intel_radar(force: str = "") -> dict[str, Any]:
     }
 
 
+def _intel_digest(json_payload: str = "") -> dict[str, Any]:
+    """资讯雷达单赛道 AI 要点提炼（plan 2026-07-09-001）。
+
+    参数：JSON 单参数 ``{"track_key": ..., "track_name": ..., "items": [...], "force": bool?}``
+    返回：``{text, model, generated_at, prompt, item_count, error?, error_type?}``
+
+    不写沉淀库——由 UI 的「存入沉淀」按钮调 ``_intel_digest_save`` 触发。
+    """
+    import json as _json
+
+    from kss.news.digest_ai import parse_items_payload, run_digest
+
+    if not json_payload:
+        return {"error": "empty payload", "error_type": "client", "text": ""}
+    try:
+        obj = _json.loads(json_payload)
+    except Exception as exc:
+        return {"error": f"invalid JSON: {exc}", "error_type": "client", "text": ""}
+
+    track_key = str(obj.get("track_key") or "")
+    track_name = str(obj.get("track_name") or track_key)
+    items = obj.get("items") or []
+    force = bool(obj.get("force") or False)
+    if not track_key:
+        return {"error": "missing track_key", "error_type": "client", "text": ""}
+    if not isinstance(items, list):
+        return {"error": "items must be a JSON array", "error_type": "client", "text": ""}
+
+    try:
+        result = run_digest(track_key, track_name, items, force=force)
+    except Exception as exc:  # noqa: BLE001 - 防御性收口
+        return {"error": f"digest failed: {exc}", "error_type": "server", "text": ""}
+    return result
+
+
+def _intel_digest_save(json_payload: str = "") -> dict[str, Any]:
+    """把已生成的 AI digest 写入沉淀库（md+json）。
+
+    参数：``{"track_key": ..., "track_name": ..., "prompt": ..., "response": ..., "model": ..., "items": [...]}``
+    返回：``{saved_path, ok}`` 或 ``{error, error_type}``
+    """
+    import json as _json
+
+    from kss.storage.notes import save_intel_digest
+
+    if not json_payload:
+        return {"ok": False, "error": "empty payload", "error_type": "client"}
+    try:
+        obj = _json.loads(json_payload)
+    except Exception as exc:
+        return {"ok": False, "error": f"invalid JSON: {exc}", "error_type": "client"}
+
+    track_key = str(obj.get("track_key") or "")
+    track_name = str(obj.get("track_name") or track_key)
+    prompt = str(obj.get("prompt") or "")
+    response = str(obj.get("response") or "")
+    model = str(obj.get("model") or "")
+    items = obj.get("items") or []
+
+    if not (track_key and response):
+        return {"ok": False, "error": "missing track_key or response", "error_type": "client"}
+
+    try:
+        md_path = save_intel_digest(
+            track_key, track_name, prompt, response, model, items,
+        )
+        return {"ok": True, "saved_path": str(md_path)}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"save failed: {exc}", "error_type": "server"}
+
+
 def _sector_rotation_history(limit: int = 30) -> list[dict[str, Any]]:
     """板块热点轮动归档列表：最新 N 个交易日，新到旧。
 
@@ -3363,6 +3434,7 @@ def _theme_leaders() -> list[dict[str, Any]]:
 WRITE_COMMANDS = frozenset({
     "run", "import", "resolve",
     "cron-rerun", "cron-enable", "cron-disable", "cron-catchup", "cron-rerun-many", "cron-sync",
+    "intel-digest-save",  # 写文件到 storage/notes/
 })
 
 # ---------------------------------------------------------------------------
@@ -3403,6 +3475,8 @@ COMMANDS = {
     "research-bundle": {"desc": "外部证据搜索+抓取 bundle(只读)", "args": ["QUERY", "[LIMIT]", "[MAX_CHARS_PER_SOURCE]"]},
     "news-digest": {"desc": "舆情热点 digest(读 cron 归档,两段式:方向+催化)", "args": ["[DATE]", "[SCENE]"]},
     "intel-radar": {"desc": "12赛道全球RSS资讯(Investment News)", "args": ["[force]"]},
+    "intel-digest": {"desc": "资讯雷达单赛道AI要点提炼(OpenAI兼容,JSON_PAYLOAD)", "args": ["JSON_PAYLOAD"]},
+    "intel-digest-save": {"desc": "把已生成digest写入沉淀库(STATE_ROOT/storage/notes)", "args": ["JSON_PAYLOAD"]},
     "longbridge-quote": {"desc": "Longbridge 实时快照(ChinaConnect LV1,仅陆股通标的)", "args": ["SYMBOL"]},
     "intraday-snapshot": {"desc": "最新分钟 bar 快照(按覆盖路由 longbridge/东财,前向-only)", "args": ["SYMBOL", "[INTERVAL]"]},
     "intraday-bars": {"desc": "完整日内 bar 序列(K线图渲染,前向-only)", "args": ["SYMBOL", "[INTERVAL]"]},
@@ -3960,6 +4034,10 @@ def dispatch(command: str, args: list[str]) -> Any:
         )
     if command == "intel-radar":
         return _intel_radar(args[0] if args else "")
+    if command == "intel-digest":
+        return _intel_digest(args[0] if args else "")
+    if command == "intel-digest-save":
+        return _intel_digest_save(args[0] if args else "")
     if command == "longbridge-quote":
         return _longbridge_quote(args[0] if args else "")
     if command == "intraday-snapshot":

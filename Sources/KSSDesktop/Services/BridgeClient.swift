@@ -157,6 +157,53 @@ struct BridgeClient {
         return try run(args, as: NewsDigestResponse.self)
     }
 
+    /// 资讯雷达单赛道 AI 要点提炼（plan 2026-07-09-001）。
+    /// ``force: true`` 跳过缓存直接重新调 LLM；``items`` 已由调用方截断到 25 条。
+    func intelDigest(
+        trackKey: String,
+        trackName: String,
+        items: [IntelItem],
+        force: Bool = false
+    ) throws -> IntelDigestResponse {
+        struct Payload: Encodable {
+            let track_key: String
+            let track_name: String
+            let items: [IntelItem]
+            let force: Bool
+        }
+        let payload = Payload(track_key: trackKey, track_name: trackName, items: items, force: force)
+        let data = try JSONEncoder().encode(payload)
+        let json = String(data: data, encoding: .utf8) ?? "{}"
+        return try run(["intel-digest", json], as: IntelDigestResponse.self)
+    }
+
+    /// 把已生成的 AI digest 写入沉淀库（md+json）。
+    func intelDigestSave(
+        trackKey: String,
+        trackName: String,
+        prompt: String,
+        response: String,
+        model: String,
+        items: [IntelItem]
+    ) throws -> IntelDigestSaveResponse {
+        struct Payload: Encodable {
+            let track_key: String
+            let track_name: String
+            let prompt: String
+            let response: String
+            let model: String
+            let items: [IntelItem]
+        }
+        let payload = Payload(
+            track_key: trackKey, track_name: trackName,
+            prompt: prompt, response: response, model: model,
+            items: items,
+        )
+        let data = try JSONEncoder().encode(payload)
+        let json = String(data: data, encoding: .utf8) ?? "{}"
+        return try run(["intel-digest-save", json], as: IntelDigestSaveResponse.self)
+    }
+
     func themeLeaders() throws -> [ThemeLeaders] {
         try run(["theme-leaders"], as: [ThemeLeaders].self)
     }
@@ -208,7 +255,7 @@ struct BridgeClient {
     /// socket 超时会误判不可用并回退，而 daemon 仍在跑同一任务 → 双跑（重复 Tushare
     /// 调用 + 争抢同一归档）。这些命令不属于热路径读，无需暖 pandas。
     // perilla-enrichment 走外网(Tushare+yFinance)耗时常 >3s，跳过 sidecar 避免超时双跑。
-    private static let subprocessOnlyCommands: Set<String> = ["run", "import", "perilla-enrichment", "intel-radar"]
+    private static let subprocessOnlyCommands: Set<String> = ["run", "import", "perilla-enrichment", "intel-radar", "intel-digest", "intel-digest-save"]
 
     private func run<T: Decodable>(_ args: [String], as type: T.Type) throws -> T {
         // U5：热路径读优先常驻 sidecar（pandas 暖、无 per-call python 启动）；

@@ -1,0 +1,15 @@
+{
+  "track_key": "ai",
+  "track_name": "AI",
+  "date": "20260709",
+  "prompt": "p",
+  "response": "text",
+  "model": "m",
+  "item_count": 1,
+  "items": [
+    {
+      "title": "x"
+    }
+  ],
+  "generated_at": "2026-07-09T05:30:44+08:00"
+}

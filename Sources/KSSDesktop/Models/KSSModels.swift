@@ -169,6 +169,51 @@ struct NewsDigestIndexEntry: Codable, Hashable, Identifiable {
     var scene: String
 }
 
+/// 资讯雷达单赛道 AI digest 响应（plan 2026-07-09-001）。
+struct IntelDigestResponse: Codable {
+    var text: String
+    var model: String?
+    var generatedAt: String?
+    var prompt: String?
+    var itemCount: Int?
+    /// 错误时 text 为空、error 非空
+    var error: String?
+    var errorType: String?
+    /// 缓存命中（已存在沉淀）→ true
+    var fromCache: Bool?
+    var cachedPath: String?
+    /// items 为空跳过
+    var skipped: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case text
+        case model
+        case generatedAt = "generated_at"
+        case prompt
+        case itemCount = "item_count"
+        case error
+        case errorType = "error_type"
+        case fromCache = "from_cache"
+        case cachedPath = "cached_path"
+        case skipped
+    }
+}
+
+/// 资讯雷达 digest 写入沉淀库响应。
+struct IntelDigestSaveResponse: Codable {
+    var ok: Bool
+    var savedPath: String?
+    var error: String?
+    var errorType: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case savedPath = "saved_path"
+        case error
+        case errorType = "error_type"
+    }
+}
+
 /// 舆情热点：选中档（某日某场景的完整 digest）。
 struct NewsDigest: Codable, Hashable {
     var date: String
