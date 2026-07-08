@@ -250,47 +250,26 @@ struct StockDetailView: View {
                     .tint(theme.accent)
                 }
                 VStack(alignment: .leading, spacing: 0) {
-                    // U3 分钟 K 线模式选择器
-                    Picker("", selection: $chartMode) {
-                        Text("日线").tag(ChartDataMode.daily)
-                        Text("1分钟").tag(ChartDataMode.m1)
-                        Text("5分钟").tag(ChartDataMode.m5)
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 180)
-                    .onChange(of: chartMode) { _, newMode in
-                        if newMode != .daily {
-                            Task { await loadIntraday(symbol: detail.symbol, mode: newMode) }
-                        }
-                    }
                     ChartLegend()
-                    if chartMode == .daily {
-                        ChartWebView(points: detail.history)
-                            .frame(minHeight: 640)
-                    } else {
-                        // R15 四状态
-                        if intradayLoading {
-                            ProgressView("加载分钟线…")
-                                .frame(minHeight: 640)
-                        } else if let err = intradayError {
-                            VStack(spacing: 8) {
-                                Text("分钟线不可用")
-                                    .font(.caption).foregroundStyle(theme.textSecondary)
-                                Text(err)
-                                    .font(.caption2).foregroundStyle(theme.textSecondary)
-                                // 回退日线
-                                ChartWebView(points: detail.history)
-                                    .frame(minHeight: 320)
-                            }
-                            .frame(minHeight: 640)
-                        } else if let bars = intradayBars, bars.isRenderable {
-                            ChartWebView(points: detail.history, intradayBars: bars.bars)
-                                .frame(minHeight: 640)
-                        } else {
-                            Text("暂无成交数据")
-                                .font(.caption).foregroundStyle(theme.textSecondary)
-                                .frame(minHeight: 640)
+                    // U9: 收敛形态——日线主图（上方 60%）+ 分钟线子图（下方 40%），不再割裂切换
+                    if let bars = intradayBars, bars.isRenderable {
+                        VStack(spacing: 4) {
+                            ChartWebView(points: detail.history)
+                                .frame(minHeight: 380)
+                            ChartWebView(points: [], intradayBars: bars.bars)
+                                .frame(minHeight: 260)
+                        }.frame(height: 680)
+                    } else if intradayLoading {
+                        ProgressView("加载分钟线…").frame(minHeight: 640)
+                    } else if let err = intradayError {
+                        VStack(spacing: 8) {
+                            Text("分钟线不可用").font(.caption).foregroundStyle(theme.textSecondary)
+                            Text(err).font(.caption2).foregroundStyle(theme.textSecondary)
+                            ChartWebView(points: detail.history).frame(minHeight: 640)
                         }
+                    } else {
+                        // 仅日线（非交易时段 / 无日内数据）——自动隐藏分钟线
+                        ChartWebView(points: detail.history).frame(minHeight: 640)
                     }
                 }
                 .id(detail.symbol)  // 切换标的时重建 chart
