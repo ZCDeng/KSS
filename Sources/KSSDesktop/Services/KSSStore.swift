@@ -259,12 +259,21 @@ final class KSSStore: ObservableObject {
         await loadRealtimeData()
     }
 
-    /// U2: 加载资讯雷达全量数据（复用既有 bridge `news-digest` 命令）。
+    /// U2: 加载资讯雷达全量数据（bridge `intel-radar` 命令 → 12 赛道 RSS）。
     func loadIntel() async {
         guard let bridge else { return }
         isLoadingIntel = true
         defer { isLoadingIntel = false }
-        let digest = try? await Task.detached { try bridge.newsDigest() }.value
+        let digest = try? await Task.detached { try bridge.intelRadar() }.value
+        if let digest { intelDigest = digest }
+    }
+
+    /// 强制刷新资讯雷达（实时抓 RSS，≈20-40s）。
+    func refreshIntelRadar() async {
+        guard let bridge else { return }
+        isLoadingIntel = true
+        defer { isLoadingIntel = false }
+        let digest = try? await Task.detached { try bridge.intelRadar(force: true) }.value
         if let digest { intelDigest = digest }
     }
 

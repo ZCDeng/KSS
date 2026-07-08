@@ -150,6 +150,13 @@ struct BridgeClient {
         return try run(args, as: NewsDigestResponse.self)
     }
 
+    /// 资讯雷达 12 赛道 RSS（Investment News）。``force: true`` 实时抓取（≈20-40s），默认读缓存。
+    func intelRadar(force: Bool = false) throws -> NewsDigestResponse {
+        var args = ["intel-radar"]
+        if force { args.append("force") }
+        return try run(args, as: NewsDigestResponse.self)
+    }
+
     func themeLeaders() throws -> [ThemeLeaders] {
         try run(["theme-leaders"], as: [ThemeLeaders].self)
     }
@@ -201,7 +208,7 @@ struct BridgeClient {
     /// socket 超时会误判不可用并回退，而 daemon 仍在跑同一任务 → 双跑（重复 Tushare
     /// 调用 + 争抢同一归档）。这些命令不属于热路径读，无需暖 pandas。
     // perilla-enrichment 走外网(Tushare+yFinance)耗时常 >3s，跳过 sidecar 避免超时双跑。
-    private static let subprocessOnlyCommands: Set<String> = ["run", "import", "perilla-enrichment"]
+    private static let subprocessOnlyCommands: Set<String> = ["run", "import", "perilla-enrichment", "intel-radar"]
 
     private func run<T: Decodable>(_ args: [String], as type: T.Type) throws -> T {
         // U5：热路径读优先常驻 sidecar（pandas 暖、无 per-call python 启动）；

@@ -143,7 +143,23 @@ struct NewsDigestResponse: Codable {
     var available: Bool
     var index: [NewsDigestIndexEntry]
     var selected: NewsDigest?
-    var tracks: [IntelTrack]?  // U2 multi-track grouping (U1 extended bridge)
+    var tracks: [IntelTrack]?     // U2 multi-track grouping (U1 extended bridge)
+    var generatedAt: String?      // intel-radar: "YYYY-MM-DD HH:MM" 生成时间
+    var recentDays: Int?          // intel-radar: 抓取天数范围
+    var stats: RadarStats?        // intel-radar: 源统计
+}
+
+/// intel-radar 源统计。
+struct RadarStats: Codable {
+    var industries: Int?
+    var totalSources: Int?
+    var failedSources: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case industries
+        case totalSources = "total_sources"
+        case failedSources = "failed_sources"
+    }
 }
 
 /// 舆情热点：可选档案条目（日期 + 场景），newest first。

@@ -44,6 +44,7 @@ NAMES_PATH = STATE_ROOT / "storage" / "stock_names.csv"
 SUPPLY_CHAIN_PATH = PROJECT_ROOT / "kss" / "config" / "supply_chain.yaml"  # config = 代码，随 bundle
 SECTOR_ROTATION_DIR = STATE_ROOT / "storage" / "sector_rotation"
 NEWS_DIGEST_DIR = STATE_ROOT / "storage" / "news_digest"  # 舆情热点 digest 归档(cron 生成)
+INTEL_RADAR_DIR = STATE_ROOT / "storage" / "intel_radar"   # 资讯雷达 12 赛道 RSS 缓存
 DATA_CATALOG_PATH = STATE_ROOT / "storage" / "data_catalog.json"  # 由 build_data_catalog.py 生成
 TOP_N = 5
 TOP_PCT = 0.2
@@ -2016,6 +2017,50 @@ def _news_digest(date: str = "", scene: str = "") -> dict[str, Any]:
     return {"available": selected is not None, "selected": selected, "index": index}
 
 
+def _intel_radar(force: str = "") -> dict[str, Any]:
+    """12赛道全球RSS资讯雷达。``force == "force"`` 时实时抓取（≈20-40s），否则读缓存。
+
+    返回格式::
+      {available, generated_at, recent_days, stats, tracks: [{key, name, accent, total, items}]}
+    tracks 对齐 Swift ``IntelTrack``，items 对齐 ``IntelItem``。
+    """
+    from kss.news.radar import get_radar
+
+    do_fetch = (force == "force")
+    data = get_radar(force=do_fetch)
+
+    industries = data.get("industries") or []
+    tracks = []
+    for ind in industries:
+        items = []
+        for it in ind.get("items") or []:
+            items.append({
+                "title": it.get("title", ""),
+                "url": it.get("url", ""),
+                "time": it.get("time", ""),
+                "source": it.get("source", ""),
+                "summary": it.get("summary", ""),
+            })
+        tracks.append({
+            "key": ind["key"],
+            "name": ind["name"],
+            "accent": ind.get("accent"),
+            "total": ind.get("total", len(items)),
+            "items": items,
+        })
+
+    available = data.get("generated_at") is not None
+    return {
+        "available": available,
+        "index": [],
+        "selected": None,
+        "tracks": tracks,
+        "generated_at": data.get("generated_at"),
+        "recent_days": data.get("recent_days"),
+        "stats": data.get("stats"),
+    }
+
+
 def _sector_rotation_history(limit: int = 30) -> list[dict[str, Any]]:
     """板块热点轮动归档列表：最新 N 个交易日，新到旧。
 
@@ -3366,6 +3411,7 @@ COMMANDS = {
     "research-fetch": {"desc": "外部 URL 证据抓取(只读,SSRF 护栏)", "args": ["URL", "[MAX_CHARS]"]},
     "research-bundle": {"desc": "外部证据搜索+抓取 bundle(只读)", "args": ["QUERY", "[LIMIT]", "[MAX_CHARS_PER_SOURCE]"]},
     "news-digest": {"desc": "舆情热点 digest(读 cron 归档,两段式:方向+催化)", "args": ["[DATE]", "[SCENE]"]},
+    "intel-radar": {"desc": "12赛道全球RSS资讯(Investment News)", "args": ["[force]"]},
     "longbridge-quote": {"desc": "Longbridge 实时快照(ChinaConnect LV1,仅陆股通标的)", "args": ["SYMBOL"]},
     "intraday-snapshot": {"desc": "最新分钟 bar 快照(按覆盖路由 longbridge/东财,前向-only)", "args": ["SYMBOL", "[INTERVAL]"]},
     "intraday-bars": {"desc": "完整日内 bar 序列(K线图渲染,前向-only)", "args": ["SYMBOL", "[INTERVAL]"]},
@@ -3921,6 +3967,8 @@ def dispatch(command: str, args: list[str]) -> Any:
             args[0] if len(args) > 0 else "",
             args[1] if len(args) > 1 else "",
         )
+    if command == "intel-radar":
+        return _intel_radar(args[0] if args else "")
     if command == "longbridge-quote":
         return _longbridge_quote(args[0] if args else "")
     if command == "intraday-snapshot":
