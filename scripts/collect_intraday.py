@@ -767,7 +767,7 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument(
         "--provider",
         choices=["eastmoney_akshare", "longbridge", "auto"],
-        default="eastmoney_akshare",
+        default="longbridge",
         help="provider 名（auto=按覆盖 manifest 路由 longbridge↔eastmoney）",
     )
     p.add_argument("--profile-version", default=None,

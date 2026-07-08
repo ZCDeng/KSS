@@ -115,7 +115,10 @@ def list_cron() -> dict:
 
 @mcp.tool
 def get_data_catalog() -> dict:
-    """全量数据资产字典：每个数据集的 列/含义/粒度/最近日期/路径（自动反射 schema + 手维含义 overlay）。"""
+    """全量数据资产字典：每个数据集的 列/含义/粒度/最近日期/路径（自动反射 schema + 手维含义 overlay）。
+
+五维分析框架索引（U7）：估值→get_stock/get_perilla_enrichment、资金面→get_longbridge_quote/get_sector_rotation、财报质量→get_stock/get_perilla_enrichment、行业景气→get_sector_rotation/get_theme_leaders、事件催化与风险→get_report/research_search。
+    """
     return _call("data-catalog")
 
 
