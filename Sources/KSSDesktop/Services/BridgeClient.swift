@@ -545,7 +545,9 @@ struct BridgeClient {
             fm.fileExists(atPath: url.appending(path: "scripts/kss_app_bridge.py").path)
         }
 
-        // ---- projectRoot（KTD7 三层：dev env > 同步代码 override > 面包屑/bundle baseline）----
+        // ---- projectRoot（KTD7 三层：dev env > 同步代码 override > bundle Resources > 面包屑 > 兜底）----
+        // bundle 模式下：只要 Resources 内嵌 scripts/ 存在，就优先用 bundle 代码，避免 breadcrumb
+        // 残留指向旧主仓库导致 app 升级后仍读旧代码。
         let envScripts = ProcessInfo.processInfo.environment["KSS_SCRIPTS_ROOT"]
         var project: URL?
         if let envProject { project = URL(fileURLWithPath: envProject) }            // dev 硬分支
@@ -553,7 +555,13 @@ struct BridgeClient {
                 hasBridge(URL(fileURLWithPath: envScripts)) {
             project = URL(fileURLWithPath: envScripts)
         }
-        else if let crumb { project = URL(fileURLWithPath: crumb.projectRoot) }     // bundle 面包屑
+        else if !isDevMode,
+                let resources = Bundle.main.resourceURL,
+                hasBridge(resources) {
+            // bundle 模式：优先使用 .app/Resources 内嵌脚本，与 app 版本严格对齐。
+            project = resources
+        }
+        else if let crumb { project = URL(fileURLWithPath: crumb.projectRoot) }     // bundle 面包屑（fallback）
         else {
             // bundle baseline：scripts 随 .app 进 Resources。
             let resources = Bundle.main.resourceURL
