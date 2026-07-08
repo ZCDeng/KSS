@@ -139,10 +139,11 @@ struct HotspotRotationHistoryItem: Codable, Hashable, Identifiable {
 
 /// 舆情热点：bridge `news-digest [DATE] [SCENE]` 顶层响应。
 /// available=false 时 selected=nil（空态）；index 供日期/场景选择列表。
-struct NewsDigestResponse: Codable, Hashable {
+struct NewsDigestResponse: Codable {
     var available: Bool
     var index: [NewsDigestIndexEntry]
     var selected: NewsDigest?
+    var tracks: [IntelTrack]?  // U2 multi-track grouping (U1 extended bridge)
 }
 
 /// 舆情热点：可选档案条目（日期 + 场景），newest first。
@@ -965,7 +966,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .trends: return "趋势观察"
         case .runbook: return "任务"
         case .reviews: return "AI复盘"
-        case .newsDigest: return "舆情热点"
+        case .newsDigest: return "资讯雷达"
         case .backtests: return "AI回测"
         case .stocks: return "股票池"
         case .aiChat: return "Seesaw"
@@ -982,7 +983,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .trends: return "calendar"
         case .runbook: return "terminal"
         case .reviews: return "doc.text.magnifyingglass"
-        case .newsDigest: return "newspaper"
+        case .newsDigest: return "antenna.radiowaves.left.and.right"
         case .backtests: return "chart.xyaxis.line"
         case .stocks: return "list.bullet.rectangle"
         case .aiChat: return "scale.3d"
@@ -997,7 +998,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
 
     /// 暂时隐藏的 section：代码保留、不上侧栏。舆情 digest 未达预期,等改进方案定了再恢复
     /// （从本数组移除即重新显示）。enum case / NewsDigestView / ContentView 路由均完整保留。
-    static let hidden: [WorkspaceSection] = [.newsDigest]
+    static let hidden: [WorkspaceSection] = []
 
     /// 可被用户拖拽重排的 section（enum 原序，去掉置顶项与隐藏项）。
     static var reorderable: [WorkspaceSection] {
@@ -1173,6 +1174,33 @@ struct PendingWriteConfirm: Identifiable {
     let effect: String
     let argsText: String
     let contextLine: String      // loop 最近一句作上下文
+}
+
+// MARK: - U2 资讯雷达模型（bridge news-digest U1 扩展多赛道字段）
+
+/// 赛道（多赛道分组新闻源）。
+struct IntelTrack: Codable, Equatable {
+    var key: String
+    var name: String
+    var accent: String?
+    var items: [IntelItem]?
+    var total: Int?
+}
+
+/// 赛道内单条资讯。
+struct IntelItem: Codable, Equatable, Identifiable {
+    var id: String { url ?? title }
+    var title: String
+    var url: String?
+    var time: String?
+    var source: String?
+    var summary: String?
+}
+
+/// Dashboard 资讯摘要条带（U3 轻量数据）。
+struct IntelSummary: Codable, Equatable {
+    var updatedTrackCount: Int
+    var recentTitles: [String]
 }
 
 // MARK: - Longbridge 实时（U1）—— bridge longbridge-quote / intraday-snapshot / intraday-bars / trading-hours 输出

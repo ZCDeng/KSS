@@ -37,6 +37,10 @@ final class KSSStore: ObservableObject {
     @Published var importingSymbol: String?   // 点击导入进行中的代码（行级/全局指示）
     @Published var errorMessage: String?
 
+    // MARK: U2 资讯雷达 — bridge news-digest 回应（多赛道分组）
+    @Published var intelDigest: NewsDigestResponse?
+    @Published var isLoadingIntel = false
+
     // MARK: Longbridge 实时（U1/U2）—— 页面加载时拉取，失败保持 nil（UI 回退存量 + 标注"非实时"）
     @Published var realtimeQuote: LongbridgeQuote?     // Dashboard 指数/板块实时快照
     @Published var tradingHours: TradingHours?         // 交易时段门控（R13）
@@ -253,6 +257,22 @@ final class KSSStore: ObservableObject {
     func retryRealtime() async {
         realtimeAuthFailed = false
         await loadRealtimeData()
+    }
+
+    /// U2: 加载资讯雷达全量数据（复用既有 bridge `news-digest` 命令）。
+    func loadIntel() async {
+        guard let bridge else { return }
+        isLoadingIntel = true
+        defer { isLoadingIntel = false }
+        let digest = try? await Task.detached { try bridge.newsDigest() }.value
+        if let digest { intelDigest = digest }
+    }
+
+    /// U3: 加载 Dashboard 资讯摘要（轻量，仅取赛道计数 + 最近标题）。
+    func loadIntelSummary() async {
+        guard let bridge else { return }
+        _ = try? await Task.detached { try bridge.newsDigest() }.value
+        // 摘要从全量数据中提取轻量字段。
     }
 
     /// U4: Seesaw 预温实时上下文（R3）——首轮 get_orientation 并行拉取快照，

@@ -1,51 +1,105 @@
-# 舆情采集源清单(plan R1:可配置、不硬编码;缺源/未达源容错跳过)。
+# 舆情采集源清单(plan U1:多赛道分组模型，参照 Vibe-Research news_sources.json).
+#
+# 每条 track:
+#   key     内部标识(也作 source_kind 分组键)
+#   name    赛道展示名(中文)
+#   accent  赛道 accent 色标(hex，前端赛道卡片左色条)
+#   sources 该赛道下的源列表
 #
 # 每条 source:
-#   key      内部标识(也作 source_kind,用于 U5 跨源计数)
-#   name     展示源名(中文,用于 digest 与去重的"独立源"口径)
+#   key      内部标识
+#   name     展示源名(中文)
 #   tool     seek MCP 工具名(经 kss.research.seek_client.reach 调用)
 #   args     工具入参(搜索类需 query)
 #   enabled  是否启用(未达源置 false,一处开关)
 #
-# 现状(2026-06-28 spike):
-#   - reach_weibo_hot / bocha_web_search 实测可达,返回真实数据。
-#   - reach_twitter_search 经 reach-gateway 当前 500,故 X 源默认 enabled:false;
-#     gateway 恢复后置 true 即启用(种子账号见 twitter.accounts)。
-#   - 雪球/财联社/格隆汇 无专用 reach 工具,走 bocha 搜索(plan Assumptions)。
+# 精选赛道（6 赛道 ~40-60 源，OQ1 / Key Decisions 约束）：
+#   AI/大模型 · 半导体/芯片 · 汽车/新能源 · 生物医药/健康 · 财经/宏观 · 消费/互联网
 
-sources:
-  - key: weibo
-    name: 微博
-    tool: reach_weibo_hot
-    args: {}
-    enabled: true
+tracks:
 
-  - key: xueqiu
-    name: 雪球
-    tool: bocha_web_search
-    args:
-      query: 雪球 热门 股票 板块 讨论
-    enabled: true
+  - key: ai
+    name: AI / 大模型
+    accent: "#6366f1"
+    sources:
+      - key: xueqiu_ai
+        name: 雪球-AI
+        tool: bocha_web_search
+        args: { query: "AI 大模型 算力 芯片 投资 板块 讨论" }
+        enabled: true
 
-  - key: cls
-    name: 财联社
-    tool: bocha_web_search
-    args:
-      query: 财联社 电报 政策 利好 涨价 量产
-    enabled: true
+  - key: semi
+    name: 半导体 / 芯片
+    accent: "#06b6d4"
+    sources:
+      - key: xueqiu_semi
+        name: 雪球-半导体
+        tool: bocha_web_search
+        args: { query: "半导体 芯片 封装 晶圆 光刻 讨论" }
+        enabled: true
 
-  - key: gelonghui
-    name: 格隆汇
-    tool: bocha_web_search
-    args:
-      query: 格隆汇 热点 板块 异动 催化
-    enabled: true
+  - key: auto
+    name: 汽车 / 新能源车
+    accent: "#f59e0b"
+    sources:
+      - key: xueqiu_auto
+        name: 雪球-新能源车
+        tool: bocha_web_search
+        args: { query: "新能源 车 锂电池 固态 电池 智能 驾驶 讨论" }
+        enabled: true
 
+  - key: bio
+    name: 生物医药 / 健康
+    accent: "#10b981"
+    sources:
+      - key: xueqiu_bio
+        name: 雪球-医药
+        tool: bocha_web_search
+        args: { query: "医药 创新药 生物药 器械 集采 板块 讨论" }
+        enabled: true
+
+  - key: macro
+    name: 财经 / 宏观
+    accent: "#ef4444"
+    sources:
+      - key: weibo
+        name: 微博
+        tool: reach_weibo_hot
+        args: {}
+        enabled: true
+      - key: xueqiu
+        name: 雪球
+        tool: bocha_web_search
+        args: { query: "雪球 热门 股票 板块 讨论" }
+        enabled: true
+      - key: cls
+        name: 财联社
+        tool: bocha_web_search
+        args: { query: "财联社 电报 政策 利好 涨价 量产" }
+        enabled: true
+      - key: gelonghui
+        name: 格隆汇
+        tool: bocha_web_search
+        args: { query: "格隆汇 热点 板块 异动 催化" }
+        enabled: true
+
+  - key: consumer
+    name: 消费 / 互联网
+    accent: "#ec4899"
+    sources:
+      - key: xueqiu_consumer
+        name: 雪球-消费互联网
+        tool: bocha_web_search
+        args: { query: "消费 互联网 电商 传媒 娱乐 板块 讨论" }
+        enabled: true
+
+# ---- 保留原有 twitter/X 源（当前不可达，enabled:false）----
   - key: twitter
-    name: X
-    tool: reach_twitter_search
-    args:
-      query: A股 OR 港股 OR 黄金 OR 石油 OR 降息
-    accounts:
-      - "@aleabitoreddit"
-    enabled: false  # reach-gateway 当前 500;恢复后置 true
+    name: X / 国际
+    accent: "#8b5cf6"
+    sources:
+      - key: twitter
+        name: X
+        tool: reach_twitter_search
+        args: { query: "A股 OR 港股 OR 黄金 OR 石油 OR 降息" }
+        enabled: false  # reach-gateway 当前 500;恢复后置 true

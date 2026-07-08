@@ -247,12 +247,6 @@ struct ContentView: View {
                     onSelectSectorRotationDate: { date in Task { await store.loadSectorRotation(date: date) } },
                     onOpenExternally: { path in store.openReportInMarkEdit(path: path) }
                 )
-            case .newsDigest:
-                NewsDigestView(
-                    newsDigest: store.newsDigest,
-                    isLoadingNewsDigest: store.isLoadingNewsDigest,
-                    onSelectNewsDigest: { date, scene in Task { await store.loadNewsDigest(date: date, scene: scene) } }
-                )
             case .backtests:
                 BacktestsView(
                     reports: snapshot.backtests,
@@ -278,6 +272,9 @@ struct ContentView: View {
                 )
             case .aiChat:
                 AIChatView()
+            case .newsDigest:
+                IntelView()
+                    .environmentObject(store)
             case .architecture:
                 ArchitectureView()
             }

@@ -1224,7 +1224,7 @@ struct LabeledMetric: View {
 /// - 交易时段 + 实时失败: 灰色时钟 + "非实时" + 重试按钮
 /// - auth_failed: 红色时钟 + "实时源未连接" + 重试按钮
 /// - 非交易时段: 灰色时钟 + "非交易时段"
-private struct RealtimeFreshnessBadge: View {
+struct RealtimeFreshnessBadge: View {
     @Environment(\.kssTheme) private var theme
     var quote: LongbridgeQuote?
     var hours: TradingHours?
