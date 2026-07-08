@@ -261,20 +261,27 @@ final class KSSStore: ObservableObject {
 
     /// U2: 加载资讯雷达全量数据（bridge `intel-radar` 命令 → 12 赛道 RSS）。
     func loadIntel() async {
-        guard let bridge else { return }
-        isLoadingIntel = true
-        defer { isLoadingIntel = false }
-        let digest = try? await Task.detached { try bridge.intelRadar() }.value
-        if let digest { intelDigest = digest }
+        await loadIntelRadar(force: false)
     }
 
     /// 强制刷新资讯雷达（实时抓 RSS，≈20-40s）。
     func refreshIntelRadar() async {
+        await loadIntelRadar(force: true)
+    }
+
+    /// 统一入口：force=false 读缓存，force=true 实时抓取。
+    private func loadIntelRadar(force: Bool) async {
         guard let bridge else { return }
         isLoadingIntel = true
         defer { isLoadingIntel = false }
-        let digest = try? await Task.detached { try bridge.intelRadar(force: true) }.value
-        if let digest { intelDigest = digest }
+        do {
+            let digest = try await Task.detached {
+                try bridge.intelRadar(force: force)
+            }.value
+            intelDigest = digest
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     /// U3: 加载 Dashboard 资讯摘要（轻量，仅取赛道计数 + 最近标题）。

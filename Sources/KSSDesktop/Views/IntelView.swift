@@ -7,7 +7,6 @@ struct IntelView: View {
     @Environment(\.kssTheme) private var theme
     @EnvironmentObject private var store: KSSStore
     @State private var activeTrack: String = "tech"
-    @State private var errorMessage: String? = nil
 
     private var digest: NewsDigestResponse? { store.intelDigest }
     private var tracks: [IntelTrack] { digest?.tracks ?? [] }
@@ -22,20 +21,21 @@ struct IntelView: View {
                         PageTitle("资讯雷达", subtitle: "12 赛道全球 RSS 资讯 · Investment News")
                         Spacer()
                         if hasData {
+                            let totalSources = digest?.stats?.totalSources ?? 108
                             StatusBadge(icon: "antenna.radiowaves.left.and.right",
-                                        text: "\(digest?.stats?.totalSources ?? 108) 源", tint: theme.accent)
+                                        text: "\(totalSources) 源", tint: theme.accent)
                         }
                     }
 
                     // ---- 统计栏 + 刷新 ----
                     statsRefreshRow
 
-                    // ---- 错误横幅 ----
-                    if let err = errorMessage {
+                    // ---- 错误横幅（读取 store 全局 errorMessage）----
+                    if let err = store.errorMessage {
                         HStack(spacing: 8) {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .font(.system(size: 12))
-                            Text(err).font(.system(size: 12.5))
+                            Text(err).font(.system(size: 12.5)).lineLimit(4)
                         }
                         .foregroundStyle(theme.down)
                         .padding(10)
@@ -50,11 +50,7 @@ struct IntelView: View {
 
                     // ---- 内容区 ----
                     if store.isLoadingIntel {
-                        VStack(spacing: 12) {
-                            ProgressView()
-                            Text("加载资讯…").font(.system(size: 12.5)).foregroundStyle(theme.textSecondary)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 200)
+                        loadingState
                     } else if tracks.isEmpty && !hasData {
                         emptyState
                     } else if let cur = tracks.first(where: { $0.key == activeTrack }) {
@@ -70,6 +66,22 @@ struct IntelView: View {
         .onAppear { Task { await store.loadIntel() } }
     }
 
+    // MARK: - 加载态
+
+    private var loadingState: some View {
+        VStack(spacing: 14) {
+            ProgressView().scaleEffect(1.2)
+            Text("正在抓取 12 赛道 RSS 资讯…")
+                .font(.system(size: 13.5, weight: .medium))
+                .foregroundStyle(theme.textSecondary)
+            Text("约 20–40 秒，108 个公开源并发获取")
+                .font(.system(size: 11.5, design: .monospaced))
+                .foregroundStyle(theme.textSecondary.opacity(0.5))
+        }
+        .frame(maxWidth: .infinity, minHeight: 240)
+        .kssCard(.filled, padding: 32)
+    }
+
     // MARK: - 统计 + 刷新行
 
     private var statsRefreshRow: some View {
@@ -78,16 +90,16 @@ struct IntelView: View {
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundStyle(theme.textSecondary)
             Spacer()
-            Button {
-                errorMessage = nil
+            Button(action: {
+                store.errorMessage = nil
                 Task { await store.refreshIntelRadar() }
-            } label: {
+            }) {
                 HStack(spacing: 5) {
                     if store.isLoadingIntel {
-                        ProgressView().scaleEffect(0.7)
-                    } else {
-                        Image(systemName: "arrow.clockwise").font(.system(size: 11, weight: .bold))
+                        ProgressView().scaleEffect(0.75)
                     }
+                    Image(systemName: store.isLoadingIntel ? "" : "arrow.clockwise")
+                        .font(.system(size: 11, weight: .bold))
                     Text(store.isLoadingIntel ? "抓取中…" : "刷新")
                         .font(.system(size: 12.5, weight: .semibold))
                 }
@@ -102,7 +114,8 @@ struct IntelView: View {
 
     private var statLine: String {
         guard hasData else {
-            return "\(tracks.count) 赛道 · \(digest?.stats?.totalSources ?? 108) 个公开源 · 点刷新拉取"
+            let total = digest?.stats?.totalSources ?? 108
+            return "\(tracks.count) 赛道 · \(total) 个公开源 · 点刷新拉取"
         }
         let totalItems = tracks.reduce(0) { $0 + ($1.items?.count ?? 0) }
         let days = digest?.recentDays ?? 7
@@ -116,7 +129,9 @@ struct IntelView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(tracks, id: \.key) { track in
-                    Button { withAnimation(.easeInOut(duration: 0.15)) { activeTrack = track.key } } label: {
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.15)) { activeTrack = track.key }
+                    }) {
                         trackPillLabel(track)
                     }
                     .buttonStyle(.plain)
@@ -156,7 +171,6 @@ struct IntelView: View {
     private func trackNewsList(_ cur: IntelTrack) -> some View {
         let items = cur.items ?? []
         return VStack(alignment: .leading, spacing: 0) {
-            // 赛道标题条
             HStack(spacing: 8) {
                 let pillColor = parseHexColor(cur.accent) ?? theme.accent
                 RoundedRectangle(cornerRadius: 2)
@@ -225,10 +239,6 @@ struct IntelView: View {
                     .foregroundStyle(theme.textBody)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Image(systemName: "arrow.up.right")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(theme.textSecondary.opacity(0))
-                    .opacity(0)
             } else {
                 Text(item.title)
                     .font(.system(size: 13))
@@ -252,15 +262,17 @@ struct IntelView: View {
             Text("点击上方「刷新」拉取 12 赛道 RSS 资讯（约 20–40 秒）")
                 .font(.system(size: 12.5))
                 .foregroundStyle(theme.textSecondary.opacity(0.6))
-            Button("立即拉取") {
-                errorMessage = nil
+            Button(action: {
+                store.errorMessage = nil
                 Task { await store.refreshIntelRadar() }
+            }) {
+                Text("立即拉取")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(theme.accent)
+                    .padding(.horizontal, 16).padding(.vertical, 7)
+                    .background(theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: theme.chipRadius))
             }
             .buttonStyle(.plain)
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(theme.accent)
-            .padding(.horizontal, 16).padding(.vertical, 7)
-            .background(theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: theme.chipRadius))
             .padding(.top, 4)
         }
         .frame(maxWidth: .infinity)
@@ -268,20 +280,8 @@ struct IntelView: View {
     }
 }
 
-// MARK: - 合规声明
-
-extension IntelView {
-    /// 底部合规声明（可在页面底部加，当前简化为空——完整版由外部调用方渲染）。
-    static var disclaimer: some View {
-        Text("只做公开信息聚合、不做推荐、不预测涨跌。已按合规词表过滤。")
-            .font(.system(size: 10.5))
-            .foregroundStyle(.secondary)
-    }
-}
-
 // MARK: - Hex Color Parsing
 
-/// 解析 `#rrggbb` 十六进制颜色字符串为 SwiftUI `Color`，失败返回 nil。
 private func parseHexColor(_ hex: String?) -> Color? {
     guard let hex, hex.hasPrefix("#"), hex.count == 7 else { return nil }
     let r = hex.dropFirst(1).prefix(2)
