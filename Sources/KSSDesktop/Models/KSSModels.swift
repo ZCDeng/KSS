@@ -445,11 +445,45 @@ struct PerillaUsPeer: Codable, Hashable {
 /// 总览第一行市场速览：A500ETF 当日行情 + 北向资金净流入。
 struct MarketStrip: Codable, Hashable {
     var date: String?
-    var northMoney: Double?    // 万元
+    var northMoney: Double?
     var northDate: String?
     var etfs: [ETFQuote]
     var indices: [IndexQuote]?
-    var indexBoard: [IndexQuote]?   // 总览底部 13 个常用指数
+    var indexBoard: [IndexQuote]?
+    var limitBoard: LimitBoard?      // U4 短线情绪（连板梯队/封板率）
+    var turnoverTop: [TurnoverTop]?  // U5a 成交额 TOP20
+    var globalIndices: [GlobalIndex]? // U5b 全球隔夜指数
+}
+
+struct LimitBoard: Codable, Hashable {
+    var maxBoard: Int?
+    var tiers: [LimitTier]?
+    var total: Int?
+    var sealRate: Double?
+    var breakRate: Double?
+}
+
+struct LimitTier: Codable, Hashable {
+    var level: Int
+    var count: Int
+}
+
+struct TurnoverTop: Codable, Hashable, Identifiable {
+    var id: String { code ?? "" }
+    var code: String?
+    var name: String?
+    var close: Double?
+    var pctChange: Double?
+    var volume: Double?
+    var amount: Double?
+}
+
+struct GlobalIndex: Codable, Hashable {
+    var code: String?
+    var name: String?
+    var close: Double?
+    var pctChange: Double?
+    var date: String?
 }
 
 struct ETFQuote: Codable, Hashable, Identifiable {

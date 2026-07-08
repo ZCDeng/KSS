@@ -2568,6 +2568,15 @@ def snapshot() -> dict[str, Any]:
     stock_by_symbol = {item["symbol"]: item for item in stocks}
     recommendation_date, recs = _recommendations(names, stock_by_symbol)
     latest_dates = [item["latestDate"] for item in stocks if item.get("latestDate")]
+    # U4-U5: 每日复盘新增短线情绪/成交TOP20/全球隔夜指数。
+    strip = _market_strip()
+    limit_board = _limit_board()
+    turnover_top = _turnover_top20() if limit_board is not None else None
+    global_idx = _global_indices()
+    if strip is not None:
+        strip["limitBoard"] = limit_board
+        strip["turnoverTop"] = turnover_top
+        strip["globalIndices"] = global_idx
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "projectRoot": str(PROJECT_ROOT),
@@ -2585,7 +2594,7 @@ def snapshot() -> dict[str, Any]:
         "sectorReviews": _sector_reviews(),
         "sectorRotationHistory": _sector_rotation_history(),
         "latestSectorRotation": _latest_sector_rotation(),
-        "marketStrip": _market_strip(),
+        "marketStrip": strip,
         "pythonEnvironment": _python_env_status(),
         "recentTaskRuns": _task_history(),
     }

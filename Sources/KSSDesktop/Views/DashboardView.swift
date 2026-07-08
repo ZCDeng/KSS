@@ -61,6 +61,17 @@ struct DashboardView: View {
 
                     mainRow(contentW: contentW)
 
+                    // U4-U5: 短线情绪 + 成交TOP20 + 全球指数（R6/R7/R8）
+                    if let lb = snapshot.marketStrip?.limitBoard {
+                        LimitBoardCard(board: lb)
+                    }
+                    if let top = snapshot.marketStrip?.turnoverTop, !top.isEmpty {
+                        TurnoverTopTable(items: top)
+                    }
+                    if let gi = snapshot.marketStrip?.globalIndices, !gi.isEmpty {
+                        GlobalIndicesStrip(indices: gi)
+                    }
+
                     if let picks = snapshot.perillaPicks, !picks.isEmpty {
                         SectionHeader("紫苏叶选股", caption: "🌿 供应链护城河 · 核心(全球≤2家) / 国产替代主线(三家寡头) 分层 · 点击看个股")
                         PerillaPicksTable(items: picks, onSelect: onSelectSymbol)
@@ -1277,5 +1288,137 @@ struct RealtimeFreshnessBadge: View {
         let f = DateFormatter()
         f.dateFormat = "HH:mm"
         return "更新于 \(f.string(from: date))"
+    }
+}
+
+// MARK: - U4 LimitBoardCard（短线情绪：连板梯队 + 封板率）
+
+private struct LimitBoardCard: View {
+    @Environment(\.kssTheme) private var theme
+    var board: LimitBoard
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader("短线情绪", caption: "连板梯队 / 封板率 — 公开涨停板数据")
+            HStack(spacing: 16) {
+                // 连板梯队数字链
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("最高连板").font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                    Text("\(board.maxBoard ?? 0) 板")
+                        .font(.system(size: 22, weight: .bold, design: .monospaced))
+                        .foregroundStyle(theme.accent)
+                }
+                Divider().frame(height: 32).overlay(theme.hairline)
+                // 封板率 / 炸板率
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("封板率").font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                    Text("\(String(format: "%.0f", board.sealRate ?? 0))%")
+                        .font(.system(size: 16, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(theme.accent)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("炸板率").font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                    Text("\(String(format: "%.0f", board.breakRate ?? 0))%")
+                        .font(.system(size: 16, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(theme.down)
+                }
+                Spacer()
+                // 连板梯队
+                if let tiers = board.tiers, !tiers.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(tiers, id: \.level) { t in
+                            HStack(spacing: 2) {
+                                Text("\(t.level)板").font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                                Text("\(t.count)").font(.system(size: 13, weight: .bold, design: .monospaced)).foregroundStyle(theme.textPrimary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .background(theme.surface, in: RoundedRectangle(cornerRadius: theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
+    }
+}
+
+// MARK: - U5 TurnoverTopTable（全市场成交额 TOP20）
+
+private struct TurnoverTopTable: View {
+    @Environment(\.kssTheme) private var theme
+    var items: [TurnoverTop]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader("成交额 TOP20", caption: "全市场按成交额降序 — 客观公开数据")
+            // 紧凑表格
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    Text("代码").font(.system(size: 11)).foregroundStyle(theme.textSecondary).frame(width: 80, alignment: .leading)
+                    Text("名称").font(.system(size: 11)).foregroundStyle(theme.textSecondary).frame(width: 64, alignment: .leading)
+                    Text("收盘").font(.system(size: 11)).foregroundStyle(theme.textSecondary).frame(width: 58, alignment: .trailing)
+                    Text("涨跌").font(.system(size: 11)).foregroundStyle(theme.textSecondary).frame(width: 52, alignment: .trailing)
+                    Text("成交额").font(.system(size: 11)).foregroundStyle(theme.textSecondary).frame(maxWidth: .infinity, alignment: .trailing)
+                }.padding(.horizontal, 10).padding(.vertical, 6)
+                Divider().overlay(theme.hairline)
+                ForEach(items.prefix(20)) { item in
+                    HStack(spacing: 8) {
+                        Text(item.code ?? "").font(.system(size: 11, design: .monospaced)).foregroundStyle(theme.textPrimary).frame(width: 80, alignment: .leading)
+                        Text(item.name ?? "").font(.system(size: 11)).foregroundStyle(theme.textPrimary).frame(width: 64, alignment: .leading).lineLimit(1)
+                        Text(item.close.map { String(format: "%.2f", $0) } ?? "—").font(.system(size: 11, design: .monospaced)).foregroundStyle(theme.textPrimary).frame(width: 58, alignment: .trailing)
+                        Text(item.pctChange.map { String(format: "%+.1f%%", $0) } ?? "—")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(theme.signColor(item.pctChange))
+                            .frame(width: 52, alignment: .trailing)
+                        Text(item.amount.map { String(format: "%.1f 亿", $0 / 1e8) } ?? "—")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(theme.textPrimary)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    Divider().overlay(theme.hairline)
+                }
+            }
+        }
+        .padding(14)
+        .background(theme.surface, in: RoundedRectangle(cornerRadius: theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
+    }
+}
+
+// MARK: - U5 GlobalIndicesStrip（全球隔夜指数）
+
+private struct GlobalIndicesStrip: View {
+    @Environment(\.kssTheme) private var theme
+    var indices: [GlobalIndex]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader("全球市场", caption: "隔夜美股/港股最新收盘 — 客观公开数据")
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 16) {
+                    ForEach(indices, id: \.code) { idx in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(idx.name ?? idx.code ?? "")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(theme.textPrimary)
+                            Text(idx.close.map { String(format: "%.2f", $0) } ?? "—")
+                                .font(.system(size: 16, weight: .bold, design: .monospaced))
+                                .foregroundStyle(theme.textPrimary)
+                            Text(idx.pctChange.map { String(format: "%+.1f%%", $0) } ?? "—")
+                                .font(.system(size: 13, design: .monospaced))
+                                .foregroundStyle(theme.signColor(idx.pctChange))
+                        }
+                        .padding(12)
+                        .frame(width: 140, alignment: .leading)
+                        .background(theme.surface, in: RoundedRectangle(cornerRadius: theme.cardRadius))
+                        .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .background(theme.surface, in: RoundedRectangle(cornerRadius: theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
     }
 }
