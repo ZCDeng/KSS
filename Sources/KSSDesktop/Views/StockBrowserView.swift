@@ -22,6 +22,13 @@ struct StockBrowserView: View {
     var onToggleWatchlist: (String) -> Void
     /// P1: BridgeClient from store（不在 view 内构造第二条 sidecar）
     var bridge: BridgeClient? = nil
+    // 实时：选中股 quote + 四态 badge
+    var realtimeQuotes: [String: LongbridgeQuote] = [:]
+    var tradingHours: TradingHours? = nil
+    var realtimeAuthFailed: Bool = false
+    var realtimeUpdatedAt: Date? = nil
+    var onRetryRealtime: () -> Void = {}
+    var onLoadRealtimeForSymbol: (String) -> Void = { _ in }
 
     @State private var sort: StockSort = .symbol
     @State private var ascending = true
@@ -143,8 +150,15 @@ struct StockBrowserView: View {
                         isWatched: watchlist.contains(detail.symbol),
                         onToggleWatchlist: { onToggleWatchlist(detail.symbol) },
                         onZoom: { showChartFullscreen = true },
-                        bridge: bridge
+                        bridge: bridge,
+                        liveQuote: realtimeQuotes[detail.symbol.uppercased()],
+                        tradingHours: tradingHours,
+                        realtimeAuthFailed: realtimeAuthFailed,
+                        realtimeUpdatedAt: realtimeUpdatedAt,
+                        onRetryRealtime: onRetryRealtime
                     )
+                    .onAppear { onLoadRealtimeForSymbol(detail.symbol) }
+                    .onChange(of: detail.symbol) { _, sym in onLoadRealtimeForSymbol(sym) }
                 } else {
                     Text("选择一只股票查看详情")
                         .font(.system(size: 14))
@@ -180,6 +194,11 @@ struct StockDetailView: View {
     var onZoom: () -> Void
     /// P1: BridgeClient 注入（不在 view 内构造——共用 store 的单桥模式）
     var bridge: BridgeClient? = nil
+    var liveQuote: LongbridgeQuote? = nil
+    var tradingHours: TradingHours? = nil
+    var realtimeAuthFailed: Bool = false
+    var realtimeUpdatedAt: Date? = nil
+    var onRetryRealtime: () -> Void = {}
     // U3 分钟 K 线模式（R7/R15）
     @State private var chartMode: ChartDataMode = .daily
     @State private var intradayBars: IntradayBars? = nil
@@ -188,6 +207,15 @@ struct StockDetailView: View {
 
     private var analysis: StockAnalysis {
         StockAnalysis(points: detail.history, latest: detail.latest)
+    }
+
+    private var liveClose: (close: Double, pct: Double, isLive: Bool)? {
+        guard let latest = detail.latest, let close = latest.close else { return nil }
+        return RealtimeMerge.applyLive(
+            close: close,
+            pct: latest.pctChange ?? 0,
+            quote: liveQuote
+        )
     }
 
     var body: some View {
@@ -203,17 +231,39 @@ struct StockDetailView: View {
                             .foregroundStyle(theme.textSecondary)
                     }
                     Spacer()
-                    Button(action: onToggleWatchlist) {
-                        Label(isWatched ? "取消自选" : "加自选", systemImage: isWatched ? "star.fill" : "star")
-                            .font(.system(size: 13, weight: .semibold))
+                    VStack(alignment: .trailing, spacing: 8) {
+                        RealtimeStatusBadge(
+                            hasLiveFields: liveClose?.isLive == true,
+                            hours: tradingHours,
+                            authFailed: realtimeAuthFailed,
+                            updatedAt: realtimeUpdatedAt,
+                            onRetry: onRetryRealtime
+                        )
+                        Button(action: onToggleWatchlist) {
+                            Label(isWatched ? "取消自选" : "加自选", systemImage: isWatched ? "star.fill" : "star")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .tint(theme.accent)
                     }
-                    .tint(theme.accent)
                 }
 
-                if let latest = detail.latest {
+                if let latest = detail.latest, let snapClose = latest.close {
+                    let live = liveClose ?? (close: snapClose, pct: latest.pctChange ?? 0, isLive: false)
                     HStack(spacing: 10) {
-                        StatTile(title: "收盘", value: KSSFormat.number(latest.close))
-                        StatTile(title: "涨跌", value: KSSFormat.pctPoints(latest.pctChange), tint: theme.signColor(latest.pctChange))
+                        LiveStatTile(
+                            title: live.isLive ? "现价" : "收盘",
+                            value: live.close,
+                            text: KSSFormat.number(live.close),
+                            tint: theme.signColor(live.pct),
+                            isLive: live.isLive
+                        )
+                        LiveStatTile(
+                            title: "涨跌",
+                            value: live.pct,
+                            text: KSSFormat.pctPoints(live.pct),
+                            tint: theme.signColor(live.pct),
+                            isLive: live.isLive
+                        )
                         StatTile(title: "MA5 / MA20", value: "\(KSSFormat.number(latest.ma5)) / \(KSSFormat.number(latest.ma20))")
                         StatTile(title: "成交额", value: KSSFormat.compactMoney(latest.amount))
                     }

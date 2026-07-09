@@ -18,6 +18,17 @@ struct ContentView: View {
             .filter { !$0.isEmpty }
     }
 
+    /// 价格页：完整四态 badge（页内）。其余页仅工具栏 status dot。
+    /// 推荐/主题有表价但本轮未做字段级 overlay → 走 status dot，避免假「实时」。
+    private static let priceSections: Set<WorkspaceSection> = [
+        .dashboard, .stocks, .watchlist
+    ]
+
+    private var toolbarHasLive: Bool {
+        !store.realtimeQuotesBySymbol.isEmpty
+            && store.realtimeQuotesBySymbol.values.contains(where: { $0.isLive })
+    }
+
     /// 用户自定义导航顺序（总览置顶），由 sidebarOrder 解析。
     private var orderedSections: [WorkspaceSection] {
         WorkspaceSection.ordered(from: sidebarOrder)
@@ -75,6 +86,16 @@ struct ContentView: View {
                             if store.isLoading {
                                 ProgressView()
                                     .controlSize(.small)
+                            }
+                            // 非价格页：工具栏状态点；价格页自带完整 badge（今日看盘/个股等）
+                            if !Self.priceSections.contains(store.selectedSection) {
+                                RealtimeStatusDot(
+                                    hasLiveFields: toolbarHasLive,
+                                    hours: store.tradingHours,
+                                    authFailed: store.realtimeAuthFailed,
+                                    updatedAt: store.realtimeUpdatedAt
+                                )
+                                .padding(.trailing, 4)
                             }
                             themeMenu
                             Button {
@@ -175,6 +196,7 @@ struct ContentView: View {
                     onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } },
                     onOpenSection: { section in store.selectedSection = section },
                     realtimeQuote: store.realtimeQuote,
+                    realtimeQuotes: store.realtimeQuotesBySymbol,
                     tradingHours: store.tradingHours,
                     realtimeAuthFailed: store.realtimeAuthFailed,
                     realtimeUpdatedAt: store.realtimeUpdatedAt,
@@ -196,7 +218,13 @@ struct ContentView: View {
                     searchText: $searchText,
                     onSelect: { symbol in Task { await store.selectStock(symbol, navigate: false) } },
                     onToggleWatchlist: toggleWatchlist,
-                    bridge: store.bridge
+                    bridge: store.bridge,
+                    realtimeQuotes: store.realtimeQuotesBySymbol,
+                    tradingHours: store.tradingHours,
+                    realtimeAuthFailed: store.realtimeAuthFailed,
+                    realtimeUpdatedAt: store.realtimeUpdatedAt,
+                    onRetryRealtime: { Task { await store.retryRealtime() } },
+                    onLoadRealtimeForSymbol: { sym in Task { await store.loadRealtimeData(symbol: sym) } }
                 )
             case .runbook:
                 RunbookView(
@@ -268,7 +296,13 @@ struct ContentView: View {
                     searchText: $searchText,
                     onSelect: { symbol in Task { await store.selectStock(symbol, navigate: false) } },
                     onToggleWatchlist: toggleWatchlist,
-                    bridge: store.bridge
+                    bridge: store.bridge,
+                    realtimeQuotes: store.realtimeQuotesBySymbol,
+                    tradingHours: store.tradingHours,
+                    realtimeAuthFailed: store.realtimeAuthFailed,
+                    realtimeUpdatedAt: store.realtimeUpdatedAt,
+                    onRetryRealtime: { Task { await store.retryRealtime() } },
+                    onLoadRealtimeForSymbol: { sym in Task { await store.loadRealtimeData(symbol: sym) } }
                 )
             case .aiChat:
                 AIChatView()
