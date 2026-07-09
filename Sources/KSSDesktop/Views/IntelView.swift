@@ -564,9 +564,9 @@ struct IntelView: View {
                 }
                 .padding(.vertical, 24)
             } else if status == "ready", let text = rw?.text, !text.isEmpty {
-                // 与中文改写同一套阅读排版；投研用结构化 sections，不用裸 markdown
+                // 投研 / 中文改写统一：分节 + 圆点列表 + 阅读体，不用裸 markdown
                 if isChinese {
-                    readingBodyText(text)
+                    structuredReadingBody(text)
                 } else {
                     investmentStructuredBody(text: text, sections: rw?.sections)
                 }
@@ -641,9 +641,9 @@ struct IntelView: View {
         }
     }
 
-    /// 与中文改写一致的正文阅读样式（16.5 / ~1.88 行距）。
+    /// 正文阅读样式（16.5 / ~1.88 行距）；支持 **加粗**，不显示 * 号。
     private func readingBodyText(_ text: String) -> some View {
-        Text(text)
+        Text(attributedReading(text))
             .font(.system(size: 16.5))
             .foregroundStyle(theme.textBody)
             .lineSpacing(16.5 * 0.88)
@@ -651,7 +651,60 @@ struct IntelView: View {
             .textSelection(.enabled)
     }
 
-    /// 投研改写：按 section 排版，不展示裸 ## / - markdown。
+    private func attributedReading(_ raw: String) -> AttributedString {
+        var s = raw
+        // 去掉残留标题/列表标记（段落级）
+        s = s.replacingOccurrences(of: #"^#{1,6}\s+"#, with: "", options: .regularExpression)
+        // **bold** → 粗体
+        if let attr = try? AttributedString(
+            markdown: s,
+            options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        ) {
+            return attr
+        }
+        return AttributedString(s.replacingOccurrences(of: "**", with: ""))
+    }
+
+    // MARK: 统一结构化阅读块（中文改写 / 投研改写共用）
+
+    private enum ReadingBlock: Identifiable {
+        case heading(String)
+        case paragraph(String)
+        case list([String])
+
+        var id: String {
+            switch self {
+            case .heading(let t): return "h-\(t)"
+            case .paragraph(let t): return "p-\(t.prefix(48))-\(t.count)"
+            case .list(let items): return "l-\(items.joined().prefix(48))-\(items.count)"
+            }
+        }
+    }
+
+    /// 中文改写：解析 ## / 列表 / 段落，视觉与投研分节一致。
+    @ViewBuilder
+    private func structuredReadingBody(_ text: String) -> some View {
+        let blocks = parseReadingBlocks(text)
+        VStack(alignment: .leading, spacing: 18) {
+            ForEach(blocks) { block in
+                switch block {
+                case .heading(let title):
+                    Text(title)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(theme.accent)
+                        .tracking(0.3)
+                        .padding(.top, 4)
+                case .paragraph(let p):
+                    readingBodyText(p)
+                case .list(let items):
+                    bulletList(items)
+                }
+            }
+        }
+        .textSelection(.enabled)
+    }
+
+    /// 投研改写：固定四节；无 sections 时走同一套 markdown 块解析。
     @ViewBuilder
     private func investmentStructuredBody(text: String, sections: [String: String]?) -> some View {
         let order = ["事件", "影响", "标的线索", "待验证"]
@@ -668,44 +721,98 @@ struct IntelView: View {
                                 .font(.system(size: 13, weight: .bold))
                                 .foregroundStyle(theme.accent)
                                 .tracking(0.3)
-                            investmentSectionLines(body)
+                            sectionBodyLines(body)
                         }
                     }
                 }
             }
             .textSelection(.enabled)
         } else {
-            // 无结构化字段时：剥掉 markdown 符号后按阅读体排版
-            readingBodyText(stripBareMarkdown(text))
+            structuredReadingBody(text)
         }
     }
 
-    private func investmentSectionLines(_ body: String) -> some View {
+    @ViewBuilder
+    private func sectionBodyLines(_ body: String) -> some View {
         let lines = body
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
             .map { stripListMarker($0) }
 
-        return VStack(alignment: .leading, spacing: 10) {
-            if lines.count <= 1 {
-                readingBodyText(lines.first ?? body)
-            } else {
-                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                    HStack(alignment: .top, spacing: 10) {
-                        Circle()
-                            .fill(theme.accent.opacity(0.85))
-                            .frame(width: 5, height: 5)
-                            .padding(.top, 10)
-                        Text(line)
-                            .font(.system(size: 16.5))
-                            .foregroundStyle(theme.textBody)
-                            .lineSpacing(16.5 * 0.88)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+        if lines.count <= 1 {
+            readingBodyText(lines.first ?? body)
+        } else {
+            bulletList(lines)
+        }
+    }
+
+    private func bulletList(_ items: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(Array(items.enumerated()), id: \.offset) { _, line in
+                HStack(alignment: .top, spacing: 10) {
+                    Circle()
+                        .fill(theme.accent.opacity(0.85))
+                        .frame(width: 5, height: 5)
+                        .padding(.top, 10)
+                    readingBodyText(line)
                 }
             }
         }
+    }
+
+    /// 把 markdown 文章拆成 heading / paragraph / list，不保留 # * 符号。
+    private func parseReadingBlocks(_ text: String) -> [ReadingBlock] {
+        var blocks: [ReadingBlock] = []
+        var para: [String] = []
+        var list: [String] = []
+
+        func flushPara() {
+            let t = para.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !t.isEmpty { blocks.append(.paragraph(t)) }
+            para.removeAll()
+        }
+        func flushList() {
+            if !list.isEmpty { blocks.append(.list(list)) }
+            list.removeAll()
+        }
+
+        for rawLine in text.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty {
+                flushList()
+                flushPara()
+                continue
+            }
+            // 水平线忽略
+            if line == "---" || line == "***" || line == "___" {
+                flushList()
+                flushPara()
+                continue
+            }
+            // ## 标题
+            if line.hasPrefix("#") {
+                flushList()
+                flushPara()
+                var t = line
+                while t.hasPrefix("#") { t = String(t.dropFirst()) }
+                t = t.trimmingCharacters(in: .whitespaces)
+                if !t.isEmpty { blocks.append(.heading(t)) }
+                continue
+            }
+            // 列表
+            if line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("• ")
+                || line.range(of: #"^\d+[\.、]\s+"#, options: .regularExpression) != nil {
+                flushPara()
+                list.append(stripListMarker(line))
+                continue
+            }
+            flushList()
+            para.append(line)
+        }
+        flushList()
+        flushPara()
+        return blocks
     }
 
     private func parseInvestmentSections(text: String, sections: [String: String]?) -> [String: String] {
@@ -717,7 +824,6 @@ struct IntelView: View {
         }
         if !out.isEmpty { return out }
 
-        // fallback: 从 ## 标题切分
         let keys = ["事件", "影响", "标的线索", "待验证"]
         let parts = text.components(separatedBy: "##")
         for part in parts {
@@ -736,18 +842,10 @@ struct IntelView: View {
         if s.hasPrefix("- ") || s.hasPrefix("* ") || s.hasPrefix("• ") {
             s = String(s.dropFirst(2))
         }
-        // 编号 1. / 1、
         if let r = try? Regex(#"^\d+[\.、]\s*"#), let m = s.firstMatch(of: r) {
             s = String(s[m.range.upperBound...])
         }
         return s.trimmingCharacters(in: .whitespaces)
-    }
-
-    private func stripBareMarkdown(_ text: String) -> String {
-        text
-            .replacingOccurrences(of: #"^#{1,6}\s+"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"\*\*(.+?)\*\*"#, with: "$1", options: .regularExpression)
-            .replacingOccurrences(of: #"(?m)^\s*[-*•]\s+"#, with: "• ", options: .regularExpression)
     }
 
     // MARK: - qmreader-like media helpers
