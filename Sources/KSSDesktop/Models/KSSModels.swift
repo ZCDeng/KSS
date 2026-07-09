@@ -609,6 +609,8 @@ struct MarketStrip: Codable, Hashable {
     var limitBoard: LimitBoard?      // U4 短线情绪（连板梯队/封板率）
     var turnoverTop: [TurnoverTop]?  // U5a 成交额 TOP20
     var globalIndices: [GlobalIndex]? // U5b 全球隔夜指数
+    /// 隔夜美股跑马灯（固定名单顺序；refresh_market_strip 写入）
+    var overnightUS: [IndexQuote]?
 }
 
 struct LimitBoard: Codable, Hashable {
