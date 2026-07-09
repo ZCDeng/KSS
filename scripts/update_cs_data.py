@@ -257,6 +257,16 @@ def update_one(
         daily = client.fetch_daily(ts_code, start, end)
         daily_basic = client.fetch_daily_basic(ts_code, start, end)
     if daily is None or daily.empty:
+        # 空返回曾被静默记为「未变」，导致 6-26 之后缺口积压而不报警。
+        gap_days = (pd.Timestamp(end[:4] + "-" + end[4:6] + "-" + end[6:8]) - max_date).days
+        if gap_days >= 3:
+            logger.warning(
+                "%s 增量拉取为空，本地仍停在 %s（距 end=%s 约 %d 日）",
+                csv_path.name,
+                max_date.strftime("%Y-%m-%d"),
+                end,
+                gap_days,
+            )
         return 0, max_date.strftime("%Y-%m-%d")
 
     # 合并 daily + daily_basic + 对齐 EXPECTED_COLS（与 ensure_history 共用）

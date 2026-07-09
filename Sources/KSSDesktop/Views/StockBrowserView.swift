@@ -288,7 +288,7 @@ struct StockDetailView: View {
                 }
 
                 HStack {
-                    SectionHeader("行情 · 日K")
+                    SectionHeader(chartMode == .daily ? "行情 · 日K" : "行情 · 分钟K")
                     Spacer()
                     Button {
                         onZoom()
@@ -300,51 +300,68 @@ struct StockDetailView: View {
                     .tint(theme.accent)
                 }
                 VStack(alignment: .leading, spacing: 0) {
-                    // U3 分钟 K 线模式选择器
-                    Picker("", selection: $chartMode) {
-                        Text("日线").tag(ChartDataMode.daily)
-                        Text("1分钟").tag(ChartDataMode.m1)
-                        Text("5分钟").tag(ChartDataMode.m5)
+                    // 日线 / 1m / 5m：图表始终全高嵌入，失败时叠状态条而非卸掉主图
+                    HStack(spacing: 10) {
+                        Picker("", selection: $chartMode) {
+                            Text("日线").tag(ChartDataMode.daily)
+                            Text("1分钟").tag(ChartDataMode.m1)
+                            Text("5分钟").tag(ChartDataMode.m5)
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 200)
+                        if chartMode != .daily {
+                            if intradayLoading {
+                                ProgressView().controlSize(.small)
+                                Text("加载分钟线…")
+                                    .font(.caption2)
+                                    .foregroundStyle(theme.textSecondary)
+                            } else if let err = intradayError {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(theme.ma5)
+                                Text(err)
+                                    .font(.caption2)
+                                    .foregroundStyle(theme.textSecondary)
+                                    .lineLimit(1)
+                                Button("重试") {
+                                    Task { await loadIntraday(symbol: detail.symbol, mode: chartMode) }
+                                }
+                                .font(.caption2.weight(.semibold))
+                                .buttonStyle(.plain)
+                                .foregroundStyle(theme.accent)
+                            } else if intradayBars?.isRenderable == true {
+                                Text("实时分钟 · 图表内仍可用日/周/月/年切换回看日线结构")
+                                    .font(.caption2)
+                                    .foregroundStyle(theme.textSecondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        Spacer(minLength: 0)
                     }
-                    .pickerStyle(.segmented)
-                    .frame(width: 180)
+                    .padding(.horizontal, 10)
+                    .padding(.top, 8)
                     .onChange(of: chartMode) { _, newMode in
                         if newMode != .daily {
                             Task { await loadIntraday(symbol: detail.symbol, mode: newMode) }
+                        } else {
+                            intradayBars = nil
+                            intradayError = nil
+                            intradayLoading = false
                         }
                     }
                     ChartLegend()
-                    if chartMode == .daily {
-                        ChartWebView(points: detail.history)
-                            .frame(minHeight: 640)
-                    } else {
-                        // R15 四状态
-                        if intradayLoading {
-                            ProgressView("加载分钟线…")
-                                .frame(minHeight: 640)
-                        } else if let err = intradayError {
-                            VStack(spacing: 8) {
-                                Text("分钟线不可用")
-                                    .font(.caption).foregroundStyle(theme.textSecondary)
-                                Text(err)
-                                    .font(.caption2).foregroundStyle(theme.textSecondary)
-                                // 回退日线
-                                ChartWebView(points: detail.history)
-                                    .frame(minHeight: 320)
-                            }
-                            .frame(minHeight: 640)
-                        } else if let bars = intradayBars, bars.isRenderable {
+                    // 主图始终占满：有可用分钟 bar 才切 intraday 数据源，否则保留原日线 chart
+                    Group {
+                        if chartMode != .daily, let bars = intradayBars, bars.isRenderable {
                             ChartWebView(points: detail.history, intradayBars: bars.bars)
-                                .frame(minHeight: 640)
                         } else {
-                            Text("暂无成交数据")
-                                .font(.caption).foregroundStyle(theme.textSecondary)
-                                .frame(minHeight: 640)
+                            ChartWebView(points: detail.history)
                         }
                     }
+                    .frame(minHeight: 640)
                 }
                 .id(detail.symbol)  // 切换标的时重建 chart
-                .frame(height: 680)
+                .frame(height: 700)
                 .background(theme.chartSurface)
                 .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
                 .overlay(
@@ -648,7 +665,19 @@ extension StockDetailView {
         }.value
         if let bars {
             if bars.isRenderable { intradayBars = bars; intradayError = nil }
-            else { intradayError = bars.error ?? "暂无成交数据" }
+            else {
+                // 失败时保留日线主图；文案对 auth 给可操作提示
+                switch bars.error {
+                case "auth_failed":
+                    intradayError = "实时源未连接 · 打开「网络与凭据」检查 Longbridge"
+                case "not_covered", "unsupported_symbol":
+                    intradayError = "该标的暂无分钟线覆盖"
+                case let e? where !e.isEmpty:
+                    intradayError = e
+                default:
+                    intradayError = bars.hint ?? "暂无成交数据"
+                }
+            }
         } else {
             intradayError = "bridge 调用失败"
         }
