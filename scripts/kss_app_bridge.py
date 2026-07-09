@@ -1236,19 +1236,40 @@ def _run_formal_daily_picks(args: dict[str, str | bool]) -> dict[str, Any]:
         return _missing_full_env_result("formal-daily-picks", "Formal Daily Picks", started)
     command = [str(python), "scripts/paper_trade_log_mv.py"]
     date_arg = args.get("date")
-    if isinstance(date_arg, str):
-        command += ["--date", date_arg]
+    target_date: str | None = None
+    if isinstance(date_arg, str) and date_arg.strip():
+        command += ["--date", date_arg.strip()]
+        target_date = date_arg.strip()[:10]
     if args.get("no_execution"):
         command.append("--no-execution")
-    if args.get("force"):
+    # 正式日更默认 force-save：避免「stdout 说已保存、实际跳过」导致推荐卡在旧日
+    # （cron / bridge 即使不带 --force 也会写盘；显式 --no-force 可关）
+    if args.get("no_force"):
+        pass
+    else:
         command.append("--force-save")
-    return _run_process_task(
+    result = _run_process_task(
         "formal-daily-picks",
         "Formal Daily Picks",
         command,
         started,
         timeout=300,
     )
+    # 落盘断言：当日 paper_trade JSON 必须存在
+    if target_date is None:
+        target_date = datetime.now().strftime("%Y-%m-%d")
+    log_path = PAPER_DIR / f"{target_date}.json"
+    if result.get("status") == "success" and not log_path.exists():
+        result = dict(result)
+        result["status"] = "failed"
+        result["summary"] = f"选股进程 exit 0 但日志缺失: {log_path}"
+        result["exitCode"] = 2
+    elif result.get("status") == "success" and log_path.exists():
+        result = dict(result)
+        result["artifacts"] = list(result.get("artifacts") or []) + [
+            str(log_path.relative_to(STATE_ROOT))
+        ]
+    return result
 
 
 def _run_formal_paper_summary() -> dict[str, Any]:

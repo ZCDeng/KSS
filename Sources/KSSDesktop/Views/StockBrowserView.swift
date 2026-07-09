@@ -209,6 +209,15 @@ struct StockDetailView: View {
         StockAnalysis(points: detail.history, latest: detail.latest)
     }
 
+    /// 推给 chart 状态条；失败时主图仍为日线。
+    private var chartStatusText: String? {
+        if chartMode == .daily { return nil }
+        if intradayLoading { return "加载分钟线…" }
+        if let err = intradayError { return err }
+        if intradayBars?.isRenderable == true { return nil }
+        return nil
+    }
+
     private var liveClose: (close: Double, pct: Double, isLive: Bool)? {
         guard let latest = detail.latest, let close = latest.close else { return nil }
         return RealtimeMerge.applyLive(
@@ -288,8 +297,30 @@ struct StockDetailView: View {
                 }
 
                 HStack {
-                    SectionHeader(chartMode == .daily ? "行情 · 日K" : "行情 · 分钟K")
+                    SectionHeader("行情")
                     Spacer()
+                    if chartMode != .daily {
+                        if intradayLoading {
+                            ProgressView().controlSize(.small)
+                            Text("加载分钟线…")
+                                .font(.caption2)
+                                .foregroundStyle(theme.textSecondary)
+                        } else if let err = intradayError {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 11))
+                                .foregroundStyle(theme.ma5)
+                            Text(err)
+                                .font(.caption2)
+                                .foregroundStyle(theme.textSecondary)
+                                .lineLimit(1)
+                            Button("重试") {
+                                Task { await loadIntraday(symbol: detail.symbol, mode: chartMode) }
+                            }
+                            .font(.caption2.weight(.semibold))
+                            .buttonStyle(.plain)
+                            .foregroundStyle(theme.accent)
+                        }
+                    }
                     Button {
                         onZoom()
                     } label: {
@@ -300,64 +331,25 @@ struct StockDetailView: View {
                     .tint(theme.accent)
                 }
                 VStack(alignment: .leading, spacing: 0) {
-                    // 日线 / 1m / 5m：图表始终全高嵌入，失败时叠状态条而非卸掉主图
-                    HStack(spacing: 10) {
-                        Picker("", selection: $chartMode) {
-                            Text("日线").tag(ChartDataMode.daily)
-                            Text("1分钟").tag(ChartDataMode.m1)
-                            Text("5分钟").tag(ChartDataMode.m5)
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: 200)
-                        if chartMode != .daily {
-                            if intradayLoading {
-                                ProgressView().controlSize(.small)
-                                Text("加载分钟线…")
-                                    .font(.caption2)
-                                    .foregroundStyle(theme.textSecondary)
-                            } else if let err = intradayError {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(theme.ma5)
-                                Text(err)
-                                    .font(.caption2)
-                                    .foregroundStyle(theme.textSecondary)
-                                    .lineLimit(1)
-                                Button("重试") {
-                                    Task { await loadIntraday(symbol: detail.symbol, mode: chartMode) }
-                                }
-                                .font(.caption2.weight(.semibold))
-                                .buttonStyle(.plain)
-                                .foregroundStyle(theme.accent)
-                            } else if intradayBars?.isRenderable == true {
-                                Text("实时分钟 · 图表内仍可用日/周/月/年切换回看日线结构")
-                                    .font(.caption2)
-                                    .foregroundStyle(theme.textSecondary)
-                                    .lineLimit(1)
+                    // TF 全部在 chart.html 内（1分/5分/日/周/月/年）；主图始终全高
+                    ChartLegend()
+                    ChartWebView(
+                        points: detail.history,
+                        intradayBars: (chartMode != .daily && intradayBars?.isRenderable == true)
+                            ? intradayBars?.bars : nil,
+                        activeMode: chartMode,
+                        statusText: chartStatusText,
+                        onSelectMode: { mode in
+                            chartMode = mode
+                            if mode == .daily {
+                                intradayBars = nil
+                                intradayError = nil
+                                intradayLoading = false
+                            } else {
+                                Task { await loadIntraday(symbol: detail.symbol, mode: mode) }
                             }
                         }
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.top, 8)
-                    .onChange(of: chartMode) { _, newMode in
-                        if newMode != .daily {
-                            Task { await loadIntraday(symbol: detail.symbol, mode: newMode) }
-                        } else {
-                            intradayBars = nil
-                            intradayError = nil
-                            intradayLoading = false
-                        }
-                    }
-                    ChartLegend()
-                    // 主图始终占满：有可用分钟 bar 才切 intraday 数据源，否则保留原日线 chart
-                    Group {
-                        if chartMode != .daily, let bars = intradayBars, bars.isRenderable {
-                            ChartWebView(points: detail.history, intradayBars: bars.bars)
-                        } else {
-                            ChartWebView(points: detail.history)
-                        }
-                    }
+                    )
                     .frame(minHeight: 640)
                 }
                 .id(detail.symbol)  // 切换标的时重建 chart
@@ -558,7 +550,8 @@ struct ChartFullscreenView: View {
             }
             .padding(14)
             ChartLegend()
-            ChartWebView(points: detail.history)
+            // 全屏同样嵌入完整 TF 条；分钟需 Longbridge，此处仅日线结构
+            ChartWebView(points: detail.history, activeMode: .daily)
         }
         // 作为浏览区上的覆盖层铺满：随 app 窗口尺寸动态最大化。
         .frame(maxWidth: .infinity, maxHeight: .infinity)

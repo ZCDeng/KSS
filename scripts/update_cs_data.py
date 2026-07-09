@@ -341,8 +341,63 @@ def main() -> None:
         "完成: 更新 %d / 未变 %d / 失败 %d，耗时 %.1fs",
         n_updated, n_unchanged, n_failed, elapsed,
     )
+
+    end_s = (args.end or datetime.now().strftime("%Y-%m-%d")).replace("-", "")
+    end_ts = pd.Timestamp(f"{end_s[:4]}-{end_s[4:6]}-{end_s[6:8]}")
+    stale = _scan_stale_cs_files(files, end_ts, min_gap_days=4)
+    status_path = _KSS_STATE / "storage" / "logs" / "cron" / "update_cs_data_last.json"
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    status = {
+        "finishedAt": datetime.now().isoformat(timespec="seconds"),
+        "end": end_ts.strftime("%Y-%m-%d"),
+        "updated": n_updated,
+        "unchanged": n_unchanged,
+        "failed": n_failed,
+        "staleCount": len(stale),
+        "stale": stale[:40],
+        "elapsedSec": round(elapsed, 1),
+    }
+    status_path.write_text(
+        __import__("json").dumps(status, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
     if n_failed > 0:
         sys.exit(1)
+    if stale:
+        logger.error(
+            "ALERT stale_gap: %d 只 cs_data 落后 end=%s ≥4 日（示例 %s）→ %s",
+            len(stale),
+            end_ts.strftime("%Y-%m-%d"),
+            ", ".join(s["file"] for s in stale[:8]),
+            status_path,
+        )
+        sys.exit(2)  # 2 = 完成但有缺口；wrapper 不重试整批，只告警
+
+
+def _scan_stale_cs_files(
+    files: list[Path],
+    end_ts: pd.Timestamp,
+    min_gap_days: int = 4,
+) -> list[dict[str, object]]:
+    """扫描本地 max(trade_date) 落后 end 超过 min_gap_days 的文件。"""
+    out: list[dict[str, object]] = []
+    for f in files:
+        try:
+            df = pd.read_csv(f, usecols=["trade_date"])
+            if df.empty:
+                continue
+            mx = pd.to_datetime(df["trade_date"]).max()
+            gap = int((end_ts - mx).days)
+            if gap >= min_gap_days:
+                out.append({
+                    "file": f.name,
+                    "maxDate": mx.strftime("%Y-%m-%d"),
+                    "gapDays": gap,
+                })
+        except Exception as exc:  # noqa: BLE001
+            out.append({"file": f.name, "error": str(exc)})
+    return out
 
 
 if __name__ == "__main__":

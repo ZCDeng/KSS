@@ -25,4 +25,16 @@ cd "$PROJECT_ROOT"
 # TUSHARE_TOKEN 从 .env 加载（KSS_STATE_ROOT=/Users/zcdeng/projects/KSS → STATE_ROOT=PROJECT_ROOT）
 TUSHARE_TOKEN=$(grep -E '^TUSHARE_TOKEN=' "$PROJECT_ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')
 KSS_STATE_ROOT="$PROJECT_ROOT" TUSHARE_TOKEN="$TUSHARE_TOKEN" \
-  "$PROJECT_ROOT/venv/bin/python" "$PROJECT_ROOT/scripts/kss_app_bridge.py" run formal-daily-picks "$@" 2>&1
+  "$PROJECT_ROOT/venv/bin/python" "$PROJECT_ROOT/scripts/kss_app_bridge.py" run formal-daily-picks --force "$@" 2>&1
+
+# 二次校验：当日 JSON 必须落在 paper_trade（与 bridge 内断言双保险）
+TODAY=$(date '+%Y-%m-%d')
+# 若用户传了 --date / date= 则跳过「今日」硬检（脚本参数由 bridge 解析；这里只检今日 cron）
+if [[ "$*" != *date* ]]; then
+  LOG_FILE="$PROJECT_ROOT/storage/paper_trade/${TODAY}.json"
+  if [ ! -f "$LOG_FILE" ]; then
+    echo "[formal_daily_picks] ALERT: 日志未落盘 $LOG_FILE" >&2
+    exit 2
+  fi
+  echo "[formal_daily_picks] ok: $LOG_FILE ($(wc -c < "$LOG_FILE") bytes)"
+fi

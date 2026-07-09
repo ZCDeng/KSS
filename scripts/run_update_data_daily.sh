@@ -94,10 +94,49 @@ if [ "$POST_CLOSE" -eq 1 ]; then
   UPDATE_ARGS=(--end "$(date '+%Y-%m-%d')" "${UPDATE_ARGS[@]}")
   echo "[wrapper] [step-1] post-close mode: force end=${UPDATE_ARGS[1]}"
 fi
-run_with_retry "update_cs_data" "$PYTHON" scripts/update_cs_data.py "${UPDATE_ARGS[@]}"
+
+# exit 0 = ok；exit 1 = 异常 → 重试；exit 2 = stale 缺口 → 不重试、告警、继续 strip
+UPDATE_RC=0
+attempt=1
+sleep_seconds=8
+while [ "$attempt" -le 3 ]; do
+  echo "[wrapper] [update_cs_data] attempt=${attempt}/3 start"
+  set +e
+  "$PYTHON" scripts/update_cs_data.py "${UPDATE_ARGS[@]}"
+  UPDATE_RC=$?
+  set -e
+  if [ "$UPDATE_RC" -eq 0 ]; then
+    echo "[wrapper] [update_cs_data] success"
+    break
+  fi
+  if [ "$UPDATE_RC" -eq 2 ]; then
+    echo "[wrapper] [update_cs_data] completed with STALE gaps (no retry)"
+    break
+  fi
+  echo "[wrapper] [update_cs_data] failed rc=${UPDATE_RC}"
+  if [ "$attempt" -lt 3 ]; then
+    echo "[wrapper] [update_cs_data] retry after ${sleep_seconds}s"
+    sleep "$sleep_seconds"
+    attempt=$((attempt + 1))
+    sleep_seconds=$((sleep_seconds * 2))
+  else
+    echo "[wrapper] [update_cs_data] retry exhausted"
+    exit "$UPDATE_RC"
+  fi
+done
+if [ "$UPDATE_RC" -eq 2 ]; then
+  echo "[wrapper] [ALERT] update_cs_data 存在 ≥4 日 stale 缺口 → $LOG_DIR/update_cs_data_last.json"
+  if [ -f "$LOG_DIR/update_cs_data_last.json" ]; then
+    cat "$LOG_DIR/update_cs_data_last.json"
+  fi
+fi
 
 # 2) 指数行情入库（market_strip.json，仪表盘指数条）—— 折进日更，不另设 cron
 echo "[wrapper] [step-2] refresh_market_strip"
 run_with_retry "refresh_market_strip" "$PYTHON" scripts/refresh_market_strip.py
 
+if [ "$UPDATE_RC" -eq 2 ]; then
+  echo "[wrapper] update_data_daily-wrapper finished WITH STALE ALERT"
+  exit 2
+fi
 echo "[wrapper] update_data_daily-wrapper finished"
