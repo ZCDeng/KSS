@@ -59,6 +59,25 @@ class TestResolveCredentials:
         with pytest.raises(LLMUnavailable):
             _resolve_credentials()
 
+    def test_deepseek_base_prefers_deepseek_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """OPENAI_BASE_URL=deepseek 时优先 DEEPSEEK_API_KEY（双 key Keychain 坑）."""
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-dead")
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://api.deepseek.com")
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-live")
+        key, base, model = _resolve_credentials()
+        assert key == "sk-deepseek-live"
+        assert base == "https://api.deepseek.com/v1"
+        assert model == "deepseek-chat"
+
+    def test_deepseek_base_normalizes_v1(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-only")
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://api.deepseek.com")
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        key, base, model = _resolve_credentials()
+        assert key == "sk-only"
+        assert base == "https://api.deepseek.com/v1"
+        assert model == "deepseek-chat"
+
 
 # ====================================================================== #
 # LLMClient.complete
