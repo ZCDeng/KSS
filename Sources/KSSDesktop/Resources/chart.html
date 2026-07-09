@@ -56,6 +56,8 @@
   <div id="chart"></div>
   <div id="legend"></div>
   <div id="tf">
+    <button data-tf="1m">1分</button>
+    <button data-tf="5m">5分</button>
     <button data-tf="D" class="on">日</button>
     <button data-tf="W">周</button>
     <button data-tf="M">月</button>
@@ -318,7 +320,13 @@
 
     function setData(payload) {
       if (!chart && !buildChart()) { pending = payload; return; }
+      intradayMode = false;
       rawBars = (payload || []).filter(p => p && p.close != null);
+      // 若当前高亮是分钟钮但收到日线数据（失败回退），不改 highlight（由 kssSetTFMode 管）
+      if (!(document.querySelector("#tf button.on") &&
+            ["1m", "5m"].includes(document.querySelector("#tf button.on").getAttribute("data-tf")))) {
+        if (!document.querySelector("#tf button.on")) setTFHighlight(currentTF || "D");
+      }
       renderTF();
     }
 
@@ -462,15 +470,65 @@
       if (buildChart()) { intradayMode ? renderIntraday() : renderTF(); }
     }
 
+    function setTFHighlight(tf) {
+      document.querySelectorAll("#tf button").forEach(b => {
+        b.classList.toggle("on", b.getAttribute("data-tf") === tf);
+      });
+    }
+
+    function postNative(msg) {
+      try {
+        if (window.webkit && webkit.messageHandlers && webkit.messageHandlers.kssChart) {
+          webkit.messageHandlers.kssChart.postMessage(msg);
+        }
+      } catch (e) { /* native 未注入时静默 */ }
+    }
+
     function wireTF() {
       document.querySelectorAll("#tf button").forEach(btn => {
         btn.addEventListener("click", () => {
-          currentTF = btn.getAttribute("data-tf");
-          document.querySelectorAll("#tf button").forEach(b => b.classList.toggle("on", b === btn));
-          renderTF();
+          const tf = btn.getAttribute("data-tf");
+          setTFHighlight(tf);
+          // 分钟线：请求 Swift 拉 Longbridge；日/周/月/年：本地 resample
+          if (tf === "1m" || tf === "5m") {
+            postNative({ type: "tf", tf: tf });
+            return;
+          }
+          currentTF = tf;
+          intradayMode = false;
+          // 切回日线结构时若 rawBars 在，直接 render；否则让 native 重推日线
+          if (rawBars && rawBars.length) {
+            renderTF();
+          } else {
+            postNative({ type: "tf", tf: tf });
+          }
         });
       });
     }
+
+    // Swift 同步 TF 高亮（失败回退日线 / 成功锁定 1m·5m）
+    window.kssSetTFMode = function (tf) {
+      try {
+        if (!tf) return;
+        setTFHighlight(tf);
+        if (tf === "1m" || tf === "5m") {
+          // 等 kssSetIntradayData
+        } else {
+          currentTF = tf;
+          intradayMode = false;
+        }
+      } catch (e) { /* ignore */ }
+    };
+
+    // 状态条：分钟加载中 / 失败提示（不卸主图）
+    window.kssSetStatus = function (text) {
+      try {
+        const el = document.getElementById("legend");
+        if (!el) return;
+        if (!text) return;
+        el.innerHTML = `<div class="row"><span class="k">${String(text)}</span></div>` + el.innerHTML;
+      } catch (e) { /* ignore */ }
+    };
 
     // 指标 key → 对应 series（BOLL/MACD 为多条）
     function indSeries(key) {

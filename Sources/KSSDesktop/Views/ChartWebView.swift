@@ -4,21 +4,37 @@ import WebKit
 /// Hosts the bundled TradingView lightweight-charts candlestick chart inside a
 /// WKWebView. Swift owns the data; the web layer only renders. 主题与数据分离：
 /// `kssSetTheme` 更新配色并从缓存 bars 重绘，`kssSetData` 只更新数据。
+///
+/// 周期钮在 chart.html 内（1分/5分/日/周/月/年）：分钟请求经 `kssChart` 消息回 Swift。
 struct ChartWebView: NSViewRepresentable {
     var points: [PricePoint]
-    /// U3 日内模式（F008）：非空时渲染分钟 K 线（走 chart.html 的 kssSetIntradayData 路径）。
+    /// 日内模式：非空时渲染分钟 K（kssSetIntradayData）。
     var intradayBars: [OHLCBar]? = nil
+    /// 当前周期高亮：daily / m1 / m5（HTML 的 D/1m/5m）。
+    var activeMode: ChartDataMode = .daily
+    /// 状态条文案（加载中 / 错误）；空则不改 legend。
+    var statusText: String? = nil
+    /// 用户点 HTML TF 条时回调（含 1m/5m/日线结构）。
+    var onSelectMode: ((ChartDataMode) -> Void)? = nil
+
     @Environment(\.kssTheme) private var theme
     @Environment(\.kssWebTheme) private var webTheme
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onSelectMode: onSelectMode)
+    }
 
     func makeNSView(context: Context) -> WKWebView {
+        let controller = WKUserContentController()
+        controller.add(WeakChartMessageHandler(context.coordinator), name: "kssChart")
+
         let config = WKWebViewConfiguration()
+        config.userContentController = controller
+
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         context.coordinator.attach(webView)
-        webView.setValue(false, forKey: "drawsBackground") // transparent until chart paints
+        webView.setValue(false, forKey: "drawsBackground")
 
         if let html = Bundle.module.url(forResource: "chart", withExtension: "html") {
             webView.loadFileURL(html, allowingReadAccessTo: html.deletingLastPathComponent())
@@ -28,9 +44,29 @@ struct ChartWebView: NSViewRepresentable {
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         let coord = context.coordinator
+        coord.onSelectMode = onSelectMode
         coord.latestTheme = webTheme
+
+        let modeKey = Self.tfKey(activeMode)
+        if modeKey != coord.latestTFKey {
+            coord.latestTFKey = modeKey
+            coord.pendingTFScript = "window.kssSetTFMode && window.kssSetTFMode('\(modeKey)');"
+            coord.bumpContent()
+        }
+
+        let status = statusText ?? ""
+        if status != coord.latestStatus {
+            coord.latestStatus = status
+            if !status.isEmpty {
+                let escaped = status
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "'", with: "\\'")
+                coord.pendingStatusScript = "window.kssSetStatus && window.kssSetStatus('\(escaped)');"
+                coord.bumpContent()
+            }
+        }
+
         if let bars = intradayBars {
-            // 日内模式：推分钟 bar 序列（F006 全序列）。
             let json = Self.encodeBars(bars)
             if json != coord.latestIntradayJSON || !coord.isIntraday {
                 coord.latestIntradayJSON = json
@@ -49,6 +85,18 @@ struct ChartWebView: NSViewRepresentable {
         coord.requestSync()
     }
 
+    static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
+        coordinator.teardown(webView)
+    }
+
+    private static func tfKey(_ mode: ChartDataMode) -> String {
+        switch mode {
+        case .daily: return "D"
+        case .m1: return "1m"
+        case .m5: return "5m"
+        }
+    }
+
     private static func encode(_ points: [PricePoint]) -> String {
         guard let data = try? JSONEncoder().encode(points),
               let string = String(data: data, encoding: .utf8) else {
@@ -65,16 +113,76 @@ struct ChartWebView: NSViewRepresentable {
         return string
     }
 
-    final class Coordinator: BridgedWebCoordinator {
+    final class Coordinator: BridgedWebCoordinator, WKScriptMessageHandler {
         var latestJSON = "[]"
         var latestIntradayJSON = "[]"
         var isIntraday = false
+        var latestTFKey = "D"
+        var latestStatus = ""
+        var pendingTFScript: String?
+        var pendingStatusScript: String?
+        var onSelectMode: ((ChartDataMode) -> Void)?
+
+        init(onSelectMode: ((ChartDataMode) -> Void)?) {
+            self.onSelectMode = onSelectMode
+            super.init()
+        }
 
         override func contentScript() -> String? {
-            if isIntraday {
-                return "window.kssSetIntradayData(\(latestIntradayJSON));"
+            var parts: [String] = []
+            if let tf = pendingTFScript {
+                parts.append(tf)
+                pendingTFScript = nil
             }
-            return "window.kssSetData(\(latestJSON));"
+            if isIntraday {
+                parts.append("window.kssSetIntradayData(\(latestIntradayJSON));")
+            } else {
+                parts.append("window.kssSetData(\(latestJSON));")
+            }
+            if let st = pendingStatusScript {
+                parts.append(st)
+                pendingStatusScript = nil
+            }
+            return parts.joined(separator: "\n")
         }
+
+        func userContentController(_ controller: WKUserContentController,
+                                   didReceive message: WKScriptMessage) {
+            guard message.name == "kssChart" else { return }
+            let body = message.body
+            var tf: String?
+            if let dict = body as? [String: Any] {
+                tf = dict["tf"] as? String
+            } else if let str = body as? String {
+                tf = str
+            }
+            guard let tf else { return }
+            let mode: ChartDataMode
+            switch tf {
+            case "1m": mode = .m1
+            case "5m": mode = .m5
+            default: mode = .daily
+            }
+            if Thread.isMainThread {
+                onSelectMode?(mode)
+            } else {
+                DispatchQueue.main.async { [weak self] in self?.onSelectMode?(mode) }
+            }
+        }
+
+        func teardown(_ webView: WKWebView) {
+            webView.configuration.userContentController
+                .removeScriptMessageHandler(forName: "kssChart")
+        }
+    }
+}
+
+/// 避免 WKUserContentController 强引用 Coordinator 形成环。
+private final class WeakChartMessageHandler: NSObject, WKScriptMessageHandler {
+    weak var target: WKScriptMessageHandler?
+    init(_ target: WKScriptMessageHandler) { self.target = target }
+    func userContentController(_ controller: WKUserContentController,
+                               didReceive message: WKScriptMessage) {
+        target?.userContentController(controller, didReceive: message)
     }
 }

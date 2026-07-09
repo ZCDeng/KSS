@@ -177,13 +177,14 @@ def save_log_entry(
     use_execution: bool,
     force: bool = False,
     regime_label: str | None = None,
-) -> Path:
+) -> tuple[Path, bool]:
     """保存当日预测到 JSON 日志（供事后对比）.
 
     日志是周报对账的审计底稿: 已存在的文件默认不覆盖 (回放旧日期会
     无声改写历史预测, 同 daily_review dry-run 教训), ``force=True`` 强制.
 
-    同时把每条预测入预测生命周期账本 (``status="open"``); JSON 写入逻辑不变.
+    Returns:
+        (path, wrote_new) — wrote_new=False 表示跳过覆盖，文件应已存在。
     """
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     in_top = picks[picks["in_top"]] if "in_top" in picks.columns else picks
@@ -191,7 +192,7 @@ def save_log_entry(
     if existing.exists() and not force:
         logger.warning("日志已存在, 跳过覆盖 (--force-save 强制): %s", existing)
         _record_ledger_entry(in_top, target_date, use_execution, regime_label, force=False)
-        return existing
+        return existing, False
     entry = {
         "prediction_date": str(target_date.date()),
         "generated_at": datetime.now().isoformat(),
@@ -213,7 +214,7 @@ def save_log_entry(
     out = LOG_DIR / f"{target_date.date()}.json"
     out.write_text(json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8")
     _record_ledger_entry(in_top, target_date, use_execution, regime_label, force=force)
-    return out
+    return out, True
 
 
 # ---------------------------------------------------------------------- #
@@ -450,13 +451,29 @@ def main() -> None:
     # ---------------------------------------------------------
 
     md = forecast.format_pool_markdown(pool)
-    log_path = save_log_entry(
+    log_path, wrote_new = save_log_entry(
         pool, actual_date,
         use_execution=not args.no_execution,
         force=args.force_save,
     )
     print(md)
-    print(f"\n📝 日志已保存: {log_path}")
+    if wrote_new:
+        print(f"\n📝 日志已写入: {log_path}")
+    else:
+        print(f"\n📝 日志已存在未覆盖: {log_path}（加 --force-save 可覆盖）")
+
+    # 落盘真值校验：路径必须存在且非空（防假成功）
+    if not log_path.exists() or log_path.stat().st_size < 32:
+        logger.error("paper_trade 日志落盘失败或不完整: %s", log_path)
+        sys.exit(2)
+    try:
+        payload = json.loads(log_path.read_text(encoding="utf-8"))
+        if not payload.get("picks"):
+            logger.error("paper_trade 日志无 picks: %s", log_path)
+            sys.exit(2)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("paper_trade 日志不可解析: %s (%s)", log_path, exc)
+        sys.exit(2)
 
     if notify_channel:
         push_md = f"{md}📝 完整日志 `{log_path}`"
