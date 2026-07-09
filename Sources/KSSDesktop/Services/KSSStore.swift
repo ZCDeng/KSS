@@ -47,6 +47,30 @@ final class KSSStore: ObservableObject {
     /// 启动时检测 Keychain 中是否有 OpenAI/DeepSeek 凭据
     @Published var hasLLMCredentials: Bool = false
 
+    // MARK: 资讯雷达 reader workbench（plan 2026-07-10-001）
+    @Published var selectedIntelItemID: String?
+    @Published var intelArticleByID: [String: IntelArticleResponse] = [:]
+    /// kind → itemId → response（investment / chinese）
+    @Published var intelRewriteByKind: [String: [String: IntelRewriteResponse]] = [:]
+    @Published var isLoadingIntelDetail = false
+    private var intelDetailTask: Task<Void, Never>?
+    private var intelRewriteRunTask: Task<Void, Never>?
+
+    /// 兼容旧调用：投研改写 map
+    var intelRewriteByID: [String: IntelRewriteResponse] {
+        intelRewriteByKind["investment"] ?? [:]
+    }
+
+    func rewrite(for itemID: String, kind: String) -> IntelRewriteResponse? {
+        intelRewriteByKind[kind]?[itemID]
+    }
+
+    func setRewrite(_ resp: IntelRewriteResponse, itemID: String, kind: String) {
+        var bucket = intelRewriteByKind[kind] ?? [:]
+        bucket[itemID] = resp
+        intelRewriteByKind[kind] = bucket
+    }
+
     /// Bulk 一键提炼全部要点状态。
     struct BulkDigestState {
         var running: Bool = false
@@ -296,14 +320,153 @@ final class KSSStore: ObservableObject {
                 try bridge.intelRadar(force: force)
             }.value
             intelDigest = digest
+            if force {
+                kickIntelRewriteWorker()
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
+    /// Fire-and-forget Top-K rewrite worker after refresh (R8).
+    func kickIntelRewriteWorker() {
+        guard let bridge else { return }
+        intelRewriteRunTask?.cancel()
+        intelRewriteRunTask = Task { [weak self] in
+            guard let self else { return }
+            _ = try? await Task.detached {
+                try bridge.intelRewriteRun()
+            }.value
+            // AE4: refresh digests so pool mode can flip without manual 提炼
+            // Only re-query tracks that already have a card or pool may be rich — avoid 12 LLM burns.
+            if let tracks = self.intelDigest?.tracks {
+                for track in tracks {
+                    let hasCard = self.intelDigests[track.key] != nil
+                    let items = track.items ?? []
+                    guard !items.isEmpty else { continue }
+                    // Always try pool path via bridge (cheap when pool insufficient → list cache)
+                    await self.summarizeIntelTrack(
+                        track.key, name: track.name, items: items, force: false
+                    )
+                    if !hasCard {
+                        // first auto fill only; still OK if pool insufficient returns list/skip
+                        continue
+                    }
+                }
+            }
+        }
+    }
+
+    /// Select list item and load body + rewrite into detail panel.
+    func selectIntelItem(_ item: IntelItem?, trackKey: String, trackName: String) {
+        intelDetailTask?.cancel()
+        guard let item else {
+            selectedIntelItemID = nil
+            isLoadingIntelDetail = false
+            return
+        }
+        selectedIntelItemID = item.id
+        isLoadingIntelDetail = true
+        intelDetailTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.isLoadingIntelDetail = false }
+            guard let bridge = self.bridge else { return }
+
+            // 并行：正文 + 中文改写 + 投研改写（缓存命中快）
+            async let articleTask: IntelArticleResponse? = {
+                if let url = item.url, !url.isEmpty {
+                    return try? await Task.detached {
+                        try bridge.intelArticle(url: url, summary: item.summary ?? "")
+                    }.value
+                }
+                return nil
+            }()
+            async let chineseTask: IntelRewriteResponse? = {
+                try? await Task.detached {
+                    try bridge.intelRewrite(
+                        trackKey: trackKey, trackName: trackName, item: item,
+                        force: false, kind: "chinese"
+                    )
+                }.value
+            }()
+            async let investTask: IntelRewriteResponse? = {
+                try? await Task.detached {
+                    try bridge.intelRewrite(
+                        trackKey: trackKey, trackName: trackName, item: item,
+                        force: false, kind: "investment"
+                    )
+                }.value
+            }()
+
+            let (article, chinese, invest) = await (articleTask, chineseTask, investTask)
+            if let article {
+                self.intelArticleByID[item.id] = article
+            } else if let body = chinese?.bodyText ?? invest?.bodyText, !body.isEmpty {
+                self.intelArticleByID[item.id] = IntelArticleResponse(
+                    body: body, title: item.title,
+                    mode: chinese?.bodyMode ?? invest?.bodyMode ?? "summary",
+                    error: nil,
+                    charCount: chinese?.bodyCharCount ?? invest?.bodyCharCount,
+                    url: item.url
+                )
+            }
+            if let chinese { self.setRewrite(chinese, itemID: item.id, kind: "chinese") }
+            if let invest { self.setRewrite(invest, itemID: item.id, kind: "investment") }
+        }
+    }
+
+    /// On-demand rewrite for selected item. kind: investment | chinese
+    func requestIntelRewrite(
+        item: IntelItem,
+        trackKey: String,
+        trackName: String,
+        force: Bool = true,
+        kind: String = "investment"
+    ) async {
+        guard let bridge else { return }
+        setRewrite(
+            IntelRewriteResponse(
+                itemId: nil, trackKey: trackKey, kind: kind, status: "generating",
+                text: nil, sections: nil, model: nil, generatedAt: nil,
+                bodyText: intelArticleByID[item.id]?.body,
+                bodyMode: intelArticleByID[item.id]?.mode,
+                bodyCharCount: intelArticleByID[item.id]?.charCount,
+                error: nil, errorType: nil, fromCache: nil
+            ),
+            itemID: item.id,
+            kind: kind
+        )
+        do {
+            let resp = try await Task.detached {
+                try bridge.intelRewrite(
+                    trackKey: trackKey, trackName: trackName, item: item,
+                    force: force, kind: kind
+                )
+            }.value
+            setRewrite(resp, itemID: item.id, kind: kind)
+            if let body = resp.bodyText, !body.isEmpty {
+                intelArticleByID[item.id] = IntelArticleResponse(
+                    body: body, title: item.title, mode: resp.bodyMode ?? "summary",
+                    error: nil, charCount: resp.bodyCharCount, url: item.url
+                )
+            }
+        } catch {
+            setRewrite(
+                IntelRewriteResponse(
+                    itemId: nil, trackKey: trackKey, kind: kind, status: "failed",
+                    text: nil, sections: nil, model: nil, generatedAt: nil,
+                    bodyText: nil, bodyMode: nil, bodyCharCount: nil,
+                    error: error.localizedDescription, errorType: "client", fromCache: nil
+                ),
+                itemID: item.id,
+                kind: kind
+            )
+        }
+    }
+
     // MARK: AI digest（plan 2026-07-09-001）
 
-    /// 单赛道 AI 要点提炼。
+    /// 单赛道 AI 要点提炼（池优先，bridge 侧 KTD5）。
     func summarizeIntelTrack(
         _ key: String,
         name: String,
@@ -312,7 +475,10 @@ final class KSSStore: ObservableObject {
     ) async {
         guard let bridge else { return }
         // 进入 loading 状态（让用户看到当前 track 在跑）
-        intelDigests[key] = IntelDigestResponse(text: "", model: nil, generatedAt: nil, prompt: nil, itemCount: nil, error: nil, errorType: nil, fromCache: nil, cachedPath: nil, skipped: nil)
+        intelDigests[key] = IntelDigestResponse(
+            text: "", model: nil, generatedAt: nil, prompt: nil, itemCount: nil,
+            error: nil, errorType: nil, fromCache: nil, cachedPath: nil, skipped: nil, mode: nil
+        )
         do {
             let resp = try await Task.detached {
                 try bridge.intelDigest(trackKey: key, trackName: name, items: items, force: force)
@@ -322,7 +488,7 @@ final class KSSStore: ObservableObject {
             var failResp = IntelDigestResponse(
                 text: "", model: nil, generatedAt: nil, prompt: nil,
                 itemCount: nil, error: error.localizedDescription, errorType: "client",
-                fromCache: nil, cachedPath: nil, skipped: nil
+                fromCache: nil, cachedPath: nil, skipped: nil, mode: "list"
             )
             failResp.error = error.localizedDescription
             failResp.errorType = "client"

@@ -169,7 +169,7 @@ struct NewsDigestIndexEntry: Codable, Hashable, Identifiable {
     var scene: String
 }
 
-/// 资讯雷达单赛道 AI digest 响应（plan 2026-07-09-001）。
+/// 资讯雷达单赛道 AI digest 响应（plan 2026-07-09-001 + 2026-07-10 pool mode）。
 struct IntelDigestResponse: Codable {
     var text: String
     var model: String?
@@ -184,6 +184,8 @@ struct IntelDigestResponse: Codable {
     var cachedPath: String?
     /// items 为空跳过
     var skipped: Bool?
+    /// ``pool`` = 改写池聚合；``list`` = 旧列表提炼（plan 2026-07-10）
+    var mode: String?
 
     enum CodingKeys: String, CodingKey {
         case text
@@ -196,6 +198,99 @@ struct IntelDigestResponse: Codable {
         case fromCache = "from_cache"
         case cachedPath = "cached_path"
         case skipped
+        case mode
+    }
+
+    var isPoolMode: Bool { mode == "pool" }
+}
+
+/// 资讯雷达正文抓取响应（U4/U5）。
+struct IntelArticleResponse: Codable {
+    var body: String?
+    var title: String?
+    var mode: String?
+    var error: String?
+    var charCount: Int?
+    var url: String?
+
+    enum CodingKeys: String, CodingKey {
+        case body, title, mode, error, url
+        case charCount = "char_count"
+    }
+}
+
+/// 资讯雷达改写响应（投研 / 中文改写共用）。
+struct IntelRewriteResponse: Codable {
+    var itemId: String?
+    var trackKey: String?
+    var kind: String?
+    var status: String?
+    var text: String?
+    var sections: [String: String]?
+    var model: String?
+    var generatedAt: String?
+    var bodyText: String?
+    var bodyMode: String?
+    var bodyCharCount: Int?
+    var error: String?
+    var errorType: String?
+    var fromCache: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case text, sections, model, status, error, kind
+        case itemId = "item_id"
+        case trackKey = "track_key"
+        case generatedAt = "generated_at"
+        case bodyText = "body_text"
+        case bodyMode = "body_mode"
+        case bodyCharCount = "body_char_count"
+        case errorType = "error_type"
+        case fromCache = "from_cache"
+    }
+}
+
+/// 详情阅读 Tab（qmreader 风；首 Tab / 默认 = 投研改写）。
+enum IntelReaderTab: String, CaseIterable, Identifiable {
+    case investment
+    case chinese
+    case original
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .investment: return "投研改写"
+        case .chinese: return "中文改写"
+        case .original: return "原文"
+        }
+    }
+
+    /// bridge kind for rewrite tabs
+    var rewriteKind: String? {
+        switch self {
+        case .original: return nil
+        case .chinese: return "chinese"
+        case .investment: return "investment"
+        }
+    }
+}
+
+/// Top-K rewrite worker summary.
+struct IntelRewriteRunResponse: Codable {
+    var day: String?
+    var k: Int?
+    var tracks: Int?
+    var attempted: Int?
+    var readyNew: Int?
+    var failed: Int?
+    var skipped: Int?
+    var stoppedReason: String?
+    var error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case day, k, tracks, attempted, failed, skipped, error
+        case readyNew = "ready_new"
+        case stoppedReason = "stopped_reason"
     }
 }
 

@@ -2,9 +2,11 @@
 
 环境变量约定（按优先级）：
 
-1. ``OPENAI_API_KEY`` + 可选 ``OPENAI_BASE_URL`` —— 走 OpenAI / oneAPI 网关
-2. fallback ``DEEPSEEK_API_KEY`` + ``https://api.deepseek.com/v1``
-3. ``KSS_LLM_MODEL`` 决定具体 model id，default ``gpt-4o-mini`` (OpenAI 路径) /
+1. 若 ``OPENAI_BASE_URL`` 指向 DeepSeek 且 ``DEEPSEEK_API_KEY`` 已配置
+   → 用 DeepSeek key（避免 Keychain 里 OpenAI 槽位旧 key 挡住有余额的 DEEPSEEK key）
+2. ``OPENAI_API_KEY`` + 可选 ``OPENAI_BASE_URL`` —— OpenAI / oneAPI / 自建兼容网关
+3. fallback ``DEEPSEEK_API_KEY`` + ``https://api.deepseek.com/v1``
+4. ``KSS_LLM_MODEL`` 决定具体 model id，default ``gpt-4o-mini`` (OpenAI 路径) /
    ``deepseek-chat`` (DeepSeek 路径)
 """
 
@@ -114,6 +116,22 @@ class LLMClient:
         return content.strip()
 
 
+def _is_deepseek_base(base_url: str | None) -> bool:
+    if not base_url:
+        return False
+    return "deepseek.com" in base_url.lower()
+
+
+def _normalize_deepseek_base(base_url: str | None) -> str:
+    """Ensure DeepSeek OpenAI-compatible base ends with ``/v1``."""
+    raw = (base_url or _DEEPSEEK_BASE_URL).strip().rstrip("/")
+    if not raw:
+        return _DEEPSEEK_BASE_URL
+    if raw.endswith("/v1"):
+        return raw
+    return raw + "/v1"
+
+
 def _resolve_credentials() -> tuple[str, str | None, str]:
     """返回 ``(api_key, base_url, default_model)``，按优先级解析环境变量.
 
@@ -121,10 +139,21 @@ def _resolve_credentials() -> tuple[str, str | None, str]:
         LLMUnavailable: 两条路径都没 key.
     """
     openai_key = os.getenv("OPENAI_API_KEY", "").strip()
-    if openai_key:
-        return openai_key, os.getenv("OPENAI_BASE_URL", "").strip() or None, _DEFAULT_MODEL_OPENAI
-
+    openai_base = os.getenv("OPENAI_BASE_URL", "").strip() or None
     deepseek_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+
+    # Dual-key Keychain 常见坑：OPENAI_* 槽位填了 DeepSeek 网关 + 旧 key，
+    # 有余额的 DEEPSEEK_API_KEY 被永远挡住。base 指向 deepseek 时优先 DEEPSEEK key。
+    if _is_deepseek_base(openai_base) and deepseek_key:
+        base = _normalize_deepseek_base(openai_base)
+        logger.info("[llm] OPENAI_BASE_URL 为 DeepSeek，使用 DEEPSEEK_API_KEY")
+        return deepseek_key, base, _DEFAULT_MODEL_DEEPSEEK
+
+    if openai_key:
+        if _is_deepseek_base(openai_base):
+            return openai_key, _normalize_deepseek_base(openai_base), _DEFAULT_MODEL_DEEPSEEK
+        return openai_key, openai_base, _DEFAULT_MODEL_OPENAI
+
     if deepseek_key:
         return deepseek_key, _DEEPSEEK_BASE_URL, _DEFAULT_MODEL_DEEPSEEK
 

@@ -205,6 +205,51 @@ struct BridgeClient {
         return try run(["intel-digest-save", json], as: IntelDigestSaveResponse.self)
     }
 
+    /// 正文 best-effort 抓取。
+    func intelArticle(url: String, summary: String = "") throws -> IntelArticleResponse {
+        struct Payload: Encodable {
+            let url: String
+            let summary: String
+        }
+        let data = try JSONEncoder().encode(Payload(url: url, summary: summary))
+        let json = String(data: data, encoding: .utf8) ?? "{}"
+        return try run(["intel-article", json], as: IntelArticleResponse.self)
+    }
+
+    /// 单篇改写（on-demand）。kind: investment | chinese
+    func intelRewrite(
+        trackKey: String,
+        trackName: String,
+        item: IntelItem,
+        force: Bool = false,
+        kind: String = "investment"
+    ) throws -> IntelRewriteResponse {
+        struct Payload: Encodable {
+            let track_key: String
+            let track_name: String
+            let item: IntelItem
+            let force: Bool
+            let kind: String
+        }
+        let payload = Payload(
+            track_key: trackKey, track_name: trackName, item: item, force: force, kind: kind
+        )
+        let data = try JSONEncoder().encode(payload)
+        let json = String(data: data, encoding: .utf8) ?? "{}"
+        return try run(["intel-rewrite", json], as: IntelRewriteResponse.self)
+    }
+
+    /// 踢 Top-K rewrite worker（不阻塞雷达列表语义，调用方 fire-and-forget）。
+    func intelRewriteRun(k: Int? = nil, force: Bool = false) throws -> IntelRewriteRunResponse {
+        struct Payload: Encodable {
+            let k: Int?
+            let force: Bool
+        }
+        let data = try JSONEncoder().encode(Payload(k: k, force: force))
+        let json = String(data: data, encoding: .utf8) ?? "{}"
+        return try run(["intel-rewrite-run", json], as: IntelRewriteRunResponse.self)
+    }
+
     func themeLeaders() throws -> [ThemeLeaders] {
         try run(["theme-leaders"], as: [ThemeLeaders].self)
     }
@@ -256,7 +301,12 @@ struct BridgeClient {
     /// socket 超时会误判不可用并回退，而 daemon 仍在跑同一任务 → 双跑（重复 Tushare
     /// 调用 + 争抢同一归档）。这些命令不属于热路径读，无需暖 pandas。
     // perilla-enrichment 走外网(Tushare+yFinance)耗时常 >3s，跳过 sidecar 避免超时双跑。
-    private static let subprocessOnlyCommands: Set<String> = ["run", "import", "perilla-enrichment", "intel-radar", "intel-digest", "intel-digest-save", "cron-catchup", "cron-rerun", "cron-rerun-many", "cron-enable", "cron-disable"]
+    private static let subprocessOnlyCommands: Set<String> = [
+        "run", "import", "perilla-enrichment",
+        "intel-radar", "intel-digest", "intel-digest-save",
+        "intel-article", "intel-rewrite", "intel-rewrite-run",
+        "cron-catchup", "cron-rerun", "cron-rerun-many", "cron-enable", "cron-disable",
+    ]
 
     private func run<T: Decodable>(_ args: [String], as type: T.Type) throws -> T {
         // U5：热路径读优先常驻 sidecar（pandas 暖、无 per-call python 启动）；
