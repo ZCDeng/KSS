@@ -63,7 +63,7 @@ struct IntelView: View {
                 } else if let cur = currentTrack {
                     HStack(spacing: 0) {
                         trackListColumn(cur)
-                            .frame(width: 360)
+                            .frame(width: 380)
                         Divider().overlay(theme.hairline)
                         detailPane(track: cur)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -272,7 +272,7 @@ struct IntelView: View {
         )
     }
 
-    // MARK: - 新闻列表
+    // MARK: - 新闻列表（qmreader entry-card 节奏：卡间距 8、圆角 10、右缩略/favicon）
 
     private func trackListColumn(_ cur: IntelTrack) -> some View {
         let items = cur.items ?? []
@@ -280,37 +280,39 @@ struct IntelView: View {
             HStack(spacing: 8) {
                 let pillColor = parseHexColor(cur.accent) ?? theme.accent
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(pillColor).frame(width: 4, height: 16)
+                    .fill(pillColor).frame(width: 3, height: 14)
                 Text(cur.name)
-                    .font(KSSFont.title(14, .bold, design: theme.titleDesign))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(theme.textPrimary)
                 Spacer()
                 Text("\(items.count)")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(theme.textSecondary)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary.opacity(0.85))
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.vertical, 12)
 
             if !items.isEmpty {
                 digestCardView(track: cur, items: items)
                     .padding(.horizontal, 10)
-                    .padding(.bottom, 8)
+                    .padding(.bottom, 10)
             }
 
             if items.isEmpty {
                 Text("近 \(digest?.recentDays ?? 7) 天该赛道暂无更新")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(theme.textSecondary)
+                    .font(.system(size: 13))
+                    .foregroundStyle(theme.textSecondary.opacity(0.7))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.top, 40)
             } else {
+                // qmreader `.entry-list { padding: 8px }` + card gap
                 ScrollView {
-                    LazyVStack(spacing: 0) {
+                    LazyVStack(spacing: 8) {
                         ForEach(items) { item in
                             newsRow(item, track: cur)
-                            Divider().overlay(theme.hairline)
                         }
                     }
+                    .padding(8)
                 }
             }
         }
@@ -321,15 +323,27 @@ struct IntelView: View {
     private func detailPane(track: IntelTrack) -> some View {
         if let item = selectedItem {
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                // qmreader reader: measure ~70ch, font ~16.5, line-height ~1.88, padding 36
+                VStack(alignment: .leading, spacing: 0) {
                     // header
                     Text(item.title)
-                        .font(KSSFont.title(18, .bold, design: theme.titleDesign))
+                        .font(.system(size: 22, weight: .bold))
                         .foregroundStyle(theme.textPrimary)
+                        .lineSpacing(4)
                         .fixedSize(horizontal: false, vertical: true)
+                        .padding(.bottom, 12)
+
                     HStack(spacing: 10) {
-                        if let t = item.time { Text(t).font(.system(size: 11.5, design: .monospaced)) }
-                        if let s = item.source { Text(s).font(.system(size: 11.5, weight: .medium)) }
+                        sourceFavicon(item: item, size: 16)
+                        if let s = item.source {
+                            Text(s)
+                                .font(.system(size: 12.5, weight: .semibold))
+                        }
+                        if let t = item.time {
+                            Text("·").foregroundStyle(theme.textSecondary.opacity(0.4))
+                            Text(t)
+                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        }
                         Spacer()
                         if let urlString = item.url, let url = URL(string: urlString) {
                             Link(destination: url) {
@@ -340,62 +354,87 @@ struct IntelView: View {
                         }
                     }
                     .foregroundStyle(theme.textSecondary)
+                    .padding(.bottom, 22)
 
-                    // body
+                    // 1) 投研改写在正文上方
+                    rewriteSection(item: item, track: track)
+                        .padding(.bottom, 22)
+
+                    // 2) 正文（qmreader reading type）
                     let article = store.intelArticleByID[item.id]
                     let bodyMode = article?.mode ?? "summary"
-                    HStack(spacing: 6) {
+                    HStack(spacing: 8) {
                         Text("正文")
                             .font(.system(size: 12, weight: .bold))
-                        Text(bodyMode == "fulltext" ? "全文" : (bodyMode == "summary" ? "摘要" : "不可用"))
+                            .foregroundStyle(theme.textPrimary)
+                        Text(bodyModeLabel(bodyMode))
                             .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                             .foregroundStyle(theme.textSecondary)
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(theme.accent.opacity(0.08), in: Capsule())
+                            .padding(.horizontal, 7).padding(.vertical, 3)
+                            .background(theme.surfaceContainer, in: Capsule())
                         if store.isLoadingIntelDetail {
                             ProgressView().scaleEffect(0.7)
                         }
                     }
-                    if let body = article?.body, !body.isEmpty {
-                        Text(body)
-                            .font(.system(size: 13.5))
-                            .foregroundStyle(theme.textBody)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } else if let sum = item.summary, !sum.isEmpty {
-                        Text(sum)
-                            .font(.system(size: 13.5))
-                            .foregroundStyle(theme.textBody)
-                        Text("全文抓取失败或未完成，以上为 RSS 摘要")
-                            .font(.system(size: 11))
-                            .foregroundStyle(theme.textSecondary)
-                    } else {
-                        Text("暂无正文，可尝试外链打开")
-                            .font(.system(size: 13))
-                            .foregroundStyle(theme.textSecondary)
+                    .padding(.bottom, 12)
+
+                    Group {
+                        if let body = article?.body, !body.isEmpty {
+                            Text(body)
+                                .font(.system(size: 16.5))
+                                .foregroundStyle(theme.textBody)
+                                .lineSpacing(16.5 * 0.88) // ~1.88 line-height feel
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else if let sum = item.summary, !sum.isEmpty {
+                            Text(sum)
+                                .font(.system(size: 16.5))
+                                .foregroundStyle(theme.textBody)
+                                .lineSpacing(16.5 * 0.88)
+                            Text("全文抓取失败或未完成，以上为 RSS 摘要")
+                                .font(.system(size: 12))
+                                .foregroundStyle(theme.textSecondary)
+                                .padding(.top, 8)
+                        } else {
+                            Text("暂无正文，可尝试外链打开")
+                                .font(.system(size: 14))
+                                .foregroundStyle(theme.textSecondary)
+                        }
                     }
-
-                    Divider().overlay(theme.hairline)
-
-                    // rewrite
-                    rewriteSection(item: item, track: track)
+                    .frame(maxWidth: 720, alignment: .leading)
                 }
-                .padding(20)
+                .frame(maxWidth: 780, alignment: .leading)
+                .padding(.horizontal, 36)
+                .padding(.vertical, 34)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
             .background(theme.canvas)
         } else {
-            VStack(spacing: 10) {
-                Image(systemName: "doc.text.magnifyingglass")
-                    .font(.system(size: 28))
-                    .foregroundStyle(theme.textSecondary.opacity(0.5))
+            VStack(spacing: 16) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 20)
+                        .fill(theme.surfaceContainer)
+                        .frame(width: 64, height: 64)
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 28, weight: .medium))
+                        .foregroundStyle(theme.textSecondary.opacity(0.55))
+                }
                 Text("选择左侧一条资讯开始阅读")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(theme.textSecondary)
-                Text("详情板展示正文（尽量全文）+ 投研向改写")
-                    .font(.system(size: 12))
-                    .foregroundStyle(theme.textSecondary.opacity(0.7))
+                Text("改写在上 · 正文在下 · 列表卡片对齐 qmreader 节奏")
+                    .font(.system(size: 12.2))
+                    .foregroundStyle(theme.textSecondary.opacity(0.65))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(theme.canvas)
+        }
+    }
+
+    private func bodyModeLabel(_ mode: String) -> String {
+        switch mode {
+        case "fulltext": return "全文"
+        case "summary": return "摘要"
+        default: return "不可用"
         }
     }
 
@@ -469,8 +508,13 @@ struct IntelView: View {
                 }
             }
         }
-        .padding(12)
-        .background(theme.accent.opacity(0.04), in: RoundedRectangle(cornerRadius: theme.chipRadius))
+        .padding(14)
+        .background(theme.surface, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(theme.outlineVariant.opacity(0.9), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 1)
     }
 
     private func statusLabel(_ status: String) -> String {
@@ -480,6 +524,55 @@ struct IntelView: View {
         case "failed": return "failed"
         default: return "not queued"
         }
+    }
+
+    // MARK: - qmreader-like media helpers
+
+    /// 域名 favicon 作列表缩略；失败时字母块（对齐 feed-item / entry-thumb）。
+    @ViewBuilder
+    private func sourceFavicon(item: IntelItem, size: CGFloat) -> some View {
+        let letter = sourceLetter(item)
+        let favURL = faviconURL(for: item.url)
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.28)
+                .fill(theme.surfaceContainer)
+            if let favURL {
+                AsyncImage(url: favURL) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable().scaledToFill()
+                    default:
+                        Text(letter)
+                            .font(.system(size: size * 0.48, weight: .bold))
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                }
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: size * 0.28))
+            } else {
+                Text(letter)
+                    .font(.system(size: size * 0.48, weight: .bold))
+                    .foregroundStyle(theme.textSecondary)
+            }
+        }
+        .frame(width: size, height: size)
+    }
+
+    private func sourceLetter(_ item: IntelItem) -> String {
+        let s = (item.source ?? item.title).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let ch = s.first else { return "·" }
+        return String(ch).uppercased()
+    }
+
+    private func faviconURL(for articleURL: String?) -> URL? {
+        guard let articleURL, let host = URL(string: articleURL)?.host, !host.isEmpty else { return nil }
+        // Google s2 favicons：轻量、无 key；失败时 AsyncImage 走字母兜底
+        var comp = URLComponents(string: "https://www.google.com/s2/favicons")
+        comp?.queryItems = [
+            URLQueryItem(name: "domain", value: host),
+            URLQueryItem(name: "sz", value: "128"),
+        ]
+        return comp?.url
     }
 
     // MARK: - AI digest 卡片（plan 2026-07-09-001）
@@ -653,44 +746,79 @@ struct IntelView: View {
         }
     }
 
+    /// qmreader `.entry-card`：左文案 + 右 58px 缩略，padding 11–12、圆角 10、gap 10。
     private func newsRow(_ item: IntelItem, track: IntelTrack) -> some View {
         let isOn = store.selectedIntelItemID == item.id
         let rwStatus = store.intelRewriteByID[item.id]?.status
         return Button {
             store.selectIntelItem(item, trackKey: track.key, trackName: track.name)
         } label: {
-            HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(item.title)
-                        .font(.system(size: 12.5, weight: isOn ? .semibold : .regular))
-                        .foregroundStyle(theme.textBody)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 0) {
+                    // top meta: source · time
                     HStack(spacing: 6) {
-                        if let time = item.time, !time.isEmpty {
-                            Text(time).font(.system(size: 10.5, design: .monospaced))
-                        }
+                        sourceFavicon(item: item, size: 13)
                         if let source = item.source, !source.isEmpty {
-                            Text(source).font(.system(size: 10.5, weight: .medium)).lineLimit(1)
+                            Text(source)
+                                .font(.system(size: 11.3, weight: .medium))
+                                .lineLimit(1)
+                        }
+                        if let time = item.time, !time.isEmpty {
+                            Text(time)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(theme.textSecondary.opacity(0.85))
                         }
                         if let rwStatus, rwStatus == "ready" {
-                            Text("改写✓")
-                                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                            Text("改写")
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
                                 .foregroundStyle(theme.accent)
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(theme.accent.opacity(0.1), in: Capsule())
                         } else if rwStatus == "generating" {
-                            Text("…")
-                                .font(.system(size: 9.5, design: .monospaced))
-                                .foregroundStyle(theme.textSecondary)
+                            ProgressView().scaleEffect(0.55)
                         }
+                        Spacer(minLength: 0)
                     }
                     .foregroundStyle(theme.textSecondary)
+                    .padding(.bottom, 6)
+
+                    Text(item.title)
+                        .font(.system(size: 13.5, weight: isOn ? .semibold : .medium))
+                        .foregroundStyle(isOn ? theme.textPrimary : theme.textBody)
+                        .lineLimit(2)
+                        .lineSpacing(2)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if let sum = item.summary, !sum.isEmpty {
+                        Text(sum)
+                            .font(.system(size: 12.2))
+                            .foregroundStyle(theme.textSecondary.opacity(0.92))
+                            .lineLimit(2)
+                            .lineSpacing(2)
+                            .padding(.top, 5)
+                            .multilineTextAlignment(.leading)
+                    }
                 }
-                Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                // entry-thumb 58×58
+                sourceFavicon(item: item, size: 58)
+                    .shadow(color: Color.black.opacity(0.06), radius: 2, x: 0, y: 1)
             }
-            .padding(.horizontal, 12).padding(.vertical, 9)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .background(isOn ? theme.accent.opacity(0.16) : Color.clear)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(isOn ? theme.surface : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(isOn ? theme.outlineVariant : Color.clear, lineWidth: 1)
+            )
+            .shadow(color: isOn ? Color.black.opacity(0.055) : .clear, radius: 4, x: 0, y: 2)
         }
         .buttonStyle(.plain)
     }
