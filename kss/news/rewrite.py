@@ -1,6 +1,8 @@
-"""Investment rewrite for 资讯雷达 (plan 2026-07-10-001 U2).
+"""资讯雷达改写：投研向 (investment) + qmreader 风中文改写 (chinese).
 
-Schema: 事件 / 影响 / 标的线索 / 待验证. Reuses LLMClient.complete like digest_ai.
+kind:
+- investment: 事件/影响/标的线索/待验证
+- chinese: 全文流畅中文改写（对齐 qmreader 语言/结构规范，不绑定「乔木」人设）
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from kss.news.rewrite_config import (
 )
 from kss.storage.rewrite_pool import (
     BEIJING,
+    VALID_KINDS,
     beijing_day,
     claim_generating,
     count_ready,
@@ -30,11 +33,13 @@ from kss.storage.rewrite_pool import (
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT_SEC = 30.0
+_TIMEOUT_INVESTMENT = 30.0
+_TIMEOUT_CHINESE = 90.0  # 长文改写
 _MAX_RETRIES = 0
 _MAX_INPUT_CHARS = 12_000
+_MAX_INPUT_CHARS_CHINESE = 16_000
 
-_SYSTEM_PROMPT = """你是「资讯雷达」投研向改写助手。任务：把用户提供的一篇资讯压成可读的投研草稿。
+_INVESTMENT_SYSTEM = """你是「资讯雷达」投研向改写助手。任务：把用户提供的一篇资讯压成可读的投研草稿。
 
 硬性要求：
 1. 严格用下面四个中文小节标题（Markdown ##），顺序固定，每节 1-4 条短句：
@@ -48,7 +53,7 @@ _SYSTEM_PROMPT = """你是「资讯雷达」投研向改写助手。任务：把
 5. 不要输出前后缀寒暄、不要编造文中不存在的数字。
 """
 
-_USER_TEMPLATE = """赛道：{track_name}（{track_key}）
+_INVESTMENT_USER = """赛道：{track_name}（{track_key}）
 来源：{source}
 时间：{time}
 标题：{title}
@@ -59,11 +64,73 @@ URL：{url}
 
 请按四小节输出投研向改写。"""
 
+# 对齐 qmreader QIAOMU_REWRITE 的语言/结构规范，去掉个人品牌人设
+_CHINESE_SYSTEM = """你是中文科技与产业内容编辑。擅长把信息密度高的英文报告、外电、机器翻译稿或资讯稿，改写成逻辑清晰、读感流畅的中文文章。
+
+目标读者是有一定专业背景的从业者，时间有限，不喜欢废话。
+
+语言风格：
+- 口语化，对话感强，像和读者面对面聊天
+- 短段落，多留白，视觉舒适
+- 善用生活化类比解释复杂概念
+- 始终使用第三人称视角叙述
+- 不要用第一人称自称，不要把原文里的 I / we / you 机械直译成作者对读者喊话
+- 真诚、不装，专业但不掉书袋
+- 数据和案例支撑观点
+
+格式规范：
+- 重要观点用 **加粗** 突出
+- 全程使用中文标点
+- 禁止使用中文破折号和英文破折号
+- 禁止使用水平分隔线
+- 不输出一级标题，直接从开头钩子进入正文，小标题使用二级或三级标题
+- 只输出改写后的中文 Markdown 文章，不要解释过程，不要输出自查清单
+
+禁用表达：
+- 禁用句式：不是……而是、想象一下、你有没有想过、值得注意的是、不难理解、毋庸置疑、随着……的发展、对于……来说、在……方面
+- 禁用词汇：精准打击、赋能、落地、深度融合、全面布局、强势崛起等空洞套话
+- 英文 newsletter 的寒暄、订阅提醒、邮箱打扰、欢迎语不要直译，要删除或改写成真正的信息开场
+
+写作结构：
+- 开头前三行必须有钩子
+- 每个段落只说一件事
+- 每一个数据后面，都解释这说明什么
+- 因果关系写清楚
+- 小标题要有实际信息量
+- 结尾给出对读者真正有用的行动结论，不做空泛总结
+
+忠实度要求：
+- 保留原文所有关键数据和核心结论，不遗漏，不夸大
+- 可以调整结构和顺序，但不能改变原意
+- 不编造原文没有的事实、数字、融资与机构背书
+"""
+
+_CHINESE_USER = """来源：{source}
+时间：{time}
+标题：{title}
+URL：{url}
+
+正文/摘要：
+{body}
+
+请输出中文改写（Markdown 正文，无一级标题）。"""
+
 
 def _model_name() -> str:
     import os
 
     return os.environ.get("KSS_LLM_MODEL") or os.environ.get("OPENAI_MODEL") or "gpt-4o-mini"
+
+
+def _normalize_kind(kind: str | None) -> str:
+    k = (kind or "investment").strip().lower()
+    if k in ("zh", "cn", "中文", "中文改写"):
+        return "chinese"
+    if k in ("invest", "投研", "投研改写"):
+        return "investment"
+    if k not in VALID_KINDS:
+        return "investment"
+    return k
 
 
 def build_rewrite_prompt(
@@ -72,9 +139,21 @@ def build_rewrite_prompt(
     item: dict[str, Any],
     body: str,
     body_mode: str,
+    kind: str = "investment",
 ) -> tuple[str, str]:
-    body_clipped = (body or "")[:_MAX_INPUT_CHARS]
-    user = _USER_TEMPLATE.format(
+    kind = _normalize_kind(kind)
+    max_chars = _MAX_INPUT_CHARS_CHINESE if kind == "chinese" else _MAX_INPUT_CHARS
+    body_clipped = (body or "")[:max_chars]
+    if kind == "chinese":
+        user = _CHINESE_USER.format(
+            source=item.get("source") or "—",
+            time=item.get("time") or "—",
+            title=item.get("title") or "",
+            url=item.get("url") or "",
+            body=body_clipped or "（无正文）",
+        )
+        return _CHINESE_SYSTEM, user
+    user = _INVESTMENT_USER.format(
         track_name=track_name or track_key,
         track_key=track_key,
         source=item.get("source") or "—",
@@ -84,11 +163,11 @@ def build_rewrite_prompt(
         body_mode=body_mode,
         body=body_clipped or "（无正文）",
     )
-    return _SYSTEM_PROMPT, user
+    return _INVESTMENT_SYSTEM, user
 
 
 def _parse_sections(text: str) -> dict[str, str]:
-    """Best-effort split of markdown ## sections."""
+    """Best-effort split of markdown ## sections (investment kind)."""
     keys = ("事件", "影响", "标的线索", "待验证")
     out = {k: "" for k in keys}
     if not text:
@@ -116,29 +195,35 @@ def run_rewrite(
     body_override: str | None = None,
     body_mode_override: str | None = None,
     respect_top_k: bool = False,
+    kind: str = "investment",
 ) -> dict[str, Any]:
-    """Generate or return investment rewrite for one item.
+    """Generate or return rewrite for one item.
 
-    respect_top_k is unused for on-demand (always False); worker enforces K externally.
+    kind=investment|chinese. respect_top_k reserved for worker.
     """
-    _ = respect_top_k  # reserved
+    _ = respect_top_k
+    kind = _normalize_kind(kind)
     title = (item.get("title") or "").strip()
     if not title:
-        return {"error": "missing title", "error_type": "invalid", "status": "failed"}
+        return {
+            "error": "missing title",
+            "error_type": "invalid",
+            "status": "failed",
+            "kind": kind,
+        }
 
     iid = item_id_for(item)
     day = beijing_day()
-    existing = read_draft(iid)
+    existing = read_draft(iid, kind)
     if existing and existing.get("status") == "ready" and not force:
-        return {**existing, "from_cache": True}
+        return {**existing, "from_cache": True, "kind": kind}
 
-    claimed, draft = claim_generating(item, track_key=track_key, day=day)
+    claimed, draft = claim_generating(item, track_key=track_key, day=day, kind=kind)
     if not claimed and draft.get("status") == "ready" and not force:
-        return {**draft, "from_cache": True}
+        return {**draft, "from_cache": True, "kind": kind}
     if not claimed and draft.get("status") == "generating" and not force:
-        return {**draft, "from_cache": True, "status": "generating"}
+        return {**draft, "from_cache": True, "status": "generating", "kind": kind}
 
-    # body
     if body_override is not None:
         body = body_override
         body_mode = body_mode_override or "summary"
@@ -163,6 +248,7 @@ def run_rewrite(
     if len(thin_input) < THIN_CONTENT_CHARS:
         failed = {
             **draft,
+            "kind": kind,
             "status": "failed",
             "error": "content too thin",
             "error_type": "thin",
@@ -174,13 +260,17 @@ def run_rewrite(
         write_draft(failed)
         return failed
 
-    system, user = build_rewrite_prompt(track_key, track_name, item, body, body_mode)
+    system, user = build_rewrite_prompt(
+        track_key, track_name, item, body, body_mode, kind=kind
+    )
+    timeout = _TIMEOUT_CHINESE if kind == "chinese" else _TIMEOUT_INVESTMENT
     try:
-        client = LLMClient(model=_model_name(), timeout=_TIMEOUT_SEC, max_retries=_MAX_RETRIES)
+        client = LLMClient(model=_model_name(), timeout=timeout, max_retries=_MAX_RETRIES)
         text = client.complete(system=system, user=user)
     except LLMUnavailable as e:
         failed = {
             **draft,
+            "kind": kind,
             "status": "failed",
             "error": str(e),
             "error_type": "unavailable",
@@ -196,6 +286,7 @@ def run_rewrite(
         et = "timeout" if "timeout" in err.lower() or "timed out" in err.lower() else "llm"
         failed = {
             **draft,
+            "kind": kind,
             "status": "failed",
             "error": err,
             "error_type": et,
@@ -208,15 +299,16 @@ def run_rewrite(
         return failed
 
     text = (text or "").strip()
-    sections = _parse_sections(text)
+    sections = _parse_sections(text) if kind == "investment" else {}
     ready = {
         **draft,
+        "kind": kind,
         "status": "ready",
         "text": text,
         "sections": sections,
         "model": _model_name(),
         "generated_at": datetime.now(BEIJING).strftime("%Y-%m-%d %H:%M:%S"),
-        "prompt_system": system,
+        "prompt_system": system[:500],  # trim storage
         "body_text": body,
         "body_mode": body_mode,
         "body_char_count": char_count,
@@ -234,10 +326,10 @@ def aggregate_track_digest(
     *,
     threshold: int | None = None,
 ) -> dict[str, Any]:
-    """Join ready rewrites into 今日要点 bullets (deterministic, no second LLM)."""
+    """Join ready **investment** rewrites into 今日要点 bullets."""
     day = day or beijing_day()
     thr = POOL_THRESHOLD if threshold is None else threshold
-    ready = list_drafts(track_key=track_key, day=day, status="ready")
+    ready = list_drafts(track_key=track_key, day=day, status="ready", kind="investment")
     n = len(ready)
     if n < thr:
         return {
@@ -259,7 +351,6 @@ def aggregate_track_digest(
         event = (sections.get("事件") or "").strip()
         impact = (sections.get("影响") or "").strip()
         if not event:
-            # first non-empty line of full text
             for line in (d.get("text") or "").splitlines():
                 line = line.strip().lstrip("-•* ").strip()
                 if line and not line.startswith("#"):
@@ -269,7 +360,6 @@ def aggregate_track_digest(
             event = (d.get("title") or "").strip()
         if not event:
             continue
-        # normalize for dedupe
         key = re.sub(r"\s+", "", event)[:80]
         if key in seen:
             continue
@@ -297,4 +387,4 @@ def aggregate_track_digest(
 
 
 def pool_ready_count(track_key: str, day: str | None = None) -> int:
-    return count_ready(track_key, day)
+    return count_ready(track_key, day, kind="investment")

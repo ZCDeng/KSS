@@ -219,10 +219,11 @@ struct IntelArticleResponse: Codable {
     }
 }
 
-/// 资讯雷达投研改写响应。
+/// 资讯雷达改写响应（投研 / 中文改写共用）。
 struct IntelRewriteResponse: Codable {
     var itemId: String?
     var trackKey: String?
+    var kind: String?
     var status: String?
     var text: String?
     var sections: [String: String]?
@@ -236,7 +237,7 @@ struct IntelRewriteResponse: Codable {
     var fromCache: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case text, sections, model, status, error
+        case text, sections, model, status, error, kind
         case itemId = "item_id"
         case trackKey = "track_key"
         case generatedAt = "generated_at"
@@ -245,6 +246,32 @@ struct IntelRewriteResponse: Codable {
         case bodyCharCount = "body_char_count"
         case errorType = "error_type"
         case fromCache = "from_cache"
+    }
+}
+
+/// 详情阅读 Tab（对齐 qmreader reader-tabs）。
+enum IntelReaderTab: String, CaseIterable, Identifiable {
+    case original
+    case chinese
+    case investment
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .original: return "原文"
+        case .chinese: return "中文改写"
+        case .investment: return "投研改写"
+        }
+    }
+
+    /// bridge kind for rewrite tabs
+    var rewriteKind: String? {
+        switch self {
+        case .original: return nil
+        case .chinese: return "chinese"
+        case .investment: return "investment"
+        }
     }
 }
 

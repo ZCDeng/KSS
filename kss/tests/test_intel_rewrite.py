@@ -28,6 +28,17 @@ def test_build_rewrite_prompt_has_sections_instruction():
     assert "body text" in user_p
 
 
+def test_build_chinese_rewrite_prompt():
+    sys_p, user_p = build_rewrite_prompt(
+        "ai", "AI", _item(), "body text here", "fulltext", kind="chinese"
+    )
+    assert "中文" in sys_p
+    assert "破折号" in sys_p
+    assert "Markdown" in sys_p
+    assert "News title 0" in user_p
+    assert "事件" not in sys_p  # not investment schema
+
+
 def test_run_rewrite_missing_title(tmp_path, monkeypatch):
     monkeypatch.setenv("KSS_STATE_ROOT", str(tmp_path))
     r = run_rewrite("ai", "AI", {"title": "", "url": "https://x.com"}, fetch_body=False)
@@ -119,6 +130,28 @@ def test_aggregate_insufficient(tmp_path, monkeypatch):
     got = aggregate_track_digest("ai", day, threshold=3)
     assert got["mode"] == "insufficient"
     assert got["count"] == 1
+
+
+def test_run_chinese_rewrite_separate_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("KSS_STATE_ROOT", str(tmp_path))
+    mock_client = MagicMock()
+    mock_client.complete.return_value = "这是一篇**流畅**的中文改写稿。\n\n第二段继续。"
+    with patch("kss.news.rewrite.LLMClient", return_value=mock_client):
+        with patch(
+            "kss.news.rewrite.body_or_summary",
+            return_value={"body": "x" * 100, "mode": "fulltext", "char_count": 100, "error": None},
+        ):
+            r = run_rewrite("ai", "AI", _item(7), force=True, kind="chinese")
+    assert r["status"] == "ready"
+    assert r["kind"] == "chinese"
+    assert "流畅" in r["text"]
+    # separate file from investment
+    from kss.storage.rewrite_pool import draft_path, item_id_for, read_draft
+
+    iid = item_id_for(_item(7))
+    assert draft_path(iid, "chinese").is_file()
+    assert read_draft(iid, "chinese")["kind"] == "chinese"
+    assert read_draft(iid, "investment") is None
 
 
 def test_aggregate_pool(tmp_path, monkeypatch):

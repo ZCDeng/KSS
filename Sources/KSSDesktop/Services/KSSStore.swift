@@ -50,10 +50,26 @@ final class KSSStore: ObservableObject {
     // MARK: 资讯雷达 reader workbench（plan 2026-07-10-001）
     @Published var selectedIntelItemID: String?
     @Published var intelArticleByID: [String: IntelArticleResponse] = [:]
-    @Published var intelRewriteByID: [String: IntelRewriteResponse] = [:]
+    /// kind → itemId → response（investment / chinese）
+    @Published var intelRewriteByKind: [String: [String: IntelRewriteResponse]] = [:]
     @Published var isLoadingIntelDetail = false
     private var intelDetailTask: Task<Void, Never>?
     private var intelRewriteRunTask: Task<Void, Never>?
+
+    /// 兼容旧调用：投研改写 map
+    var intelRewriteByID: [String: IntelRewriteResponse] {
+        intelRewriteByKind["investment"] ?? [:]
+    }
+
+    func rewrite(for itemID: String, kind: String) -> IntelRewriteResponse? {
+        intelRewriteByKind[kind]?[itemID]
+    }
+
+    func setRewrite(_ resp: IntelRewriteResponse, itemID: String, kind: String) {
+        var bucket = intelRewriteByKind[kind] ?? [:]
+        bucket[itemID] = resp
+        intelRewriteByKind[kind] = bucket
+    }
 
     /// Bulk 一键提炼全部要点状态。
     struct BulkDigestState {
@@ -356,62 +372,78 @@ final class KSSStore: ObservableObject {
             defer { self.isLoadingIntelDetail = false }
             guard let bridge = self.bridge else { return }
 
-            // Prefer rewrite first (body snapshot on draft for AE1)
-            do {
-                let rewrite = try await Task.detached {
-                    try bridge.intelRewrite(trackKey: trackKey, trackName: trackName, item: item, force: false)
-                }.value
-                self.intelRewriteByID[item.id] = rewrite
-                if let body = rewrite.bodyText, !body.isEmpty {
-                    self.intelArticleByID[item.id] = IntelArticleResponse(
-                        body: body,
-                        title: item.title,
-                        mode: rewrite.bodyMode ?? "summary",
-                        error: nil,
-                        charCount: rewrite.bodyCharCount,
-                        url: item.url
-                    )
-                } else if let url = item.url, !url.isEmpty {
-                    let article = try await Task.detached {
+            // 并行：正文 + 中文改写 + 投研改写（缓存命中快）
+            async let articleTask: IntelArticleResponse? = {
+                if let url = item.url, !url.isEmpty {
+                    return try? await Task.detached {
                         try bridge.intelArticle(url: url, summary: item.summary ?? "")
                     }.value
-                    self.intelArticleByID[item.id] = article
                 }
-            } catch {
-                if let url = item.url, !url.isEmpty {
-                    let article: IntelArticleResponse? = await Task.detached {
-                        try? bridge.intelArticle(url: url, summary: item.summary ?? "")
-                    }.value
-                    if let article {
-                        self.intelArticleByID[item.id] = article
-                    }
-                }
-                self.intelRewriteByID[item.id] = IntelRewriteResponse(
-                    itemId: nil, trackKey: trackKey, status: "failed",
-                    text: nil, sections: nil, model: nil, generatedAt: nil,
-                    bodyText: nil, bodyMode: nil, bodyCharCount: nil,
-                    error: error.localizedDescription, errorType: "client", fromCache: nil
+                return nil
+            }()
+            async let chineseTask: IntelRewriteResponse? = {
+                try? await Task.detached {
+                    try bridge.intelRewrite(
+                        trackKey: trackKey, trackName: trackName, item: item,
+                        force: false, kind: "chinese"
+                    )
+                }.value
+            }()
+            async let investTask: IntelRewriteResponse? = {
+                try? await Task.detached {
+                    try bridge.intelRewrite(
+                        trackKey: trackKey, trackName: trackName, item: item,
+                        force: false, kind: "investment"
+                    )
+                }.value
+            }()
+
+            let (article, chinese, invest) = await (articleTask, chineseTask, investTask)
+            if let article {
+                self.intelArticleByID[item.id] = article
+            } else if let body = chinese?.bodyText ?? invest?.bodyText, !body.isEmpty {
+                self.intelArticleByID[item.id] = IntelArticleResponse(
+                    body: body, title: item.title,
+                    mode: chinese?.bodyMode ?? invest?.bodyMode ?? "summary",
+                    error: nil,
+                    charCount: chinese?.bodyCharCount ?? invest?.bodyCharCount,
+                    url: item.url
                 )
             }
+            if let chinese { self.setRewrite(chinese, itemID: item.id, kind: "chinese") }
+            if let invest { self.setRewrite(invest, itemID: item.id, kind: "investment") }
         }
     }
 
-    /// On-demand rewrite for selected item.
-    func requestIntelRewrite(item: IntelItem, trackKey: String, trackName: String, force: Bool = true) async {
+    /// On-demand rewrite for selected item. kind: investment | chinese
+    func requestIntelRewrite(
+        item: IntelItem,
+        trackKey: String,
+        trackName: String,
+        force: Bool = true,
+        kind: String = "investment"
+    ) async {
         guard let bridge else { return }
-        intelRewriteByID[item.id] = IntelRewriteResponse(
-            itemId: nil, trackKey: trackKey, status: "generating",
-            text: nil, sections: nil, model: nil, generatedAt: nil,
-            bodyText: intelArticleByID[item.id]?.body,
-            bodyMode: intelArticleByID[item.id]?.mode,
-            bodyCharCount: intelArticleByID[item.id]?.charCount,
-            error: nil, errorType: nil, fromCache: nil
+        setRewrite(
+            IntelRewriteResponse(
+                itemId: nil, trackKey: trackKey, kind: kind, status: "generating",
+                text: nil, sections: nil, model: nil, generatedAt: nil,
+                bodyText: intelArticleByID[item.id]?.body,
+                bodyMode: intelArticleByID[item.id]?.mode,
+                bodyCharCount: intelArticleByID[item.id]?.charCount,
+                error: nil, errorType: nil, fromCache: nil
+            ),
+            itemID: item.id,
+            kind: kind
         )
         do {
             let resp = try await Task.detached {
-                try bridge.intelRewrite(trackKey: trackKey, trackName: trackName, item: item, force: force)
+                try bridge.intelRewrite(
+                    trackKey: trackKey, trackName: trackName, item: item,
+                    force: force, kind: kind
+                )
             }.value
-            intelRewriteByID[item.id] = resp
+            setRewrite(resp, itemID: item.id, kind: kind)
             if let body = resp.bodyText, !body.isEmpty {
                 intelArticleByID[item.id] = IntelArticleResponse(
                     body: body, title: item.title, mode: resp.bodyMode ?? "summary",
@@ -419,11 +451,15 @@ final class KSSStore: ObservableObject {
                 )
             }
         } catch {
-            intelRewriteByID[item.id] = IntelRewriteResponse(
-                itemId: nil, trackKey: trackKey, status: "failed",
-                text: nil, sections: nil, model: nil, generatedAt: nil,
-                bodyText: nil, bodyMode: nil, bodyCharCount: nil,
-                error: error.localizedDescription, errorType: "client", fromCache: nil
+            setRewrite(
+                IntelRewriteResponse(
+                    itemId: nil, trackKey: trackKey, kind: kind, status: "failed",
+                    text: nil, sections: nil, model: nil, generatedAt: nil,
+                    bodyText: nil, bodyMode: nil, bodyCharCount: nil,
+                    error: error.localizedDescription, errorType: "client", fromCache: nil
+                ),
+                itemID: item.id,
+                kind: kind
             )
         }
     }

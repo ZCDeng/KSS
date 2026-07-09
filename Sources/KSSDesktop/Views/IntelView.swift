@@ -7,6 +7,8 @@ struct IntelView: View {
     @Environment(\.kssTheme) private var theme
     @EnvironmentObject private var store: KSSStore
     @State private var activeTrack: String = "tech"
+    /// 对齐 qmreader DEFAULT_READER_OPEN_TAB = rewrite → 中文改写
+    @State private var readerTab: IntelReaderTab = .chinese
 
     private var digest: NewsDigestResponse? { store.intelDigest }
     private var tracks: [IntelTrack] { digest?.tracks ?? [] }
@@ -322,29 +324,29 @@ struct IntelView: View {
     @ViewBuilder
     private func detailPane(track: IntelTrack) -> some View {
         if let item = selectedItem {
-            ScrollView {
-                // qmreader reader: measure ~70ch, font ~16.5, line-height ~1.88, padding 36
+            VStack(alignment: .leading, spacing: 0) {
+                // header sticky-ish top
                 VStack(alignment: .leading, spacing: 0) {
-                    // header
                     Text(item.title)
                         .font(.system(size: 22, weight: .bold))
                         .foregroundStyle(theme.textPrimary)
                         .lineSpacing(4)
                         .fixedSize(horizontal: false, vertical: true)
-                        .padding(.bottom, 12)
+                        .padding(.bottom, 10)
 
                     HStack(spacing: 10) {
                         sourceFavicon(item: item, size: 16)
                         if let s = item.source {
-                            Text(s)
-                                .font(.system(size: 12.5, weight: .semibold))
+                            Text(s).font(.system(size: 12.5, weight: .semibold))
                         }
                         if let t = item.time {
                             Text("·").foregroundStyle(theme.textSecondary.opacity(0.4))
-                            Text(t)
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            Text(t).font(.system(size: 12, weight: .medium, design: .monospaced))
                         }
                         Spacer()
+                        if store.isLoadingIntelDetail {
+                            ProgressView().scaleEffect(0.7)
+                        }
                         if let urlString = item.url, let url = URL(string: urlString) {
                             Link(destination: url) {
                                 Label("外链打开", systemImage: "arrow.up.right.square")
@@ -354,60 +356,37 @@ struct IntelView: View {
                         }
                     }
                     .foregroundStyle(theme.textSecondary)
-                    .padding(.bottom, 22)
+                    .padding(.bottom, 14)
 
-                    // 1) 投研改写在正文上方
-                    rewriteSection(item: item, track: track)
-                        .padding(.bottom, 22)
-
-                    // 2) 正文（qmreader reading type）
-                    let article = store.intelArticleByID[item.id]
-                    let bodyMode = article?.mode ?? "summary"
-                    HStack(spacing: 8) {
-                        Text("正文")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(theme.textPrimary)
-                        Text(bodyModeLabel(bodyMode))
-                            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(theme.textSecondary)
-                            .padding(.horizontal, 7).padding(.vertical, 3)
-                            .background(theme.surfaceContainer, in: Capsule())
-                        if store.isLoadingIntelDetail {
-                            ProgressView().scaleEffect(0.7)
-                        }
-                    }
-                    .padding(.bottom, 12)
-
-                    Group {
-                        if let body = article?.body, !body.isEmpty {
-                            Text(body)
-                                .font(.system(size: 16.5))
-                                .foregroundStyle(theme.textBody)
-                                .lineSpacing(16.5 * 0.88) // ~1.88 line-height feel
-                                .fixedSize(horizontal: false, vertical: true)
-                        } else if let sum = item.summary, !sum.isEmpty {
-                            Text(sum)
-                                .font(.system(size: 16.5))
-                                .foregroundStyle(theme.textBody)
-                                .lineSpacing(16.5 * 0.88)
-                            Text("全文抓取失败或未完成，以上为 RSS 摘要")
-                                .font(.system(size: 12))
-                                .foregroundStyle(theme.textSecondary)
-                                .padding(.top, 8)
-                        } else {
-                            Text("暂无正文，可尝试外链打开")
-                                .font(.system(size: 14))
-                                .foregroundStyle(theme.textSecondary)
-                        }
-                    }
-                    .frame(maxWidth: 720, alignment: .leading)
+                    // qmreader .reader-tabs
+                    readerTabBar
+                        .padding(.bottom, 4)
                 }
-                .frame(maxWidth: 780, alignment: .leading)
                 .padding(.horizontal, 36)
-                .padding(.vertical, 34)
+                .padding(.top, 28)
+                .frame(maxWidth: 780, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .center)
+
+                Divider().overlay(theme.hairline.opacity(0.7))
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        readerTabPanel(item: item, track: track)
+                            .frame(maxWidth: 720, alignment: .leading)
+                    }
+                    .frame(maxWidth: 780, alignment: .leading)
+                    .padding(.horizontal, 36)
+                    .padding(.vertical, 24)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                }
             }
             .background(theme.canvas)
+            .onChange(of: item.id) { _, _ in
+                // 有中文改写则默认切到中文改写，否则原文
+                if store.rewrite(for: item.id, kind: "chinese")?.status == "ready" {
+                    readerTab = .chinese
+                }
+            }
         } else {
             VStack(spacing: 16) {
                 ZStack {
@@ -421,12 +400,111 @@ struct IntelView: View {
                 Text("选择左侧一条资讯开始阅读")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(theme.textSecondary)
-                Text("改写在上 · 正文在下 · 列表卡片对齐 qmreader 节奏")
+                Text("原文 · 中文改写 · 投研改写（qmreader Tab）")
                     .font(.system(size: 12.2))
                     .foregroundStyle(theme.textSecondary.opacity(0.65))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(theme.canvas)
+        }
+    }
+
+    // MARK: - Reader tabs（qmreader .reader-tabs）
+
+    private var readerTabBar: some View {
+        HStack(spacing: 4) {
+            ForEach(IntelReaderTab.allCases) { tab in
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) { readerTab = tab }
+                } label: {
+                    Text(tab.label)
+                        .font(.system(size: 13, weight: readerTab == tab ? .semibold : .medium))
+                        .foregroundStyle(readerTab == tab ? theme.textPrimary : theme.textSecondary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(
+                            readerTab == tab
+                                ? theme.surface
+                                : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 8)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(
+                                    readerTab == tab ? theme.outlineVariant : Color.clear,
+                                    lineWidth: 1
+                                )
+                        )
+                        .shadow(
+                            color: readerTab == tab ? Color.black.opacity(0.04) : .clear,
+                            radius: 2, x: 0, y: 1
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(4)
+        .background(theme.surfaceContainer.opacity(0.65), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private func readerTabPanel(item: IntelItem, track: IntelTrack) -> some View {
+        switch readerTab {
+        case .original:
+            originalBodyPanel(item: item)
+        case .chinese:
+            rewritePanel(
+                item: item, track: track, kind: "chinese",
+                title: "中文改写",
+                generateLabel: "生成中文改写",
+                emptyHint: "这篇文章还没有中文改写。可一键生成流畅中文稿（qmreader 风格）。"
+            )
+        case .investment:
+            rewritePanel(
+                item: item, track: track, kind: "investment",
+                title: "投研改写",
+                generateLabel: "生成投研改写",
+                emptyHint: "尚未生成投研改写。后台 Top-K 或点下方按钮生成。"
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func originalBodyPanel(item: IntelItem) -> some View {
+        let article = store.intelArticleByID[item.id]
+        let bodyMode = article?.mode ?? "summary"
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Text("原文")
+                    .font(.system(size: 12, weight: .bold))
+                Text(bodyModeLabel(bodyMode))
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary)
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(theme.surfaceContainer, in: Capsule())
+            }
+            Group {
+                if let body = article?.body, !body.isEmpty {
+                    Text(body)
+                        .font(.system(size: 16.5))
+                        .foregroundStyle(theme.textBody)
+                        .lineSpacing(16.5 * 0.88)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if let sum = item.summary, !sum.isEmpty {
+                    Text(sum)
+                        .font(.system(size: 16.5))
+                        .foregroundStyle(theme.textBody)
+                        .lineSpacing(16.5 * 0.88)
+                    Text("全文抓取失败或未完成，以上为 RSS 摘要")
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textSecondary)
+                } else {
+                    Text("暂无正文，可尝试外链打开")
+                        .font(.system(size: 14))
+                        .foregroundStyle(theme.textSecondary)
+                }
+            }
         }
     }
 
@@ -439,82 +517,127 @@ struct IntelView: View {
     }
 
     @ViewBuilder
-    private func rewriteSection(item: IntelItem, track: IntelTrack) -> some View {
-        let rw = store.intelRewriteByID[item.id]
+    private func rewritePanel(
+        item: IntelItem,
+        track: IntelTrack,
+        kind: String,
+        title: String,
+        generateLabel: String,
+        emptyHint: String
+    ) -> some View {
+        let rw = store.rewrite(for: item.id, kind: kind)
         let status = rw?.status ?? "none"
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("投研改写")
-                    .font(KSSFont.title(14, .bold, design: theme.titleDesign))
-                    .foregroundStyle(theme.accent)
-                Spacer()
+        let isChinese = kind == "chinese"
+
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(isChinese
+                        ? Color(red: 0.48, green: 0.39, blue: 0.18) // qmreader amber-ish
+                        : theme.accent)
                 Text(statusLabel(status))
                     .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                     .foregroundStyle(theme.textSecondary)
+                Spacer()
+                if status == "ready" {
+                    Button {
+                        Task {
+                            await store.requestIntelRewrite(
+                                item: item, trackKey: track.key, trackName: track.name,
+                                force: true, kind: kind
+                            )
+                        }
+                    } label: {
+                        Label("重新生成", systemImage: "arrow.clockwise")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(theme.accent)
+                }
             }
+
             if status == "generating" || (store.isLoadingIntelDetail && rw == nil) {
                 HStack(spacing: 8) {
-                    ProgressView().scaleEffect(0.8)
-                    Text("生成投研改写中…")
-                        .font(.system(size: 12.5))
+                    ProgressView().scaleEffect(0.85)
+                    Text(isChinese ? "正在生成中文改写…" : "正在生成投研改写…")
+                        .font(.system(size: 13))
                         .foregroundStyle(theme.textSecondary)
                 }
+                .padding(.vertical, 24)
             } else if status == "ready", let text = rw?.text, !text.isEmpty {
-                digestMarkdownView(text)
+                // reading type for chinese; structured bullets for investment
+                if isChinese {
+                    Text(text)
+                        .font(.system(size: 16.5))
+                        .foregroundStyle(theme.textBody)
+                        .lineSpacing(16.5 * 0.88)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                } else {
+                    digestMarkdownView(text)
+                        .textSelection(.enabled)
+                }
                 if let model = rw?.model {
-                    Text(model).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(theme.textSecondary)
+                    Text(model)
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(theme.textSecondary)
+                        .padding(.top, 8)
                 }
-                Button {
-                    Task { await store.requestIntelRewrite(item: item, trackKey: track.key, trackName: track.name, force: true) }
-                } label: {
-                    Label("重新改写", systemImage: "arrow.clockwise")
-                        .font(.system(size: 12, weight: .semibold))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(theme.accent)
             } else if status == "failed" {
-                HStack(spacing: 6) {
+                HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 12))
-                    Text(rw?.error ?? "改写失败")
+                    Text(rw?.error ?? "生成失败")
                         .font(.system(size: 12.5))
-                        .lineLimit(3)
+                        .lineLimit(4)
                 }
                 .foregroundStyle(theme.down)
                 Button {
-                    Task { await store.requestIntelRewrite(item: item, trackKey: track.key, trackName: track.name, force: true) }
+                    Task {
+                        await store.requestIntelRewrite(
+                            item: item, trackKey: track.key, trackName: track.name,
+                            force: true, kind: kind
+                        )
+                    }
                 } label: {
                     Label("重试", systemImage: "arrow.clockwise")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(theme.accent)
+                        .padding(.horizontal, 12).padding(.vertical, 7)
+                        .background(theme.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(theme.accent)
             } else {
-                Text("尚未生成改写（后台 Top-K 或点下方按钮）")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(theme.textSecondary)
-                if store.hasLLMCredentials {
-                    Button {
-                        Task { await store.requestIntelRewrite(item: item, trackKey: track.key, trackName: track.name, force: true) }
-                    } label: {
-                        Label("生成投研改写", systemImage: "sparkles")
-                            .font(.system(size: 12.5, weight: .semibold))
-                            .foregroundStyle(theme.accent)
-                            .padding(.horizontal, 12).padding(.vertical, 6)
-                            .background(theme.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: theme.chipRadius))
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(emptyHint)
+                        .font(.system(size: 13.5))
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if store.hasLLMCredentials {
+                        Button {
+                            Task {
+                                await store.requestIntelRewrite(
+                                    item: item, trackKey: track.key, trackName: track.name,
+                                    force: true, kind: kind
+                                )
+                            }
+                        } label: {
+                            Label(generateLabel, systemImage: "sparkles")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 14).padding(.vertical, 8)
+                                .background(theme.accent, in: RoundedRectangle(cornerRadius: 8))
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        Text("未接入 AI — 前往设置")
+                            .font(.system(size: 12))
+                            .foregroundStyle(theme.ma5)
                     }
-                    .buttonStyle(.plain)
-                } else {
-                    Text("未接入 AI — 前往设置").font(.system(size: 12)).foregroundStyle(theme.ma5)
                 }
+                .padding(.vertical, 12)
             }
         }
-        .padding(14)
-        .background(theme.surface, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(theme.outlineVariant.opacity(0.9), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 1)
     }
 
     private func statusLabel(_ status: String) -> String {
@@ -749,9 +872,11 @@ struct IntelView: View {
     /// qmreader `.entry-card`：左文案 + 右 58px 缩略，padding 11–12、圆角 10、gap 10。
     private func newsRow(_ item: IntelItem, track: IntelTrack) -> some View {
         let isOn = store.selectedIntelItemID == item.id
-        let rwStatus = store.intelRewriteByID[item.id]?.status
+        let zhReady = store.rewrite(for: item.id, kind: "chinese")?.status == "ready"
+        let invStatus = store.rewrite(for: item.id, kind: "investment")?.status
         return Button {
             store.selectIntelItem(item, trackKey: track.key, trackName: track.name)
+            if zhReady { readerTab = .chinese }
         } label: {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 0) {
@@ -768,13 +893,20 @@ struct IntelView: View {
                                 .font(.system(size: 11, design: .monospaced))
                                 .foregroundStyle(theme.textSecondary.opacity(0.85))
                         }
-                        if let rwStatus, rwStatus == "ready" {
-                            Text("改写")
+                        if zhReady {
+                            Text("中文")
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundStyle(Color(red: 0.48, green: 0.39, blue: 0.18))
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(Color(red: 0.48, green: 0.39, blue: 0.18).opacity(0.12), in: Capsule())
+                        }
+                        if invStatus == "ready" {
+                            Text("投研")
                                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                                 .foregroundStyle(theme.accent)
                                 .padding(.horizontal, 5).padding(.vertical, 1)
                                 .background(theme.accent.opacity(0.1), in: Capsule())
-                        } else if rwStatus == "generating" {
+                        } else if invStatus == "generating" {
                             ProgressView().scaleEffect(0.55)
                         }
                         Spacer(minLength: 0)

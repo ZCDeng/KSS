@@ -216,20 +216,24 @@ struct BridgeClient {
         return try run(["intel-article", json], as: IntelArticleResponse.self)
     }
 
-    /// 单篇投研改写（on-demand）。
+    /// 单篇改写（on-demand）。kind: investment | chinese
     func intelRewrite(
         trackKey: String,
         trackName: String,
         item: IntelItem,
-        force: Bool = false
+        force: Bool = false,
+        kind: String = "investment"
     ) throws -> IntelRewriteResponse {
         struct Payload: Encodable {
             let track_key: String
             let track_name: String
             let item: IntelItem
             let force: Bool
+            let kind: String
         }
-        let payload = Payload(track_key: trackKey, track_name: trackName, item: item, force: force)
+        let payload = Payload(
+            track_key: trackKey, track_name: trackName, item: item, force: force, kind: kind
+        )
         let data = try JSONEncoder().encode(payload)
         let json = String(data: data, encoding: .utf8) ?? "{}"
         return try run(["intel-rewrite", json], as: IntelRewriteResponse.self)

@@ -46,8 +46,17 @@ def item_id_for(item: dict[str, Any]) -> str:
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
 
 
-def draft_path(item_id: str) -> Path:
-    return pool_dir() / f"{item_id}.json"
+# kind: investment (投研改写, legacy bare file) | chinese (qmreader 风中文改写)
+VALID_KINDS = frozenset({"investment", "chinese"})
+
+
+def draft_path(item_id: str, kind: str = "investment") -> Path:
+    kind = (kind or "investment").strip().lower()
+    if kind not in VALID_KINDS:
+        kind = "investment"
+    if kind == "investment":
+        return pool_dir() / f"{item_id}.json"
+    return pool_dir() / f"{item_id}.{kind}.json"
 
 
 def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
@@ -68,8 +77,8 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
         raise
 
 
-def read_draft(item_id: str) -> dict[str, Any] | None:
-    path = draft_path(item_id)
+def read_draft(item_id: str, kind: str = "investment") -> dict[str, Any] | None:
+    path = draft_path(item_id, kind)
     if not path.is_file():
         return None
     try:
@@ -82,7 +91,8 @@ def write_draft(data: dict[str, Any]) -> Path:
     iid = data.get("item_id")
     if not iid:
         raise ValueError("draft missing item_id")
-    path = draft_path(str(iid))
+    kind = str(data.get("kind") or "investment")
+    path = draft_path(str(iid), kind)
     _atomic_write_json(path, data)
     return path
 
@@ -92,16 +102,19 @@ def claim_generating(
     *,
     track_key: str,
     day: str | None = None,
+    kind: str = "investment",
     ttl_sec: float = GENERATING_TTL_SEC,
 ) -> tuple[bool, dict[str, Any]]:
     """Atomically claim item for rewrite.
 
     Returns (claimed, draft). claimed=False if ready or non-stale generating exists.
     """
+    kind = (kind or "investment").strip().lower()
+    if kind not in VALID_KINDS:
+        kind = "investment"
     day = day or beijing_day()
     iid = item_id_for(item)
-    path = draft_path(iid)
-    existing = read_draft(iid)
+    existing = read_draft(iid, kind)
     now = time.time()
     if existing:
         st = existing.get("status")
@@ -113,6 +126,7 @@ def claim_generating(
                 return False, existing
     draft = {
         "item_id": iid,
+        "kind": kind,
         "track_key": track_key,
         "day": day,
         "status": "generating",
@@ -124,7 +138,7 @@ def claim_generating(
         "started_at": datetime.now(BEIJING).strftime("%Y-%m-%d %H:%M:%S"),
     }
     # O_EXCL-style: if ready appeared under us, don't overwrite ready
-    again = read_draft(iid)
+    again = read_draft(iid, kind)
     if again and again.get("status") == "ready":
         return False, again
     write_draft(draft)
@@ -136,16 +150,29 @@ def list_drafts(
     track_key: str | None = None,
     day: str | None = None,
     status: str | None = None,
+    kind: str | None = "investment",
 ) -> list[dict[str, Any]]:
+    """List drafts. Default kind=investment so digest pool ignores chinese rewrites."""
     root = pool_dir()
     if not root.is_dir():
         return []
     out: list[dict[str, Any]] = []
     for p in root.glob("*.json"):
+        # investment files: {id}.json ; chinese: {id}.chinese.json
+        name = p.name
+        if kind == "investment":
+            if name.count(".") != 1:  # skip foo.chinese.json
+                continue
+        elif kind == "chinese":
+            if not name.endswith(".chinese.json"):
+                continue
+        elif kind is not None:
+            continue
         try:
             d = json.loads(p.read_text(encoding="utf-8"))
         except Exception:  # noqa: BLE001
             continue
+        d.setdefault("kind", "investment" if name.count(".") == 1 else "chinese")
         if track_key is not None and d.get("track_key") != track_key:
             continue
         if day is not None and d.get("day") != day:
@@ -157,6 +184,6 @@ def list_drafts(
     return out
 
 
-def count_ready(track_key: str, day: str | None = None) -> int:
+def count_ready(track_key: str, day: str | None = None, kind: str = "investment") -> int:
     day = day or beijing_day()
-    return len(list_drafts(track_key=track_key, day=day, status="ready"))
+    return len(list_drafts(track_key=track_key, day=day, status="ready", kind=kind))

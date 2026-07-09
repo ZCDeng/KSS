@@ -2232,7 +2232,11 @@ def _intel_article(json_payload: str = "") -> dict[str, Any]:
 
 
 def _intel_rewrite(json_payload: str = "") -> dict[str, Any]:
-    """On-demand investment rewrite for one item (U4)."""
+    """On-demand rewrite for one item.
+
+    JSON: ``{track_key, track_name, item, force?, kind?}``
+    kind: ``investment`` (default) | ``chinese`` (qmreader 风中文改写)
+    """
     import json as _json
 
     from kss.news.rewrite import run_rewrite
@@ -2248,10 +2252,13 @@ def _intel_rewrite(json_payload: str = "") -> dict[str, Any]:
     track_name = str(obj.get("track_name") or track_key)
     item = obj.get("item") or {}
     force = bool(obj.get("force") or False)
+    kind = str(obj.get("kind") or "investment")
     if not track_key or not isinstance(item, dict):
         return {"status": "failed", "error": "missing track_key or item", "error_type": "client"}
     try:
-        return run_rewrite(track_key, track_name, item, force=force, fetch_body=True)
+        return run_rewrite(
+            track_key, track_name, item, force=force, fetch_body=True, kind=kind
+        )
     except Exception as exc:  # noqa: BLE001
         return {"status": "failed", "error": f"rewrite failed: {exc}", "error_type": "server"}
 
@@ -3626,7 +3633,7 @@ COMMANDS = {
     "intel-digest": {"desc": "资讯雷达单赛道AI要点提炼(OpenAI兼容,JSON_PAYLOAD;池优先)", "args": ["JSON_PAYLOAD"]},
     "intel-digest-save": {"desc": "把已生成digest写入沉淀库(STATE_ROOT/storage/notes)", "args": ["JSON_PAYLOAD"]},
     "intel-article": {"desc": "资讯雷达文章正文best-effort抓取(JSON_PAYLOAD)", "args": ["JSON_PAYLOAD"]},
-    "intel-rewrite": {"desc": "资讯雷达单篇投研改写(on-demand,JSON_PAYLOAD)", "args": ["JSON_PAYLOAD"]},
+    "intel-rewrite": {"desc": "资讯雷达改写(investment|chinese,JSON_PAYLOAD)", "args": ["JSON_PAYLOAD"]},
     "intel-rewrite-run": {"desc": "资讯雷达Top-K改写worker(JSON_PAYLOAD可选)", "args": ["[JSON_PAYLOAD]"]},
     "longbridge-quote": {"desc": "Longbridge 实时快照(ChinaConnect LV1,仅陆股通标的)", "args": ["SYMBOL"]},
     "intraday-snapshot": {"desc": "最新分钟 bar 快照(按覆盖路由 longbridge/东财,前向-only)", "args": ["SYMBOL", "[INTERVAL]"]},
