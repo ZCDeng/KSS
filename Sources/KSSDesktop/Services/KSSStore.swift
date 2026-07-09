@@ -281,7 +281,8 @@ final class KSSStore: ObservableObject {
     }
 
     /// 多标的实时刷新（KTD1）：不得循环 `loadRealtimeData`（旧实现会写穿单槽）。
-    /// - `symbols == nil`：从 `snapshot.marketStrip` + 当前选中股 harvest
+    /// - `symbols == nil`：priority=选中股+推荐+主题龙头，再并 marketStrip
+    /// - `symbols != nil`：以传入列表为 priority（页内 onAppear 聚焦）
     /// - 每标 `longbridge-quote` + 30s coalesce；成功 merge 进 map；一次发布
     func refreshRealtimeQuotes(symbols: [String]? = nil) async {
         guard let bridge else { return }
@@ -298,11 +299,22 @@ final class KSSStore: ObservableObject {
 
         var list: [String]
         if let symbols {
-            list = RealtimeMerge.harvestSymbols(strip: nil, extra: symbols)
+            // 页内聚焦：优先这些，仍补 canary + 少量 strip 热区
+            list = RealtimeMerge.harvestSymbols(
+                strip: snapshot?.marketStrip,
+                priority: symbols,
+                extra: []
+            )
         } else {
-            var extra: [String] = []
-            if let sel = selectedSymbol { extra.append(sel) }
-            list = RealtimeMerge.harvestSymbols(strip: snapshot?.marketStrip, extra: extra)
+            var priority: [String] = []
+            if let sel = selectedSymbol { priority.append(sel) }
+            priority.append(contentsOf: RealtimeMerge.symbolsFromRecommendations(snapshot?.recommendations ?? []))
+            priority.append(contentsOf: RealtimeMerge.symbolsFromThemes(themeLeaders))
+            list = RealtimeMerge.harvestSymbols(
+                strip: snapshot?.marketStrip,
+                priority: priority,
+                extra: []
+            )
         }
         if list.isEmpty {
             list = [RealtimeMerge.canarySymbol]

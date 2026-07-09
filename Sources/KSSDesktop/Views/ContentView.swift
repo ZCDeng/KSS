@@ -19,9 +19,8 @@ struct ContentView: View {
     }
 
     /// 价格页：完整四态 badge（页内）。其余页仅工具栏 status dot。
-    /// 推荐/主题有表价但本轮未做字段级 overlay → 走 status dot，避免假「实时」。
     private static let priceSections: Set<WorkspaceSection> = [
-        .dashboard, .stocks, .watchlist
+        .dashboard, .stocks, .watchlist, .recommendations, .themes
     ]
 
     private var toolbarHasLive: Bool {
@@ -204,9 +203,19 @@ struct ContentView: View {
                     onRetryRealtime: { Task { await store.retryRealtime() } }
                 )
             case .recommendations:
-                RecommendationsView(snapshot: snapshot) { symbol in
-                    Task { await store.selectStock(symbol) }
-                }
+                RecommendationsView(
+                    snapshot: snapshot,
+                    onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } },
+                    realtimeQuotes: store.realtimeQuotesBySymbol,
+                    tradingHours: store.tradingHours,
+                    realtimeAuthFailed: store.realtimeAuthFailed,
+                    realtimeUpdatedAt: store.realtimeUpdatedAt,
+                    onRetryRealtime: { Task { await store.retryRealtime() } },
+                    onLoadRealtime: {
+                        let syms = RealtimeMerge.symbolsFromRecommendations(snapshot.recommendations)
+                        Task { await store.refreshRealtimeQuotes(symbols: syms) }
+                    }
+                )
             case .watchlist:
                 StockBrowserView(
                     title: "Watchlist",
@@ -249,7 +258,16 @@ struct ContentView: View {
                 ThemesView(
                     themes: store.themeLeaders,
                     onLoad: { Task { await store.loadThemeLeaders() } },
-                    onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } }
+                    onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } },
+                    realtimeQuotes: store.realtimeQuotesBySymbol,
+                    tradingHours: store.tradingHours,
+                    realtimeAuthFailed: store.realtimeAuthFailed,
+                    realtimeUpdatedAt: store.realtimeUpdatedAt,
+                    onRetryRealtime: { Task { await store.retryRealtime() } },
+                    onLoadRealtime: {
+                        let syms = RealtimeMerge.symbolsFromThemes(store.themeLeaders)
+                        Task { await store.refreshRealtimeQuotes(symbols: syms) }
+                    }
                 )
             case .trends:
                 TrendsView(

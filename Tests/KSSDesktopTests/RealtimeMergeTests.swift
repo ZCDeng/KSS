@@ -43,16 +43,52 @@ final class RealtimeMergeTests: XCTestCase {
             turnoverTop: nil,
             globalIndices: nil
         )
-        let symbols = RealtimeMerge.harvestSymbols(strip: strip, extra: ["688017.SH", "830799.BJ"])
-        XCTAssertEqual(symbols.first, "563360.SH")
+        let symbols = RealtimeMerge.harvestSymbols(strip: strip, priority: ["688017.SH", "830799.BJ"])
+        // priority 页内标的排最前
+        XCTAssertEqual(symbols.first, "688017.SH")
+        XCTAssertTrue(symbols.contains("563360.SH"))
         XCTAssertTrue(symbols.contains("000001.SH"))
         XCTAssertTrue(symbols.contains("399006.SZ"))
-        XCTAssertTrue(symbols.contains("688017.SH"))
         XCTAssertFalse(symbols.contains("IXIC"))
         XCTAssertFalse(symbols.contains("HSI"))
         XCTAssertFalse(symbols.contains("830799.BJ"))
         // 去重：上证只一次
         XCTAssertEqual(symbols.filter { $0 == "000001.SH" }.count, 1)
+    }
+
+    func testPriorityBeatsIndexBoardCap() {
+        var board: [IndexQuote] = []
+        for i in 0..<25 {
+            board.append(IndexQuote(code: String(format: "%06d.SH", i + 1), name: "x", close: 1, pct: 0))
+        }
+        let strip = MarketStrip(
+            date: nil, northMoney: nil, northDate: nil,
+            etfs: [], indices: nil, indexBoard: board,
+            limitBoard: nil, turnoverTop: nil, globalIndices: nil
+        )
+        let symbols = RealtimeMerge.harvestSymbols(
+            strip: strip,
+            priority: ["688017.SH", "688322.SH"],
+            maxCount: 5
+        )
+        XCTAssertEqual(symbols.prefix(2).map { $0 }, ["688017.SH", "688322.SH"])
+        XCTAssertEqual(symbols.count, 5)
+    }
+
+    func testDisplayPriceLiveAndSnapshot() {
+        var q = LongbridgeQuote()
+        q.lastDone = 12.5
+        q.prevClose = 10
+        let live = RealtimeMerge.displayPrice(snapshotClose: 11, quote: q)
+        XCTAssertEqual(live?.close, 12.5)
+        XCTAssertEqual(live?.pct ?? 0, 25, accuracy: 1e-9)
+        XCTAssertEqual(live?.isLive, true)
+
+        let snap = RealtimeMerge.displayPrice(snapshotClose: 11, quote: nil)
+        XCTAssertEqual(snap?.close, 11)
+        XCTAssertEqual(snap?.isLive, false)
+
+        XCTAssertNil(RealtimeMerge.displayPrice(snapshotClose: nil, quote: nil))
     }
 
     func testHarvestCap() {

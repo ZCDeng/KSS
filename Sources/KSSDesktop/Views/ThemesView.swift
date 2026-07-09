@@ -8,15 +8,39 @@ struct ThemesView: View {
     var themes: [ThemeLeaders]
     var onLoad: () -> Void
     var onSelectSymbol: (String) -> Void
+    var realtimeQuotes: [String: LongbridgeQuote] = [:]
+    var tradingHours: TradingHours? = nil
+    var realtimeAuthFailed: Bool = false
+    var realtimeUpdatedAt: Date? = nil
+    var onRetryRealtime: () -> Void = {}
+    var onLoadRealtime: () -> Void = {}
 
     private let margin: CGFloat = 24
+
+    private var themeSymbols: [String] {
+        RealtimeMerge.symbolsFromThemes(themes)
+    }
+
+    private var hasLiveFields: Bool {
+        RealtimeMerge.hasAnyLive(symbols: themeSymbols, quotes: realtimeQuotes)
+    }
 
     var body: some View {
         GeometryReader { geo in
             let contentW = min(geo.size.width - margin * 2, 1080)
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    PageTitle("概念主题", subtitle: "十五五科技主题 · 各板块龙头与第二梯队")
+                    HStack(alignment: .top) {
+                        PageTitle("概念主题", subtitle: "十五五科技主题 · 各板块龙头与第二梯队")
+                        Spacer(minLength: 12)
+                        RealtimeStatusBadge(
+                            hasLiveFields: hasLiveFields,
+                            hours: tradingHours,
+                            authFailed: realtimeAuthFailed,
+                            updatedAt: realtimeUpdatedAt,
+                            onRetry: onRetryRealtime
+                        )
+                    }
 
                     if themes.isEmpty {
                         emptyState
@@ -26,7 +50,11 @@ struct ThemesView: View {
                             .font(.system(size: 12))
                             .foregroundStyle(theme.textSecondary)
                         ForEach(themes) { theme in
-                            ThemeCard(theme: theme, onSelectSymbol: onSelectSymbol)
+                            ThemeCard(
+                                theme: theme,
+                                quotes: realtimeQuotes,
+                                onSelectSymbol: onSelectSymbol
+                            )
                         }
                     }
                 }
@@ -38,7 +66,11 @@ struct ThemesView: View {
             .background(theme.canvas)
         }
         .background(theme.canvas)
-        .task { onLoad() }
+        .task {
+            onLoad()
+            onLoadRealtime()
+        }
+        .onChange(of: themes.count) { _, _ in onLoadRealtime() }
     }
 
     private var emptyState: some View {
@@ -59,6 +91,7 @@ struct ThemesView: View {
 private struct ThemeCard: View {
     @Environment(\.kssTheme) private var tokens
     var theme: ThemeLeaders
+    var quotes: [String: LongbridgeQuote] = [:]
     var onSelectSymbol: (String) -> Void
 
     var body: some View {
@@ -137,22 +170,53 @@ private struct ThemeCard: View {
     }
 
     private func stockChip(_ s: HotspotLeaderStock, _ tint: Color) -> some View {
-        Button { onSelectSymbol(s.symbol) } label: {
+        let quote = quotes[s.symbol.uppercased()]
+        let live = RealtimeMerge.displayPrice(snapshotClose: nil, quote: quote)
+        return Button { onSelectSymbol(s.symbol) } label: {
             HStack(spacing: 5) {
                 Text(s.name)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(tokens.textBody)
+                if let live {
+                    LivePriceText(
+                        value: live.close,
+                        text: String(format: "%.2f", live.close),
+                        baseColor: tokens.signColor(live.pct),
+                        isLive: live.isLive,
+                        font: .system(size: 11, weight: .bold, design: .monospaced)
+                    )
+                    if live.isLive {
+                        LivePriceText(
+                            value: live.pct,
+                            text: String(format: "%+.1f%%", live.pct),
+                            baseColor: tokens.signColor(live.pct),
+                            isLive: true,
+                            font: .system(size: 10, weight: .bold, design: .monospaced)
+                        )
+                    }
+                }
                 Text("\(s.appearances)")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundStyle(tint)
             }
             .padding(.horizontal, 8).padding(.vertical, 3)
             .background(tint.opacity(0.10), in: Capsule())
-            .overlay(Capsule().stroke(tint.opacity(0.22), lineWidth: 0.5))
+            .overlay(Capsule().stroke(
+                (live.map { $0.isLive ? tokens.signColor($0.pct).opacity(0.35) : tint.opacity(0.22) })
+                    ?? tint.opacity(0.22),
+                lineWidth: 0.5
+            ))
             .lineLimit(1).fixedSize()
         }
         .buttonStyle(.plain)
-        .help("\(s.name) \(s.symbol) · 霸榜 \(s.appearances) 次")
+        .help(chipHelp(s, live: live))
+    }
+
+    private func chipHelp(_ s: HotspotLeaderStock, live: (close: Double, pct: Double, isLive: Bool)?) -> String {
+        if let live, live.isLive {
+            return "\(s.name) \(s.symbol) · 现价 \(String(format: "%.2f", live.close)) \(String(format: "%+.2f%%", live.pct)) · 霸榜 \(s.appearances) 次"
+        }
+        return "\(s.name) \(s.symbol) · 霸榜 \(s.appearances) 次"
     }
 
     private func classificationBadge(_ cls: String) -> some View {

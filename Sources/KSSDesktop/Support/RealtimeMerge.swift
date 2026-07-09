@@ -11,9 +11,12 @@ enum RealtimeMerge {
         return u.hasSuffix(".SH") || u.hasSuffix(".SZ")
     }
 
-    /// 从市场速览采集待刷新符号：ETF → 主指数行 → 指数板 → extra；去重、过滤、截断。
+    /// 采集待刷新符号。
+    /// 顺序：`priority`（页内标的）→ ETF → 主指数行 → `extra` → 指数板。
+    /// 保证推荐/主题等页内标的不被 indexBoard 挤出 20 槽。
     static func harvestSymbols(
         strip: MarketStrip?,
+        priority: [String] = [],
         extra: [String] = [],
         maxCount: Int = maxSymbolsPerTick
     ) -> [String] {
@@ -28,15 +31,54 @@ enum RealtimeMerge {
             out.append(code)
         }
 
+        for p in priority { add(p) }
         for e in strip?.etfs ?? [] { add(e.code) }
         for i in strip?.indices ?? [] { add(i.code) }
-        for i in strip?.indexBoard ?? [] { add(i.code) }
         for e in extra { add(e) }
+        for i in strip?.indexBoard ?? [] { add(i.code) }
 
         if out.count > maxCount {
             out = Array(out.prefix(maxCount))
         }
         return out
+    }
+
+    /// 推荐列表符号（保持 rank 序）。
+    static func symbolsFromRecommendations(_ recs: [Recommendation]) -> [String] {
+        recs.map(\.symbol)
+    }
+
+    /// 主题龙头优先、第二梯队殿后。
+    static func symbolsFromThemes(_ themes: [ThemeLeaders]) -> [String] {
+        var out: [String] = []
+        for t in themes {
+            for b in t.boards {
+                out.append(contentsOf: b.leaders.map(\.symbol))
+            }
+        }
+        for t in themes {
+            for b in t.boards {
+                out.append(contentsOf: b.secondTier.map(\.symbol))
+            }
+        }
+        return out
+    }
+
+    /// 可选快照收盘价 + quote → 展示用 close/pct/isLive；两者皆无则 nil。
+    static func displayPrice(
+        snapshotClose: Double?,
+        snapshotPct: Double? = nil,
+        quote: LongbridgeQuote?
+    ) -> (close: Double, pct: Double, isLive: Bool)? {
+        if let quote, quote.isLive, let last = quote.lastDone {
+            let baseClose = snapshotClose ?? last
+            let basePct = snapshotPct ?? 0
+            return applyLive(close: baseClose, pct: basePct, quote: quote)
+        }
+        if let c = snapshotClose {
+            return (c, snapshotPct ?? 0, false)
+        }
+        return nil
     }
 
     /// 用 live quote 覆盖 close/pct；无有效 lastDone 则保持快照。
