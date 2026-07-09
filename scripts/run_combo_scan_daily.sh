@@ -18,6 +18,7 @@ set -e
 set -o pipefail
 
 PROJECT_ROOT="/Users/zcdeng/projects/KSS"
+export KSS_STATE_ROOT="$PROJECT_ROOT"
 PYTHON="/opt/homebrew/opt/python@3.11/bin/python3.11"
 KSS_ENV="$PROJECT_ROOT/.env"
 

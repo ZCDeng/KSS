@@ -14,10 +14,10 @@
 	</dict>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c/scripts/run_data_catalog_daily.sh</string>
+		<string>/Users/zcdeng/projects/KSS/scripts/run_data_catalog_daily.sh</string>
 	</array>
 	<key>WorkingDirectory</key>
-	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c</string>
+	<string>/Users/zcdeng/projects/KSS</string>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
@@ -26,9 +26,9 @@
 		<string>/Users/zcdeng</string>
 	</dict>
 	<key>StandardOutPath</key>
-	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c/storage/logs/cron/data_catalog_daily.log</string>
+	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/data_catalog_daily.log</string>
 	<key>StandardErrorPath</key>
-	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c/storage/logs/cron/data_catalog_daily.log</string>
+	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/data_catalog_daily.log</string>
 	<key>RunAtLoad</key>
 	<false/>
 	<key>ThrottleInterval</key>

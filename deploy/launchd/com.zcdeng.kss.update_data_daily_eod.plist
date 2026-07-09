@@ -50,11 +50,11 @@
 	</array>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c/scripts/run_update_data_daily.sh</string>
+		<string>/Users/zcdeng/projects/KSS/scripts/run_update_data_daily.sh</string>
 		<string>--post-close</string>
 	</array>
 	<key>WorkingDirectory</key>
-	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c</string>
+	<string>/Users/zcdeng/projects/KSS</string>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
@@ -63,9 +63,9 @@
 		<string>/Users/zcdeng</string>
 	</dict>
 	<key>StandardOutPath</key>
-	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c/storage/logs/cron/update_data_daily_eod.log</string>
+	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/update_data_daily_eod.log</string>
 	<key>StandardErrorPath</key>
-	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c/storage/logs/cron/update_data_daily_eod.log</string>
+	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/update_data_daily_eod.log</string>
 	<key>RunAtLoad</key>
 	<false/>
 	<key>ThrottleInterval</key>

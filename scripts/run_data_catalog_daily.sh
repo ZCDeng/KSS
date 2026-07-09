@@ -10,6 +10,7 @@ set -e
 set -o pipefail
 
 PROJECT_ROOT="/Users/zcdeng/projects/KSS"
+export KSS_STATE_ROOT="$PROJECT_ROOT"
 PYTHON="$PROJECT_ROOT/.venv-desktop/bin/python"
 
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') data_catalog 开始 ====="

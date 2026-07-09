@@ -50,11 +50,11 @@
 	</array>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c/scripts/run_scan_bj50_daily.sh</string>
+		<string>/Users/zcdeng/projects/KSS/scripts/run_scan_bj50_daily.sh</string>
 		<string>--push</string>
 	</array>
 	<key>WorkingDirectory</key>
-	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c</string>
+	<string>/Users/zcdeng/projects/KSS</string>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
@@ -63,9 +63,9 @@
 		<string>/Users/zcdeng</string>
 	</dict>
 	<key>StandardOutPath</key>
-	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c/storage/logs/cron/scan_bj50_daily.log</string>
+	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/scan_bj50_daily.log</string>
 	<key>StandardErrorPath</key>
-	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c/storage/logs/cron/scan_bj50_daily.log</string>
+	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/scan_bj50_daily.log</string>
 	<key>RunAtLoad</key>
 	<false/>
 	<key>ThrottleInterval</key>

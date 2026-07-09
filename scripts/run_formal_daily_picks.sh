@@ -15,6 +15,7 @@ set -e
 set -o pipefail
 
 PROJECT_ROOT="/Users/zcdeng/projects/KSS"
+export KSS_STATE_ROOT="$PROJECT_ROOT"
 LOG_DIR="$PROJECT_ROOT/storage/logs/cron"
 
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') formal_daily_picks 开始 ====="

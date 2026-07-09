@@ -16,10 +16,10 @@
 	</dict>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c/scripts/run_prediction_validation_weekly.sh</string>
+		<string>/Users/zcdeng/projects/KSS/scripts/run_prediction_validation_weekly.sh</string>
 	</array>
 	<key>WorkingDirectory</key>
-	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c</string>
+	<string>/Users/zcdeng/projects/KSS</string>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
@@ -28,9 +28,9 @@
 		<string>/Users/zcdeng</string>
 	</dict>
 	<key>StandardOutPath</key>
-	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c/storage/logs/cron/prediction_validation_weekly.log</string>
+	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/prediction_validation_weekly.log</string>
 	<key>StandardErrorPath</key>
-	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c/storage/logs/cron/prediction_validation_weekly.log</string>
+	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/prediction_validation_weekly.log</string>
 	<key>RunAtLoad</key>
 	<false/>
 	<key>ThrottleInterval</key>
