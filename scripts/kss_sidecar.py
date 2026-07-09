@@ -29,6 +29,8 @@ import kss_app_bridge as bridge  # noqa: E402
 logger = logging.getLogger(__name__)
 
 SOCKET_PATH = bridge.STATE_ROOT / "run" / "kss-sidecar.sock"
+PID_PATH = SOCKET_PATH.parent / "kss-sidecar.pid"
+VERSION_PATH = SOCKET_PATH.parent / "kss-sidecar.version"
 
 # ---------------------------------------------------------------------------
 # U3(plan 004)：chat-turn 长连 handler + 并发 reader 任务 = 写执行唯一点。
@@ -210,7 +212,12 @@ async def _serve() -> None:
     server = await asyncio.start_unix_server(_on_connection, path=str(SOCKET_PATH))
     os.chmod(SOCKET_PATH, 0o700)
     # PID 文件供 U9 运行时更新后 SIGHUP 重载。
-    (SOCKET_PATH.parent / "kss-sidecar.pid").write_text(str(os.getpid()))
+    PID_PATH.write_text(str(os.getpid()))
+    # U10：启动时把自身代码版本指纹持久化，Swift 端可快速比对陈旧进程。
+    try:
+        VERSION_PATH.write_text(bridge._sidecar_version_fingerprint())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[version] 无法写版本文件: %s", exc)
 
     # SIGHUP → exec 自身：重载改动的 Python（保住「改 Python 不重编」DX）。
     loop = asyncio.get_running_loop()
@@ -225,8 +232,10 @@ async def _serve() -> None:
 
     async with server:
         await stop
-    if SOCKET_PATH.exists():
-        SOCKET_PATH.unlink()
+    # 清理：socket/pid/version 文件一起移除，避免 orphan 文件。
+    for p in (SOCKET_PATH, PID_PATH, VERSION_PATH):
+        if p.exists():
+            p.unlink()
 
 
 if __name__ == "__main__":

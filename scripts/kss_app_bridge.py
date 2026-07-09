@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import csv
 import glob
+import hashlib
 import json
 import math
 import os
 import re
-import subprocess
 import statistics
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,6 +63,61 @@ def _envelope_json(payload: Any) -> str:
     """版本化信封 {schemaVersion, data} 的 JSON 行（U4/U5：subprocess 与 sidecar 共用）。"""
     envelope = {"schemaVersion": BRIDGE_SCHEMA_VERSION, "data": payload}
     return json.dumps(envelope, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+
+
+def _sidecar_version_fingerprint(project_root: Path | None = None) -> str:
+    """返回 sidecar 的代码版本指纹，供 Swift 端比对是否陈旧。
+
+    策略：
+    1. dev 模式优先用 git describe --always --dirty（短 hash + 标签），可感
+       知代码改动，并与 scripts/sign_and_build.sh 给 CFBundleShortVersionString
+       的写法一致。
+    2. bundle 模式（无 .git 或 git 失败）fallback：scripts/VERSION 内容 + 关键
+       文件内容 hash。这里的关键文件是 sidecar 和 bridge 本身，因为任何一方变
+       都意味着 daemon 逻辑与 app 可能不同步。
+    3. 极端 fallback 返回 "unknown"，绝不抛异常，避免 sidecar 因版本计算失败
+       无法启动。
+
+    Args:
+        project_root: 用于计算版本指纹的代码根；默认取模块级 PROJECT_ROOT。
+    """
+    root = project_root or PROJECT_ROOT
+
+    # 1) git describe（dev 模式）
+    try:
+        result = subprocess.run(
+            ["git", "describe", "--always", "--dirty"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5.0,
+        )
+        git_ver = result.stdout.strip()
+        if git_ver:
+            return git_ver
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 2) bundle / fallback：VERSION 必须存在，否则无有效版本标记
+    try:
+        version_file = root / "scripts" / "VERSION"
+        if not version_file.exists():
+            return "unknown"
+        hasher = hashlib.sha256()
+        hasher.update(version_file.read_bytes())
+        key_files = [
+            Path(__file__),
+            root / "scripts" / "kss_sidecar.py",
+        ]
+        for path in key_files:
+            if path.exists():
+                hasher.update(path.read_bytes())
+        return f"bundle:{hasher.hexdigest()[:16]}"
+    except Exception:  # noqa: BLE001
+        pass
+
+    return "unknown"
 
 
 def _json_dump(payload: Any) -> None:
@@ -4052,6 +4108,9 @@ def dispatch(command: str, args: list[str]) -> Any:
         )
     if command == "trading-hours":
         return _trading_hours()
+    if command == "version":
+        # 返回 sidecar 代码版本指纹，供 Swift 端校验陈旧进程。
+        return {"version": _sidecar_version_fingerprint()}
     raise ValueError(f"unknown command: {command}")
 
 

@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 enum BridgeError: LocalizedError {
     case projectRootNotFound
@@ -320,25 +321,72 @@ struct BridgeClient {
         stateRoot.appending(path: "run/kss-sidecar.sock").path
     }
 
+    private var versionPath: String {
+        stateRoot.appending(path: "run/kss-sidecar.version").path
+    }
+
     private struct SidecarResponse: Decodable { let code: Int; let stdout: String?; let stderr: String? }
 
-    /// socket 缺失或 pid 失效则 spawn sidecar daemon（detached，best-effort），等其就绪 ≤3s。
-    /// 检查 pid 文件以避免 orphan socket（文件在但进程死）的情况。
+    /// 计算本地 sidecar 代码指纹，与 Python 侧 `_sidecar_version_fingerprint()` 保持同步。
+    /// 策略：dev 优先 git describe；bundle 或 git 失败 fallback 到 VERSION + 关键文件 hash。
+    private static func sidecarVersionFingerprint(projectRoot: URL) -> String {
+        if let git = runGitDescribe(in: projectRoot), !git.isEmpty {
+            return git
+        }
+
+        var data = Data()
+        let versionFile = projectRoot.appending(path: "scripts/VERSION")
+        guard let versionData = try? Data(contentsOf: versionFile) else { return "unknown" }
+        data.append(versionData)
+        let bridgeFile = projectRoot.appending(path: "scripts/kss_app_bridge.py")
+        if let d = try? Data(contentsOf: bridgeFile) { data.append(d) }
+        let sidecarFile = projectRoot.appending(path: "scripts/kss_sidecar.py")
+        if let d = try? Data(contentsOf: sidecarFile) { data.append(d) }
+
+        let digest = SHA256.hash(data: data)
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        return "bundle:\(String(hex.prefix(16)))"
+    }
+
+    private static func runGitDescribe(in repo: URL) -> String? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        p.arguments = ["-C", repo.path, "describe", "--always", "--dirty"]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        try? p.run()
+        p.waitUntilExit()
+        guard p.terminationStatus == 0 else { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// socket 缺失、pid 失效或版本不匹配则 spawn sidecar daemon（detached，best-effort），
+    /// 等其就绪 ≤3s。U10：版本握手防止陈旧 sidecar 继续服务。
     private func ensureSidecarRunning() {
-        if FileManager.default.fileExists(atPath: socketPath) {
-            // 验证 pid 文件中的进程仍存活；否则清掉 pid 和 socket 后重新 spawn
+        let fm = FileManager.default
+        if fm.fileExists(atPath: socketPath) {
             let pidPath = (stateRoot.appending(path: "run/kss-sidecar.pid")).path
             if let pidStr = try? String(contentsOfFile: pidPath, encoding: .utf8),
                let pid = pid_t(pidStr.trimmingCharacters(in: .whitespacesAndNewlines)),
                kill(pid, 0) == 0 {
-                return  // socket + alive pid → trust
+                // 版本握手：version 文件缺失 / 空 / 不匹配 → 陈旧，杀旧拉新
+                let expected = Self.sidecarVersionFingerprint(projectRoot: projectRoot)
+                let current = (try? String(contentsOfFile: versionPath, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let current, !current.isEmpty, current == expected {
+                    return  // socket + alive pid + version 一致 → 复用
+                }
+                // 旧 sidecar 不认识 version 命令/没写文件，或指纹不同，一律视为陈旧
+                kill(pid, SIGTERM)
+                // 给旧进程留 0.2s 收尾；socket 随后会被新 daemon 替换
+                Thread.sleep(forTimeInterval: 0.2)
             }
-            // Stale: clean up and respawn
-            try? FileManager.default.removeItem(atPath: pidPath)
-            try? FileManager.default.removeItem(atPath: socketPath)
+            // Stale：清理 pid/socket/version 后 respawn
+            cleanupSidecarFiles()
         }
         let sidecar = projectRoot.appending(path: "scripts/kss_sidecar.py")
-        guard FileManager.default.fileExists(atPath: sidecar.path) else { return }
+        guard fm.fileExists(atPath: sidecar.path) else { return }
         let p = Process()
         p.executableURL = python
         p.arguments = [sidecar.path]
@@ -352,8 +400,15 @@ struct BridgeClient {
         p.standardError = FileHandle.nullDevice
         try? p.run()   // detached daemon，不 wait
         for _ in 0..<30 {
-            if FileManager.default.fileExists(atPath: socketPath) { return }
+            if fm.fileExists(atPath: socketPath) { return }
             Thread.sleep(forTimeInterval: 0.1)
+        }
+    }
+
+    private func cleanupSidecarFiles() {
+        let runDir = stateRoot.appending(path: "run")
+        for name in ["kss-sidecar.pid", "kss-sidecar.sock", "kss-sidecar.version"] {
+            try? FileManager.default.removeItem(atPath: runDir.appending(path: name).path)
         }
     }
 
