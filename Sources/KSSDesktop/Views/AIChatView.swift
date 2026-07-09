@@ -26,7 +26,7 @@ struct AIChatView: View {
         .init(icon: "square.grid.2x2", title: "板块轮动",
               desc: "板块上下文:轮动快照 + 近期历史 + 主题龙头梯队",
               tag: "sector_context", prompt: "今天哪个板块在轮动，龙头梯队如何"),
-        .init(icon: "gauge.with.dots.needle.50percent", title: "今日总览",
+        .init(icon: "gauge.with.dots.needle.50percent", title: "今日看盘",
               desc: "大盘指数、推荐股、复盘/回测计数一览",
               tag: "get_snapshot", prompt: "今天大盘总体怎么样"),
         .init(icon: "books.vertical", title: "数据上手",

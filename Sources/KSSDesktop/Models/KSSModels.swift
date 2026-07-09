@@ -1054,7 +1054,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .dashboard: return "今日总览"
+        case .dashboard: return "今日看盘"
         case .recommendations: return "推荐"
         case .watchlist: return "自选"
         case .themes: return "主题"
