@@ -17,6 +17,12 @@ struct RecommendationsView: View {
     @Environment(\.kssTheme) private var theme
     var snapshot: AppSnapshot
     var onSelectSymbol: (String) -> Void
+    var realtimeQuotes: [String: LongbridgeQuote] = [:]
+    var tradingHours: TradingHours? = nil
+    var realtimeAuthFailed: Bool = false
+    var realtimeUpdatedAt: Date? = nil
+    var onRetryRealtime: () -> Void = {}
+    var onLoadRealtime: () -> Void = {}
 
     @State private var tab: RecTab = .current
     @State private var sort: RecSort = .rank
@@ -32,14 +38,32 @@ struct RecommendationsView: View {
         }
     }
 
+    private var recSymbols: [String] {
+        RealtimeMerge.symbolsFromRecommendations(snapshot.recommendations)
+    }
+
+    private var hasLiveFields: Bool {
+        RealtimeMerge.hasAnyLive(symbols: recSymbols, quotes: realtimeQuotes)
+    }
+
     var body: some View {
         // M3：内容封顶 1080 居中，统一外边距（与总览一致）。
         GeometryReader { geo in
             let w = min(geo.size.width - 48, 1080)
             VStack(alignment: .leading, spacing: 0) {
-                PageTitle("推荐", subtitle: snapshot.recommendationDate)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 18)
+                HStack(alignment: .top) {
+                    PageTitle("推荐", subtitle: snapshot.recommendationDate)
+                    Spacer(minLength: 12)
+                    RealtimeStatusBadge(
+                        hasLiveFields: hasLiveFields,
+                        hours: tradingHours,
+                        authFailed: realtimeAuthFailed,
+                        updatedAt: realtimeUpdatedAt,
+                        onRetry: onRetryRealtime
+                    )
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 18)
 
                 Picker("", selection: $tab) {
                     ForEach(RecTab.allCases) { Text($0.rawValue).tag($0) }
@@ -62,6 +86,7 @@ struct RecommendationsView: View {
             .background(theme.canvas)
         }
         .background(theme.canvas)
+        .onAppear { onLoadRealtime() }
     }
 
     // MARK: - 当日推荐 (aligned table)
@@ -87,12 +112,14 @@ struct RecommendationsView: View {
                 SortHeaderCell(title: "#", key: RecSort.rank, selection: $sort, ascending: $ascending,
                                alignment: .leading, width: 44)
                 Text("名称 / 代码").frame(maxWidth: .infinity, alignment: .leading)
-                Text("状态").frame(width: 96, alignment: .center)
-                Text("log_mv").frame(width: 86, alignment: .trailing)
+                Text("状态").frame(width: 80, alignment: .center)
+                Text("现价").frame(width: 72, alignment: .trailing)
+                Text("涨跌").frame(width: 64, alignment: .trailing)
+                Text("log_mv").frame(width: 72, alignment: .trailing)
                 SortHeaderCell(title: "权重", key: RecSort.weight, selection: $sort, ascending: $ascending,
-                               alignment: .trailing, width: 64)
+                               alignment: .trailing, width: 56)
                 SortHeaderCell(title: "跟踪", key: RecSort.tracking, selection: $sort, ascending: $ascending,
-                               alignment: .trailing, width: 84)
+                               alignment: .trailing, width: 72)
             }
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(theme.textSecondary)
@@ -115,19 +142,20 @@ struct RecommendationsView: View {
                                 .foregroundStyle(theme.textSecondary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        StatusBadge.tracking(item.status).frame(width: 96, alignment: .center)
+                        StatusBadge.tracking(item.status).frame(width: 80, alignment: .center)
+                        recPriceCells(item)
                         Text(KSSFormat.number(item.factorValue, digits: 3))
                             .font(.system(size: 13, weight: .semibold, design: .monospaced))
                             .foregroundStyle(theme.textPrimary)
-                            .frame(width: 86, alignment: .trailing)
+                            .frame(width: 72, alignment: .trailing)
                         Text(KSSFormat.percent(item.weight))
                             .font(.system(size: 13, design: .monospaced))
                             .foregroundStyle(theme.textPrimary)
-                            .frame(width: 64, alignment: .trailing)
+                            .frame(width: 56, alignment: .trailing)
                         Text(KSSFormat.percent(item.trackingReturn))
                             .font(.system(size: 13, weight: .semibold, design: .monospaced))
                             .foregroundStyle(theme.signColor(item.trackingReturn))
-                            .frame(width: 84, alignment: .trailing)
+                            .frame(width: 72, alignment: .trailing)
                     }
                     .contentShape(Rectangle())
                     .padding(.vertical, 3)
@@ -137,6 +165,50 @@ struct RecommendationsView: View {
             }
             .scrollContentBackground(.hidden)
             .background(theme.canvas)
+        }
+    }
+
+    /// 现价 / 日内涨跌：live quote 优先，否则 latestClose 快照，皆无则 —。
+    @ViewBuilder
+    private func recPriceCells(_ item: Recommendation) -> some View {
+        let quote = realtimeQuotes[item.symbol.uppercased()]
+        if let disp = RealtimeMerge.displayPrice(
+            snapshotClose: item.latestClose,
+            snapshotPct: nil,
+            quote: quote
+        ) {
+            LivePriceText(
+                value: disp.close,
+                text: KSSFormat.number(disp.close),
+                baseColor: theme.signColor(disp.isLive ? disp.pct : 0),
+                isLive: disp.isLive,
+                font: .system(size: 13, weight: .semibold, design: .monospaced)
+            )
+            .frame(width: 72, alignment: .trailing)
+            if disp.isLive {
+                LivePriceText(
+                    value: disp.pct,
+                    text: KSSFormat.pctPoints(disp.pct),
+                    baseColor: theme.signColor(disp.pct),
+                    isLive: true,
+                    font: .system(size: 12, weight: .semibold, design: .monospaced)
+                )
+                .frame(width: 64, alignment: .trailing)
+            } else {
+                Text("—")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(width: 64, alignment: .trailing)
+            }
+        } else {
+            Text("—")
+                .font(.system(size: 13, design: .monospaced))
+                .foregroundStyle(theme.textSecondary)
+                .frame(width: 72, alignment: .trailing)
+            Text("—")
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(theme.textSecondary)
+                .frame(width: 64, alignment: .trailing)
         }
     }
 

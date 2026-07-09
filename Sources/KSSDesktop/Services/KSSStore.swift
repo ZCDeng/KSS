@@ -82,7 +82,8 @@ final class KSSStore: ObservableObject {
     }
 
     // MARK: Longbridge 实时（U1/U2）—— 页面加载时拉取，失败保持 nil（UI 回退存量 + 标注"非实时"）
-    @Published var realtimeQuote: LongbridgeQuote?     // Dashboard 指数/板块实时快照
+    @Published var realtimeQuote: LongbridgeQuote?     // 兼容 canary（上证 / 任一 live）
+    @Published var realtimeQuotesBySymbol: [String: LongbridgeQuote] = [:]  // 多标的 map，供 今日看盘 overlay
     @Published var tradingHours: TradingHours?         // 交易时段门控（R13）
     @Published var realtimeAuthFailed = false          // auth_failed → 停定时刷新 + "实时源未连接"（R4）
     @Published var realtimeUpdatedAt: Date?            // 最近一次实时拉取成功时间（"更新于 HH:MM"）
@@ -94,6 +95,8 @@ final class KSSStore: ObservableObject {
     private var lastDispatchCache: [String: Date] = [:]  // R14: coalescing cache (cmd:symbol → last dispatch)
     private static let minIntervalSeconds: Double = 120  // R14: 最小间隔 2min
     private static let coalesceSeconds: Double = 30     // R14: 同标的+同命令 30s 内复用
+    /// 产品：交易时段 2 分钟真刷新（非 MainActor 默认参数安全的字面量）
+    nonisolated private static let refreshIntervalSeconds: Double = 120
 
     // MARK: AI 复盘助手聊天态（#4 U4/U5）—— 会话历史归 store，section 切换不丢
     @Published var chatMessages: [ChatMessage] = []
@@ -265,39 +268,114 @@ final class KSSStore: ObservableObject {
         return hours?.isTradingSession ?? false
     }
 
-    /// Dashboard onAppear 时拉取 Longbridge 实时快照（R1/R4/R13）。
-    /// 非交易时段跳过；失败保持 nil（UI 回退 cron 存量 + 标注"非实时"）。
+    /// Dashboard onAppear / 手动重试：拉取 Longbridge 实时（默认可从 marketStrip 采标）。
+    /// 非交易时段跳过；失败不整表清空（单标失败保留其它 map 项）。
     /// auth_failed → 置 realtimeAuthFailed（停后续定时刷新，展示"实时源未连接"）。
-    func loadRealtimeData(symbol: String = "000001.SH") async {
+    func loadRealtimeData(symbol: String = RealtimeMerge.canarySymbol) async {
+        // 默认 canary 入口 → 全量 harvest；显式其它 symbol 则至少包含该标 + canary。
+        if symbol == RealtimeMerge.canarySymbol {
+            await refreshRealtimeQuotes(symbols: nil)
+        } else {
+            await refreshRealtimeQuotes(symbols: [symbol, RealtimeMerge.canarySymbol])
+        }
+    }
+
+    /// 多标的实时刷新（KTD1）：不得循环 `loadRealtimeData`（旧实现会写穿单槽）。
+    /// - `symbols == nil`：priority=选中股+推荐+主题龙头，再并 marketStrip
+    /// - `symbols != nil`：以传入列表为 priority（页内 onAppear 聚焦）
+    /// - 每标 `longbridge-quote` + 30s coalesce；成功 merge 进 map；一次发布
+    func refreshRealtimeQuotes(symbols: [String]? = nil) async {
         guard let bridge else { return }
-        // 门控：非交易时段不拉实时（R13），直接用存量。
         let inSession = await loadTradingHours()
         guard inSession else {
             realtimeQuote = nil
+            reevaluateTimer()
             return
         }
-        let quote = try? await Task.detached {
-            try bridge.longbridgeQuote(symbol: symbol)
-        }.value
-        if let quote, quote.isLive {
-            realtimeQuote = quote
-            realtimeAuthFailed = false
-            realtimeUpdatedAt = Date()
+        if realtimeAuthFailed {
+            stopRefreshTimer()
+            return
+        }
+
+        var list: [String]
+        if let symbols {
+            // 页内聚焦：优先这些，仍补 canary + 少量 strip 热区
+            list = RealtimeMerge.harvestSymbols(
+                strip: snapshot?.marketStrip,
+                priority: symbols,
+                extra: []
+            )
         } else {
-            // 回退：保持 nil，UI 展示 cron 存量 + "非实时"。auth 失败额外标记。
-            realtimeQuote = nil
-            if let err = quote?.error, err == "auth_failed" {
-                realtimeAuthFailed = true
+            var priority: [String] = []
+            if let sel = selectedSymbol { priority.append(sel) }
+            priority.append(contentsOf: RealtimeMerge.symbolsFromRecommendations(snapshot?.recommendations ?? []))
+            priority.append(contentsOf: RealtimeMerge.symbolsFromThemes(themeLeaders))
+            list = RealtimeMerge.harvestSymbols(
+                strip: snapshot?.marketStrip,
+                priority: priority,
+                extra: []
+            )
+        }
+        if list.isEmpty {
+            list = [RealtimeMerge.canarySymbol]
+        } else if !list.contains(RealtimeMerge.canarySymbol) {
+            list.insert(RealtimeMerge.canarySymbol, at: 0)
+            if list.count > RealtimeMerge.maxSymbolsPerTick {
+                list = Array(list.prefix(RealtimeMerge.maxSymbolsPerTick))
             }
         }
-        // P0: Timer 需在 tradingHours 异步加载完成后启动（scenePhase 触发时 tradingHours 为 nil）。
+
+        var updated = realtimeQuotesBySymbol
+        var anySuccess = false
+        var sawAuthFailed = false
+
+        for sym in list {
+            if shouldSkipDispatch(cmd: "longbridge-quote", symbol: sym) {
+                // coalesce 命中：若 map 已有该标 live，仍算「有实时」用于 badge 时间不必强制推进
+                if updated[sym]?.isLive == true { anySuccess = true }
+                continue
+            }
+            let quote = try? await Task.detached {
+                try bridge.longbridgeQuote(symbol: sym)
+            }.value
+            guard let quote else { continue }
+            if quote.error == "auth_failed" {
+                sawAuthFailed = true
+                break
+            }
+            if quote.isLive {
+                updated[sym] = quote
+                anySuccess = true
+            }
+            // 软失败：不删除 map 已有项
+        }
+
+        if sawAuthFailed {
+            realtimeAuthFailed = true
+            stopRefreshTimer()
+            reevaluateTimer()
+            return
+        }
+
+        if anySuccess {
+            realtimeQuotesBySymbol = updated
+            realtimeAuthFailed = false
+            realtimeUpdatedAt = Date()
+            if let canary = updated[RealtimeMerge.canarySymbol], canary.isLive {
+                realtimeQuote = canary
+            } else if let first = updated.first(where: { $0.value.isLive })?.value {
+                realtimeQuote = first
+            }
+        }
         reevaluateTimer()
     }
 
     /// 手动重试实时源（R4：avoid "未连接"状态永久滞留）。
     func retryRealtime() async {
         realtimeAuthFailed = false
-        await loadRealtimeData()
+        // 清 coalesce，保证重试真正打到 bridge
+        lastDispatchCache = lastDispatchCache.filter { !$0.key.hasPrefix("longbridge-quote:") }
+        await refreshRealtimeQuotes(symbols: nil)
     }
 
     /// U2: 加载资讯雷达全量数据（bridge `intel-radar` 命令 → 12 赛道 RSS）。
@@ -624,13 +702,8 @@ final class KSSStore: ObservableObject {
     /// U4: Seesaw 预温实时上下文（R3）——首轮 get_orientation 并行拉取快照，
     /// 为 LLM 提供"今日盘面"索引数据。
     func preheatRealtimeContext() async {
-        guard let bridge else { return }
-        _ = await loadTradingHours()
-        guard tradingHours?.isTradingSession ?? false else { return }
-        let quote = try? await Task.detached {
-            try bridge.longbridgeQuote(symbol: "000001.SH")
-        }.value
-        if let quote, quote.isLive { realtimeQuote = quote; realtimeUpdatedAt = Date() }
+        // 与 Dashboard 同源：走 multi-symbol 管线（session 门控在 refresh 内）
+        await refreshRealtimeQuotes(symbols: [RealtimeMerge.canarySymbol])
     }
 
     /// U4: 将 intraday-snapshot 工具返回的 bar 数据存入 chat attachment（R8）。
@@ -645,23 +718,22 @@ final class KSSStore: ObservableObject {
     /// Caller passes whether the scene/window is active (R14 gate).
     func updateSceneActive(_ active: Bool) {
         scenePhaseActive = active
-        if scenePhaseActive, tradingHours?.isTradingSession ?? false {
-            startRefreshTimer()
-        } else {
-            stopRefreshTimer()
-        }
+        reevaluateTimer()
     }
 
     /// 交易时段门控更新后重新评估 Timer（trading-hours 查询与 loadTradingHours 异步）。
+    /// auth_failed 时停表，直到 retryRealtime 成功。
     func reevaluateTimer() {
-        guard scenePhaseActive, let hours = tradingHours, hours.isTradingSession else {
+        guard scenePhaseActive,
+              let hours = tradingHours, hours.isTradingSession,
+              !realtimeAuthFailed else {
             stopRefreshTimer()
             return
         }
         startRefreshTimer()
     }
 
-    func startRefreshTimer(intervalSeconds: Double = 300) {
+    func startRefreshTimer(intervalSeconds: Double = 120) {
         stopRefreshTimer()
         let effectiveInterval = max(intervalSeconds, Self.minIntervalSeconds)
         timerCancellable = Timer.publish(every: effectiveInterval, on: .main, in: .common)
@@ -675,15 +747,12 @@ final class KSSStore: ObservableObject {
     }
 
     private func onRefreshTick() {
-        guard scenePhaseActive, tradingHours?.isTradingSession ?? false else { return }
-        // 跨页面 coalescing (R14): 最近一次 dispatch 在 30s 内 → 跳过此 tick
-        let now = Date()
-        let cacheKey = "refresh-tick"
-        if let last = lastDispatchCache[cacheKey], now.timeIntervalSince(last) < Self.coalesceSeconds {
-            return
-        }
-        lastDispatchCache[cacheKey] = now
-        refreshTimestamp = now
+        guard scenePhaseActive,
+              tradingHours?.isTradingSession ?? false,
+              !realtimeAuthFailed else { return }
+        refreshTimestamp = Date()
+        // KTD1: tick 真拉 Longbridge，不是只改 timestamp 的 no-op
+        Task { await refreshRealtimeQuotes(symbols: nil) }
     }
 
     /// 检查 coalescing cache（R14）：同 command:symbol 30s 内跳过。

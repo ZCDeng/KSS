@@ -7,6 +7,7 @@ struct DashboardView: View {
     var onOpenSection: (WorkspaceSection) -> Void
     // U2 实时接线：页面加载触发 Longbridge 实时拉取，展示新鲜度徽标。
     var realtimeQuote: LongbridgeQuote? = nil
+    var realtimeQuotes: [String: LongbridgeQuote] = [:]
     var tradingHours: TradingHours? = nil
     var realtimeAuthFailed: Bool = false
     var realtimeUpdatedAt: Date? = nil
@@ -19,6 +20,12 @@ struct DashboardView: View {
     private let sectionSpacing: CGFloat = 22
     private let maxContent: CGFloat = 1040
 
+    /// badge「实时」⇔ 本页展示的可实时标的中至少一条 map 命中（KTD4，非 canary 单独糊弄）。
+    private var hasLiveDisplayedFields: Bool {
+        let symbols = RealtimeMerge.harvestSymbols(strip: snapshot.marketStrip)
+        return RealtimeMerge.hasAnyLive(symbols: symbols, quotes: realtimeQuotes)
+    }
+
     var body: some View {
         GeometryReader { geo in
             let contentW = min(geo.size.width - margin * 2, maxContent)
@@ -29,8 +36,8 @@ struct DashboardView: View {
                         Spacer(minLength: 16)
                         VStack(alignment: .trailing, spacing: 4) {
                             EditorialDateView()
-                            RealtimeFreshnessBadge(
-                                quote: realtimeQuote,
+                            RealtimeStatusBadge(
+                                hasLiveFields: hasLiveDisplayedFields,
                                 hours: tradingHours,
                                 authFailed: realtimeAuthFailed,
                                 updatedAt: realtimeUpdatedAt,
@@ -42,17 +49,17 @@ struct DashboardView: View {
                     // 第一行：市场速览（A500ETF ×2 + 北向资金）
                     if let strip = snapshot.marketStrip,
                        (!strip.etfs.isEmpty || strip.northMoney != nil) {
-                        MarketStripRow(strip: strip)
+                        MarketStripRow(strip: strip, quotes: realtimeQuotes)
                     }
 
                     // 第二行：指数（上证 / 纳斯达克 / 恒生）
                     if let indices = snapshot.marketStrip?.indices, !indices.isEmpty {
-                        MarketIndexRow(indices: indices)
+                        MarketIndexRow(indices: indices, quotes: realtimeQuotes)
                     }
 
                     // 指数跑马灯：紧贴指数行下方，无标题，13 指数按涨跌幅排序滚动
                     if let board = snapshot.marketStrip?.indexBoard, !board.isEmpty {
-                        IndexMarquee(indices: board)
+                        IndexMarquee(indices: board, quotes: realtimeQuotes)
                     }
 
                     if let pulse = snapshot.sectorReviews?.first, !pulse.themes.isEmpty {
@@ -74,7 +81,7 @@ struct DashboardView: View {
                     // 底部：指数一览
                     if let board = snapshot.marketStrip?.indexBoard, !board.isEmpty {
                         SectionHeader("指数一览", caption: "常用宽基 / 主题指数当日表现")
-                        IndexBoardGrid(indices: board)
+                        IndexBoardGrid(indices: board, quotes: realtimeQuotes)
                     }
                 }
                 .frame(width: contentW, alignment: .leading)
@@ -734,23 +741,30 @@ struct EditorialDateView: View {
 struct MarketStripRow: View {
     @Environment(\.kssTheme) private var theme
     var strip: MarketStrip
+    var quotes: [String: LongbridgeQuote] = [:]
 
     var body: some View {
         HStack(spacing: 12) {
             ForEach(strip.etfs) { etf in
+                let live = RealtimeMerge.applyLive(close: etf.close, pct: etf.pct, quote: quotes[etf.code.uppercased()])
                 card(title: etf.name,
                      sub: etf.code,
-                     value: String(format: "%.3f", etf.close),
-                     delta: etf.pct,
-                     deltaText: String(format: "%+.2f%%", etf.pct))
+                     close: live.close,
+                     closeText: String(format: "%.3f", live.close),
+                     delta: live.pct,
+                     deltaText: String(format: "%+.2f%%", live.pct),
+                     isLive: live.isLive)
             }
             if let nm = strip.northMoney {
                 let yi = nm / 10000.0
+                // 北向资金非 Longbridge 价，不做 live flash
                 card(title: "北向资金",
                      sub: northSub,
-                     value: String(format: "%+.1f", yi) + " 亿",
+                     close: yi,
+                     closeText: String(format: "%+.1f", yi) + " 亿",
                      delta: yi,
-                     deltaText: yi >= 0 ? "净流入" : "净流出")
+                     deltaText: yi >= 0 ? "净流入" : "净流出",
+                     isLive: false)
             }
         }
     }
@@ -760,7 +774,7 @@ struct MarketStripRow: View {
         return "\(d.prefix(4))-\(d.dropFirst(4).prefix(2))-\(d.suffix(2))"
     }
 
-    private func card(title: String, sub: String, value: String, delta: Double, deltaText: String) -> some View {
+    private func card(title: String, sub: String, close: Double, closeText: String, delta: Double, deltaText: String, isLive: Bool) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Text(title)
@@ -774,14 +788,22 @@ struct MarketStripRow: View {
                     .lineLimit(1)
             }
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(value)
-                    .font(KSSFont.harmonyNumber(22))
-                    .foregroundStyle(theme.signColor(delta))
-                    .lineLimit(1)
-                Text(deltaText)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(theme.signColor(delta))
-                    .lineLimit(1)
+                LivePriceText(
+                    value: close,
+                    text: closeText,
+                    baseColor: theme.signColor(delta),
+                    isLive: isLive,
+                    font: KSSFont.harmonyNumber(22)
+                )
+                .lineLimit(1)
+                LivePriceText(
+                    value: delta,
+                    text: deltaText,
+                    baseColor: theme.signColor(delta),
+                    isLive: isLive,
+                    font: .system(size: 12, weight: .semibold, design: .monospaced)
+                )
+                .lineLimit(1)
                 Spacer(minLength: 0)
             }
         }
@@ -794,25 +816,35 @@ struct MarketStripRow: View {
 struct IndexBoardGrid: View {
     @Environment(\.kssTheme) private var theme
     var indices: [IndexQuote]
+    var quotes: [String: LongbridgeQuote] = [:]
 
     var body: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 158), spacing: 10)], spacing: 10) {
             ForEach(indices) { idx in
+                let live = RealtimeMerge.applyLive(close: idx.close, pct: idx.pct, quote: quotes[idx.code.uppercased()])
                 VStack(alignment: .leading, spacing: 5) {
                     Text(idx.name)
                         .font(.system(size: 12.5, weight: .bold))
                         .foregroundStyle(theme.textPrimary)
                         .lineLimit(1)
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(String(format: "%.2f", idx.close))
-                            .font(KSSFont.harmonyNumber(16))
-                            .foregroundStyle(theme.signColor(idx.pct))
-                            .lineLimit(1)
+                        LivePriceText(
+                            value: live.close,
+                            text: String(format: "%.2f", live.close),
+                            baseColor: theme.signColor(live.pct),
+                            isLive: live.isLive,
+                            font: KSSFont.harmonyNumber(16)
+                        )
+                        .lineLimit(1)
                         Spacer(minLength: 0)
-                        Text(String(format: "%+.2f%%", idx.pct))
-                            .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(theme.signColor(idx.pct))
-                            .lineLimit(1)
+                        LivePriceText(
+                            value: live.pct,
+                            text: String(format: "%+.2f%%", live.pct),
+                            baseColor: theme.signColor(live.pct),
+                            isLive: live.isLive,
+                            font: .system(size: 11.5, weight: .semibold, design: .monospaced)
+                        )
+                        .lineLimit(1)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -827,13 +859,27 @@ struct IndexBoardGrid: View {
 struct IndexMarquee: View {
     @Environment(\.kssTheme) private var theme
     var indices: [IndexQuote]
+    var quotes: [String: LongbridgeQuote] = [:]
 
     private let gap: CGFloat = 10
     private let speed: Double = 42            // 滚动速度 pts/s
     @State private var rowWidth: CGFloat = 0  // 单份内容宽（含内部间距）
 
-    private var sorted: [IndexQuote] {
-        indices.sorted { $0.pct > $1.pct }    // 涨幅高→低
+    private struct LiveIndex: Identifiable {
+        var id: String { code }
+        var code: String
+        var name: String
+        var close: Double
+        var pct: Double
+        var isLive: Bool
+    }
+
+    private var sorted: [LiveIndex] {
+        indices.map { idx in
+            let live = RealtimeMerge.applyLive(close: idx.close, pct: idx.pct, quote: quotes[idx.code.uppercased()])
+            return LiveIndex(code: idx.code, name: idx.name, close: live.close, pct: live.pct, isLive: live.isLive)
+        }
+        .sorted { $0.pct > $1.pct }
     }
 
     var body: some View {
@@ -873,7 +919,7 @@ struct IndexMarquee: View {
         }
     }
 
-    private func chip(_ idx: IndexQuote) -> some View {
+    private func chip(_ idx: LiveIndex) -> some View {
         HStack(spacing: 6) {
             Image(systemName: idx.pct >= 0 ? "arrowtriangle.up.fill" : "arrowtriangle.down.fill")
                 .font(.system(size: 9, weight: .bold))
@@ -882,14 +928,22 @@ struct IndexMarquee: View {
                 .font(.system(size: 12.5, weight: .bold))
                 .foregroundStyle(theme.textPrimary)
                 .lineLimit(1)
-            Text(String(format: "%.2f", idx.close))
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundStyle(theme.textSecondary)
-                .lineLimit(1)
-            Text(String(format: "%+.2f%%", idx.pct))
-                .font(.system(size: 12, weight: .heavy, design: .monospaced))
-                .foregroundStyle(theme.signColor(idx.pct))
-                .lineLimit(1)
+            LivePriceText(
+                value: idx.close,
+                text: String(format: "%.2f", idx.close),
+                baseColor: theme.textSecondary,
+                isLive: idx.isLive,
+                font: .system(size: 12, weight: .semibold, design: .monospaced)
+            )
+            .lineLimit(1)
+            LivePriceText(
+                value: idx.pct,
+                text: String(format: "%+.2f%%", idx.pct),
+                baseColor: theme.signColor(idx.pct),
+                isLive: idx.isLive,
+                font: .system(size: 12, weight: .heavy, design: .monospaced)
+            )
+            .lineLimit(1)
         }
         .padding(.horizontal, 14).padding(.vertical, 9)
         .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeL))
@@ -924,10 +978,12 @@ private struct MarqueeWidthKey: PreferenceKey {
 struct MarketIndexRow: View {
     @Environment(\.kssTheme) private var theme
     var indices: [IndexQuote]
+    var quotes: [String: LongbridgeQuote] = [:]
 
     var body: some View {
         HStack(spacing: 12) {
             ForEach(indices) { idx in
+                let live = RealtimeMerge.applyLive(close: idx.close, pct: idx.pct, quote: quotes[idx.code.uppercased()])
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) {
                         Text(idx.name)
@@ -941,14 +997,22 @@ struct MarketIndexRow: View {
                             .lineLimit(1)
                     }
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(String(format: "%.2f", idx.close))
-                            .font(KSSFont.harmonyNumber(22))
-                            .foregroundStyle(theme.signColor(idx.pct))
-                            .lineLimit(1)
-                        Text(String(format: "%+.2f%%", idx.pct))
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(theme.signColor(idx.pct))
-                            .lineLimit(1)
+                        LivePriceText(
+                            value: live.close,
+                            text: String(format: "%.2f", live.close),
+                            baseColor: theme.signColor(live.pct),
+                            isLive: live.isLive,
+                            font: KSSFont.harmonyNumber(22)
+                        )
+                        .lineLimit(1)
+                        LivePriceText(
+                            value: live.pct,
+                            text: String(format: "%+.2f%%", live.pct),
+                            baseColor: theme.signColor(live.pct),
+                            isLive: live.isLive,
+                            font: .system(size: 12, weight: .semibold, design: .monospaced)
+                        )
+                        .lineLimit(1)
                         Spacer(minLength: 0)
                     }
                 }
@@ -1217,65 +1281,4 @@ struct LabeledMetric: View {
     }
 }
 
-// MARK: - U2 RealtimeFreshnessBadge
-
-/// 实时数据新鲜度指示（R4/R13）。
-/// - 交易时段 + 实时 OK: 绿色时钟 + "实时 · 更新于 HH:MM"
-/// - 交易时段 + 实时失败: 灰色时钟 + "非实时" + 重试按钮
-/// - auth_failed: 红色时钟 + "实时源未连接" + 重试按钮
-/// - 非交易时段: 灰色时钟 + "非交易时段"
-private struct RealtimeFreshnessBadge: View {
-    @Environment(\.kssTheme) private var theme
-    var quote: LongbridgeQuote?
-    var hours: TradingHours?
-    var authFailed: Bool
-    var updatedAt: Date?
-    var onRetry: () -> Void
-
-    var body: some View {
-        if let hours, !hours.isTradingSession {
-            HStack(spacing: 4) {
-                Image(systemName: "clock")
-                Text("非交易时段")
-            }
-            .font(.caption2)
-            .foregroundStyle(theme.textSecondary)
-        } else if authFailed {
-            Button(action: onRetry) {
-                HStack(spacing: 4) {
-                    Image(systemName: "clock.badge.exclamationmark")
-                    Text("实时源未连接")
-                    Text("重试").underline()
-                }
-                .font(.caption2)
-                .foregroundStyle(theme.down)
-            }
-            .buttonStyle(.plain)
-        } else if let q = quote, q.isLive {
-            HStack(spacing: 4) {
-                Image(systemName: "clock")
-                    .foregroundStyle(theme.up)
-                Text("实时")
-                    .foregroundStyle(theme.up)
-                if let ts = updatedAt {
-                    Text(formatted(ts))
-                        .foregroundStyle(theme.textSecondary)
-                }
-            }
-            .font(.caption2)
-        } else {
-            HStack(spacing: 4) {
-                Image(systemName: "clock")
-                Text("非实时")
-            }
-            .font(.caption2)
-            .foregroundStyle(theme.textSecondary)
-        }
-    }
-
-    private func formatted(_ date: Date) -> String {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm"
-        return "更新于 \(f.string(from: date))"
-    }
-}
+// RealtimeStatusBadge / LivePriceText → Support/RealtimeChrome.swift
