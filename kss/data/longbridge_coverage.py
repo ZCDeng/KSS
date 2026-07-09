@@ -103,9 +103,13 @@ def route_provider(symbol: str, manifest: CoverageManifest | None = None) -> str
     if manifest is None:
         manifest = load_manifest()
     norm = normalize_symbol(symbol)
-    if norm in manifest.covered:
-        return PROVIDER_LONGBRIDGE
-    return PROVIDER_EASTMONEY
+    if norm in manifest.route_to_eastmoney:
+        return PROVIDER_EASTMONEY  # 显式路由回东财（北交所已验证不可达）
+    # KTD6 保守 → 激进：非北交所、非显式 route_to_eastmoney → 全部走 longbridge
+    # manifest.covered 仅是对已 scan 的精确图，而非全池否定 —— 未 scan 的标的同样
+    # 可能被 ChinaConnect 覆盖。东财端点已证实不稳定（本机直连/代理均不通），
+    # 故取消 2026-07 初版的 fail-safe 回退（"其余 → eastmoney"）。
+    return PROVIDER_LONGBRIDGE
 
 
 _MANIFEST_CACHE: CoverageManifest | None = None
