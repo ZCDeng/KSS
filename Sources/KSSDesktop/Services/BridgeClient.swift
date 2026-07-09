@@ -150,6 +150,60 @@ struct BridgeClient {
         return try run(args, as: NewsDigestResponse.self)
     }
 
+    /// 资讯雷达 12 赛道 RSS（Investment News）。``force: true`` 实时抓取（≈20-40s），默认读缓存。
+    func intelRadar(force: Bool = false) throws -> NewsDigestResponse {
+        var args = ["intel-radar"]
+        if force { args.append("force") }
+        return try run(args, as: NewsDigestResponse.self)
+    }
+
+    /// 资讯雷达单赛道 AI 要点提炼（plan 2026-07-09-001）。
+    /// ``force: true`` 跳过缓存直接重新调 LLM；``items`` 已由调用方截断到 25 条。
+    func intelDigest(
+        trackKey: String,
+        trackName: String,
+        items: [IntelItem],
+        force: Bool = false
+    ) throws -> IntelDigestResponse {
+        struct Payload: Encodable {
+            let track_key: String
+            let track_name: String
+            let items: [IntelItem]
+            let force: Bool
+        }
+        let payload = Payload(track_key: trackKey, track_name: trackName, items: items, force: force)
+        let data = try JSONEncoder().encode(payload)
+        let json = String(data: data, encoding: .utf8) ?? "{}"
+        return try run(["intel-digest", json], as: IntelDigestResponse.self)
+    }
+
+    /// 把已生成的 AI digest 写入沉淀库（md+json）。
+    func intelDigestSave(
+        trackKey: String,
+        trackName: String,
+        prompt: String,
+        response: String,
+        model: String,
+        items: [IntelItem]
+    ) throws -> IntelDigestSaveResponse {
+        struct Payload: Encodable {
+            let track_key: String
+            let track_name: String
+            let prompt: String
+            let response: String
+            let model: String
+            let items: [IntelItem]
+        }
+        let payload = Payload(
+            track_key: trackKey, track_name: trackName,
+            prompt: prompt, response: response, model: model,
+            items: items,
+        )
+        let data = try JSONEncoder().encode(payload)
+        let json = String(data: data, encoding: .utf8) ?? "{}"
+        return try run(["intel-digest-save", json], as: IntelDigestSaveResponse.self)
+    }
+
     func themeLeaders() throws -> [ThemeLeaders] {
         try run(["theme-leaders"], as: [ThemeLeaders].self)
     }
@@ -201,7 +255,7 @@ struct BridgeClient {
     /// socket 超时会误判不可用并回退，而 daemon 仍在跑同一任务 → 双跑（重复 Tushare
     /// 调用 + 争抢同一归档）。这些命令不属于热路径读，无需暖 pandas。
     // perilla-enrichment 走外网(Tushare+yFinance)耗时常 >3s，跳过 sidecar 避免超时双跑。
-    private static let subprocessOnlyCommands: Set<String> = ["run", "import", "perilla-enrichment"]
+    private static let subprocessOnlyCommands: Set<String> = ["run", "import", "perilla-enrichment", "intel-radar", "intel-digest", "intel-digest-save", "cron-catchup", "cron-rerun", "cron-rerun-many", "cron-enable", "cron-disable"]
 
     private func run<T: Decodable>(_ args: [String], as type: T.Type) throws -> T {
         // U5：热路径读优先常驻 sidecar（pandas 暖、无 per-call python 启动）；
@@ -268,9 +322,21 @@ struct BridgeClient {
 
     private struct SidecarResponse: Decodable { let code: Int; let stdout: String?; let stderr: String? }
 
-    /// socket 缺失则 spawn sidecar daemon（detached，best-effort），等其就绪 ≤3s。
+    /// socket 缺失或 pid 失效则 spawn sidecar daemon（detached，best-effort），等其就绪 ≤3s。
+    /// 检查 pid 文件以避免 orphan socket（文件在但进程死）的情况。
     private func ensureSidecarRunning() {
-        if FileManager.default.fileExists(atPath: socketPath) { return }
+        if FileManager.default.fileExists(atPath: socketPath) {
+            // 验证 pid 文件中的进程仍存活；否则清掉 pid 和 socket 后重新 spawn
+            let pidPath = (stateRoot.appending(path: "run/kss-sidecar.pid")).path
+            if let pidStr = try? String(contentsOfFile: pidPath, encoding: .utf8),
+               let pid = pid_t(pidStr.trimmingCharacters(in: .whitespacesAndNewlines)),
+               kill(pid, 0) == 0 {
+                return  // socket + alive pid → trust
+            }
+            // Stale: clean up and respawn
+            try? FileManager.default.removeItem(atPath: pidPath)
+            try? FileManager.default.removeItem(atPath: socketPath)
+        }
         let sidecar = projectRoot.appending(path: "scripts/kss_sidecar.py")
         guard FileManager.default.fileExists(atPath: sidecar.path) else { return }
         let p = Process()
@@ -379,14 +445,37 @@ struct BridgeClient {
     }
 
     /// 连接 → 发请求 → 逐 newline 帧读到 done/error/EOF。SO_RCVTIMEO 作 **idle 间隔**而非硬超时。
+    /// 连接失败时清理 stale pid/socket 并自动 respawn + 重试一次（处理 sidecar 突然崩溃的情况）。
     private static func chatTurnStream(path: String, request: Data,
                                        onFrame: @escaping (ChatFrame) -> Void,
                                        onConfirmRequired: @escaping (ChatFrame) -> Bool,
                                        onEnd: @escaping (String?) -> Void) {
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        if fd < 0 { onEnd("无法创建 socket"); return }
-        defer { close(fd) }
+        // 第一次连接尝试
+        if let fd = connectToSidecar(path: path) {
+            runStreamLoop(fd: fd, request: request,
+                          onFrame: onFrame, onConfirmRequired: onConfirmRequired, onEnd: onEnd)
+            return
+        }
+        // 连接失败：清理 stale 文件 + 触发 respawn（通过清理 socket 强制 ensureSidecarRunning 走 respawn 分支）
+        let socketURL = URL(fileURLWithPath: path)
+        let pidURL = socketURL.deletingLastPathComponent().appendingPathComponent("kss-sidecar.pid")
+        try? FileManager.default.removeItem(at: socketURL)
+        try? FileManager.default.removeItem(at: pidURL)
+        // 等 sidecar 重新 spawn（最多 3s，匹配 ensureSidecarRunning）
+        Thread.sleep(forTimeInterval: 0.5)
+        // 第二次连接尝试
+        if let fd = connectToSidecar(path: path) {
+            runStreamLoop(fd: fd, request: request,
+                          onFrame: onFrame, onConfirmRequired: onConfirmRequired, onEnd: onEnd)
+        } else {
+            onEnd("无法连接 sidecar")
+        }
+    }
 
+    /// Unix domain socket 连接。成功返回 fd，失败返回 nil。
+    private static func connectToSidecar(path: String) -> Int32? {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        if fd < 0 { return nil }
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
         let pathBytes = Array(path.utf8)
@@ -397,18 +486,27 @@ struct BridgeClient {
                 raw.baseAddress!.copyMemory(from: src.baseAddress!, byteCount: n)
             }
         }
-        // 1s idle 间隔：read() 每秒返回一次让我们检查（而非一直阻塞）。非硬超时。
         var tv = timeval(tv_sec: 1, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
-
         let connected = withUnsafePointer(to: &addr) { ptr -> Int32 in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
                 connect(fd, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
-        if connected != 0 { onEnd("无法连接 sidecar"); return }
+        if connected != 0 {
+            close(fd)
+            return nil
+        }
+        return fd
+    }
 
+    /// 已有 fd 的 stream 循环：发请求 → 读帧 → done/error/EOF 退出。
+    private static func runStreamLoop(fd: Int32, request: Data,
+                                     onFrame: @escaping (ChatFrame) -> Void,
+                                     onConfirmRequired: @escaping (ChatFrame) -> Bool,
+                                     onEnd: @escaping (String?) -> Void) {
+        defer { close(fd) }
         let reqBytes = [UInt8](request)
         var sent = 0
         while sent < reqBytes.count {
@@ -538,7 +636,9 @@ struct BridgeClient {
             fm.fileExists(atPath: url.appending(path: "scripts/kss_app_bridge.py").path)
         }
 
-        // ---- projectRoot（KTD7 三层：dev env > 同步代码 override > 面包屑/bundle baseline）----
+        // ---- projectRoot（KTD7 三层：dev env > 同步代码 override > bundle Resources > 面包屑 > 兜底）----
+        // bundle 模式下：只要 Resources 内嵌 scripts/ 存在，就优先用 bundle 代码，避免 breadcrumb
+        // 残留指向旧主仓库导致 app 升级后仍读旧代码。
         let envScripts = ProcessInfo.processInfo.environment["KSS_SCRIPTS_ROOT"]
         var project: URL?
         if let envProject { project = URL(fileURLWithPath: envProject) }            // dev 硬分支
@@ -546,7 +646,13 @@ struct BridgeClient {
                 hasBridge(URL(fileURLWithPath: envScripts)) {
             project = URL(fileURLWithPath: envScripts)
         }
-        else if let crumb { project = URL(fileURLWithPath: crumb.projectRoot) }     // bundle 面包屑
+        else if !isDevMode,
+                let resources = Bundle.main.resourceURL,
+                hasBridge(resources) {
+            // bundle 模式：优先使用 .app/Resources 内嵌脚本，与 app 版本严格对齐。
+            project = resources
+        }
+        else if let crumb { project = URL(fileURLWithPath: crumb.projectRoot) }     // bundle 面包屑（fallback）
         else {
             // bundle baseline：scripts 随 .app 进 Resources。
             let resources = Bundle.main.resourceURL

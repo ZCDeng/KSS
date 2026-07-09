@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
+<!-- GENERATED — do not edit; edit kss/config/cron_jobs.yaml -->
 <dict>
 	<key>Label</key>
 	<string>com.zcdeng.kss.collect_intraday</string>
@@ -13,23 +14,21 @@
 	</dict>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Users/zcdeng/projects/KSS/scripts/run_collect_intraday.sh</string>
+		<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c/scripts/run_collect_intraday.sh</string>
 	</array>
 	<key>WorkingDirectory</key>
-	<string>/Users/zcdeng/projects/KSS</string>
+	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c</string>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
 		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
 		<key>HOME</key>
 		<string>/Users/zcdeng</string>
-		<key>KSS_STATE_ROOT</key>
-		<string>/Users/zcdeng/projects/KSS</string>
 	</dict>
 	<key>StandardOutPath</key>
-	<string>/Users/zcdeng/projects/KSS/storage/logs/launchd/collect_intraday.log</string>
+	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c/storage/logs/cron/collect_intraday.log</string>
 	<key>StandardErrorPath</key>
-	<string>/Users/zcdeng/projects/KSS/storage/logs/launchd/collect_intraday.log</string>
+	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c/storage/logs/cron/collect_intraday.log</string>
 	<key>RunAtLoad</key>
 	<false/>
 	<key>ThrottleInterval</key>

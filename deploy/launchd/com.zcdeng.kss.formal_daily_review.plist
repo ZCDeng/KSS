@@ -4,53 +4,53 @@
 <!-- GENERATED — do not edit; edit kss/config/cron_jobs.yaml -->
 <dict>
 	<key>Label</key>
-	<string>com.zcdeng.kss.ledger_settle</string>
+	<string>com.zcdeng.kss.formal_daily_review</string>
 	<key>StartCalendarInterval</key>
 	<array>
 		<dict>
 			<key>Weekday</key>
 			<integer>1</integer>
 			<key>Hour</key>
-			<integer>15</integer>
+			<integer>17</integer>
 			<key>Minute</key>
-			<integer>35</integer>
+			<integer>20</integer>
 		</dict>
 		<dict>
 			<key>Weekday</key>
 			<integer>2</integer>
 			<key>Hour</key>
-			<integer>15</integer>
+			<integer>17</integer>
 			<key>Minute</key>
-			<integer>35</integer>
+			<integer>20</integer>
 		</dict>
 		<dict>
 			<key>Weekday</key>
 			<integer>3</integer>
 			<key>Hour</key>
-			<integer>15</integer>
+			<integer>17</integer>
 			<key>Minute</key>
-			<integer>35</integer>
+			<integer>20</integer>
 		</dict>
 		<dict>
 			<key>Weekday</key>
 			<integer>4</integer>
 			<key>Hour</key>
-			<integer>15</integer>
+			<integer>17</integer>
 			<key>Minute</key>
-			<integer>35</integer>
+			<integer>20</integer>
 		</dict>
 		<dict>
 			<key>Weekday</key>
 			<integer>5</integer>
 			<key>Hour</key>
-			<integer>15</integer>
+			<integer>17</integer>
 			<key>Minute</key>
-			<integer>35</integer>
+			<integer>20</integer>
 		</dict>
 	</array>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c/scripts/run_ledger_settle_daily.sh</string>
+		<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c/scripts/run_formal_daily_review.sh</string>
 	</array>
 	<key>WorkingDirectory</key>
 	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c</string>
@@ -62,9 +62,9 @@
 		<string>/Users/zcdeng</string>
 	</dict>
 	<key>StandardOutPath</key>
-	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c/storage/logs/cron/ledger_settle.log</string>
+	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c/storage/logs/cron/formal_daily_review.log</string>
 	<key>StandardErrorPath</key>
-	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c/storage/logs/cron/ledger_settle.log</string>
+	<string>/Users/zcdeng/projects/KSS/.claude/worktrees/eager-chatterjee-b3498c/storage/logs/cron/formal_daily_review.log</string>
 	<key>RunAtLoad</key>
 	<false/>
 	<key>ThrottleInterval</key>

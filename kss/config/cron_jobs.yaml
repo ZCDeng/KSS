@@ -114,13 +114,29 @@ jobs:
     catchup: true
     enabled: true
 
+  - suffix: formal_daily_picks
+    wrapper: scripts/run_formal_daily_picks.sh
+    schedule: {hour: 17, minute: 0, weekdays: [1, 2, 3, 4, 5]}
+    title: 正式每日选股
+    category: 扫描选股
+    catchup: true
+    enabled: true
+
+  - suffix: formal_daily_review
+    wrapper: scripts/run_formal_daily_review.sh
+    schedule: {hour: 17, minute: 20, weekdays: [1, 2, 3, 4, 5]}
+    title: 正式每日个股复盘
+    category: 板块复盘
+    catchup: true
+    enabled: true
+
   - suffix: news_digest_premarket
     wrapper: scripts/run_news_digest_premarket.sh
     schedule: {hour: 8, minute: 40, weekdays: [1, 2, 3, 4, 5]}
     title: 舆情热点·盘前
     category: 舆情热点
     catchup: true
-    enabled: false  # 舆情 digest 未达预期,暂停省资源(代码留存);改进后置 true 重启
+    enabled: true  # 2026-07-09: 恢复，配合资讯雷达页面 IntelView 修复
 
   - suffix: news_digest_postclose
     wrapper: scripts/run_news_digest_postclose.sh
@@ -128,7 +144,15 @@ jobs:
     title: 舆情热点·盘后
     category: 舆情热点
     catchup: true
-    enabled: false  # 同上:舆情 digest 暂停,改进后置 true 重启
+    enabled: true  # 2026-07-09: 恢复，配合资讯雷达页面 IntelView 修复
+
+  - suffix: intel_radar_refresh
+    wrapper: scripts/run_intel_radar.sh
+    schedule: {hour: 9, minute: 0, weekdays: [1, 2, 3, 4, 5]}
+    title: 资讯雷达刷新
+    category: 盘中快讯
+    catchup: false
+    enabled: true
 
   - suffix: morning_divergence_alert
     wrapper: scripts/run_morning_divergence_alert.sh

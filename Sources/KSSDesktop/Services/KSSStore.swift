@@ -41,6 +41,22 @@ final class KSSStore: ObservableObject {
     @Published var intelDigest: NewsDigestResponse?
     @Published var isLoadingIntel = false
 
+    // MARK: 资讯雷达 AI digest（plan 2026-07-09-001）
+    @Published var intelDigests: [String: IntelDigestResponse] = [:]
+    @Published var bulkDigest = BulkDigestState()
+    /// 启动时检测 Keychain 中是否有 OpenAI/DeepSeek 凭据
+    @Published var hasLLMCredentials: Bool = false
+
+    /// Bulk 一键提炼全部要点状态。
+    struct BulkDigestState {
+        var running: Bool = false
+        var done: Int = 0
+        var total: Int = 0
+        var failedCount: Int = 0
+        var currentTask: Task<Void, Never>?
+        var summaryShownUntil: Date?  // 4s 后消失
+    }
+
     // MARK: Longbridge 实时（U1/U2）—— 页面加载时拉取，失败保持 nil（UI 回退存量 + 标注"非实时"）
     @Published var realtimeQuote: LongbridgeQuote?     // Dashboard 指数/板块实时快照
     @Published var tradingHours: TradingHours?         // 交易时段门控（R13）
@@ -67,6 +83,7 @@ final class KSSStore: ObservableObject {
 
     init() {
         self.bridge = try? BridgeClient()
+        refreshLLMCredentialsStatus()
     }
 
     // MARK: - 聊天一轮（流式 + 人在环内写闸）
@@ -259,13 +276,176 @@ final class KSSStore: ObservableObject {
         await loadRealtimeData()
     }
 
-    /// U2: 加载资讯雷达全量数据（复用既有 bridge `news-digest` 命令）。
+    /// U2: 加载资讯雷达全量数据（bridge `intel-radar` 命令 → 12 赛道 RSS）。
     func loadIntel() async {
+        await loadIntelRadar(force: false)
+    }
+
+    /// 强制刷新资讯雷达（实时抓 RSS，≈20-40s）。
+    func refreshIntelRadar() async {
+        await loadIntelRadar(force: true)
+    }
+
+    /// 统一入口：force=false 读缓存，force=true 实时抓取。
+    private func loadIntelRadar(force: Bool) async {
         guard let bridge else { return }
         isLoadingIntel = true
         defer { isLoadingIntel = false }
-        let digest = try? await Task.detached { try bridge.newsDigest() }.value
-        if let digest { intelDigest = digest }
+        do {
+            let digest = try await Task.detached {
+                try bridge.intelRadar(force: force)
+            }.value
+            intelDigest = digest
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    // MARK: AI digest（plan 2026-07-09-001）
+
+    /// 单赛道 AI 要点提炼。
+    func summarizeIntelTrack(
+        _ key: String,
+        name: String,
+        items: [IntelItem],
+        force: Bool = false
+    ) async {
+        guard let bridge else { return }
+        // 进入 loading 状态（让用户看到当前 track 在跑）
+        intelDigests[key] = IntelDigestResponse(text: "", model: nil, generatedAt: nil, prompt: nil, itemCount: nil, error: nil, errorType: nil, fromCache: nil, cachedPath: nil, skipped: nil)
+        do {
+            let resp = try await Task.detached {
+                try bridge.intelDigest(trackKey: key, trackName: name, items: items, force: force)
+            }.value
+            intelDigests[key] = resp
+        } catch {
+            var failResp = IntelDigestResponse(
+                text: "", model: nil, generatedAt: nil, prompt: nil,
+                itemCount: nil, error: error.localizedDescription, errorType: "client",
+                fromCache: nil, cachedPath: nil, skipped: nil
+            )
+            failResp.error = error.localizedDescription
+            failResp.errorType = "client"
+            intelDigests[key] = failResp
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// 把当前 digest 写入沉淀库。返回成功后的 savedPath。
+    func saveIntelDigestToNotes(
+        trackKey: String,
+        trackName: String,
+        prompt: String,
+        response: String,
+        model: String,
+        items: [IntelItem]
+    ) async -> String? {
+        guard let bridge else { return nil }
+        do {
+            let resp = try await Task.detached {
+                try bridge.intelDigestSave(
+                    trackKey: trackKey, trackName: trackName,
+                    prompt: prompt, response: response, model: model,
+                    items: items,
+                )
+            }.value
+            if resp.ok, let path = resp.savedPath {
+                // 标记 saved 状态
+                if var current = intelDigests[trackKey] {
+                    current.cachedPath = path
+                    current.fromCache = true
+                    intelDigests[trackKey] = current
+                }
+                return path
+            }
+            errorMessage = resp.error ?? "沉淀失败"
+            return nil
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// 一键提炼全部要点（串行 + 进度 + 取消支持）。
+    func summarizeAllIntelTracks(force: Bool = false) async {
+        guard let tracks = intelDigest?.tracks else { return }
+        let targets = tracks.filter { ($0.items?.isEmpty ?? true) == false }
+        guard !targets.isEmpty else { return }
+
+        // 重置状态
+        bulkDigest = BulkDigestState()
+        bulkDigest.running = true
+        bulkDigest.total = targets.count
+
+        let task = Task<Void, Never> { [weak self] in
+            guard let self else { return }
+            for track in targets {
+                if Task.isCancelled { break }
+                await self.summarizeIntelTrack(
+                    track.key, name: track.name, items: track.items ?? [], force: force
+                )
+                await MainActor.run {
+                    self.bulkDigest.done += 1
+                    if let resp = self.intelDigests[track.key], resp.error != nil {
+                        self.bulkDigest.failedCount += 1
+                    }
+                }
+            }
+            await MainActor.run {
+                self.bulkDigest.running = false
+                self.bulkDigest.currentTask = nil
+                self.bulkDigest.summaryShownUntil = Date().addingTimeInterval(4)
+            }
+        }
+        bulkDigest.currentTask = task
+        await task.value
+    }
+
+    /// 取消正在运行的 bulk digest 任务（当前 LLM 调用会跑完，下个 track 不开始）。
+    func cancelBulkDigest() {
+        bulkDigest.currentTask?.cancel()
+    }
+
+    /// 重试 bulk 中失败的 track。
+    func retryFailedBulkDigests() async {
+        let failedKeys: [String] = intelDigests.compactMap { (key, resp) in
+            if resp.error != nil { return key } else { return nil }
+        }
+        guard let tracks = intelDigest?.tracks, !failedKeys.isEmpty else { return }
+        let byKey = Dictionary(uniqueKeysWithValues: tracks.map { ($0.key, $0) })
+
+        bulkDigest = BulkDigestState()
+        bulkDigest.running = true
+        bulkDigest.total = failedKeys.count
+
+        let task = Task<Void, Never> { [weak self] in
+            guard let self else { return }
+            for key in failedKeys {
+                if Task.isCancelled { break }
+                guard let track = byKey[key], let items = track.items, !items.isEmpty else { continue }
+                await self.summarizeIntelTrack(key, name: track.name, items: items, force: true)
+                await MainActor.run {
+                    self.bulkDigest.done += 1
+                    if let resp = self.intelDigests[key], resp.error != nil {
+                        self.bulkDigest.failedCount += 1
+                    }
+                }
+            }
+            await MainActor.run {
+                self.bulkDigest.running = false
+                self.bulkDigest.currentTask = nil
+                self.bulkDigest.summaryShownUntil = Date().addingTimeInterval(4)
+            }
+        }
+        bulkDigest.currentTask = task
+        await task.value
+    }
+
+    /// 启动时检测 OpenAI/DeepSeek Keychain 凭据是否存在。
+    func refreshLLMCredentialsStatus() {
+        let env = KeychainStore.injectedEnvironment()
+        hasLLMCredentials = (env["OPENAI_API_KEY"]?.isEmpty == false)
+            || (env["DEEPSEEK_API_KEY"]?.isEmpty == false)
     }
 
     /// U3: 加载 Dashboard 资讯摘要（轻量，仅取赛道计数 + 最近标题）。

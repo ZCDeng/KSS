@@ -44,6 +44,7 @@ NAMES_PATH = STATE_ROOT / "storage" / "stock_names.csv"
 SUPPLY_CHAIN_PATH = PROJECT_ROOT / "kss" / "config" / "supply_chain.yaml"  # config = 代码，随 bundle
 SECTOR_ROTATION_DIR = STATE_ROOT / "storage" / "sector_rotation"
 NEWS_DIGEST_DIR = STATE_ROOT / "storage" / "news_digest"  # 舆情热点 digest 归档(cron 生成)
+INTEL_RADAR_DIR = STATE_ROOT / "storage" / "intel_radar"   # 资讯雷达 12 赛道 RSS 缓存
 DATA_CATALOG_PATH = STATE_ROOT / "storage" / "data_catalog.json"  # 由 build_data_catalog.py 生成
 TOP_N = 5
 TOP_PCT = 0.2
@@ -2016,6 +2017,121 @@ def _news_digest(date: str = "", scene: str = "") -> dict[str, Any]:
     return {"available": selected is not None, "selected": selected, "index": index}
 
 
+def _intel_radar(force: str = "") -> dict[str, Any]:
+    """12赛道全球RSS资讯雷达。``force == "force"`` 时实时抓取（≈20-40s），否则读缓存。
+
+    返回格式::
+      {available, generated_at, recent_days, stats, tracks: [{key, name, accent, total, items}]}
+    tracks 对齐 Swift ``IntelTrack``，items 对齐 ``IntelItem``。
+    """
+    from kss.news.radar import get_radar
+
+    do_fetch = (force == "force")
+    data = get_radar(force=do_fetch)
+
+    industries = data.get("industries") or []
+    tracks = []
+    for ind in industries:
+        items = []
+        for it in ind.get("items") or []:
+            items.append({
+                "title": it.get("title", ""),
+                "url": it.get("url", ""),
+                "time": it.get("time", ""),
+                "source": it.get("source", ""),
+                "summary": it.get("summary", ""),
+            })
+        tracks.append({
+            "key": ind["key"],
+            "name": ind["name"],
+            "accent": ind.get("accent"),
+            "total": ind.get("total", len(items)),
+            "items": items,
+        })
+
+    available = data.get("generated_at") is not None
+    return {
+        "available": available,
+        "index": [],
+        "selected": None,
+        "tracks": tracks,
+        "generated_at": data.get("generated_at"),
+        "recent_days": data.get("recent_days"),
+        "stats": data.get("stats"),
+    }
+
+
+def _intel_digest(json_payload: str = "") -> dict[str, Any]:
+    """资讯雷达单赛道 AI 要点提炼（plan 2026-07-09-001）。
+
+    参数：JSON 单参数 ``{"track_key": ..., "track_name": ..., "items": [...], "force": bool?}``
+    返回：``{text, model, generated_at, prompt, item_count, error?, error_type?}``
+
+    不写沉淀库——由 UI 的「存入沉淀」按钮调 ``_intel_digest_save`` 触发。
+    """
+    import json as _json
+
+    from kss.news.digest_ai import parse_items_payload, run_digest
+
+    if not json_payload:
+        return {"error": "empty payload", "error_type": "client", "text": ""}
+    try:
+        obj = _json.loads(json_payload)
+    except Exception as exc:
+        return {"error": f"invalid JSON: {exc}", "error_type": "client", "text": ""}
+
+    track_key = str(obj.get("track_key") or "")
+    track_name = str(obj.get("track_name") or track_key)
+    items = obj.get("items") or []
+    force = bool(obj.get("force") or False)
+    if not track_key:
+        return {"error": "missing track_key", "error_type": "client", "text": ""}
+    if not isinstance(items, list):
+        return {"error": "items must be a JSON array", "error_type": "client", "text": ""}
+
+    try:
+        result = run_digest(track_key, track_name, items, force=force)
+    except Exception as exc:  # noqa: BLE001 - 防御性收口
+        return {"error": f"digest failed: {exc}", "error_type": "server", "text": ""}
+    return result
+
+
+def _intel_digest_save(json_payload: str = "") -> dict[str, Any]:
+    """把已生成的 AI digest 写入沉淀库（md+json）。
+
+    参数：``{"track_key": ..., "track_name": ..., "prompt": ..., "response": ..., "model": ..., "items": [...]}``
+    返回：``{saved_path, ok}`` 或 ``{error, error_type}``
+    """
+    import json as _json
+
+    from kss.storage.notes import save_intel_digest
+
+    if not json_payload:
+        return {"ok": False, "error": "empty payload", "error_type": "client"}
+    try:
+        obj = _json.loads(json_payload)
+    except Exception as exc:
+        return {"ok": False, "error": f"invalid JSON: {exc}", "error_type": "client"}
+
+    track_key = str(obj.get("track_key") or "")
+    track_name = str(obj.get("track_name") or track_key)
+    prompt = str(obj.get("prompt") or "")
+    response = str(obj.get("response") or "")
+    model = str(obj.get("model") or "")
+    items = obj.get("items") or []
+
+    if not (track_key and response):
+        return {"ok": False, "error": "missing track_key or response", "error_type": "client"}
+
+    try:
+        md_path = save_intel_digest(
+            track_key, track_name, prompt, response, model, items,
+        )
+        return {"ok": True, "saved_path": str(md_path)}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"save failed: {exc}", "error_type": "server"}
+
+
 def _sector_rotation_history(limit: int = 30) -> list[dict[str, Any]]:
     """板块热点轮动归档列表：最新 N 个交易日，新到旧。
 
@@ -2568,15 +2684,6 @@ def snapshot() -> dict[str, Any]:
     stock_by_symbol = {item["symbol"]: item for item in stocks}
     recommendation_date, recs = _recommendations(names, stock_by_symbol)
     latest_dates = [item["latestDate"] for item in stocks if item.get("latestDate")]
-    # U4-U5: 每日复盘新增短线情绪/成交TOP20/全球隔夜指数。
-    strip = _market_strip()
-    limit_board = _limit_board()
-    turnover_top = _turnover_top20() if limit_board is not None else None
-    global_idx = _global_indices()
-    if strip is not None:
-        strip["limitBoard"] = limit_board
-        strip["turnoverTop"] = turnover_top
-        strip["globalIndices"] = global_idx
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "projectRoot": str(PROJECT_ROOT),
@@ -2594,7 +2701,7 @@ def snapshot() -> dict[str, Any]:
         "sectorReviews": _sector_reviews(),
         "sectorRotationHistory": _sector_rotation_history(),
         "latestSectorRotation": _latest_sector_rotation(),
-        "marketStrip": strip,
+        "marketStrip": _market_strip(),
         "pythonEnvironment": _python_env_status(),
         "recentTaskRuns": _task_history(),
     }
@@ -3327,6 +3434,7 @@ def _theme_leaders() -> list[dict[str, Any]]:
 WRITE_COMMANDS = frozenset({
     "run", "import", "resolve",
     "cron-rerun", "cron-enable", "cron-disable", "cron-catchup", "cron-rerun-many", "cron-sync",
+    "intel-digest-save",  # 写文件到 storage/notes/
 })
 
 # ---------------------------------------------------------------------------
@@ -3366,6 +3474,9 @@ COMMANDS = {
     "research-fetch": {"desc": "外部 URL 证据抓取(只读,SSRF 护栏)", "args": ["URL", "[MAX_CHARS]"]},
     "research-bundle": {"desc": "外部证据搜索+抓取 bundle(只读)", "args": ["QUERY", "[LIMIT]", "[MAX_CHARS_PER_SOURCE]"]},
     "news-digest": {"desc": "舆情热点 digest(读 cron 归档,两段式:方向+催化)", "args": ["[DATE]", "[SCENE]"]},
+    "intel-radar": {"desc": "12赛道全球RSS资讯(Investment News)", "args": ["[force]"]},
+    "intel-digest": {"desc": "资讯雷达单赛道AI要点提炼(OpenAI兼容,JSON_PAYLOAD)", "args": ["JSON_PAYLOAD"]},
+    "intel-digest-save": {"desc": "把已生成digest写入沉淀库(STATE_ROOT/storage/notes)", "args": ["JSON_PAYLOAD"]},
     "longbridge-quote": {"desc": "Longbridge 实时快照(ChinaConnect LV1,仅陆股通标的)", "args": ["SYMBOL"]},
     "intraday-snapshot": {"desc": "最新分钟 bar 快照(按覆盖路由 longbridge/东财,前向-only)", "args": ["SYMBOL", "[INTERVAL]"]},
     "intraday-bars": {"desc": "完整日内 bar 序列(K线图渲染,前向-only)", "args": ["SYMBOL", "[INTERVAL]"]},
@@ -3921,6 +4032,12 @@ def dispatch(command: str, args: list[str]) -> Any:
             args[0] if len(args) > 0 else "",
             args[1] if len(args) > 1 else "",
         )
+    if command == "intel-radar":
+        return _intel_radar(args[0] if args else "")
+    if command == "intel-digest":
+        return _intel_digest(args[0] if args else "")
+    if command == "intel-digest-save":
+        return _intel_digest_save(args[0] if args else "")
     if command == "longbridge-quote":
         return _longbridge_quote(args[0] if args else "")
     if command == "intraday-snapshot":
