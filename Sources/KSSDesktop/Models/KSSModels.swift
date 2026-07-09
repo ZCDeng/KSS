@@ -249,19 +249,19 @@ struct IntelRewriteResponse: Codable {
     }
 }
 
-/// 详情阅读 Tab（对齐 qmreader reader-tabs）。
+/// 详情阅读 Tab（qmreader 风；首 Tab / 默认 = 投研改写）。
 enum IntelReaderTab: String, CaseIterable, Identifiable {
-    case original
-    case chinese
     case investment
+    case chinese
+    case original
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .original: return "原文"
-        case .chinese: return "中文改写"
         case .investment: return "投研改写"
+        case .chinese: return "中文改写"
+        case .original: return "原文"
         }
     }
 

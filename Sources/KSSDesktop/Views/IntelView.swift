@@ -7,8 +7,8 @@ struct IntelView: View {
     @Environment(\.kssTheme) private var theme
     @EnvironmentObject private var store: KSSStore
     @State private var activeTrack: String = "tech"
-    /// 对齐 qmreader DEFAULT_READER_OPEN_TAB = rewrite → 中文改写
-    @State private var readerTab: IntelReaderTab = .chinese
+    /// 默认首 Tab：投研改写
+    @State private var readerTab: IntelReaderTab = .investment
 
     private var digest: NewsDigestResponse? { store.intelDigest }
     private var tracks: [IntelTrack] { digest?.tracks ?? [] }
@@ -382,10 +382,8 @@ struct IntelView: View {
             }
             .background(theme.canvas)
             .onChange(of: item.id) { _, _ in
-                // 有中文改写则默认切到中文改写，否则原文
-                if store.rewrite(for: item.id, kind: "chinese")?.status == "ready" {
-                    readerTab = .chinese
-                }
+                // 默认投研改写；有现成稿也保持该 Tab
+                readerTab = .investment
             }
         } else {
             VStack(spacing: 16) {
@@ -400,7 +398,7 @@ struct IntelView: View {
                 Text("选择左侧一条资讯开始阅读")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(theme.textSecondary)
-                Text("原文 · 中文改写 · 投研改写（qmreader Tab）")
+                Text("投研改写 · 中文改写 · 原文")
                     .font(.system(size: 12.2))
                     .foregroundStyle(theme.textSecondary.opacity(0.65))
             }
@@ -451,15 +449,6 @@ struct IntelView: View {
     @ViewBuilder
     private func readerTabPanel(item: IntelItem, track: IntelTrack) -> some View {
         switch readerTab {
-        case .original:
-            originalBodyPanel(item: item)
-        case .chinese:
-            rewritePanel(
-                item: item, track: track, kind: "chinese",
-                title: "中文改写",
-                generateLabel: "生成中文改写",
-                emptyHint: "这篇文章还没有中文改写。可一键生成流畅中文稿（qmreader 风格）。"
-            )
         case .investment:
             rewritePanel(
                 item: item, track: track, kind: "investment",
@@ -467,6 +456,15 @@ struct IntelView: View {
                 generateLabel: "生成投研改写",
                 emptyHint: "尚未生成投研改写。后台 Top-K 或点下方按钮生成。"
             )
+        case .chinese:
+            rewritePanel(
+                item: item, track: track, kind: "chinese",
+                title: "中文改写",
+                generateLabel: "生成中文改写",
+                emptyHint: "这篇文章还没有中文改写。可一键生成流畅中文稿（qmreader 风格）。"
+            )
+        case .original:
+            originalBodyPanel(item: item)
         }
     }
 
@@ -566,17 +564,11 @@ struct IntelView: View {
                 }
                 .padding(.vertical, 24)
             } else if status == "ready", let text = rw?.text, !text.isEmpty {
-                // reading type for chinese; structured bullets for investment
+                // 与中文改写同一套阅读排版；投研用结构化 sections，不用裸 markdown
                 if isChinese {
-                    Text(text)
-                        .font(.system(size: 16.5))
-                        .foregroundStyle(theme.textBody)
-                        .lineSpacing(16.5 * 0.88)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
+                    readingBodyText(text)
                 } else {
-                    digestMarkdownView(text)
-                        .textSelection(.enabled)
+                    investmentStructuredBody(text: text, sections: rw?.sections)
                 }
                 if let model = rw?.model {
                     Text(model)
@@ -647,6 +639,115 @@ struct IntelView: View {
         case "failed": return "failed"
         default: return "not queued"
         }
+    }
+
+    /// 与中文改写一致的正文阅读样式（16.5 / ~1.88 行距）。
+    private func readingBodyText(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 16.5))
+            .foregroundStyle(theme.textBody)
+            .lineSpacing(16.5 * 0.88)
+            .fixedSize(horizontal: false, vertical: true)
+            .textSelection(.enabled)
+    }
+
+    /// 投研改写：按 section 排版，不展示裸 ## / - markdown。
+    @ViewBuilder
+    private func investmentStructuredBody(text: String, sections: [String: String]?) -> some View {
+        let order = ["事件", "影响", "标的线索", "待验证"]
+        let parsed = parseInvestmentSections(text: text, sections: sections)
+        let hasAny = order.contains { !(parsed[$0] ?? "").isEmpty }
+
+        if hasAny {
+            VStack(alignment: .leading, spacing: 22) {
+                ForEach(order, id: \.self) { key in
+                    let body = (parsed[key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !body.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(key)
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(theme.accent)
+                                .tracking(0.3)
+                            investmentSectionLines(body)
+                        }
+                    }
+                }
+            }
+            .textSelection(.enabled)
+        } else {
+            // 无结构化字段时：剥掉 markdown 符号后按阅读体排版
+            readingBodyText(stripBareMarkdown(text))
+        }
+    }
+
+    private func investmentSectionLines(_ body: String) -> some View {
+        let lines = body
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .map { stripListMarker($0) }
+
+        return VStack(alignment: .leading, spacing: 10) {
+            if lines.count <= 1 {
+                readingBodyText(lines.first ?? body)
+            } else {
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                    HStack(alignment: .top, spacing: 10) {
+                        Circle()
+                            .fill(theme.accent.opacity(0.85))
+                            .frame(width: 5, height: 5)
+                            .padding(.top, 10)
+                        Text(line)
+                            .font(.system(size: 16.5))
+                            .foregroundStyle(theme.textBody)
+                            .lineSpacing(16.5 * 0.88)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
+    private func parseInvestmentSections(text: String, sections: [String: String]?) -> [String: String] {
+        var out: [String: String] = [:]
+        if let sections {
+            for (k, v) in sections where !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                out[k] = v
+            }
+        }
+        if !out.isEmpty { return out }
+
+        // fallback: 从 ## 标题切分
+        let keys = ["事件", "影响", "标的线索", "待验证"]
+        let parts = text.components(separatedBy: "##")
+        for part in parts {
+            let trimmed = part.trimmingCharacters(in: .whitespacesAndNewlines)
+            for k in keys where trimmed.hasPrefix(k) {
+                var body = String(trimmed.dropFirst(k.count))
+                body = body.trimmingCharacters(in: CharacterSet(charactersIn: " \n：:"))
+                if !body.isEmpty { out[k] = body }
+            }
+        }
+        return out
+    }
+
+    private func stripListMarker(_ line: String) -> String {
+        var s = line
+        if s.hasPrefix("- ") || s.hasPrefix("* ") || s.hasPrefix("• ") {
+            s = String(s.dropFirst(2))
+        }
+        // 编号 1. / 1、
+        if let r = try? Regex(#"^\d+[\.、]\s*"#), let m = s.firstMatch(of: r) {
+            s = String(s[m.range.upperBound...])
+        }
+        return s.trimmingCharacters(in: .whitespaces)
+    }
+
+    private func stripBareMarkdown(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: #"^#{1,6}\s+"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\*\*(.+?)\*\*"#, with: "$1", options: .regularExpression)
+            .replacingOccurrences(of: #"(?m)^\s*[-*•]\s+"#, with: "• ", options: .regularExpression)
     }
 
     // MARK: - qmreader-like media helpers
@@ -876,7 +977,7 @@ struct IntelView: View {
         let invStatus = store.rewrite(for: item.id, kind: "investment")?.status
         return Button {
             store.selectIntelItem(item, trackKey: track.key, trackName: track.name)
-            if zhReady { readerTab = .chinese }
+            readerTab = .investment
         } label: {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 0) {
