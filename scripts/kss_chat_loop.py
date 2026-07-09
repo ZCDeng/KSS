@@ -88,7 +88,7 @@ TOOL_SPECS: list[dict[str, Any]] = [
     _spec("get_trends_day", "trends-day", "趋势页某日明细。date 为 YYYY-MM-DD",
           {"date": _STR}, ["date"]),
     _spec("list_cron", "cron-list", "列出计划任务及状态"),
-    _spec("cron_sync", "cron-sync", "同步 launchd 任务（无 prune 的 apply 方式）"),
+    _spec("sync_cron_preview", "cron-sync", "预览 launchd 同步计划（只读，不执行）"),
     _spec("list_recipes", "recipe-list", "编排剧本目录(确定性复盘 DAG)"),
     _spec("run_recipe", "run-recipe",
           "跑只读复盘剧本(如 explain_stock_today)。args 为 JSON 串如 {\"symbol\":\"688008.SH\"}",
