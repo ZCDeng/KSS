@@ -2118,37 +2118,60 @@ def _intel_radar(force: str = "") -> dict[str, Any]:
 
 
 def _intel_digest(json_payload: str = "") -> dict[str, Any]:
-    """资讯雷达单赛道 AI 要点提炼（plan 2026-07-09-001）。
+    """资讯雷达单赛道 AI 要点提炼（plan 2026-07-09-001 + 2026-07-10 pool mode）。
 
     参数：JSON 单参数 ``{"track_key": ..., "track_name": ..., "items": [...], "force": bool?}``
-    返回：``{text, model, generated_at, prompt, item_count, error?, error_type?}``
+    返回：``{text, model, generated_at, prompt, item_count, mode, error?, error_type?}``
+
+    Pool-first: when rewrite pool has ≥ threshold ready drafts for today, return
+    aggregate and **ignore** list notes cache (R9/KTD5). Else existing list digest.
 
     不写沉淀库——由 UI 的「存入沉淀」按钮调 ``_intel_digest_save`` 触发。
     """
     import json as _json
 
-    from kss.news.digest_ai import parse_items_payload, run_digest
+    from kss.news.digest_ai import run_digest
+    from kss.news.rewrite import aggregate_track_digest, pool_ready_count
+    from kss.news.rewrite_config import POOL_THRESHOLD
 
     if not json_payload:
-        return {"error": "empty payload", "error_type": "client", "text": ""}
+        return {"error": "empty payload", "error_type": "client", "text": "", "mode": "list"}
     try:
         obj = _json.loads(json_payload)
     except Exception as exc:
-        return {"error": f"invalid JSON: {exc}", "error_type": "client", "text": ""}
+        return {"error": f"invalid JSON: {exc}", "error_type": "client", "text": "", "mode": "list"}
 
     track_key = str(obj.get("track_key") or "")
     track_name = str(obj.get("track_name") or track_key)
     items = obj.get("items") or []
     force = bool(obj.get("force") or False)
     if not track_key:
-        return {"error": "missing track_key", "error_type": "client", "text": ""}
+        return {"error": "missing track_key", "error_type": "client", "text": "", "mode": "list"}
     if not isinstance(items, list):
-        return {"error": "items must be a JSON array", "error_type": "client", "text": ""}
+        return {"error": "items must be a JSON array", "error_type": "client", "text": "", "mode": "list"}
+
+    # Pool-before-list-cache (plan 2026-07-10 KTD5)
+    prefer_list = bool(obj.get("prefer_list") or False)
+    if not prefer_list and pool_ready_count(track_key) >= POOL_THRESHOLD:
+        agg = aggregate_track_digest(track_key)
+        if agg.get("mode") == "pool" and (agg.get("text") or "").strip():
+            return {
+                "text": agg["text"],
+                "model": "rewrite-pool",
+                "generated_at": agg.get("generated_at"),
+                "prompt": None,
+                "item_count": agg.get("count"),
+                "mode": "pool",
+                "draft_ids": agg.get("draft_ids"),
+                "from_cache": False,
+            }
 
     try:
         result = run_digest(track_key, track_name, items, force=force)
     except Exception as exc:  # noqa: BLE001 - 防御性收口
-        return {"error": f"digest failed: {exc}", "error_type": "server", "text": ""}
+        return {"error": f"digest failed: {exc}", "error_type": "server", "text": "", "mode": "list"}
+    if isinstance(result, dict):
+        result.setdefault("mode", "list")
     return result
 
 
@@ -2186,6 +2209,73 @@ def _intel_digest_save(json_payload: str = "") -> dict[str, Any]:
         return {"ok": True, "saved_path": str(md_path)}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"save failed: {exc}", "error_type": "server"}
+
+
+def _intel_article(json_payload: str = "") -> dict[str, Any]:
+    """Best-effort article body fetch (plan 2026-07-10-001 U4)."""
+    import json as _json
+
+    from kss.news.article_fetch import body_or_summary, fetch_article
+
+    if not json_payload:
+        return {"mode": "empty", "body": "", "error": "empty payload", "error_type": "client"}
+    try:
+        obj = _json.loads(json_payload)
+    except Exception as exc:
+        return {"mode": "empty", "body": "", "error": f"invalid JSON: {exc}", "error_type": "client"}
+
+    url = str(obj.get("url") or "")
+    summary = str(obj.get("summary") or "")
+    if summary or not url:
+        return body_or_summary(url=url, summary=summary)
+    return fetch_article(url)
+
+
+def _intel_rewrite(json_payload: str = "") -> dict[str, Any]:
+    """On-demand investment rewrite for one item (U4)."""
+    import json as _json
+
+    from kss.news.rewrite import run_rewrite
+
+    if not json_payload:
+        return {"status": "failed", "error": "empty payload", "error_type": "client"}
+    try:
+        obj = _json.loads(json_payload)
+    except Exception as exc:
+        return {"status": "failed", "error": f"invalid JSON: {exc}", "error_type": "client"}
+
+    track_key = str(obj.get("track_key") or "")
+    track_name = str(obj.get("track_name") or track_key)
+    item = obj.get("item") or {}
+    force = bool(obj.get("force") or False)
+    if not track_key or not isinstance(item, dict):
+        return {"status": "failed", "error": "missing track_key or item", "error_type": "client"}
+    try:
+        return run_rewrite(track_key, track_name, item, force=force, fetch_body=True)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "failed", "error": f"rewrite failed: {exc}", "error_type": "server"}
+
+
+def _intel_rewrite_run(json_payload: str = "") -> dict[str, Any]:
+    """Kick Top-K rewrite worker (U4). Optional JSON ``{k?, force?}``."""
+    import json as _json
+
+    from kss.news.rewrite_worker import run_top_k_rewrites
+
+    k = None
+    force = False
+    if json_payload:
+        try:
+            obj = _json.loads(json_payload)
+            if obj.get("k") is not None:
+                k = int(obj["k"])
+            force = bool(obj.get("force") or False)
+        except Exception as exc:
+            return {"error": f"invalid JSON: {exc}", "error_type": "client"}
+    try:
+        return run_top_k_rewrites(k=k, force=force)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"worker failed: {exc}", "error_type": "server"}
 
 
 def _sector_rotation_history(limit: int = 30) -> list[dict[str, Any]]:
@@ -3491,6 +3581,8 @@ WRITE_COMMANDS = frozenset({
     "run", "import", "resolve",
     "cron-rerun", "cron-enable", "cron-disable", "cron-catchup", "cron-rerun-many", "cron-sync",
     "intel-digest-save",  # 写文件到 storage/notes/
+    "intel-rewrite",      # 写 rewrite pool
+    "intel-rewrite-run",  # worker 写 pool
 })
 
 # ---------------------------------------------------------------------------
@@ -3531,8 +3623,11 @@ COMMANDS = {
     "research-bundle": {"desc": "外部证据搜索+抓取 bundle(只读)", "args": ["QUERY", "[LIMIT]", "[MAX_CHARS_PER_SOURCE]"]},
     "news-digest": {"desc": "舆情热点 digest(读 cron 归档,两段式:方向+催化)", "args": ["[DATE]", "[SCENE]"]},
     "intel-radar": {"desc": "12赛道全球RSS资讯(Investment News)", "args": ["[force]"]},
-    "intel-digest": {"desc": "资讯雷达单赛道AI要点提炼(OpenAI兼容,JSON_PAYLOAD)", "args": ["JSON_PAYLOAD"]},
+    "intel-digest": {"desc": "资讯雷达单赛道AI要点提炼(OpenAI兼容,JSON_PAYLOAD;池优先)", "args": ["JSON_PAYLOAD"]},
     "intel-digest-save": {"desc": "把已生成digest写入沉淀库(STATE_ROOT/storage/notes)", "args": ["JSON_PAYLOAD"]},
+    "intel-article": {"desc": "资讯雷达文章正文best-effort抓取(JSON_PAYLOAD)", "args": ["JSON_PAYLOAD"]},
+    "intel-rewrite": {"desc": "资讯雷达单篇投研改写(on-demand,JSON_PAYLOAD)", "args": ["JSON_PAYLOAD"]},
+    "intel-rewrite-run": {"desc": "资讯雷达Top-K改写worker(JSON_PAYLOAD可选)", "args": ["[JSON_PAYLOAD]"]},
     "longbridge-quote": {"desc": "Longbridge 实时快照(ChinaConnect LV1,仅陆股通标的)", "args": ["SYMBOL"]},
     "intraday-snapshot": {"desc": "最新分钟 bar 快照(按覆盖路由 longbridge/东财,前向-only)", "args": ["SYMBOL", "[INTERVAL]"]},
     "intraday-bars": {"desc": "完整日内 bar 序列(K线图渲染,前向-only)", "args": ["SYMBOL", "[INTERVAL]"]},
@@ -4094,6 +4189,12 @@ def dispatch(command: str, args: list[str]) -> Any:
         return _intel_digest(args[0] if args else "")
     if command == "intel-digest-save":
         return _intel_digest_save(args[0] if args else "")
+    if command == "intel-article":
+        return _intel_article(args[0] if args else "")
+    if command == "intel-rewrite":
+        return _intel_rewrite(args[0] if args else "")
+    if command == "intel-rewrite-run":
+        return _intel_rewrite_run(args[0] if args else "")
     if command == "longbridge-quote":
         return _longbridge_quote(args[0] if args else "")
     if command == "intraday-snapshot":

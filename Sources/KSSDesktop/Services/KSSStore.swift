@@ -47,6 +47,14 @@ final class KSSStore: ObservableObject {
     /// 启动时检测 Keychain 中是否有 OpenAI/DeepSeek 凭据
     @Published var hasLLMCredentials: Bool = false
 
+    // MARK: 资讯雷达 reader workbench（plan 2026-07-10-001）
+    @Published var selectedIntelItemID: String?
+    @Published var intelArticleByID: [String: IntelArticleResponse] = [:]
+    @Published var intelRewriteByID: [String: IntelRewriteResponse] = [:]
+    @Published var isLoadingIntelDetail = false
+    private var intelDetailTask: Task<Void, Never>?
+    private var intelRewriteRunTask: Task<Void, Never>?
+
     /// Bulk 一键提炼全部要点状态。
     struct BulkDigestState {
         var running: Bool = false
@@ -296,14 +304,133 @@ final class KSSStore: ObservableObject {
                 try bridge.intelRadar(force: force)
             }.value
             intelDigest = digest
+            if force {
+                kickIntelRewriteWorker()
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
+    /// Fire-and-forget Top-K rewrite worker after refresh (R8).
+    func kickIntelRewriteWorker() {
+        guard let bridge else { return }
+        intelRewriteRunTask?.cancel()
+        intelRewriteRunTask = Task { [weak self] in
+            guard let self else { return }
+            _ = try? await Task.detached {
+                try bridge.intelRewriteRun()
+            }.value
+            // AE4: refresh digests so pool mode can flip without manual 提炼
+            // Only re-query tracks that already have a card or pool may be rich — avoid 12 LLM burns.
+            if let tracks = self.intelDigest?.tracks {
+                for track in tracks {
+                    let hasCard = self.intelDigests[track.key] != nil
+                    let items = track.items ?? []
+                    guard !items.isEmpty else { continue }
+                    // Always try pool path via bridge (cheap when pool insufficient → list cache)
+                    await self.summarizeIntelTrack(
+                        track.key, name: track.name, items: items, force: false
+                    )
+                    if !hasCard {
+                        // first auto fill only; still OK if pool insufficient returns list/skip
+                        continue
+                    }
+                }
+            }
+        }
+    }
+
+    /// Select list item and load body + rewrite into detail panel.
+    func selectIntelItem(_ item: IntelItem?, trackKey: String, trackName: String) {
+        intelDetailTask?.cancel()
+        guard let item else {
+            selectedIntelItemID = nil
+            isLoadingIntelDetail = false
+            return
+        }
+        selectedIntelItemID = item.id
+        isLoadingIntelDetail = true
+        intelDetailTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.isLoadingIntelDetail = false }
+            guard let bridge = self.bridge else { return }
+
+            // Prefer rewrite first (body snapshot on draft for AE1)
+            do {
+                let rewrite = try await Task.detached {
+                    try bridge.intelRewrite(trackKey: trackKey, trackName: trackName, item: item, force: false)
+                }.value
+                self.intelRewriteByID[item.id] = rewrite
+                if let body = rewrite.bodyText, !body.isEmpty {
+                    self.intelArticleByID[item.id] = IntelArticleResponse(
+                        body: body,
+                        title: item.title,
+                        mode: rewrite.bodyMode ?? "summary",
+                        error: nil,
+                        charCount: rewrite.bodyCharCount,
+                        url: item.url
+                    )
+                } else if let url = item.url, !url.isEmpty {
+                    let article = try await Task.detached {
+                        try bridge.intelArticle(url: url, summary: item.summary ?? "")
+                    }.value
+                    self.intelArticleByID[item.id] = article
+                }
+            } catch {
+                if let url = item.url, !url.isEmpty {
+                    let article: IntelArticleResponse? = await Task.detached {
+                        try? bridge.intelArticle(url: url, summary: item.summary ?? "")
+                    }.value
+                    if let article {
+                        self.intelArticleByID[item.id] = article
+                    }
+                }
+                self.intelRewriteByID[item.id] = IntelRewriteResponse(
+                    itemId: nil, trackKey: trackKey, status: "failed",
+                    text: nil, sections: nil, model: nil, generatedAt: nil,
+                    bodyText: nil, bodyMode: nil, bodyCharCount: nil,
+                    error: error.localizedDescription, errorType: "client", fromCache: nil
+                )
+            }
+        }
+    }
+
+    /// On-demand rewrite for selected item.
+    func requestIntelRewrite(item: IntelItem, trackKey: String, trackName: String, force: Bool = true) async {
+        guard let bridge else { return }
+        intelRewriteByID[item.id] = IntelRewriteResponse(
+            itemId: nil, trackKey: trackKey, status: "generating",
+            text: nil, sections: nil, model: nil, generatedAt: nil,
+            bodyText: intelArticleByID[item.id]?.body,
+            bodyMode: intelArticleByID[item.id]?.mode,
+            bodyCharCount: intelArticleByID[item.id]?.charCount,
+            error: nil, errorType: nil, fromCache: nil
+        )
+        do {
+            let resp = try await Task.detached {
+                try bridge.intelRewrite(trackKey: trackKey, trackName: trackName, item: item, force: force)
+            }.value
+            intelRewriteByID[item.id] = resp
+            if let body = resp.bodyText, !body.isEmpty {
+                intelArticleByID[item.id] = IntelArticleResponse(
+                    body: body, title: item.title, mode: resp.bodyMode ?? "summary",
+                    error: nil, charCount: resp.bodyCharCount, url: item.url
+                )
+            }
+        } catch {
+            intelRewriteByID[item.id] = IntelRewriteResponse(
+                itemId: nil, trackKey: trackKey, status: "failed",
+                text: nil, sections: nil, model: nil, generatedAt: nil,
+                bodyText: nil, bodyMode: nil, bodyCharCount: nil,
+                error: error.localizedDescription, errorType: "client", fromCache: nil
+            )
+        }
+    }
+
     // MARK: AI digest（plan 2026-07-09-001）
 
-    /// 单赛道 AI 要点提炼。
+    /// 单赛道 AI 要点提炼（池优先，bridge 侧 KTD5）。
     func summarizeIntelTrack(
         _ key: String,
         name: String,
@@ -312,7 +439,10 @@ final class KSSStore: ObservableObject {
     ) async {
         guard let bridge else { return }
         // 进入 loading 状态（让用户看到当前 track 在跑）
-        intelDigests[key] = IntelDigestResponse(text: "", model: nil, generatedAt: nil, prompt: nil, itemCount: nil, error: nil, errorType: nil, fromCache: nil, cachedPath: nil, skipped: nil)
+        intelDigests[key] = IntelDigestResponse(
+            text: "", model: nil, generatedAt: nil, prompt: nil, itemCount: nil,
+            error: nil, errorType: nil, fromCache: nil, cachedPath: nil, skipped: nil, mode: nil
+        )
         do {
             let resp = try await Task.detached {
                 try bridge.intelDigest(trackKey: key, trackName: name, items: items, force: force)
@@ -322,7 +452,7 @@ final class KSSStore: ObservableObject {
             var failResp = IntelDigestResponse(
                 text: "", model: nil, generatedAt: nil, prompt: nil,
                 itemCount: nil, error: error.localizedDescription, errorType: "client",
-                fromCache: nil, cachedPath: nil, skipped: nil
+                fromCache: nil, cachedPath: nil, skipped: nil, mode: "list"
             )
             failResp.error = error.localizedDescription
             failResp.errorType = "client"
