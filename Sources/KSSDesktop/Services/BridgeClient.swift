@@ -322,9 +322,21 @@ struct BridgeClient {
 
     private struct SidecarResponse: Decodable { let code: Int; let stdout: String?; let stderr: String? }
 
-    /// socket 缺失则 spawn sidecar daemon（detached，best-effort），等其就绪 ≤3s。
+    /// socket 缺失或 pid 失效则 spawn sidecar daemon（detached，best-effort），等其就绪 ≤3s。
+    /// 检查 pid 文件以避免 orphan socket（文件在但进程死）的情况。
     private func ensureSidecarRunning() {
-        if FileManager.default.fileExists(atPath: socketPath) { return }
+        if FileManager.default.fileExists(atPath: socketPath) {
+            // 验证 pid 文件中的进程仍存活；否则清掉 pid 和 socket 后重新 spawn
+            let pidPath = (stateRoot.appending(path: "run/kss-sidecar.pid")).path
+            if let pidStr = try? String(contentsOfFile: pidPath, encoding: .utf8),
+               let pid = pid_t(pidStr.trimmingCharacters(in: .whitespacesAndNewlines)),
+               kill(pid, 0) == 0 {
+                return  // socket + alive pid → trust
+            }
+            // Stale: clean up and respawn
+            try? FileManager.default.removeItem(atPath: pidPath)
+            try? FileManager.default.removeItem(atPath: socketPath)
+        }
         let sidecar = projectRoot.appending(path: "scripts/kss_sidecar.py")
         guard FileManager.default.fileExists(atPath: sidecar.path) else { return }
         let p = Process()
@@ -433,14 +445,37 @@ struct BridgeClient {
     }
 
     /// 连接 → 发请求 → 逐 newline 帧读到 done/error/EOF。SO_RCVTIMEO 作 **idle 间隔**而非硬超时。
+    /// 连接失败时清理 stale pid/socket 并自动 respawn + 重试一次（处理 sidecar 突然崩溃的情况）。
     private static func chatTurnStream(path: String, request: Data,
                                        onFrame: @escaping (ChatFrame) -> Void,
                                        onConfirmRequired: @escaping (ChatFrame) -> Bool,
                                        onEnd: @escaping (String?) -> Void) {
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        if fd < 0 { onEnd("无法创建 socket"); return }
-        defer { close(fd) }
+        // 第一次连接尝试
+        if let fd = connectToSidecar(path: path) {
+            runStreamLoop(fd: fd, request: request,
+                          onFrame: onFrame, onConfirmRequired: onConfirmRequired, onEnd: onEnd)
+            return
+        }
+        // 连接失败：清理 stale 文件 + 触发 respawn（通过清理 socket 强制 ensureSidecarRunning 走 respawn 分支）
+        let socketURL = URL(fileURLWithPath: path)
+        let pidURL = socketURL.deletingLastPathComponent().appendingPathComponent("kss-sidecar.pid")
+        try? FileManager.default.removeItem(at: socketURL)
+        try? FileManager.default.removeItem(at: pidURL)
+        // 等 sidecar 重新 spawn（最多 3s，匹配 ensureSidecarRunning）
+        Thread.sleep(forTimeInterval: 0.5)
+        // 第二次连接尝试
+        if let fd = connectToSidecar(path: path) {
+            runStreamLoop(fd: fd, request: request,
+                          onFrame: onFrame, onConfirmRequired: onConfirmRequired, onEnd: onEnd)
+        } else {
+            onEnd("无法连接 sidecar")
+        }
+    }
 
+    /// Unix domain socket 连接。成功返回 fd，失败返回 nil。
+    private static func connectToSidecar(path: String) -> Int32? {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        if fd < 0 { return nil }
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
         let pathBytes = Array(path.utf8)
@@ -451,18 +486,27 @@ struct BridgeClient {
                 raw.baseAddress!.copyMemory(from: src.baseAddress!, byteCount: n)
             }
         }
-        // 1s idle 间隔：read() 每秒返回一次让我们检查（而非一直阻塞）。非硬超时。
         var tv = timeval(tv_sec: 1, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
-
         let connected = withUnsafePointer(to: &addr) { ptr -> Int32 in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
                 connect(fd, sa, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
-        if connected != 0 { onEnd("无法连接 sidecar"); return }
+        if connected != 0 {
+            close(fd)
+            return nil
+        }
+        return fd
+    }
 
+    /// 已有 fd 的 stream 循环：发请求 → 读帧 → done/error/EOF 退出。
+    private static func runStreamLoop(fd: Int32, request: Data,
+                                     onFrame: @escaping (ChatFrame) -> Void,
+                                     onConfirmRequired: @escaping (ChatFrame) -> Bool,
+                                     onEnd: @escaping (String?) -> Void) {
+        defer { close(fd) }
         let reqBytes = [UInt8](request)
         var sent = 0
         while sent < reqBytes.count {
