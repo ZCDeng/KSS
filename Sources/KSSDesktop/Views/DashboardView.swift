@@ -62,6 +62,12 @@ struct DashboardView: View {
                         IndexMarquee(indices: board, quotes: realtimeQuotes)
                     }
 
+                    // 隔夜美股：固定名单顺序，不按涨跌重排；≥1 才显示
+                    if let overnight = snapshot.marketStrip?.overnightUS, !overnight.isEmpty {
+                        SectionHeader("隔夜美股", caption: "美股/ETF 与全球指数 · 收盘或延迟行情")
+                        OvernightUSMarquee(indices: overnight)
+                    }
+
                     if let pulse = snapshot.sectorReviews?.first, !pulse.themes.isEmpty {
                         SectorPulseStrip(pulse: pulse)
                     }
@@ -860,6 +866,8 @@ struct IndexMarquee: View {
     @Environment(\.kssTheme) private var theme
     var indices: [IndexQuote]
     var quotes: [String: LongbridgeQuote] = [:]
+    /// false = 保持传入顺序（隔夜美股）；true = 按涨跌幅降序（A 股指数板默认）
+    var sortByPct: Bool = true
 
     private let gap: CGFloat = 10
     private let speed: Double = 42            // 滚动速度 pts/s
@@ -875,11 +883,11 @@ struct IndexMarquee: View {
     }
 
     private var sorted: [LiveIndex] {
-        indices.map { idx in
+        let mapped = indices.map { idx -> LiveIndex in
             let live = RealtimeMerge.applyLive(close: idx.close, pct: idx.pct, quote: quotes[idx.code.uppercased()])
             return LiveIndex(code: idx.code, name: idx.name, close: live.close, pct: live.pct, isLive: live.isLive)
         }
-        .sorted { $0.pct > $1.pct }
+        return sortByPct ? mapped.sorted { $0.pct > $1.pct } : mapped
     }
 
     var body: some View {
@@ -971,6 +979,15 @@ private struct MarqueeWidthKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = max(value, nextValue())
+    }
+}
+
+/// 隔夜美股跑马灯：名单固定顺序，不按涨跌重排；无 Longbridge overlay（yfinance 快照）。
+struct OvernightUSMarquee: View {
+    var indices: [IndexQuote]
+
+    var body: some View {
+        IndexMarquee(indices: indices, quotes: [:], sortByPct: false)
     }
 }
 
