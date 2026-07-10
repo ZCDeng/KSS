@@ -2,12 +2,12 @@
 
 环境变量约定（按优先级）：
 
-1. 若 ``OPENAI_BASE_URL`` 指向 DeepSeek 且 ``DEEPSEEK_API_KEY`` 已配置
-   → 用 DeepSeek key（避免 Keychain 里 OpenAI 槽位旧 key 挡住有余额的 DEEPSEEK key）
-2. ``OPENAI_API_KEY`` + 可选 ``OPENAI_BASE_URL`` —— OpenAI / oneAPI / 自建兼容网关
-3. fallback ``DEEPSEEK_API_KEY`` + ``https://api.deepseek.com/v1``
-4. ``KSS_LLM_MODEL`` 决定具体 model id，default ``gpt-4o-mini`` (OpenAI 路径) /
-   ``deepseek-chat`` (DeepSeek 路径)
+1. ``DEEPSEEK_API_KEY`` + ``https://api.deepseek.com/v1`` —— DeepSeek **主路径**
+2. fallback ``OPENAI_API_KEY`` + 可选 ``OPENAI_BASE_URL`` —— OpenAI / oneAPI / 自建兼容网关
+3. 若仅有 OPENAI_* 但 ``OPENAI_BASE_URL`` 指向 DeepSeek：仍走 DeepSeek base（并优先
+   同槽位的 DEEPSEEK key，若有）
+4. ``KSS_LLM_MODEL`` 覆盖具体 model id；缺省
+   ``deepseek-v4-flash`` (DeepSeek) / ``gpt-4o-mini`` (OpenAI)
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 _DEEPSEEK_BASE_URL: Final[str] = "https://api.deepseek.com/v1"
 _DEFAULT_MODEL_OPENAI: Final[str] = "gpt-4o-mini"
-_DEFAULT_MODEL_DEEPSEEK: Final[str] = "deepseek-chat"
+_DEFAULT_MODEL_DEEPSEEK: Final[str] = "deepseek-v4-flash"
 # 生成 1000-1500 中文字（非 streaming）通常 30-60s，DeepSeek 偶尔 >60s；
 # 取 90s 余量。cron 链路 17:30 不抢时，余量充足.
 _DEFAULT_TIMEOUT_SEC: Final[float] = 90.0
@@ -142,23 +142,25 @@ def _resolve_credentials() -> tuple[str, str | None, str]:
     openai_base = os.getenv("OPENAI_BASE_URL", "").strip() or None
     deepseek_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
-    # Dual-key Keychain 常见坑：OPENAI_* 槽位填了 DeepSeek 网关 + 旧 key，
-    # 有余额的 DEEPSEEK_API_KEY 被永远挡住。base 指向 deepseek 时优先 DEEPSEEK key。
-    if _is_deepseek_base(openai_base) and deepseek_key:
-        base = _normalize_deepseek_base(openai_base)
-        logger.info("[llm] OPENAI_BASE_URL 为 DeepSeek，使用 DEEPSEEK_API_KEY")
+    # 1) DeepSeek 主路径：有 DEEPSEEK_API_KEY 一律优先（即便 OPENAI_* 也在）。
+    if deepseek_key:
+        # 若 OPENAI_BASE_URL 也指 deepseek，复用规范化后的 base；否则官方 /v1。
+        if _is_deepseek_base(openai_base):
+            base = _normalize_deepseek_base(openai_base)
+        else:
+            base = _DEEPSEEK_BASE_URL
+        logger.info("[llm] 使用 DEEPSEEK_API_KEY 主路径")
         return deepseek_key, base, _DEFAULT_MODEL_DEEPSEEK
 
+    # 2) OpenAI / 兼容网关 fallback
     if openai_key:
         if _is_deepseek_base(openai_base):
+            # 仅 OPENAI key 但 base 指 deepseek：仍走 deepseek 网关 + 该 key
             return openai_key, _normalize_deepseek_base(openai_base), _DEFAULT_MODEL_DEEPSEEK
         return openai_key, openai_base, _DEFAULT_MODEL_OPENAI
 
-    if deepseek_key:
-        return deepseek_key, _DEEPSEEK_BASE_URL, _DEFAULT_MODEL_DEEPSEEK
-
     raise LLMUnavailable(
-        "未配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY；"
+        "未配置 DEEPSEEK_API_KEY 或 OPENAI_API_KEY；"
         "wrapper 应从 Hermes .env grep 注入"
     )
 

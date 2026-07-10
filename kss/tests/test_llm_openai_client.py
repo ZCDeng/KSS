@@ -18,33 +18,34 @@ from kss.llm.openai_client import LLMClient, LLMUnavailable, _resolve_credential
 class TestResolveCredentials:
     """_resolve_credentials —— 环境变量 → (key, base_url, default_model)."""
 
-    def test_openai_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_deepseek_primary_even_when_openai_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """DEEPSEEK 在 → 主路径，即便 OPENAI 也在."""
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test")
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
         monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        key, base, model = _resolve_credentials()
+        assert key == "ds-test"
+        assert base == "https://api.deepseek.com/v1"
+        assert model == "deepseek-v4-flash"
+
+    def test_falls_back_to_openai(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """DEEPSEEK 缺失 + OPENAI 在 → fallback OpenAI."""
         monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
         key, base, model = _resolve_credentials()
         assert key == "sk-test"
         assert base is None
         assert model == "gpt-4o-mini"
 
-    def test_openai_with_custom_base_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_openai_fallback_with_custom_base_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """oneAPI 网关之类的自建 base_url 应保留."""
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
         monkeypatch.setenv("OPENAI_BASE_URL", "https://oneapi.local/v1")
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
         key, base, _ = _resolve_credentials()
         assert key == "sk-test"
         assert base == "https://oneapi.local/v1"
-
-    def test_falls_back_to_deepseek(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """OPENAI 缺失 + DEEPSEEK 在 → 走 deepseek."""
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test")
-        key, base, model = _resolve_credentials()
-        assert key == "ds-test"
-        assert base == "https://api.deepseek.com/v1"
-        assert model == "deepseek-chat"
 
     def test_both_missing_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -60,23 +61,26 @@ class TestResolveCredentials:
             _resolve_credentials()
 
     def test_deepseek_base_prefers_deepseek_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """OPENAI_BASE_URL=deepseek 时优先 DEEPSEEK_API_KEY（双 key Keychain 坑）."""
+        """双 key + OPENAI_BASE_URL=deepseek 时仍用 DEEPSEEK_API_KEY."""
         monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-dead")
         monkeypatch.setenv("OPENAI_BASE_URL", "https://api.deepseek.com")
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-live")
         key, base, model = _resolve_credentials()
         assert key == "sk-deepseek-live"
         assert base == "https://api.deepseek.com/v1"
-        assert model == "deepseek-chat"
+        assert model == "deepseek-v4-flash"
 
-    def test_deepseek_base_normalizes_v1(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_deepseek_base_normalizes_v1_openai_key_only(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """仅 OPENAI key 但 base 指 deepseek：走 deepseek 网关 + 该 key."""
         monkeypatch.setenv("OPENAI_API_KEY", "sk-only")
         monkeypatch.setenv("OPENAI_BASE_URL", "https://api.deepseek.com")
         monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
         key, base, model = _resolve_credentials()
         assert key == "sk-only"
         assert base == "https://api.deepseek.com/v1"
-        assert model == "deepseek-chat"
+        assert model == "deepseek-v4-flash"
 
 
 # ====================================================================== #
