@@ -902,10 +902,11 @@ struct IntelView: View {
     @ViewBuilder
     private func digestCardView(track: IntelTrack, items: [IntelItem]) -> some View {
         let state = store.intelDigests[track.key]
-        let isLoading = state != nil && (state?.text.isEmpty ?? true) && state?.error == nil && state?.skipped != true && state?.fromCache != true
+        let isLoading = store.intelDigestLoadingKeys.contains(track.key)
         let isSaved = state?.fromCache == true
         let isNeedKey = !store.hasLLMCredentials
         let showSavedBadge = isSaved
+        let bodyText = (state?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
 
         VStack(alignment: .leading, spacing: 10) {
             // header
@@ -923,6 +924,9 @@ struct IntelView: View {
                         .background(theme.accent.opacity(mode == "pool" ? 0.12 : 0.06), in: Capsule())
                 }
                 Spacer()
+                if isLoading {
+                    ProgressView().scaleEffect(0.65)
+                }
                 if showSavedBadge {
                     Label("已存入沉淀", systemImage: "checkmark.circle.fill")
                         .font(.system(size: 11, weight: .semibold))
@@ -930,47 +934,45 @@ struct IntelView: View {
                 }
             }
 
-            // body
-            if let state, !isLoading {
-                if let err = state.error {
-                    // error
-                    HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 12))
-                        Text("提炼失败：\(err)")
-                            .font(.system(size: 12.5))
-                            .lineLimit(3)
-                    }
-                    .foregroundStyle(theme.down)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    HStack(spacing: 8) {
-                        digestActionButton(track: track, items: items, label: "重试", icon: "arrow.clockwise", isPrimary: true)
-                    }
-                } else if !(state.text.isEmpty) {
-                    // done: render markdown bullets
-                    digestMarkdownView(state.text)
-                    if let model = state.model, !model.isEmpty {
-                        HStack(spacing: 8) {
-                            Text(model)
-                                .font(.system(size: 10.5, design: .monospaced))
-                                .foregroundStyle(theme.textSecondary)
-                            if let at = state.generatedAt, !at.isEmpty {
-                                Text(at)
-                                    .font(.system(size: 10.5, design: .monospaced))
-                                    .foregroundStyle(theme.textSecondary.opacity(0.7))
-                            }
-                        }
-                    }
-                    HStack(spacing: 8) {
-                        digestActionButton(track: track, items: items, label: "重新提炼", icon: "arrow.clockwise", isPrimary: false)
-                        if !isSaved {
-                            digestSaveButton(track: track, items: items, state: state)
-                        }
-                    }
-                } else if state.skipped == true {
-                    Text("该赛道资讯过少，跳过提炼")
+            // body：有正文优先展示（loading 时保留上一版 + 顶栏小转圈）
+            if let err = state?.error, bodyText.isEmpty, !isLoading {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12))
+                    Text("提炼失败：\(err)")
                         .font(.system(size: 12.5))
-                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(3)
+                }
+                .foregroundStyle(theme.down)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 8) {
+                    digestActionButton(track: track, items: items, label: "重试", icon: "arrow.clockwise", isPrimary: true)
+                }
+            } else if !bodyText.isEmpty {
+                digestMarkdownView(bodyText)
+                if let model = state?.model, !model.isEmpty {
+                    HStack(spacing: 8) {
+                        Text(model)
+                            .font(.system(size: 10.5, design: .monospaced))
+                            .foregroundStyle(theme.textSecondary)
+                        if let at = state?.generatedAt, !at.isEmpty {
+                            Text(at)
+                                .font(.system(size: 10.5, design: .monospaced))
+                                .foregroundStyle(theme.textSecondary.opacity(0.7))
+                        }
+                    }
+                }
+                if let err = state?.error {
+                    Text("最近一次重提失败：\(err)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(theme.down)
+                        .lineLimit(2)
+                }
+                HStack(spacing: 8) {
+                    digestActionButton(track: track, items: items, label: "重新提炼", icon: "arrow.clockwise", isPrimary: false)
+                    if !isSaved, let state {
+                        digestSaveButton(track: track, items: items, state: state)
+                    }
                 }
             } else if isLoading {
                 HStack(spacing: 8) {
@@ -979,8 +981,17 @@ struct IntelView: View {
                         .font(.system(size: 12.5))
                         .foregroundStyle(theme.textSecondary)
                 }
+            } else if state?.skipped == true {
+                Text("该赛道资讯过少，跳过提炼")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(theme.textSecondary)
+            } else if state != nil {
+                // 已回包但无正文：勿静默空白
+                Text("未生成要点正文，可重试")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(theme.textSecondary)
+                digestActionButton(track: track, items: items, label: "重试", icon: "arrow.clockwise", isPrimary: true)
             } else {
-                // idle - 显示触发按钮
                 if isNeedKey {
                     HStack(spacing: 6) {
                         Image(systemName: "key.fill")
@@ -1045,23 +1056,45 @@ struct IntelView: View {
 
     /// 把 LLM 返回的 markdown bullet 文本渲染为列表（不依赖 AttributedString markdown）
     private func digestMarkdownView(_ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(text.split(separator: "\n").enumerated()), id: \.offset) { _, line in
+        // 兼容 `\r\n`、全角破折、无换行用 `；`/`•` 分句的模型输出
+        let normalized = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        let lines: [String] = {
+            let split = normalized.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            if split.count > 1 { return split }
+            // 单行多要点：按常见子弹切开
+            let one = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
+            if one.isEmpty { return [] }
+            for sep in ["；", ";", "•", "·"] {
+                if one.contains(sep) {
+                    return one.components(separatedBy: sep).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                }
+            }
+            return [one]
+        }()
+        return VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                 let s = line.trimmingCharacters(in: .whitespaces)
-                if s.isEmpty { EmptyView() } else {
+                if s.isEmpty {
+                    EmptyView()
+                } else {
                     HStack(alignment: .top, spacing: 6) {
-                        if s.hasPrefix("- ") {
+                        let bullet = s.hasPrefix("- ") || s.hasPrefix("* ") || s.hasPrefix("• ")
+                        let body: String = {
+                            if s.hasPrefix("- ") || s.hasPrefix("* ") { return String(s.dropFirst(2)) }
+                            if s.hasPrefix("• ") { return String(s.dropFirst(2)) }
+                            return s
+                        }()
+                        if bullet {
                             Text("•").font(.system(size: 12, weight: .bold)).foregroundStyle(theme.accent)
-                            Text(String(s.dropFirst(2)))
-                                .font(.system(size: 13))
-                                .foregroundStyle(theme.textBody)
-                                .fixedSize(horizontal: false, vertical: true)
                         } else {
-                            Text(s)
-                                .font(.system(size: 13))
-                                .foregroundStyle(theme.textBody)
-                                .fixedSize(horizontal: false, vertical: true)
+                            Text("•").font(.system(size: 12, weight: .bold)).foregroundStyle(theme.accent.opacity(0.55))
                         }
+                        Text(body)
+                            .font(.system(size: 13))
+                            .foregroundStyle(theme.textBody)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
