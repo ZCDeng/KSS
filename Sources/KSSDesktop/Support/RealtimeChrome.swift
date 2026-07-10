@@ -63,6 +63,75 @@ struct RealtimeStatusBadge: View {
     }
 }
 
+// MARK: - 日线新鲜度（与实时 badge 并列，语义分离）
+
+/// 列表紧凑 / 详情完整；陈旧时可点触发全池 update-cs-data 确认流。
+struct DailyFreshnessLabel: View {
+    @Environment(\.kssTheme) private var theme
+    var barDate: String?
+    var referenceTradeDate: String?
+    /// true → `07-09` / `陈旧·06-26`；false → `日线截至 …`
+    var compact: Bool = false
+    var isRunning: Bool = false
+    var onRequestUpdate: () -> Void = {}
+
+    private var status: DailyBarFreshness.Status {
+        DailyBarFreshness.status(barDate: barDate, referenceTradeDate: referenceTradeDate)
+    }
+
+    private var text: String {
+        if isRunning {
+            return compact ? "更新中…" : "日线更新中…"
+        }
+        return compact
+            ? DailyBarFreshness.compactLabel(barDate: barDate, referenceTradeDate: referenceTradeDate)
+            : DailyBarFreshness.detailLabel(barDate: barDate, referenceTradeDate: referenceTradeDate)
+    }
+
+    private var tint: Color {
+        if isRunning { return theme.textSecondary }
+        switch status {
+        case .stale: return theme.ma5
+        case .missing: return theme.textSecondary
+        case .fresh: return theme.textSecondary
+        }
+    }
+
+    var body: some View {
+        if status == .stale && !isRunning {
+            Button(action: onRequestUpdate) {
+                labelRow(tappable: true)
+            }
+            .buttonStyle(.plain)
+            .help("点击更新全池日线（update-cs-data）")
+        } else {
+            labelRow(tappable: false)
+        }
+    }
+
+    private func labelRow(tappable: Bool) -> some View {
+        HStack(spacing: 4) {
+            // 列表紧凑态避免 N 行 ProgressView 同时转；详情才显示 spinner
+            if isRunning && !compact {
+                ProgressView().controlSize(.mini)
+            } else if status == .stale {
+                Image(systemName: "exclamationmark.triangle.fill")
+            } else if status == .missing {
+                Image(systemName: "calendar.badge.exclamationmark")
+            } else if !compact {
+                Image(systemName: "calendar")
+            }
+            Text(text)
+            if tappable {
+                Text("更新").underline()
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(tint)
+        .lineLimit(1)
+    }
+}
+
 // MARK: - 紧凑状态点（非价格页）
 
 /// 绿=有实时 / 灰=非实时或非交易 / 红=未连接。

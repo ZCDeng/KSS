@@ -257,8 +257,64 @@ def test_trading_hours_json_contract_matches_swift_model(monkeypatch):
     """U1：trading-hours 返回 JSON 含 Swift TradingHours 期望的 key。"""
     monkeypatch.setattr(b, "_is_trade_day", lambda d: True)
     out = b.dispatch("trading-hours", [])
-    for key in ("is_trade_day", "is_trading_session", "session_end"):
+    for key in ("is_trade_day", "is_trading_session", "session_end", "reference_trade_date"):
         assert key in out, f"missing key expected by Swift model: {key}"
+    # reference 为 YYYY-MM-DD
+    ref = out["reference_trade_date"]
+    assert isinstance(ref, str) and len(ref) == 10 and ref[4] == "-" and ref[7] == "-"
+
+
+def test_reference_trade_date_intraday_vs_eod(monkeypatch):
+    """KTD1：交易日 10:00 → 上一交易日；19:00 → 今天。"""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    monkeypatch.setattr(b, "_is_trade_day", lambda d: True)
+    morning = datetime(2026, 7, 10, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    assert b._reference_trade_date(now=morning, is_trade_day=True) == "2026-07-09"
+    evening = datetime(2026, 7, 10, 19, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    assert b._reference_trade_date(now=evening, is_trade_day=True) == "2026-07-10"
+
+
+def test_reference_trade_date_eod_boundary(monkeypatch):
+    """KTD1：17:59 → 上一交易日；18:00 整 → 今天。"""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    monkeypatch.setattr(b, "_is_trade_day", lambda d: True)
+    before = datetime(2026, 7, 10, 17, 59, tzinfo=ZoneInfo("Asia/Shanghai"))
+    assert b._reference_trade_date(now=before, is_trade_day=True) == "2026-07-09"
+    at_eod = datetime(2026, 7, 10, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    assert b._reference_trade_date(now=at_eod, is_trade_day=True) == "2026-07-10"
+
+
+def test_reference_trade_date_weekend(monkeypatch):
+    """KTD1：非交易日 → ≤ 今天的最近交易日。"""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    def is_td(d: str) -> bool:
+        return d not in ("20260711", "20260712")  # 周六日闭市
+
+    monkeypatch.setattr(b, "_is_trade_day", is_td)
+    sat = datetime(2026, 7, 11, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    assert b._reference_trade_date(now=sat, is_trade_day=False) == "2026-07-10"
+
+
+def test_reference_trade_date_skips_holiday_before_open(monkeypatch):
+    """KTD1：交易日盘中，上一自然日若休市则继续回找开市日。"""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    # 2026-07-10 开市；07-09 模拟休市；07-08 开市
+    closed = {"20260709"}
+
+    def is_td(d: str) -> bool:
+        return d not in closed
+
+    monkeypatch.setattr(b, "_is_trade_day", is_td)
+    morning = datetime(2026, 7, 10, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    assert b._reference_trade_date(now=morning, is_trade_day=True) == "2026-07-08"
 
 
 # --------------------------------------------------------------------------- #

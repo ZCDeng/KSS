@@ -1525,11 +1525,14 @@ struct TradingHours: Codable, Hashable {
     var isTradingSession: Bool
     var sessionEnd: String?
     var now: String?
+    /// 应有日线日 YYYY-MM-DD（日线新鲜度锚点；缺省则不标陈旧）
+    var referenceTradeDate: String?
 
     enum CodingKeys: String, CodingKey {
         case isTradeDay = "is_trade_day"
         case isTradingSession = "is_trading_session"
         case sessionEnd = "session_end"
         case now
+        case referenceTradeDate = "reference_trade_date"
     }
 }

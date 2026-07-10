@@ -234,7 +234,9 @@ struct ContentView: View {
                     realtimeAuthFailed: store.realtimeAuthFailed,
                     realtimeUpdatedAt: store.realtimeUpdatedAt,
                     onRetryRealtime: { Task { await store.retryRealtime() } },
-                    onLoadRealtimeForSymbol: { sym in Task { await store.loadRealtimeData(symbol: sym) } }
+                    onLoadRealtimeForSymbol: { sym in Task { await store.loadRealtimeData(symbol: sym) } },
+                    isRunningTask: store.isUpdatingCsData,
+                    onUpdateCsData: { Task { await updateCsDataAndRefreshDetail() } }
                 )
             case .runbook:
                 RunbookView(
@@ -321,7 +323,9 @@ struct ContentView: View {
                     realtimeAuthFailed: store.realtimeAuthFailed,
                     realtimeUpdatedAt: store.realtimeUpdatedAt,
                     onRetryRealtime: { Task { await store.retryRealtime() } },
-                    onLoadRealtimeForSymbol: { sym in Task { await store.loadRealtimeData(symbol: sym) } }
+                    onLoadRealtimeForSymbol: { sym in Task { await store.loadRealtimeData(symbol: sym) } },
+                    isRunningTask: store.isUpdatingCsData,
+                    onUpdateCsData: { Task { await updateCsDataAndRefreshDetail() } }
                 )
             case .aiChat:
                 AIChatView()
@@ -348,6 +352,19 @@ struct ContentView: View {
         if result.generate {
             Task { await store.generateReview(for: symbol) }
         }
+    }
+
+    /// 全池日更后刷新 snapshot + 当前详情（runTask 成功时已 loadSnapshot）。
+    private func updateCsDataAndRefreshDetail() async {
+        // 任意形式任务在跑则不重复开火（含其它 Runbook 任务）
+        guard !store.isRunningTask else { return }
+        await store.runTask(.updateCsData)
+        // 用当前选中票刷新，不强制回日更开始时的 symbol（避免长任务中途换票被拽回）
+        if let symbol = store.selectedSymbol {
+            await store.selectStock(symbol, navigate: false)
+        }
+        // 刷新 reference_trade_date 锚点（日更后可能跨过 18:00 或新 bar 日）
+        _ = await store.loadTradingHours()
     }
 }
 
