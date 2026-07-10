@@ -42,6 +42,14 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 OUT_DIR = PROJECT_ROOT / "storage" / "reports" / "bj50_scan"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
+# Tushare 历史截止日：禁止硬编码（曾写死 20260607 → App 北证日线全员停在 6 月）。
+# 可用 env KSS_BJ_END_DATE=YYYYMMDD 覆盖（回测/定点复现）。
+def _end_date_yyyymmdd() -> str:
+    override = (os.environ.get("KSS_BJ_END_DATE") or "").strip()
+    if len(override) == 8 and override.isdigit():
+        return override
+    return datetime.now().strftime("%Y%m%d")
+
 # 评分维度权重 (V2: 北证特化, 加入相对动量 + 关注度代理)
 WEIGHTS = {
     "quality": 0.30,      # 财务质量 (ROE/毛利/资负/净利率)
@@ -110,7 +118,7 @@ def fetch_daily(pro: Any, ts_code: str, force: bool = False) -> pd.DataFrame:
     if cache.exists() and not force:
         df = pd.read_csv(cache, parse_dates=["trade_date"])
         return df
-    df = pro.daily(ts_code=ts_code, start_date="20230101", end_date="20260607")
+    df = pro.daily(ts_code=ts_code, start_date="20230101", end_date=_end_date_yyyymmdd())
     if df is None or df.empty:
         return pd.DataFrame()
     df["trade_date"] = pd.to_datetime(df["trade_date"])
@@ -128,7 +136,7 @@ def fetch_daily_basic(pro: Any, ts_code: str, force: bool = False) -> pd.DataFra
     df = pro.daily_basic(
         ts_code=ts_code,
         start_date="20230101",
-        end_date="20260607",
+        end_date=_end_date_yyyymmdd(),
         fields=(
             "ts_code,trade_date,turnover_rate,turnover_rate_f,volume_ratio,"
             "pe,pe_ttm,pb,ps,ps_ttm,total_mv,circ_mv"
@@ -151,7 +159,7 @@ def fetch_fina(pro: Any, ts_code: str, force: bool = False) -> pd.DataFrame:
     df = pro.fina_indicator(
         ts_code=ts_code,
         start_date="20230101",
-        end_date="20260601",
+        end_date=_end_date_yyyymmdd(),
         fields=(
             "ts_code,ann_date,end_date,roe,roe_dt,grossprofit_margin,"
             "netprofit_margin,debt_to_assets,or_yoy,netprofit_yoy,"
@@ -176,7 +184,7 @@ def fetch_holdernumber(pro: Any, ts_code: str, force: bool = False) -> pd.DataFr
     if cache.exists() and not force:
         df = pd.read_csv(cache, parse_dates=["ann_date", "end_date"])
         return df
-    df = pro.stk_holdernumber(ts_code=ts_code, start_date="20230101", end_date="20260601")
+    df = pro.stk_holdernumber(ts_code=ts_code, start_date="20230101", end_date=_end_date_yyyymmdd())
     if df is None or df.empty:
         return pd.DataFrame()
     df["ann_date"] = pd.to_datetime(df["ann_date"])
@@ -195,7 +203,7 @@ def fetch_bj50_index(pro: Any, force: bool = False) -> pd.DataFrame:
     if cache.exists() and not force:
         df = pd.read_csv(cache, parse_dates=["trade_date"])
         return df
-    df = pro.index_daily(ts_code="899050.BJ", start_date="20230101", end_date="20260607")
+    df = pro.index_daily(ts_code="899050.BJ", start_date="20230101", end_date=_end_date_yyyymmdd())
     if df is None or df.empty:
         raise RuntimeError("北证50指数日线拉取失败")
     df["trade_date"] = pd.to_datetime(df["trade_date"])

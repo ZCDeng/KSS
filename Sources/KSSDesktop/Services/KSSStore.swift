@@ -613,7 +613,10 @@ final class KSSStore: ObservableObject {
         // 世代号：并发/重入时只采纳最新一次；勿用空 text 占位抹掉已展示正文。
         let epoch = (intelDigestEpoch[key] ?? 0) + 1
         intelDigestEpoch[key] = epoch
-        intelDigestLoadingKeys.insert(key)
+        // Set 原地 mutate 可能不触发 @Published；整集合赋值。
+        var loading = intelDigestLoadingKeys
+        loading.insert(key)
+        intelDigestLoadingKeys = loading
         let capped = Array(items.prefix(25))
         do {
             let resp = try await Task.detached {
@@ -623,7 +626,9 @@ final class KSSStore: ObservableObject {
             var next = intelDigests
             next[key] = resp
             intelDigests = next
-            intelDigestLoadingKeys.remove(key)
+            var done = intelDigestLoadingKeys
+            done.remove(key)
+            intelDigestLoadingKeys = done
         } catch {
             guard intelDigestEpoch[key] == epoch else { return }
             var failResp = IntelDigestResponse(
@@ -637,7 +642,9 @@ final class KSSStore: ObservableObject {
             var next = intelDigests
             next[key] = failResp
             intelDigests = next
-            intelDigestLoadingKeys.remove(key)
+            var done = intelDigestLoadingKeys
+            done.remove(key)
+            intelDigestLoadingKeys = done
             errorMessage = error.localizedDescription
         }
     }
@@ -707,7 +714,10 @@ final class KSSStore: ObservableObject {
             await MainActor.run {
                 self.bulkDigest.running = false
                 self.bulkDigest.currentTask = nil
-                self.bulkDigest.summaryShownUntil = Date().addingTimeInterval(4)
+                self.bulkDigest.summaryShownUntil = Date().addingTimeInterval(10)
+                // 强制左栏卡片重建：整表再赋值一次（防 Set/Dict 发布漏触发）
+                self.intelDigests = self.intelDigests
+                self.intelDigestLoadingKeys = []
             }
         }
         bulkDigest.currentTask = task
@@ -747,7 +757,9 @@ final class KSSStore: ObservableObject {
             await MainActor.run {
                 self.bulkDigest.running = false
                 self.bulkDigest.currentTask = nil
-                self.bulkDigest.summaryShownUntil = Date().addingTimeInterval(4)
+                self.bulkDigest.summaryShownUntil = Date().addingTimeInterval(10)
+                self.intelDigests = self.intelDigests
+                self.intelDigestLoadingKeys = []
             }
         }
         bulkDigest.currentTask = task

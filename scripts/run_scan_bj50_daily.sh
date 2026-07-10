@@ -54,4 +54,13 @@ fi
 mkdir -p "$PROJECT_ROOT/storage/logs/cron"
 
 cd "$PROJECT_ROOT"
-exec "$PYTHON" scripts/scan_bj50.py --force-refresh --threads 4 $PUSH_FLAG
+# 不可 exec：扫描后还需增量刷新 bj_cache 到今日（App 日线真源）。
+set +e
+"$PYTHON" scripts/scan_bj50.py --force-refresh --threads 4 $PUSH_FLAG
+scan_rc=$?
+set -e
+echo "===== $(date '+%Y-%m-%d %H:%M:%S') refresh_bj_daily 开始 ====="
+# 即使扫描部分失败，也尽量把已有缓存推到最新交易日
+"$PYTHON" scripts/refresh_bj_daily.py || echo "[wrapper] WARNING: refresh_bj_daily 失败 (rc=$?)"
+echo "===== $(date '+%Y-%m-%d %H:%M:%S') scan_bj50_daily 结束 scan_rc=$scan_rc ====="
+exit "$scan_rc"
