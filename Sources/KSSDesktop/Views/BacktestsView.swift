@@ -110,7 +110,7 @@ struct BacktestsView: View {
                             .font(.largeTitle)
                             .foregroundStyle(theme.textSecondary)
                         Text("选择一份回测/分析报告")
-                            .font(.system(size: 16, weight: .bold))
+                            .font(KSSFont.themed(16, .bold, theme: theme))
                             .foregroundStyle(theme.textPrimary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -144,12 +144,12 @@ struct BacktestReportRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(report.title)
-                .font(.system(size: 14.5, weight: .bold))
+                .font(KSSFont.themed(14.5, .bold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
                 .lineLimit(2)
             HStack(spacing: 6) {
                 Image(systemName: "clock")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(KSSFont.themed(10, .semibold, theme: theme))
                     .foregroundStyle(theme.textSecondary)
                 Text(report.updatedAt)
                     .font(.system(size: 11.5, weight: .medium, design: .monospaced))
@@ -157,7 +157,7 @@ struct BacktestReportRow: View {
             }
             if let firstMetric = report.metrics.first {
                 Text("\(firstMetric.name): \(firstMetric.value)")
-                    .font(.system(size: 11.5))
+                    .font(KSSFont.themed(11.5, theme: theme))
                     .foregroundStyle(theme.textSecondary)
                     .lineLimit(1)
             }
@@ -173,7 +173,7 @@ struct BacktestCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(report.title)
-                .font(.system(size: 15.5, weight: .bold))
+                .font(KSSFont.themed(15.5, .bold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
                 .lineLimit(2)
             Text(report.updatedAt)
@@ -182,7 +182,7 @@ struct BacktestCard: View {
             ForEach(report.metrics.prefix(4), id: \.self) { metric in
                 HStack {
                     Text(metric.name)
-                        .font(.system(size: 13))
+                        .font(KSSFont.themed(13, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                     Spacer()
                     Text(metric.value)
@@ -191,7 +191,7 @@ struct BacktestCard: View {
                 }
             }
             Text(report.excerpt)
-                .font(.system(size: 12))
+                .font(KSSFont.themed(12, theme: theme))
                 .foregroundStyle(theme.textSecondary)
                 .lineLimit(3)
             Spacer(minLength: 0)
@@ -208,7 +208,7 @@ struct BacktestDetailHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(report.title)
-                .font(.system(size: 21, weight: .bold))
+                .font(KSSFont.themed(21, .bold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
                 .textSelection(.enabled)
             if !report.metrics.isEmpty {

@@ -47,7 +47,7 @@ struct ThemesView: View {
                     } else {
                         let withLeaders = themes.reduce(0) { $0 + $1.leaderBoardCount }
                         Text("共 \(themes.count) 个主题 · \(withLeaders) 个板块已有龙头数据。龙头数据来自热点轮动归档，随每日任务累积逐步补全。")
-                            .font(.system(size: 12))
+                            .font(KSSFont.themed(12, theme: theme))
                             .foregroundStyle(theme.textSecondary)
                         ForEach(themes) { theme in
                             ThemeCard(
@@ -76,10 +76,10 @@ struct ThemesView: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("暂无主题数据")
-                .font(.system(size: 15, weight: .bold))
+                .font(KSSFont.themed(15, .bold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
             Text("检查 storage/themes_15th_5y.yaml 是否存在，并运行「板块热点轮动归档」任务累积龙头数据。")
-                .font(.system(size: 13))
+                .font(KSSFont.themed(13, theme: theme))
                 .foregroundStyle(theme.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -99,17 +99,17 @@ private struct ThemeCard: View {
             HStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 2).fill(tokens.accent).frame(width: 4, height: 18)
                 Text(theme.name)
-                    .font(KSSFont.serif(18, .semibold))
+                    .font(KSSFont.themed(18, .semibold, theme: tokens, design: .serif))
                     .foregroundStyle(tokens.textPrimary)
                 Spacer()
                 Text("\(theme.boardCount) 板块 · \(theme.leaderBoardCount) 有龙头")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(KSSFont.themed(11, .semibold, theme: tokens))
                     .foregroundStyle(tokens.textSecondary)
             }
 
             if theme.boards.isEmpty {
                 Text("该主题板块龙头数据待归档积累")
-                    .font(.system(size: 12))
+                    .font(KSSFont.themed(12, theme: tokens))
                     .foregroundStyle(tokens.textSecondary)
                 FlowChips(items: theme.boardNames, tint: tokens.textSecondary)
             } else {
@@ -127,7 +127,7 @@ private struct ThemeCard: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text(board.board)
-                    .font(.system(size: 14, weight: .bold))
+                    .font(KSSFont.themed(14, .bold, theme: tokens))
                     .foregroundStyle(tokens.textPrimary)
                 if let cls = board.classification {
                     classificationBadge(cls)
@@ -147,7 +147,7 @@ private struct ThemeCard: View {
         if stocks.isEmpty {
             HStack(spacing: 8) {
                 tierLabel(label, tint)
-                Text("—").font(.system(size: 12)).foregroundStyle(tokens.textSecondary)
+                Text("—").font(KSSFont.themed(12, theme: tokens)).foregroundStyle(tokens.textSecondary)
             }
         } else {
             HStack(alignment: .top, spacing: 8) {
@@ -163,7 +163,7 @@ private struct ThemeCard: View {
 
     private func tierLabel(_ label: String, _ tint: Color) -> some View {
         Text(label)
-            .font(.system(size: 11, weight: .bold))
+            .font(KSSFont.themed(11, .bold, theme: tokens))
             .foregroundStyle(tint)
             .frame(width: 56, alignment: .leading)
             .padding(.top, 3)
@@ -175,7 +175,7 @@ private struct ThemeCard: View {
         return Button { onSelectSymbol(s.symbol) } label: {
             HStack(spacing: 5) {
                 Text(s.name)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(KSSFont.themed(12, .semibold, theme: tokens))
                     .foregroundStyle(tokens.textBody)
                 if let live {
                     LivePriceText(
@@ -230,7 +230,7 @@ private struct ThemeCard: View {
             }
         }()
         return Text(text)
-            .font(.system(size: 10, weight: .bold))
+            .font(KSSFont.themed(10, .bold, theme: tokens))
             .foregroundStyle(tint)
             .padding(.horizontal, 6).padding(.vertical, 1.5)
             .background(tint.opacity(0.12), in: Capsule())

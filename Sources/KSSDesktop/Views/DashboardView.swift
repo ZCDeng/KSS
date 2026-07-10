@@ -263,7 +263,7 @@ struct TodayPicksList: View {
             SortHeaderCell(title: "权重", key: TodayPickSort.weight, selection: $sortKey, ascending: $ascending,
                            alignment: .trailing, width: wWeight)
         }
-        .font(.system(size: 10.5, weight: .medium))
+        .font(KSSFont.themed(10.5, .medium, theme: theme))
         .tracking(0.5)
         .foregroundStyle(theme.textSecondary)
         .padding(.horizontal, rowPadH)
@@ -277,7 +277,7 @@ struct TodayPicksList: View {
                 .foregroundStyle(theme.accent)
                 .frame(width: wRank, alignment: .leading)
             Text(item.name.isEmpty ? item.symbol : item.name)
-                .font(.system(size: 14.5, weight: .bold))
+                .font(KSSFont.themed(14.5, .bold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
                 .lineLimit(1)
                 .frame(width: wName, alignment: .leading)
@@ -287,7 +287,7 @@ struct TodayPicksList: View {
                 .lineLimit(1)
                 .frame(width: wSymbol, alignment: .leading)
             Text(item.industry.isEmpty ? "—" : item.industry)
-                .font(.system(size: 12.5))
+                .font(KSSFont.themed(12.5, theme: theme))
                 .foregroundStyle(theme.textBody)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -402,7 +402,7 @@ struct PerillaPicksTable: View {
                 Text(tab == .core
                      ? "全球供应商≤2家·垄断/双寡头·深链锁定"
                      : "全球三家寡头·深链锁定·国产替代赛道")
-                    .font(.system(size: 10.5))
+                    .font(KSSFont.themed(10.5, theme: theme))
                     .foregroundStyle(theme.textSecondary)
             }
             card
@@ -450,7 +450,7 @@ struct PerillaPicksTable: View {
             SortHeaderCell(title: "年", key: PerillaSort.retYear, selection: $sortKey, ascending: $ascending,
                            alignment: .trailing, width: wRet)
         }
-        .font(.system(size: 10.5, weight: .medium))
+        .font(KSSFont.themed(10.5, .medium, theme: theme))
         .tracking(0.3)
         .foregroundStyle(theme.textSecondary)
         .padding(.horizontal, rowPadH)
@@ -468,7 +468,7 @@ struct PerillaPicksTable: View {
             // 名称 + 代码
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name)
-                    .font(.system(size: 14, weight: .bold))
+                    .font(KSSFont.themed(14, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
                 Text(item.symbol)
@@ -481,17 +481,17 @@ struct PerillaPicksTable: View {
             // 产业链 + 层级·护城河
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.chains.isEmpty ? "—" : item.chains)
-                    .font(.system(size: 12.5, weight: .medium))
+                    .font(KSSFont.themed(12.5, .medium, theme: theme))
                     .foregroundStyle(theme.textBody)
                     .lineLimit(1)
                 HStack(spacing: 5) {
                     Text("\(layerLabel(item)) · \(item.moat)")
-                        .font(.system(size: 10.5))
+                        .font(KSSFont.themed(10.5, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                     if item.locked {
                         Image(systemName: "lock.fill")
-                            .font(.system(size: 8))
+                            .font(KSSFont.themed(8, theme: theme))
                             .foregroundStyle(theme.accent)
                     }
                 }
@@ -540,7 +540,7 @@ struct PerillaPicksTable: View {
         let s = item.instHolding ?? ""
         if s.isEmpty {
             Text("—")
-                .font(.system(size: 11))
+                .font(KSSFont.themed(11, theme: theme))
                 .foregroundStyle(theme.textSecondary)
                 .frame(width: wInst, alignment: .leading)
         } else {
@@ -550,12 +550,12 @@ struct PerillaPicksTable: View {
             let tail = segs.dropFirst().joined(separator: " · ")
             VStack(alignment: .leading, spacing: 1) {
                 Text(head)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(KSSFont.themed(12, .semibold, theme: theme))
                     .foregroundStyle(theme.textBody)
                     .lineLimit(1)
                 if !tail.isEmpty {
                     Text(tail)
-                        .font(.system(size: 10))
+                        .font(KSSFont.themed(10, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                 }
@@ -570,7 +570,7 @@ struct PerillaPicksTable: View {
         VStack(alignment: .leading, spacing: 1) {
             if ticker.isEmpty {
                 Text("无对标")
-                    .font(.system(size: 11))
+                    .font(KSSFont.themed(11, theme: theme))
                     .foregroundStyle(theme.textSecondary)
             } else {
                 Text(ticker)
@@ -620,14 +620,14 @@ struct SectorPulseStrip: View {
             HStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 2).fill(theme.accent).frame(width: 4, height: 18)
                 Text("今日板块")
-                    .font(KSSFont.serif(18, .semibold))
+                    .font(KSSFont.themed(18, .semibold, theme: theme, design: .serif))
                     .foregroundStyle(theme.textPrimary)
                 Text(regimeText)
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundStyle(pulse.regimeInRegime == true ? theme.up : theme.textSecondary)
                 Spacer()
                 Text("资金正=申购/负=赎回 · 5日赎回≥2%=强势确认")
-                    .font(.system(size: 11))
+                    .font(KSSFont.themed(11, theme: theme))
                     .foregroundStyle(theme.textSecondary)
                     .lineLimit(1)
             }
@@ -656,12 +656,12 @@ struct SectorChip: View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 5) {
                 Text(theme.name)
-                    .font(.system(size: 14, weight: .bold))
+                    .font(KSSFont.themed(14, .bold, theme: tokens))
                     .foregroundStyle(tokens.textPrimary)
                     .lineLimit(1)
                 if theme.accel {
                     Image(systemName: "bolt.fill")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(KSSFont.themed(9, .bold, theme: tokens))
                         .foregroundStyle(tokens.accent)
                         .help("资金加速")
                 }
@@ -670,7 +670,7 @@ struct SectorChip: View {
             }
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text("近5日")
-                    .font(.system(size: 10))
+                    .font(KSSFont.themed(10, theme: tokens))
                     .foregroundStyle(tokens.textSecondary)
                 Text(theme.past5Ret.map { KSSFormat.percent($0 / 100) } ?? "—")
                     .font(KSSFont.harmonyNumber(18))
@@ -693,7 +693,7 @@ struct SectorChip: View {
         // warn 底=up(饱和红，白字为不随主题变化的 invariant)；strong 底=accent，须用 onAccent。
         let fg = warn ? Color.white : (strong ? tokens.onAccent : tokens.textBody)
         return Text(theme.divergence ? "见顶预警" : theme.grade)
-            .font(.system(size: 10, weight: .bold))
+            .font(KSSFont.themed(10, .bold, theme: tokens))
             .foregroundStyle(fg)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
@@ -705,7 +705,7 @@ struct SectorChip: View {
     private func flowItem(_ label: String, _ flow: Double?) -> some View {
         HStack(spacing: 3) {
             Text(label)
-                .font(.system(size: 10))
+                .font(KSSFont.themed(10, theme: tokens))
                 .foregroundStyle(tokens.textSecondary)
             Text(flow.map { String(format: "%+.1f", $0) } ?? "—")
                 .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
@@ -724,7 +724,7 @@ struct EditorialDateView: View {
     var body: some View {
         HStack(alignment: .top, spacing: 7) {
             Text(monthDay)
-                .font(.system(size: 34, weight: .bold, design: .serif))
+                .font(KSSFont.themed(34, .bold, theme: theme, design: .serif))
                 .foregroundStyle(theme.textPrimary)
                 .monospacedDigit()
             VStack(alignment: .leading, spacing: 1) {
@@ -733,7 +733,7 @@ struct EditorialDateView: View {
                 Text(weekday)
                     .foregroundStyle(theme.accent)
             }
-            .font(.system(size: 12, weight: .semibold, design: .serif))
+            .font(KSSFont.themed(12, .semibold, theme: theme, design: .serif))
             .padding(.top, 3)
         }
         .fixedSize()
@@ -793,7 +793,7 @@ struct MarketStripRow: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Text(title)
-                    .font(.system(size: 13.5, weight: .bold))
+                    .font(KSSFont.themed(13.5, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
@@ -839,7 +839,7 @@ struct IndexBoardGrid: View {
                 let live = RealtimeMerge.applyLive(close: idx.close, pct: idx.pct, quote: quotes[idx.code.uppercased()])
                 VStack(alignment: .leading, spacing: 5) {
                     Text(idx.name)
-                        .font(.system(size: 12.5, weight: .bold))
+                        .font(KSSFont.themed(12.5, .bold, theme: theme))
                         .foregroundStyle(theme.textPrimary)
                         .lineLimit(1)
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -955,10 +955,10 @@ struct IndexMarquee: View {
 
         return HStack(spacing: 6) {
             Image(systemName: idx.pct >= 0 ? "arrowtriangle.up.fill" : "arrowtriangle.down.fill")
-                .font(.system(size: 9, weight: .bold))
+                .font(KSSFont.themed(9, .bold, theme: theme))
                 .foregroundStyle(theme.signColor(idx.pct))
             Text(idx.name)
-                .font(.system(size: 12.5, weight: .bold))
+                .font(KSSFont.themed(12.5, .bold, theme: theme))
                 .foregroundStyle(nameColor)
                 .lineLimit(1)
             LivePriceText(
@@ -1030,7 +1030,7 @@ struct MarketIndexRow: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) {
                         Text(idx.name)
-                            .font(.system(size: 13.5, weight: .bold))
+                            .font(KSSFont.themed(13.5, .bold, theme: theme))
                             .foregroundStyle(theme.textPrimary)
                             .lineLimit(1)
                         Spacer(minLength: 4)
@@ -1164,12 +1164,12 @@ struct IndexStackColumnView: View {
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(item.name)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(KSSFont.themed(13, .semibold, theme: theme))
                     .foregroundStyle(theme.accent)
                     .lineLimit(1)
                 if live.isLive {
                     Text("实时")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(KSSFont.themed(9, .bold, theme: theme))
                         .foregroundStyle(theme.accent)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
@@ -1274,11 +1274,11 @@ struct CountCard: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Image(systemName: icon)
-                        .font(.system(size: 14))
+                        .font(KSSFont.themed(14, theme: theme))
                         .foregroundStyle(theme.accent)
                     Spacer()
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(KSSFont.themed(10, .bold, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
@@ -1286,11 +1286,11 @@ struct CountCard: View {
                         .font(KSSFont.harmonyNumber(24))
                         .foregroundStyle(theme.textPrimary)
                     Text(unit)
-                        .font(.system(size: 12))
+                        .font(KSSFont.themed(12, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                 }
                 Text(label)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(KSSFont.themed(12, .medium, theme: theme))
                     .foregroundStyle(theme.textSecondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1316,7 +1316,7 @@ struct TrackingSummaryCard: View {
             Divider().overlay(theme.hairline)
             HStack {
                 Text("样本天数")
-                    .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                    .font(KSSFont.themed(12, theme: theme)).foregroundStyle(theme.textSecondary)
                 Spacer()
                 Text("\(tracking.nDaysWithReturns) / \(tracking.nDaysLogged)")
                     .font(.system(size: 13, weight: .semibold, design: .monospaced))
@@ -1324,7 +1324,7 @@ struct TrackingSummaryCard: View {
             }
             if let message = tracking.message {
                 Text(message)
-                    .font(.system(size: 11.5))
+                    .font(KSSFont.themed(11.5, theme: theme))
                     .foregroundStyle(theme.textSecondary)
             }
         }
@@ -1335,7 +1335,7 @@ struct TrackingSummaryCard: View {
     private func metric(_ label: String, _ value: String, _ tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label.uppercased())
-                .font(.system(size: 10, weight: .medium)).tracking(0.5)
+                .font(KSSFont.themed(10, .medium, theme: theme)).tracking(0.5)
                 .foregroundStyle(theme.textSecondary)
             Text(value)
                 .font(KSSFont.harmonyNumber(19))
@@ -1364,12 +1364,12 @@ struct SectionHeader: View {
                     .fill(theme.accent)
                     .frame(width: 4, height: 18)
                 Text(title)
-                    .font(KSSFont.serif(18, .semibold))
+                    .font(KSSFont.themed(18, .semibold, theme: theme, design: .serif))
                     .foregroundStyle(theme.textPrimary)
             }
             if let caption {
                 Text(caption)
-                    .font(.system(size: 11.5))
+                    .font(KSSFont.themed(11.5, theme: theme))
                     .foregroundStyle(theme.textSecondary)
             }
         }
@@ -1387,7 +1387,7 @@ struct StatTile: View {
         // Discord KPI tile: uppercase tracked muted label, display value, optional delta tint.
         VStack(alignment: .leading, spacing: 5) {
             Text(title.uppercased())
-                .font(.system(size: 10.5, weight: .medium))
+                .font(KSSFont.themed(10.5, .medium, theme: theme))
                 .tracking(0.6)
                 .foregroundStyle(theme.textSecondary)
             Text(value)
@@ -1418,7 +1418,7 @@ struct RecommendationCard: View {
                 StatusBadge.tracking(item.status)
             }
             Text(item.name.isEmpty ? item.symbol : item.name)
-                .font(.system(size: 17, weight: .bold))
+                .font(KSSFont.themed(17, .bold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
                 .lineLimit(1)
             Text(item.symbol)
@@ -1451,7 +1451,7 @@ struct BJScanSection: View {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Text(item.name.isEmpty ? item.symbol : item.name)
-                                .font(.system(size: 14.5, weight: .bold))
+                                .font(KSSFont.themed(14.5, .bold, theme: theme))
                                 .foregroundStyle(theme.textPrimary)
                                 .lineLimit(1)
                             Spacer()
@@ -1465,7 +1465,7 @@ struct BJScanSection: View {
                             .lineLimit(1)
                         HStack {
                             Text(item.tag)
-                                .font(.system(size: 10.5))
+                                .font(KSSFont.themed(10.5, theme: theme))
                                 .foregroundStyle(theme.textSecondary)
                                 .lineLimit(1)
                             Spacer()

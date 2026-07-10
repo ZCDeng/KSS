@@ -60,7 +60,7 @@ struct RunbookView: View {
                     SectionHeader("任务记录")
                     if results.isEmpty {
                         Text("暂无任务运行记录")
-                            .font(.system(size: 13.5))
+                            .font(KSSFont.themed(13.5, theme: theme))
                             .foregroundStyle(theme.textSecondary)
                     } else {
                         VStack(spacing: 10) {
@@ -113,7 +113,7 @@ struct ScheduledTasksSection: View {
     var body: some View {
         if jobs.isEmpty {
             Text("正在读取定时任务…")
-                .font(.system(size: 13.5))
+                .font(KSSFont.themed(13.5, theme: theme))
                 .foregroundStyle(theme.textSecondary)
         } else {
             VStack(spacing: 12) {
@@ -148,7 +148,7 @@ struct ScheduledTasksSection: View {
                     ProgressView().controlSize(.small)
                 } else {
                     Label("全部重跑", systemImage: "arrow.clockwise")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(KSSFont.themed(12, .semibold, theme: theme))
                 }
             }
             .buttonStyle(.bordered)
@@ -164,7 +164,7 @@ struct ScheduledTasksSection: View {
         HStack(spacing: 5) {
             Circle().fill(tint).frame(width: 7, height: 7)
             Text("\(label) \(n)")
-                .font(.system(size: 12.5, weight: n > 0 ? .bold : .regular))
+                .font(KSSFont.themed(12.5, n > 0 ? .bold : .regular, theme: theme))
                 .foregroundStyle(n > 0 ? theme.textPrimary : theme.textSecondary)
         }
     }
@@ -173,14 +173,14 @@ struct ScheduledTasksSection: View {
     private var catchUpBanner: some View {
         HStack(spacing: 12) {
             Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
-                .font(.system(size: 18, weight: .semibold))
+                .font(KSSFont.themed(18, .semibold, theme: theme))
                 .foregroundStyle(theme.ma5)
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(staleJobs.count) 个任务因关机漏跑")
-                    .font(.system(size: 14, weight: .bold))
+                    .font(KSSFont.themed(14, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
                 Text(staleJobs.map(\.title).joined(separator: "、"))
-                    .font(.system(size: 11.5))
+                    .font(KSSFont.themed(11.5, theme: theme))
                     .foregroundStyle(theme.textSecondary)
                     .lineLimit(2)
             }
@@ -190,7 +190,7 @@ struct ScheduledTasksSection: View {
                     ProgressView().controlSize(.small)
                 } else {
                     Label("一键补跑", systemImage: "play.circle.fill")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(KSSFont.themed(13, .bold, theme: theme))
                 }
             }
             .buttonStyle(.borderedProminent)
@@ -211,7 +211,7 @@ struct ScheduledTasksSection: View {
             Image(systemName: "info.circle.fill")
                 .foregroundStyle(theme.accent)
             Text(note)
-                .font(.system(size: 12.5))
+                .font(KSSFont.themed(12.5, theme: theme))
                 .foregroundStyle(theme.textPrimary)
             Spacer()
             Button(action: onDismissBatchNote) {
@@ -229,10 +229,10 @@ struct ScheduledTasksSection: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(category)
-                    .font(.system(size: 12.5, weight: .bold))
+                    .font(KSSFont.themed(12.5, .bold, theme: theme))
                     .foregroundStyle(theme.textSecondary)
                 Text("\(catJobs.count)")
-                    .font(.system(size: 10.5, weight: .bold))
+                    .font(KSSFont.themed(10.5, .bold, theme: theme))
                     .foregroundStyle(theme.textSecondary)
                     .padding(.horizontal, 6).padding(.vertical, 1)
                     .background(theme.textSecondary.opacity(0.12), in: Capsule())
@@ -242,7 +242,7 @@ struct ScheduledTasksSection: View {
                         onRerunMany(enabledLabels)
                     } label: {
                         Label("全部重跑", systemImage: "arrow.clockwise")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(KSSFont.themed(11, .semibold, theme: theme))
                     }
                     .buttonStyle(.borderless)
                     .controlSize(.small)
@@ -274,17 +274,17 @@ struct ScheduledJobRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: job.running ? "arrow.triangle.2.circlepath" : "clock.arrow.circlepath")
-                .font(.system(size: 16, weight: .semibold))
+                .font(KSSFont.themed(16, .semibold, theme: theme))
                 .foregroundStyle(job.needsInstall == true || job.stale ? theme.ma5 : theme.accent)
                 .frame(width: 22)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
                     Text(job.title)
-                        .font(.system(size: 14.5, weight: .bold))
+                        .font(KSSFont.themed(14.5, .bold, theme: theme))
                         .foregroundStyle(theme.textPrimary)
                     Text(job.schedule)
-                        .font(.system(size: 11.5, weight: .semibold))
+                        .font(KSSFont.themed(11.5, .semibold, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                         .padding(.horizontal, 7).padding(.vertical, 1.5)
                         .background(theme.textSecondary.opacity(0.12), in: Capsule())
@@ -295,26 +295,26 @@ struct ScheduledJobRow: View {
                         .foregroundStyle(theme.textSecondary)
                     if let at = job.lastRunAt {
                         Text("· 上次 \(at)")
-                            .font(.system(size: 11))
+                            .font(KSSFont.themed(11, theme: theme))
                             .foregroundStyle(theme.textSecondary)
                     }
                     if let next = job.nextRunAt, job.enabled {
                         Text("· 下次 \(next)")
-                            .font(.system(size: 11))
+                            .font(KSSFont.themed(11, theme: theme))
                             .foregroundStyle(theme.textSecondary)
                     }
                 }
                 if job.needsInstall == true {
                     Text("需同步 LaunchAgent 后才能调度")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(KSSFont.themed(11, .semibold, theme: theme))
                         .foregroundStyle(theme.ma5)
                 } else if job.stale {
                     Text("漏跑 \(job.missedCycles) 次" + (job.expectedAt.map { "，应跑于 \($0)" } ?? ""))
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(KSSFont.themed(11, .semibold, theme: theme))
                         .foregroundStyle(theme.ma5)
                 } else if let line = job.lastLine {
                     Text(line)
-                        .font(.system(size: 11))
+                        .font(KSSFont.themed(11, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -329,7 +329,7 @@ struct ScheduledJobRow: View {
                         ProgressView().controlSize(.small)
                     } else {
                         Label("同步", systemImage: "arrow.down.doc.fill")
-                            .font(.system(size: 11.5, weight: .semibold))
+                            .font(KSSFont.themed(11.5, .semibold, theme: theme))
                             .labelStyle(.titleAndIcon)
                     }
                 }
@@ -345,7 +345,7 @@ struct ScheduledJobRow: View {
                     ProgressView().controlSize(.small)
                 } else {
                     Label("重跑", systemImage: "play.fill")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(KSSFont.themed(12, .semibold, theme: theme))
                         .labelStyle(.titleAndIcon)
                 }
             }
@@ -403,11 +403,11 @@ struct PythonEnvironmentBanner: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: environment?.usable == true ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                .font(.system(size: 18))
+                .font(KSSFont.themed(18, theme: theme))
                 .foregroundStyle(environment?.usable == true ? theme.accent : theme.ma5)
             VStack(alignment: .leading, spacing: 3) {
                 Text(environment?.usable == true ? "正式 Python 环境就绪" : "正式 Python 环境不可用")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(KSSFont.themed(15, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
                 Text(environment?.selected ?? "缺少 pandas / lightgbm / tushare / akshare 解释器")
                     .font(.system(size: 12, design: .monospaced))
@@ -439,7 +439,7 @@ struct TaskGrid: View {
                             .foregroundStyle(theme.accent)
                             .frame(width: 24)
                         Text(task.title)
-                            .font(.system(size: 14, weight: .bold))
+                            .font(KSSFont.themed(14, .bold, theme: theme))
                             .lineLimit(1)
                         Spacer()
                         if isRunning {
@@ -465,13 +465,13 @@ struct TaskResultCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(result.title)
-                    .font(.system(size: 15, weight: .bold))
+                    .font(KSSFont.themed(15, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
                 Spacer()
                 StatusBadge.task(result.status)
             }
             Text(result.summary)
-                .font(.system(size: 13.5))
+                .font(KSSFont.themed(13.5, theme: theme))
                 .foregroundStyle(theme.textPrimary)
             if !result.artifacts.isEmpty {
                 Text(result.artifacts.joined(separator: "  "))

@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import CoreText
 
 /// 主题几何与动效常量。颜色/卡片半径已迁入 `ThemeCatalog` + 环境 `kssTheme` token；
 /// 这里只保留与设计系统无关的形状比例（M3 spacing 标度）与运动曲线。
@@ -41,6 +42,36 @@ enum KSSFont {
     /// HarmonyOS Sans SC Bold（打包进 app，AppDelegate 启动时注册）。大数字专用。
     static func harmonyNumber(_ size: CGFloat) -> Font {
         .custom("HarmonyOS_Sans_SC_Bold", size: size)
+    }
+
+    /// 主题感知正文/标题字体。8 套经典主题 `nativeFontFamily` 为 nil，行为与 `.system(size:weight:design:)`
+    /// 完全一致（零回归）；xcom 模式下按 weight 分桶取 "<family>-<Weight>" PostScript 名，并给中文字形
+    /// 挂一个级联到 `nativeCJKFallback` 的 `CTFontDescriptor`，单个 Text 内中英文混排各走各的字体。
+    /// `design: .monospaced` 场景（K 线/表格数字对齐）不走自定义字体——等宽是功能性选择，跳过。
+    static func themed(_ size: CGFloat, _ weight: Font.Weight = .regular, theme: KSSThemeTokens, design: Font.Design = .default) -> Font {
+        guard design != .monospaced, let family = theme.nativeFontFamily, let cjkFallback = theme.nativeCJKFallback else {
+            return .system(size: size, weight: weight, design: design)
+        }
+        let psName = "\(family)-\(weightSuffix(weight))"
+        guard let baseDescriptor = CTFontDescriptorCreateWithNameAndSize(psName as CFString, size) as CTFontDescriptor? else {
+            return .system(size: size, weight: weight, design: design)
+        }
+        let cjkDescriptor = CTFontDescriptorCreateWithNameAndSize(cjkFallback as CFString, size)
+        let cascaded = CTFontDescriptorCreateCopyWithAttributes(
+            baseDescriptor,
+            [kCTFontCascadeListAttribute: [cjkDescriptor]] as CFDictionary
+        )
+        let ctFont = CTFontCreateWithFontDescriptor(cascaded, size, nil)
+        return Font(ctFont)
+    }
+
+    private static func weightSuffix(_ weight: Font.Weight) -> String {
+        switch weight {
+        case .black, .heavy: return "Heavy"
+        case .bold, .semibold: return "Bold"
+        case .medium: return "Medium"
+        default: return "Regular"
+        }
     }
 }
 

@@ -73,16 +73,16 @@ struct LaunchFallbackView: View {
             .frame(height: 34)
 
             Text("KSS")
-                .font(.system(size: 88, weight: .bold, design: theme.titleDesign))
+                .font(KSSFont.themed(88, .bold, theme: theme, design: theme.titleDesign))
                 .foregroundStyle(theme.textPrimary)
 
             Text("Let's join the war!")
-                .font(.system(size: 22, weight: .semibold))
+                .font(KSSFont.themed(22, .semibold, theme: theme))
                 .foregroundStyle(theme.textSecondary)
 
             Button(action: onEnter) {
                 Text("进入工作台")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(KSSFont.themed(15, .semibold, theme: theme))
                     .padding(.horizontal, 40)
                     .padding(.vertical, 12)
                     .background(theme.accent, in: Capsule())

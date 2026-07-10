@@ -69,11 +69,11 @@ struct SidebarView: View {
         return Button { selection = section } label: {
             HStack(spacing: 11) {
                 Image(systemName: section.symbol)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(KSSFont.themed(15, .semibold, theme: theme))
                     .frame(width: 22)
                     .foregroundStyle(isOn ? theme.onAccent : theme.accent)
                 Text(section.displayName)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(KSSFont.themed(15, .semibold, theme: theme))
                     .foregroundStyle(isOn ? theme.onAccent : theme.textBody)
                 Spacer(minLength: 0)
             }
@@ -95,7 +95,7 @@ struct SidebarView: View {
                 let isOn = selection == section
                 Button { selection = section } label: {
                     Image(systemName: section.symbol)
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(KSSFont.themed(17, .semibold, theme: theme))
                         .frame(width: 46, height: 38)
                         .foregroundStyle(isOn ? theme.onAccent : theme.accent)
                         .background(
@@ -168,7 +168,7 @@ struct AppHeader: View {
     private var toggleButton: some View {
         Button(action: onToggleCollapse) {
             Image(systemName: "sidebar.leading")
-                .font(.system(size: 13, weight: .semibold))
+                .font(KSSFont.themed(13, .semibold, theme: theme))
                 .foregroundStyle(theme.textSecondary)
                 .frame(width: 26, height: 26)
         }
@@ -185,7 +185,7 @@ struct AppHeader: View {
                 .foregroundStyle(theme.textPrimary)
         } else {
             Text("KSSDeck")
-                .font(.system(size: 18, weight: .heavy))
+                .font(KSSFont.themed(18, .heavy, theme: theme))
                 .foregroundStyle(theme.textPrimary)
         }
     }
@@ -214,21 +214,21 @@ struct SidebarFooter: View {
             Link(destination: url) {
                 if collapsed {
                     Image(systemName: "chevron.left.forwardslash.chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(KSSFont.themed(14, .semibold, theme: theme))
                         .foregroundStyle(theme.accent)
                         .frame(maxWidth: .infinity, minHeight: 28)
                 } else {
                     HStack(spacing: 8) {
                         Image(systemName: "chevron.left.forwardslash.chevron.right")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(KSSFont.themed(11, .semibold, theme: theme))
                             .foregroundStyle(theme.accent)
                             .frame(width: 15)
                         Text("GitHub · ZCDeng/KSS")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(KSSFont.themed(12, .semibold, theme: theme))
                             .foregroundStyle(theme.textBody)
                         Spacer()
                         Image(systemName: "arrow.up.forward")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(KSSFont.themed(9, .semibold, theme: theme))
                             .foregroundStyle(theme.textSecondary)
                     }
                     .padding(.horizontal, 6)

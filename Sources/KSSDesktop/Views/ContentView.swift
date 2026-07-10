@@ -132,7 +132,7 @@ struct ContentView: View {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
                     Text("正在导入 \(sym) … 拉取日线并加入股票池")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(KSSFont.themed(13, .semibold, theme: theme))
                         .foregroundStyle(theme.textPrimary)
                 }
                 .padding(.horizontal, 16).padding(.vertical, 11)

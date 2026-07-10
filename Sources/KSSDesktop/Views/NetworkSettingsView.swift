@@ -25,10 +25,10 @@ struct NetworkSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("网络与凭据")
-                .font(.system(size: 18, weight: .bold))
+                .font(KSSFont.themed(18, .bold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
             Text("凭据存入 macOS Keychain，不写入磁盘明文。留空表示删除该项。")
-                .font(.system(size: 12))
+                .font(KSSFont.themed(12, theme: theme))
                 .foregroundStyle(theme.textSecondary)
 
             field("Tushare Token", text: $tushareToken, secure: true)
@@ -38,9 +38,9 @@ struct NetworkSettingsView: View {
 
             Divider().padding(.vertical, 2)
             Text("Seesaw")
-                .font(.system(size: 13, weight: .bold)).foregroundStyle(theme.textPrimary)
+                .font(KSSFont.themed(13, .bold, theme: theme)).foregroundStyle(theme.textPrimary)
             Text("二选一填 key（优先 DeepSeek；都填以 DeepSeek 为准）。保存后自动重启 sidecar 生效。")
-                .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                .font(KSSFont.themed(11, theme: theme)).foregroundStyle(theme.textSecondary)
             field("DeepSeek API Key", text: $deepseekApiKey, secure: true)
             field("OpenAI API Key（fallback）", text: $openaiApiKey, secure: true)
             field("OpenAI Base URL（网关/oneAPI，可选）", text: $openaiBaseUrl, secure: false)
@@ -48,18 +48,18 @@ struct NetworkSettingsView: View {
             Toggle(isOn: $appLive) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("允许 AI 执行写操作（live）")
-                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                        .font(KSSFont.themed(12, .semibold, theme: theme)).foregroundStyle(theme.textPrimary)
                     Text("关：写操作弹窗确认后仍被拒（只读安全）。开：本人逐次 tap 确认后真执行。")
-                        .font(.system(size: 10)).foregroundStyle(theme.textSecondary)
+                        .font(KSSFont.themed(10, theme: theme)).foregroundStyle(theme.textSecondary)
                 }
             }
             .onChange(of: appLive) { _, _ in saved = false }
 
             Divider().padding(.vertical, 2)
             Text("Longbridge 实时行情")
-                .font(.system(size: 13, weight: .bold)).foregroundStyle(theme.textPrimary)
+                .font(KSSFont.themed(13, .bold, theme: theme)).foregroundStyle(theme.textPrimary)
             Text("ChinaConnect LV1 实时（陆股通池），注入 sidecar 供 LongbridgeProvider 使用。")
-                .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                .font(KSSFont.themed(11, theme: theme)).foregroundStyle(theme.textSecondary)
             field("Longbridge App Key", text: $longbridgeAppKey, secure: true)
             field("Longbridge App Secret", text: $longbridgeAppSecret, secure: true)
             field("Longbridge Access Token", text: $longbridgeAccessToken, secure: true)
@@ -67,7 +67,7 @@ struct NetworkSettingsView: View {
             HStack {
                 if saved {
                     Label("已保存到 Keychain", systemImage: "checkmark.seal.fill")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(KSSFont.themed(12, .semibold, theme: theme))
                         .foregroundStyle(theme.up)
                 }
                 Spacer()
@@ -93,7 +93,7 @@ struct NetworkSettingsView: View {
     private func field(_ label: String, text: Binding<String>, secure: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.system(size: 11, weight: .semibold))
+                .font(KSSFont.themed(11, .semibold, theme: theme))
                 .foregroundStyle(theme.textSecondary)
             Group {
                 if secure {

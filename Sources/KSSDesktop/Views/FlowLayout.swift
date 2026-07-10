@@ -12,7 +12,7 @@ struct FlowChips: View {
         FlowLayout(spacing: 6, lineSpacing: 6) {
             ForEach(items, id: \.self) { name in
                 Text(name)
-                    .font(.system(size: 11.5, weight: .semibold))
+                    .font(KSSFont.themed(11.5, .semibold, theme: theme))
                     .foregroundStyle(theme.textBody)
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(tint.opacity(0.10), in: Capsule())
