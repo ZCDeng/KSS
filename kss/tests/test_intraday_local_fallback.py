@@ -62,6 +62,17 @@ def test_infer_session_date():
         )
         == "2026-07-09"
     )
+    assert (
+        b._infer_session_date_from_bars(
+            [{"timestamp": "2026-07-10 15:00:00", "close": 1}]
+        )
+        == "2026-07-10"
+    )
+
+
+def test_symbol_cache_aliases():
+    assert "HSI.HK" in b._symbol_cache_aliases("HSI")
+    assert "HSI" in b._symbol_cache_aliases("HSI.HK")
 
 
 def test_expected_bars():

@@ -388,25 +388,32 @@ final class KSSStore: ObservableObject {
         reevaluateTimer()
     }
 
-    /// 堆叠卡 live sparkline：产品码 → Longbridge `intraday-bars` 1m 收盘序列。
+    /// 堆叠卡会话 sparkline：产品码 → `intraday-bars` 1m（live→local，非交易时段也跑）。
     private func refreshRealtimeSparklines(displaySymbols: [String]) async {
         guard let bridge else { return }
         guard !displaySymbols.isEmpty else { return }
         var sparks = realtimeSparklinesBySymbol
         var changed = false
         for displaySym in displaySymbols {
-            guard let lbSym = RealtimeMerge.toLongbridgeSymbol(displaySym) else { continue }
-            if shouldSkipDispatch(cmd: "intraday-bars", symbol: displaySym) {
+            let key = displaySym.uppercased()
+            // 独立 coalesce 键，避免与详情 1 分线抢 30s 窗
+            if shouldSkipDispatch(cmd: "intraday-bars-spark", symbol: key) {
                 continue
             }
+            // 请求优先 Longbridge 码；bridge 内会别名回退本地 cache
+            let reqSym = RealtimeMerge.toLongbridgeSymbol(key) ?? key
             let bars = try? await Task.detached {
-                try bridge.intradayBars(symbol: lbSym, interval: 1)
+                try bridge.intradayBars(symbol: reqSym, interval: 1)
             }.value
-            // 失败保留旧 sparkline；auth_failed 由 quote 路径停表
-            guard let bars, bars.error != "auth_failed" else { continue }
+            // 有 bars 就用（local 降级可能仍带 hint，但 error 为空或 bars 非空）
+            guard let bars, bars.isRenderable else { continue }
             let closes = RealtimeMerge.sparklineCloses(from: bars.bars)
             if !closes.isEmpty {
-                sparks[displaySym] = closes
+                sparks[key] = closes
+                // 产品码与请求码都写一份，避免 HSI / HSI.HK 键不一致
+                if reqSym.uppercased() != key {
+                    sparks[reqSym.uppercased()] = closes
+                }
                 changed = true
             }
         }

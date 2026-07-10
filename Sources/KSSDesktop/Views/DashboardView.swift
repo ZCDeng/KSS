@@ -1151,8 +1151,10 @@ struct IndexStackColumnView: View {
             pct: item.pct,
             quote: quote
         )
-        // 实盘 1m 优先；无则回退 strip 快照 sparkline
-        let liveSpark = liveSparklines[code] ?? []
+        // 会话 1m（live/local）优先；无则回退 strip 快照 sparkline
+        let liveSpark = liveSparklines[code]
+            ?? liveSparklines[RealtimeMerge.toLongbridgeSymbol(code) ?? ""]
+            ?? []
         let spark = !liveSpark.isEmpty ? liveSpark : (item.sparkline ?? []).map(\.c)
         let hasSpark = spark.count >= 2
         let absChg = absoluteChange(close: live.close, pct: live.pct, quote: quote)

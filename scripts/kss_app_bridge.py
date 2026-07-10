@@ -4022,36 +4022,54 @@ def _infer_session_date_from_bars(bars: list[dict[str, Any]]) -> str | None:
     if not bars:
         return None
     last = bars[-1]
-    for key in ("time", "bar_ts", "bar_end_ts", "datetime", "date"):
+    for key in ("timestamp", "time", "bar_ts", "bar_end_ts", "datetime", "date"):
         raw = last.get(key)
         if raw is None:
             continue
         s = str(raw).strip()
+        # "2026-07-10 09:31:00" / ISO / YYYYMMDD
+        if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+            return s[:10]
         digits = "".join(ch for ch in s if ch.isdigit())
         if len(digits) >= 8:
             return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
-        if len(s) >= 10 and s[4] == "-" and s[7] == "-":
-            return s[:10]
     return None
+
+
+def _symbol_cache_aliases(symbol: str) -> list[str]:
+    """产品码 / Longbridge 码互为别名（HSI ↔ HSI.HK）。"""
+    u = (symbol or "").strip().upper()
+    if not u:
+        return []
+    out = [u]
+    if u.endswith(".HK") and u.count(".") == 1:
+        bare = u[: -len(".HK")]
+        if bare and bare not in out:
+            out.append(bare)
+    elif "." not in u:
+        out.append(f"{u}.HK")
+    return out
 
 
 def _load_local_session_bars(
     symbol: str, interval_minutes: int
 ) -> tuple[list[dict[str, Any]], str | None]:
-    """本地降级：session cache JSON → 可选 canonical_bars（若库有 complete 会话）。"""
-    # 1) 页内 cache（最常命中）
-    try:
-        import json as _json  # noqa: PLC0415
+    """本地降级：session cache JSON（纯 stdlib，不依赖 pandas/longbridge）。"""
+    import json as _json  # noqa: PLC0415
 
-        path = _intraday_session_cache_path(symbol, interval_minutes)
-        if path.is_file():
+    # 1) 页内 cache（最常命中）；别名互查
+    for sym in _symbol_cache_aliases(symbol):
+        try:
+            path = _intraday_session_cache_path(sym, interval_minutes)
+            if not path.is_file():
+                continue
             data = _json.loads(path.read_text(encoding="utf-8"))
             bars = data.get("bars") or []
             if isinstance(bars, list) and bars:
                 sd = data.get("session_date") or _infer_session_date_from_bars(bars)
                 return bars, sd
-    except Exception:  # noqa: BLE001
-        pass
+        except Exception:  # noqa: BLE001
+            continue
 
     # 2) 5m：无 5m cache 时从 1m 聚合
     if interval_minutes == 5:
@@ -4059,7 +4077,7 @@ def _load_local_session_bars(
         if bars1:
             return _aggregate_bars_to_interval(bars1, 5), sd
 
-    # 3) canonical_bars（盘后 close 写入后）
+    # 3) canonical_bars（盘后 close；sqlite3 标准库，仍不 import kss.data）
     try:
         import sqlite3  # noqa: PLC0415
         from kss.config.paths import INTRADAY_DB  # noqa: PLC0415
@@ -4068,17 +4086,20 @@ def _load_local_session_bars(
             return [], None
         conn = sqlite3.connect(str(INTRADAY_DB), timeout=5)
         conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT trade_date, COUNT(*) AS n FROM canonical_bars "
-            "WHERE symbol=? AND interval_minutes=? "
-            "GROUP BY trade_date ORDER BY trade_date DESC LIMIT 1",
-            (symbol, interval_minutes),
-        ).fetchone()
-        if not row or int(row["n"] or 0) < 10:
-            # try 1m then aggregate for 5m
-            if interval_minutes != 1:
-                conn.close()
-                return [], None
+        aliases = _symbol_cache_aliases(symbol)
+        row = None
+        for sym in aliases:
+            row = conn.execute(
+                "SELECT trade_date, COUNT(*) AS n FROM canonical_bars "
+                "WHERE symbol=? AND interval_minutes=? "
+                "GROUP BY trade_date ORDER BY trade_date DESC LIMIT 1",
+                (sym, interval_minutes),
+            ).fetchone()
+            if row and int(row["n"] or 0) >= 10:
+                symbol = sym
+                break
+            row = None
+        if not row:
             conn.close()
             return [], None
         trade_date = str(row["trade_date"])
@@ -4089,18 +4110,17 @@ def _load_local_session_bars(
             (symbol, interval_minutes, trade_date),
         ).fetchall()
         conn.close()
-        # 每 bar_end_ts 取最高 revision（ORDER 后后写覆盖）
         by_ts: dict[str, dict[str, Any]] = {}
         for r in rows:
             d = dict(r)
             by_ts[str(d["bar_end_ts"])] = {
-                "time": d["bar_end_ts"],
+                "timestamp": d["bar_end_ts"],
                 "open": d["open"],
                 "high": d["high"],
                 "low": d["low"],
                 "close": d["close"],
                 "volume": d["volume"],
-                "amount": d.get("amount"),
+                "turnover": d.get("amount"),
             }
         bars = [by_ts[k] for k in sorted(by_ts)]
         if len(trade_date) == 8 and trade_date.isdigit():
@@ -4148,55 +4168,99 @@ def _aggregate_bars_to_interval(
 
 
 def _intraday_bars_inner(symbol: str, interval_minutes: int = 1, asset_kind: str = "stock") -> dict[str, Any]:
-    """intraday-bars 核心逻辑（不含 retry）。live 优先 → 本地会话降级（KTD1）。"""
-    from kss.data.intraday_client import (  # noqa: PLC0415
-        EastmoneyAkshareProvider,
-        LongbridgeProvider,
-    )
-    from kss.data.longbridge_coverage import PROVIDER_LONGBRIDGE  # noqa: PLC0415
-
-    meta = _longbridge_coverage_meta(symbol)
-    if meta["routed_provider"] == PROVIDER_LONGBRIDGE:
-        provider: Any = LongbridgeProvider()
-    else:
-        provider = EastmoneyAkshareProvider()
-    res = provider.fetch_bars(
-        symbol, interval_minutes=interval_minutes, asset_kind=asset_kind
-    )
+    """intraday-bars：live 优先 → 本地会话；**永不因 import/源异常抛出**（防 Swift「bridge 调用失败」）。"""
+    # 轻量 meta：coverage 失败也不炸
+    try:
+        meta = _longbridge_coverage_meta(symbol)
+    except Exception:  # noqa: BLE001
+        meta = {
+            "normalized_symbol": (symbol or "").strip().upper(),
+            "routed_provider": "unknown",
+            "manifest_stale": True,
+        }
+    norm = str(meta.get("normalized_symbol") or symbol or "").strip().upper()
     expected = _intraday_expected_bars(interval_minutes)
-    live_bars = list(res.rows) if res.ok and res.rows else []
+
+    # 预读本地（stdlib only）—— live 路径 import 失败时仍可交付
+    local_bars, local_sd = _load_local_session_bars(norm, interval_minutes)
+    if not local_bars:
+        for alt in _symbol_cache_aliases(norm):
+            if alt == norm:
+                continue
+            local_bars, local_sd = _load_local_session_bars(alt, interval_minutes)
+            if local_bars:
+                break
+
+    live_bars: list[dict[str, Any]] = []
+    live_err: str | None = None
+    live_asof: Any = None
+    provider_name = "unknown"
+
+    try:
+        from kss.data.intraday_client import (  # noqa: PLC0415
+            EastmoneyAkshareProvider,
+            LongbridgeProvider,
+        )
+        from kss.data.longbridge_coverage import PROVIDER_LONGBRIDGE  # noqa: PLC0415
+
+        routed = meta.get("routed_provider")
+        providers: list[Any] = []
+        if routed == PROVIDER_LONGBRIDGE:
+            providers.append(LongbridgeProvider())
+            # 非交易时段 LB 常 auth/empty：A 股再试东财
+            if norm.endswith(".SH") or norm.endswith(".SZ"):
+                providers.append(EastmoneyAkshareProvider())
+        else:
+            providers.append(EastmoneyAkshareProvider())
+
+        for provider in providers:
+            provider_name = getattr(provider, "name", provider.__class__.__name__)
+            res = provider.fetch_bars(
+                norm, interval_minutes=interval_minutes, asset_kind=asset_kind
+            )
+            if res.ok and res.rows:
+                live_bars = list(res.rows)
+                live_asof = res.source_asof_ts
+                live_err = None
+                break
+            live_err = res.error or "empty"
+    except Exception as exc:  # noqa: BLE001 — 含 ModuleNotFoundError(pandas)
+        live_err = f"provider_import_or_fetch: {type(exc).__name__}: {exc}"
+        live_bars = []
+
     live_n = len(live_bars)
     live_sufficient = live_n >= max(10, int(expected * 0.5))
 
     if live_sufficient:
         session_date = _infer_session_date_from_bars(live_bars)
-        _persist_page_pull(meta["normalized_symbol"], provider.name, interval_minutes,
-                           asset_kind, live_bars)
-        _save_intraday_session_cache(
-            meta["normalized_symbol"], interval_minutes, live_bars, session_date
-        )
+        try:
+            _persist_page_pull(norm, provider_name, interval_minutes, asset_kind, live_bars)
+        except Exception:  # noqa: BLE001
+            pass
+        _save_intraday_session_cache(norm, interval_minutes, live_bars, session_date)
+        # 同步别名键，堆叠 HSI / 个股请求码都能命中
+        for alt in _symbol_cache_aliases(norm):
+            if alt != norm:
+                _save_intraday_session_cache(alt, interval_minutes, live_bars, session_date)
         return {
-            "symbol": meta["normalized_symbol"],
+            "symbol": norm,
             "interval_minutes": interval_minutes,
             "bars": live_bars,
             "source": "live",
             "session_date": session_date,
-            "source_asof_ts": res.source_asof_ts,
+            "source_asof_ts": live_asof,
             "eligibility": "forward_observed",
             **meta,
         }
 
-    # live 空/不充分 → 本地 complete/cache
-    local_bars, session_date = _load_local_session_bars(
-        meta["normalized_symbol"], interval_minutes
-    )
-    if local_bars and len(local_bars) >= max(10, live_n + 1):
+    # live 空/不充分 → 本地
+    if local_bars and len(local_bars) >= max(10, live_n + 1 if live_n else 10):
         return {
-            "symbol": meta["normalized_symbol"],
+            "symbol": norm,
             "interval_minutes": interval_minutes,
             "bars": local_bars,
             "source": "local",
-            "session_date": session_date,
+            "session_date": local_sd or _infer_session_date_from_bars(local_bars),
             "source_asof_ts": None,
             "eligibility": "forward_observed",
             "hint": "源不足，已降级本地会话存档",
@@ -4204,35 +4268,28 @@ def _intraday_bars_inner(symbol: str, interval_minutes: int = 1, asset_kind: str
         }
 
     if live_bars:
-        # 半截 live 仍可渲染
         session_date = _infer_session_date_from_bars(live_bars)
-        _save_intraday_session_cache(
-            meta["normalized_symbol"], interval_minutes, live_bars, session_date
-        )
+        _save_intraday_session_cache(norm, interval_minutes, live_bars, session_date)
         return {
-            "symbol": meta["normalized_symbol"],
+            "symbol": norm,
             "interval_minutes": interval_minutes,
             "bars": live_bars,
             "source": "live_partial",
             "session_date": session_date,
-            "source_asof_ts": res.source_asof_ts,
+            "source_asof_ts": live_asof,
             "eligibility": "forward_observed",
             "hint": "源仅返回部分分钟线",
             **meta,
         }
 
     return {
-        "symbol": meta["normalized_symbol"],
+        "symbol": norm,
         "interval_minutes": interval_minutes,
         "bars": [],
         "source": None,
         "session_date": None,
-        "error": (res.error if not res.ok else "empty") or "empty",
-        "hint": (
-            "无分钟存档且源不可用；可待盘后 collect_intraday 或交易时段打开一次缓存"
-            if meta["routed_provider"] != PROVIDER_LONGBRIDGE
-            else "无分钟存档且源取数失败"
-        ),
+        "error": live_err or "empty",
+        "hint": "无分钟存档且源不可用；交易时段打开一次 1 分线可缓存，或跑盘后 collect_intraday",
         "eligibility": "forward_observed",
         **meta,
     }
