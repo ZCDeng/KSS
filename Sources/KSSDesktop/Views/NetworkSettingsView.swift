@@ -39,12 +39,12 @@ struct NetworkSettingsView: View {
             Divider().padding(.vertical, 2)
             Text("Seesaw")
                 .font(.system(size: 13, weight: .bold)).foregroundStyle(theme.textPrimary)
-            Text("二选一填 key（优先 OpenAI；都填以 OpenAI 为准）。保存后自动重启 sidecar 生效。")
+            Text("二选一填 key（优先 DeepSeek；都填以 DeepSeek 为准）。保存后自动重启 sidecar 生效。")
                 .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
-            field("OpenAI API Key", text: $openaiApiKey, secure: true)
-            field("OpenAI Base URL（网关/oneAPI，可选）", text: $openaiBaseUrl, secure: false)
             field("DeepSeek API Key", text: $deepseekApiKey, secure: true)
-            field("模型 ID（KSS_LLM_MODEL，可选，如 deepseek-chat）", text: $llmModel, secure: false)
+            field("OpenAI API Key（fallback）", text: $openaiApiKey, secure: true)
+            field("OpenAI Base URL（网关/oneAPI，可选）", text: $openaiBaseUrl, secure: false)
+            field("模型 ID（KSS_LLM_MODEL，可选，默认 deepseek-v4-flash）", text: $llmModel, secure: false)
             Toggle(isOn: $appLive) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("允许 AI 执行写操作（live）")
