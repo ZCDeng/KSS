@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 注册打包进 app 的字体（SwiftPM 资源在 Bundle.module，需运行时注册才能被 Font.custom 使用）。
     private static func registerBundledFonts() {
-        for name in ["HarmonyOS_Sans_SC_Bold"] {
+        for name in ["HarmonyOS_Sans_SC_Bold", "chirp-regular-web", "chirp-medium-web", "chirp-bold-web", "chirp-heavy-web", "仓耳今楷02-W02"] {
             guard let url = Bundle.module.url(forResource: name, withExtension: "ttf") else {
                 NSLog("[KSS] 字体缺失，未注册: \(name).ttf")
                 continue

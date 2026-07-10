@@ -24,7 +24,16 @@ let package = Package(
                 .copy("Resources/logo.png"),
                 .copy("Resources/kmark.png"),
                 .copy("Resources/wordmark.png"),
-                .copy("Resources/HarmonyOS_Sans_SC_Bold.ttf")
+                .copy("Resources/HarmonyOS_Sans_SC_Bold.ttf"),
+                .copy("Resources/chirp-regular-web.ttf"),
+                .copy("Resources/chirp-medium-web.ttf"),
+                .copy("Resources/chirp-bold-web.ttf"),
+                .copy("Resources/chirp-heavy-web.ttf"),
+                .copy("Resources/chirp-regular-web.woff"),
+                .copy("Resources/chirp-medium-web.woff"),
+                .copy("Resources/chirp-bold-web.woff"),
+                .copy("Resources/chirp-heavy-web.woff"),
+                .copy("Resources/仓耳今楷02-W02.ttf")
             ]
         ),
         .testTarget(
