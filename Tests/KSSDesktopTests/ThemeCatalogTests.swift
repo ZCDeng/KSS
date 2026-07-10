@@ -15,8 +15,8 @@ final class ThemeCatalogTests: XCTestCase {
                 count += 1
             }
         }
-        XCTAssertEqual(count, 16, "8 设计系统 × 亮/暗 = 16 组合")
-        XCTAssertEqual(KSSDesignSystem.allCases.count, 8)
+        XCTAssertEqual(count, 18, "9 设计系统(含 xcom) × 亮/暗 = 18 组合")
+        XCTAssertEqual(KSSDesignSystem.allCases.count, 9)
     }
 
     func testRequiredRolesOpaque() {

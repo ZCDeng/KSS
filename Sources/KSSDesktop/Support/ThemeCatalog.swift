@@ -3,9 +3,11 @@ import AppKit
 
 // MARK: - 设计系统 / 外观
 
-/// 8 套可切换设计系统的稳定 raw id（持久化到 UserDefaults，不可随意改名）。
+/// 8 套「经典」可切换设计系统 + 1 套「新版」xcom 的稳定 raw id（持久化到 UserDefaults，不可随意改名）。
 /// `clayM3` 是旧安装缺失 `designSystemId` 时的迁移默认；`material3` 专指
 /// showcase 的成对紫色 M3 token，两者来源独立、不得 alias/fallback 互相派生。
+/// `xcom` 是新版设计语言，走独立的顶层「新版/经典版」菜单入口（见 KSSUIGeneration），
+/// 不在经典版的 8 项子菜单里出现。
 enum KSSDesignSystem: String, CaseIterable, Identifiable, Hashable {
     case clayM3
     case tradingTerminal
@@ -15,6 +17,7 @@ enum KSSDesignSystem: String, CaseIterable, Identifiable, Hashable {
     case airbnb
     case discord
     case binanceUS
+    case xcom
 
     var id: String { rawValue }
 
@@ -23,6 +26,9 @@ enum KSSDesignSystem: String, CaseIterable, Identifiable, Hashable {
         guard let raw, let system = KSSDesignSystem(rawValue: raw) else { return .clayM3 }
         return system
     }
+
+    /// 经典版工具栏子菜单只展示这 8 套，不含 `xcom`（xcom 走独立顶层入口）。
+    static var classicCases: [KSSDesignSystem] { allCases.filter { $0 != .xcom } }
 
     var displayName: String {
         switch self {
@@ -34,7 +40,23 @@ enum KSSDesignSystem: String, CaseIterable, Identifiable, Hashable {
         case .airbnb:          return "Airbnb"
         case .discord:         return "Discord"
         case .binanceUS:       return "Binance.US"
+        case .xcom:            return "x.com"
         }
+    }
+}
+
+/// 顶层「新版/经典版」模式开关。`xcom` 复用同一个 `KSSDesignSystem` 枚举的第 9 个 case，
+/// 但工具栏菜单结构与侧边栏导航视觉按这个更粗的维度分支（见 ThemeController、ContentView、SidebarView）。
+enum KSSUIGeneration: String, CaseIterable, Identifiable, Hashable {
+    case classic
+    case xcom
+
+    var id: String { rawValue }
+    var displayName: String { self == .xcom ? "新版 x.com" : "经典版" }
+
+    static func normalized(_ raw: String?) -> KSSUIGeneration {
+        guard let raw, let generation = KSSUIGeneration(rawValue: raw) else { return .classic }
+        return generation
     }
 }
 
@@ -126,6 +148,12 @@ struct ThemeTypography: Equatable {
     /// 原生标题用的 SwiftUI Font.Design（serif 主题用 serif，等宽主题用 monospaced）。
     var titleDesign: Font.Design
 
+    /// 原生自定义字体家族（PostScript 名前缀，如 "Chirp"）；nil = 8 套经典主题原样走系统字体。
+    /// 非 nil 时 `KSSFont.themed(_:_:theme:)` 按 weight 分桶取 "<family>-<Weight>" PostScript 名。
+    var nativeFontFamily: String? = nil
+    /// 中文字形级联回退的 PostScript 名（如 "TsangerJinKai02-W02"），仅在 nativeFontFamily 非 nil 时生效。
+    var nativeCJKFallback: String? = nil
+
     static let claySerif = ThemeTypography(
         serif: "ui-serif, Georgia, \"Songti SC\", serif",
         sans: "-apple-system, \"SF Pro Text\", \"PingFang SC\", sans-serif",
@@ -149,6 +177,15 @@ struct ThemeTypography: Equatable {
         sans: "\"Roboto\", system-ui, sans-serif",
         mono: "ui-monospace, \"Roboto Mono\", monospace",
         titleDesign: .default
+    )
+    /// x.com 模式:英文走 Chirp,中文走仓耳今楷,WebView 侧 CSS 字体栈同顺序级联。
+    static let xcomChirp = ThemeTypography(
+        serif: "\"Chirp\", -apple-system, \"TsangerJinKai02\", sans-serif",
+        sans: "\"Chirp\", -apple-system, \"TsangerJinKai02\", sans-serif",
+        mono: "ui-monospace, \"SF Mono\", Menlo, monospace",
+        titleDesign: .default,
+        nativeFontFamily: "Chirp",
+        nativeCJKFallback: "TsangerJinKai02-W02"
     )
 }
 
@@ -418,6 +455,27 @@ enum ThemeCatalog {
                    accent: c(0x8A6300), onAccent: c(0xFFFFFF), secondary: c(0x5E6673),
                    cardRadius: 6, chipRadius: 6, typography: .pureSans,
                    elevation: ThemeElevation(opacity: 0.08, radius: 3, y: 1))
+
+        // 9. x.com「新版」：近纯黑/白画布 + 单一品牌蓝 + hairline,零阴影(flat by design)。
+        //    up/down/ma5/ma20 不在此覆盖,走下面共享的 MarketColors(与其余 8 套一致)。
+        case .xcom:
+            return dark
+            ? Seed(canvas: c(0x000000), surfaceLowest: c(0x000000), surface: c(0x16181C),
+                   surfaceContainer: c(0x16181C), surfaceRaised: c(0x1E2732), surfaceHighest: c(0x273340),
+                   surfaceTint: c(0x1D9BF0), chartSurface: c(0x000000),
+                   hairline: c(0x2F3336), outlineVariant: c(0x2F3336),
+                   ink: c(0xE7E9EA), body: c(0xE7E9EA), muted: c(0x71767B),
+                   accent: c(0x1D9BF0), onAccent: c(0xFFFFFF), secondary: c(0x8B98A5),
+                   cardRadius: 16, chipRadius: 999, typography: .xcomChirp,
+                   elevation: ThemeElevation(opacity: 0, radius: 0, y: 0))
+            : Seed(canvas: c(0xFFFFFF), surfaceLowest: c(0xFFFFFF), surface: c(0xF7F9F9),
+                   surfaceContainer: c(0xF7F9F9), surfaceRaised: c(0xEFF3F4), surfaceHighest: c(0xE5E8E8),
+                   surfaceTint: c(0x1D9BF0), chartSurface: c(0xFFFFFF),
+                   hairline: c(0xEFF3F4), outlineVariant: c(0xEFF3F4),
+                   ink: c(0x0F1419), body: c(0x0F1419), muted: c(0x536471),
+                   accent: c(0x1D9BF0), onAccent: c(0xFFFFFF), secondary: c(0x536471),
+                   cardRadius: 16, chipRadius: 999, typography: .xcomChirp,
+                   elevation: ThemeElevation(opacity: 0, radius: 0, y: 0))
         }
     }
     // swiftlint:enable function_body_length
