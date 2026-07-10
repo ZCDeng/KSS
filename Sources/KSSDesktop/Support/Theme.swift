@@ -48,11 +48,14 @@ enum KSSFont {
     /// 完全一致（零回归）；xcom 模式下按 weight 分桶取 "<family>-<Weight>" PostScript 名，并给中文字形
     /// 挂一个级联到 `nativeCJKFallback` 的 `CTFontDescriptor`，单个 Text 内中英文混排各走各的字体。
     /// `design: .monospaced` 场景（K 线/表格数字对齐）不走自定义字体——等宽是功能性选择，跳过。
-    static func themed(_ size: CGFloat, _ weight: Font.Weight = .regular, theme: KSSThemeTokens, design: Font.Design = .default) -> Font {
+    /// `chirpWeight`：可选，仅覆盖 Chirp 路径的字重文件选择（不影响经典模式的 `.system(...)` 回退，
+    /// 那条分支永远只看 `weight`）。用于像侧边栏选中态这种"经典模式字重差异化、xcom 模式想要不同字重
+    /// 差异化"的场景，不必为了改 xcom 视觉而牵动经典模式。
+    static func themed(_ size: CGFloat, _ weight: Font.Weight = .regular, chirpWeight: Font.Weight? = nil, theme: KSSThemeTokens, design: Font.Design = .default) -> Font {
         guard design != .monospaced, let family = theme.nativeFontFamily, let cjkFallback = theme.nativeCJKFallback else {
             return .system(size: size, weight: weight, design: design)
         }
-        let psName = "\(family)-\(weightSuffix(weight))"
+        let psName = "\(family)-\(weightSuffix(chirpWeight ?? weight))"
         guard let baseDescriptor = CTFontDescriptorCreateWithNameAndSize(psName as CFString, size) as CTFontDescriptor? else {
             return .system(size: size, weight: weight, design: design)
         }

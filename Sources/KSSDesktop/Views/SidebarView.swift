@@ -73,13 +73,13 @@ struct SidebarView: View {
             HStack(spacing: 11) {
                 Image(systemName: section.symbol)
                     .symbolVariant(isXcom && isOn ? .fill : .none)
-                    .font(KSSFont.themed(15, .semibold, theme: theme))
+                    .font(KSSFont.themed(15, .semibold, chirpWeight: isOn ? .semibold : .medium, theme: theme))
                     .frame(width: 22)
                     .foregroundStyle(isXcom
                         ? (isOn ? theme.accent : theme.textSecondary)
                         : (isOn ? theme.onAccent : theme.accent))
                 Text(section.displayName)
-                    .font(KSSFont.themed(15, isXcom && isOn ? .bold : .semibold, theme: theme))
+                    .font(KSSFont.themed(15, isXcom && isOn ? .bold : .semibold, chirpWeight: isOn ? .semibold : .medium, theme: theme))
                     .foregroundStyle(isXcom
                         ? (isOn ? theme.textPrimary : theme.textBody)
                         : (isOn ? theme.onAccent : theme.textBody))
@@ -105,7 +105,7 @@ struct SidebarView: View {
                 Button { selection = section } label: {
                     Image(systemName: section.symbol)
                         .symbolVariant(isXcom && isOn ? .fill : .none)
-                        .font(KSSFont.themed(17, .semibold, theme: theme))
+                        .font(KSSFont.themed(17, .semibold, chirpWeight: isOn ? .semibold : .medium, theme: theme))
                         .frame(width: 46, height: 38)
                         .foregroundStyle(isXcom
                             ? (isOn ? theme.accent : theme.textSecondary)
@@ -180,7 +180,7 @@ struct AppHeader: View {
     private var toggleButton: some View {
         Button(action: onToggleCollapse) {
             Image(systemName: "sidebar.leading")
-                .font(KSSFont.themed(13, .semibold, theme: theme))
+                .font(KSSFont.themed(13, .semibold, chirpWeight: .medium, theme: theme))
                 .foregroundStyle(theme.textSecondary)
                 .frame(width: 26, height: 26)
         }
@@ -197,7 +197,7 @@ struct AppHeader: View {
                 .foregroundStyle(theme.textPrimary)
         } else {
             Text("KSSDeck")
-                .font(KSSFont.themed(18, .heavy, theme: theme))
+                .font(KSSFont.themed(18, .heavy, chirpWeight: .medium, theme: theme))
                 .foregroundStyle(theme.textPrimary)
         }
     }
@@ -226,21 +226,21 @@ struct SidebarFooter: View {
             Link(destination: url) {
                 if collapsed {
                     Image(systemName: "chevron.left.forwardslash.chevron.right")
-                        .font(KSSFont.themed(14, .semibold, theme: theme))
+                        .font(KSSFont.themed(14, .semibold, chirpWeight: .medium, theme: theme))
                         .foregroundStyle(theme.accent)
                         .frame(maxWidth: .infinity, minHeight: 28)
                 } else {
                     HStack(spacing: 8) {
                         Image(systemName: "chevron.left.forwardslash.chevron.right")
-                            .font(KSSFont.themed(11, .semibold, theme: theme))
+                            .font(KSSFont.themed(11, .semibold, chirpWeight: .medium, theme: theme))
                             .foregroundStyle(theme.accent)
                             .frame(width: 15)
                         Text("GitHub · ZCDeng/KSS")
-                            .font(KSSFont.themed(12, .semibold, theme: theme))
+                            .font(KSSFont.themed(12, .semibold, chirpWeight: .medium, theme: theme))
                             .foregroundStyle(theme.textBody)
                         Spacer()
                         Image(systemName: "arrow.up.forward")
-                            .font(KSSFont.themed(9, .semibold, theme: theme))
+                            .font(KSSFont.themed(9, .semibold, chirpWeight: .medium, theme: theme))
                             .foregroundStyle(theme.textSecondary)
                     }
                     .padding(.horizontal, 6)
