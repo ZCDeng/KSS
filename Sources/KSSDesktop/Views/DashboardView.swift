@@ -869,6 +869,12 @@ struct IndexBoardGrid: View {
     }
 }
 
+/// 跑马灯 chip 底色：指数板用 raised；隔夜美股用纸白底以区分。
+enum MarqueeChipSurface {
+    case raised
+    case paper
+}
+
 /// 指数跑马灯：13 指数按涨跌幅降序，TimelineView 驱动无缝循环横向滚动。
 /// 参照 M3 carousel —— 圆角容器(shapeL) + 两端淡出遮罩 + 一致项高，展示型不可点。
 struct IndexMarquee: View {
@@ -877,6 +883,7 @@ struct IndexMarquee: View {
     var quotes: [String: LongbridgeQuote] = [:]
     /// false = 保持传入顺序（隔夜美股）；true = 按涨跌幅降序（A 股指数板默认）
     var sortByPct: Bool = true
+    var chipSurface: MarqueeChipSurface = .raised
 
     private let gap: CGFloat = 10
     private let speed: Double = 42            // 滚动速度 pts/s
@@ -937,18 +944,27 @@ struct IndexMarquee: View {
     }
 
     private func chip(_ idx: LiveIndex) -> some View {
-        HStack(spacing: 6) {
+        let paper = chipSurface == .paper
+        // 纸白底：名称/次价用深色保证对比；raised 走主题 token
+        let nameColor: Color = paper ? Color(white: 0.12) : theme.textPrimary
+        let closeColor: Color = paper ? Color(white: 0.35) : theme.textSecondary
+        let fill: Color = paper ? Color.white : theme.surfaceRaised
+        let border = paper
+            ? Color.black.opacity(0.08)
+            : theme.signColor(idx.pct).opacity(0.18)
+
+        return HStack(spacing: 6) {
             Image(systemName: idx.pct >= 0 ? "arrowtriangle.up.fill" : "arrowtriangle.down.fill")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(theme.signColor(idx.pct))
             Text(idx.name)
                 .font(.system(size: 12.5, weight: .bold))
-                .foregroundStyle(theme.textPrimary)
+                .foregroundStyle(nameColor)
                 .lineLimit(1)
             LivePriceText(
                 value: idx.close,
                 text: String(format: "%.2f", idx.close),
-                baseColor: theme.textSecondary,
+                baseColor: closeColor,
                 isLive: idx.isLive,
                 font: .system(size: 12, weight: .semibold, design: .monospaced)
             )
@@ -963,11 +979,12 @@ struct IndexMarquee: View {
             .lineLimit(1)
         }
         .padding(.horizontal, 14).padding(.vertical, 9)
-        .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeL))
+        .background(fill, in: RoundedRectangle(cornerRadius: KSSTheme.shapeL))
         .overlay(
             RoundedRectangle(cornerRadius: KSSTheme.shapeL)
-                .strokeBorder(theme.signColor(idx.pct).opacity(0.18), lineWidth: 1)
+                .strokeBorder(border, lineWidth: 1)
         )
+        .shadow(color: paper ? Color.black.opacity(0.04) : .clear, radius: paper ? 2 : 0, y: paper ? 1 : 0)
         .fixedSize()
     }
 
@@ -991,12 +1008,12 @@ private struct MarqueeWidthKey: PreferenceKey {
     }
 }
 
-/// 隔夜美股跑马灯：名单固定顺序，不按涨跌重排；无 Longbridge overlay（yfinance 快照）。
+/// 隔夜美股跑马灯：名单固定顺序，不按涨跌重排；纸白底芯片，区别于上方指数 raised 跑马灯。
 struct OvernightUSMarquee: View {
     var indices: [IndexQuote]
 
     var body: some View {
-        IndexMarquee(indices: indices, quotes: [:], sortByPct: false)
+        IndexMarquee(indices: indices, quotes: [:], sortByPct: false, chipSurface: .paper)
     }
 }
 
@@ -1173,7 +1190,7 @@ struct IndexStackColumnView: View {
                     LivePriceText(
                         value: live.close,
                         text: formatIndexPrice(live.close),
-                        baseColor: theme.textPrimary,
+                        baseColor: sign,
                         isLive: live.isLive,
                         font: KSSFont.harmonyNumber(22)
                     )
