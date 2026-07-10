@@ -2196,6 +2196,30 @@ def _intel_digest(json_payload: str = "") -> dict[str, Any]:
     return result
 
 
+def _intel_panorama(json_payload: str = "") -> dict[str, Any]:
+    """12 赛道全景热点（独立 LLM）。
+
+    参数：``{"tracks": [{"key","name","titles":[...]}, ...]}``
+    """
+    import json as _json
+
+    from kss.news.digest_ai import run_panorama
+
+    if not json_payload:
+        return {"text": "", "error": "empty payload", "error_type": "client"}
+    try:
+        obj = _json.loads(json_payload)
+    except Exception as exc:
+        return {"text": "", "error": f"invalid JSON: {exc}", "error_type": "client"}
+    tracks = obj.get("tracks") if isinstance(obj, dict) else None
+    if not isinstance(tracks, list):
+        return {"text": "", "error": "tracks must be a JSON array", "error_type": "client"}
+    try:
+        return run_panorama(tracks)
+    except Exception as exc:  # noqa: BLE001
+        return {"text": "", "error": f"panorama failed: {exc}", "error_type": "server"}
+
+
 def _intel_digest_save(json_payload: str = "") -> dict[str, Any]:
     """把已生成的 AI digest 写入沉淀库（md+json）。
 
@@ -3660,6 +3684,7 @@ COMMANDS = {
     "news-digest": {"desc": "舆情热点 digest(读 cron 归档,两段式:方向+催化)", "args": ["[DATE]", "[SCENE]"]},
     "intel-radar": {"desc": "12赛道全球RSS资讯(Investment News)", "args": ["[force]"]},
     "intel-digest": {"desc": "资讯雷达单赛道AI要点提炼(OpenAI兼容,JSON_PAYLOAD;池优先)", "args": ["JSON_PAYLOAD"]},
+    "intel-panorama": {"desc": "资讯雷达12赛道全景热点(独立LLM,JSON_PAYLOAD)", "args": ["JSON_PAYLOAD"]},
     "intel-digest-save": {"desc": "把已生成digest写入沉淀库(STATE_ROOT/storage/notes)", "args": ["JSON_PAYLOAD"]},
     "intel-article": {"desc": "资讯雷达文章正文best-effort抓取(JSON_PAYLOAD)", "args": ["JSON_PAYLOAD"]},
     "intel-rewrite": {"desc": "资讯雷达改写(investment|chinese,JSON_PAYLOAD)", "args": ["JSON_PAYLOAD"]},
@@ -4542,6 +4567,8 @@ def dispatch(command: str, args: list[str]) -> Any:
         return _intel_radar(args[0] if args else "")
     if command == "intel-digest":
         return _intel_digest(args[0] if args else "")
+    if command == "intel-panorama":
+        return _intel_panorama(args[0] if args else "")
     if command == "intel-digest-save":
         return _intel_digest_save(args[0] if args else "")
     if command == "intel-article":

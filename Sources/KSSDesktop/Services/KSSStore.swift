@@ -51,6 +51,9 @@ final class KSSStore: ObservableObject {
     /// 每赛道序号，丢弃过期的 in-flight 响应。
     private var intelDigestEpoch: [String: Int] = [:]
     @Published var bulkDigest = BulkDigestState()
+    /// 12 赛道全景热点（独立 LLM，跟一键提炼一并生成）
+    @Published var intelPanorama: IntelPanoramaResponse?
+    @Published var intelPanoramaLoading = false
     /// 启动时检测 Keychain 中是否有 OpenAI/DeepSeek 凭据
     @Published var hasLLMCredentials: Bool = false
 
@@ -719,9 +722,34 @@ final class KSSStore: ObservableObject {
                 self.intelDigests = self.intelDigests
                 self.intelDigestLoadingKeys = []
             }
+            // 同批：12 赛道全景 LLM
+            await self.generateIntelPanorama()
         }
         bulkDigest.currentTask = task
         await task.value
+    }
+
+    /// 用当前雷达各赛道头条采样生成全景热点。
+    func generateIntelPanorama() async {
+        guard let bridge else { return }
+        guard let tracks = intelDigest?.tracks, !tracks.isEmpty else { return }
+        intelPanoramaLoading = true
+        defer { intelPanoramaLoading = false }
+        let inputs: [IntelPanoramaTrackInput] = tracks.map { t in
+            let titles = (t.items ?? []).prefix(4).map(\.title)
+            return IntelPanoramaTrackInput(key: t.key, name: t.name, titles: Array(titles))
+        }
+        do {
+            let resp = try await Task.detached {
+                try bridge.intelPanorama(tracks: inputs)
+            }.value
+            intelPanorama = resp
+        } catch {
+            intelPanorama = IntelPanoramaResponse(
+                text: "", model: nil, generatedAt: nil, trackCount: nil,
+                error: error.localizedDescription, errorType: "client"
+            )
+        }
     }
 
     /// 取消正在运行的 bulk digest 任务（当前 LLM 调用会跑完，下个 track 不开始）。
