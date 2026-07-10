@@ -46,6 +46,10 @@ final class KSSStore: ObservableObject {
 
     // MARK: 资讯雷达 AI digest（plan 2026-07-09-001）
     @Published var intelDigests: [String: IntelDigestResponse] = [:]
+    /// 显式 loading 集合：勿用「text 为空」兼作 loading（并发重入会盖掉已成功结果并永远转圈）。
+    @Published var intelDigestLoadingKeys: Set<String> = []
+    /// 每赛道序号，丢弃过期的 in-flight 响应。
+    private var intelDigestEpoch: [String: Int] = [:]
     @Published var bulkDigest = BulkDigestState()
     /// 启动时检测 Keychain 中是否有 OpenAI/DeepSeek 凭据
     @Published var hasLLMCredentials: Bool = false
@@ -606,25 +610,34 @@ final class KSSStore: ObservableObject {
         force: Bool = false
     ) async {
         guard let bridge else { return }
-        // 进入 loading 状态（让用户看到当前 track 在跑）
-        intelDigests[key] = IntelDigestResponse(
-            text: "", model: nil, generatedAt: nil, prompt: nil, itemCount: nil,
-            error: nil, errorType: nil, fromCache: nil, cachedPath: nil, skipped: nil, mode: nil
-        )
+        // 世代号：并发/重入时只采纳最新一次；勿用空 text 占位抹掉已展示正文。
+        let epoch = (intelDigestEpoch[key] ?? 0) + 1
+        intelDigestEpoch[key] = epoch
+        intelDigestLoadingKeys.insert(key)
+        let capped = Array(items.prefix(25))
         do {
             let resp = try await Task.detached {
-                try bridge.intelDigest(trackKey: key, trackName: name, items: items, force: force)
+                try bridge.intelDigest(trackKey: key, trackName: name, items: capped, force: force)
             }.value
-            intelDigests[key] = resp
+            guard intelDigestEpoch[key] == epoch else { return }
+            var next = intelDigests
+            next[key] = resp
+            intelDigests = next
+            intelDigestLoadingKeys.remove(key)
         } catch {
+            guard intelDigestEpoch[key] == epoch else { return }
             var failResp = IntelDigestResponse(
-                text: "", model: nil, generatedAt: nil, prompt: nil,
+                text: intelDigests[key]?.text ?? "",
+                model: nil, generatedAt: nil, prompt: nil,
                 itemCount: nil, error: error.localizedDescription, errorType: "client",
                 fromCache: nil, cachedPath: nil, skipped: nil, mode: "list"
             )
             failResp.error = error.localizedDescription
             failResp.errorType = "client"
-            intelDigests[key] = failResp
+            var next = intelDigests
+            next[key] = failResp
+            intelDigests = next
+            intelDigestLoadingKeys.remove(key)
             errorMessage = error.localizedDescription
         }
     }
@@ -648,11 +661,13 @@ final class KSSStore: ObservableObject {
                 )
             }.value
             if resp.ok, let path = resp.savedPath {
-                // 标记 saved 状态
+                // 标记 saved 状态（整表赋值，确保 @Published 触发）
                 if var current = intelDigests[trackKey] {
                     current.cachedPath = path
                     current.fromCache = true
-                    intelDigests[trackKey] = current
+                    var next = intelDigests
+                    next[trackKey] = current
+                    intelDigests = next
                 }
                 return path
             }
