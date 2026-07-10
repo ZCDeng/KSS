@@ -204,6 +204,30 @@ struct IntelDigestResponse: Codable {
     var isPoolMode: Bool { mode == "pool" }
 }
 
+/// 全景热点单赛道采样（bridge intel-panorama 入参）。
+struct IntelPanoramaTrackInput: Codable {
+    var key: String
+    var name: String
+    var titles: [String]
+}
+
+/// 12 赛道全景热点响应。
+struct IntelPanoramaResponse: Codable {
+    var text: String
+    var model: String?
+    var generatedAt: String?
+    var trackCount: Int?
+    var error: String?
+    var errorType: String?
+
+    enum CodingKeys: String, CodingKey {
+        case text, model, error
+        case generatedAt = "generated_at"
+        case trackCount = "track_count"
+        case errorType = "error_type"
+    }
+}
+
 /// 资讯雷达正文抓取响应（U4/U5）。
 struct IntelArticleResponse: Codable {
     var body: String?

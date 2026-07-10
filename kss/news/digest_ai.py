@@ -169,3 +169,73 @@ def parse_items_payload(raw: str | bytes) -> list[dict[str, Any]]:
     if not isinstance(obj, list):
         raise ValueError("items payload must be a JSON array")
     return obj
+
+
+# ---------------------------------------------------------------------------
+# 12 赛道全景热点（独立 LLM，与单赛道 digest 分离）
+# ---------------------------------------------------------------------------
+
+_PANORAMA_TIMEOUT_SEC = 90.0
+_PANORAMA_MAX_TITLES_PER_TRACK = 4
+_PANORAMA_MAX_CHARS = 10_000
+
+_PANORAMA_SYSTEM = """你是「资讯雷达」全景热点助手。根据用户提供的 12 个赛道近期头条，归纳**跨赛道**当日热点。
+
+要求：
+1. 输出 4-7 条短 bullet，用「- 」开头；每条点明赛道或跨赛道主题
+2. 只客观陈述，不荐股、不预测涨跌
+3. 优先跨源/跨赛道共振；避免逐赛道机械复读标题
+4. 全文控制在约 200-350 中文字；不要寒暄与前后缀
+"""
+
+_PANORAMA_USER = """以下为各赛道最新标题采样（已截断）：
+
+{body}
+
+请输出今日 12 赛道全景热点（「- 」列表）。"""
+
+
+def run_panorama(tracks: list[dict[str, Any]]) -> dict[str, Any]:
+    """跨赛道全景摘要。
+
+    tracks: ``[{key, name, titles: [str, ...]}, ...]``
+    """
+    if not tracks:
+        return {"text": "", "error": "empty tracks", "error_type": "client"}
+
+    blocks: list[str] = []
+    for t in tracks:
+        name = str(t.get("name") or t.get("key") or "—")
+        titles = t.get("titles") or []
+        if not isinstance(titles, list):
+            titles = []
+        lines = [f"  · {str(x).strip()}" for x in titles[:_PANORAMA_MAX_TITLES_PER_TRACK] if str(x).strip()]
+        if not lines:
+            lines = ["  · （无标题）"]
+        blocks.append(f"【{name}】\n" + "\n".join(lines))
+    body = "\n\n".join(blocks)[:_PANORAMA_MAX_CHARS]
+    user = _PANORAMA_USER.format(body=body)
+
+    try:
+        client = LLMClient(timeout=_PANORAMA_TIMEOUT_SEC, max_retries=_MAX_RETRIES)
+        text = client.complete(system=_PANORAMA_SYSTEM, user=user)
+    except LLMUnavailable as exc:
+        msg = str(exc)
+        lower = msg.lower()
+        if "timeout" in lower or "timed out" in lower:
+            err_type = "timeout"
+        elif "auth" in lower or "401" in msg or "403" in msg:
+            err_type = "auth"
+        else:
+            err_type = "server"
+        logger.warning("[digest-ai] panorama failed: %s", exc)
+        return {"text": "", "error": msg, "error_type": err_type}
+
+    import datetime as _dt
+
+    return {
+        "text": text,
+        "model": os.getenv("KSS_LLM_MODEL") or "(unknown)",
+        "generated_at": _dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "track_count": len(tracks),
+    }

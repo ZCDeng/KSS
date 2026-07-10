@@ -9,6 +9,8 @@ struct IntelView: View {
     @State private var activeTrack: String = "tech"
     /// 默认首 Tab：投研改写
     @State private var readerTab: IntelReaderTab = .investment
+    /// 全景热点条默认折叠（约 2 行）
+    @State private var panoramaExpanded = false
 
     private var digest: NewsDigestResponse? { store.intelDigest }
     private var tracks: [IntelTrack] { digest?.tracks ?? [] }
@@ -48,6 +50,10 @@ struct IntelView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(theme.down.opacity(0.1), in: RoundedRectangle(cornerRadius: theme.chipRadius))
                 }
+                // 12 赛道 pill 上方：全景热点
+                if hasData || store.intelPanorama != nil || store.intelPanoramaLoading {
+                    panoramaBar
+                }
                 if !tracks.isEmpty { trackPills }
             }
             .padding(.horizontal, 20)
@@ -56,19 +62,30 @@ struct IntelView: View {
 
             Divider().overlay(theme.hairline)
 
-            // ---- 内容：list | detail ----
+            // ---- 内容：整行今日要点 → 左列表 | 右正文 ----
             Group {
                 if store.isLoadingIntel {
                     loadingState
                 } else if tracks.isEmpty && !hasData {
                     emptyState
                 } else if let cur = currentTrack {
-                    HStack(spacing: 0) {
-                        trackListColumn(cur)
-                            .frame(width: 380)
+                    VStack(spacing: 0) {
+                        // 全宽今日要点（当前赛道）
+                        if !(cur.items ?? []).isEmpty {
+                            digestCardView(track: cur, items: cur.items ?? [])
+                                .padding(.horizontal, 16)
+                                .padding(.top, 12)
+                                .padding(.bottom, 8)
+                        }
                         Divider().overlay(theme.hairline)
-                        detailPane(track: cur)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        HStack(spacing: 0) {
+                            trackListColumn(cur)
+                                .frame(width: 380)
+                            Divider().overlay(theme.hairline)
+                            detailPane(track: cur)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
             }
@@ -140,6 +157,92 @@ struct IntelView: View {
         let days = digest?.recentDays ?? 7
         let updated = digest?.generatedAt ?? "—"
         return "\(tracks.count) 赛道 / \(totalItems) 条资讯 · 近 \(days) 天 · 更新于 \(updated)"
+    }
+
+    // MARK: - 12 赛道全景热点（pill 上方）
+
+    @ViewBuilder
+    private var panoramaBar: some View {
+        let pan = store.intelPanorama
+        let body = (pan?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "globe.asia.australia.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(theme.accent)
+                Text("12 赛道 · 当日热点")
+                    .font(KSSFont.title(13, .bold, design: theme.titleDesign))
+                    .foregroundStyle(theme.textPrimary)
+                Spacer()
+                if store.intelPanoramaLoading {
+                    ProgressView().scaleEffect(0.65)
+                    Text("生成中…")
+                        .font(.system(size: 11))
+                        .foregroundStyle(theme.textSecondary)
+                } else if !body.isEmpty {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            panoramaExpanded.toggle()
+                        }
+                    } label: {
+                        Text(panoramaExpanded ? "收起" : "展开")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(theme.accent)
+                    }
+                    .buttonStyle(.plain)
+                    Button {
+                        Task { await store.generateIntelPanorama() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("重新生成全景摘要")
+                }
+            }
+
+            if store.intelPanoramaLoading && body.isEmpty {
+                Text("一键提炼全部要点时将生成跨赛道全景…")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(theme.textSecondary)
+            } else if let err = pan?.error, body.isEmpty {
+                Text("全景生成失败：\(err)")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(theme.down)
+                    .lineLimit(2)
+                Button {
+                    Task { await store.generateIntelPanorama() }
+                } label: {
+                    Text("重试")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(theme.accent)
+                }
+                .buttonStyle(.plain)
+            } else if body.isEmpty {
+                Text("点右上角「一键提炼全部要点」生成 12 赛道全景热点")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(theme.textSecondary)
+            } else {
+                Text(body)
+                    .font(.system(size: 13))
+                    .foregroundStyle(theme.textBody)
+                    .lineLimit(panoramaExpanded ? nil : 2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let model = pan?.model, !model.isEmpty {
+                    Text(model)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(theme.textSecondary.opacity(0.75))
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: theme.cardRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: theme.cardRadius)
+                .strokeBorder(theme.outlineVariant, lineWidth: 1)
+        )
     }
 
     // MARK: - Bulk digest 按钮 + 摘要
@@ -293,12 +396,6 @@ struct IntelView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
-
-            if !items.isEmpty {
-                digestCardView(track: cur, items: items)
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 10)
-            }
 
             if items.isEmpty {
                 Text("近 \(digest?.recentDays ?? 7) 天该赛道暂无更新")

@@ -178,6 +178,16 @@ struct BridgeClient {
         return try run(["intel-digest", json], as: IntelDigestResponse.self)
     }
 
+    /// 12 赛道全景热点（独立 LLM）。
+    func intelPanorama(tracks: [IntelPanoramaTrackInput]) throws -> IntelPanoramaResponse {
+        struct Payload: Encodable {
+            let tracks: [IntelPanoramaTrackInput]
+        }
+        let data = try JSONEncoder().encode(Payload(tracks: tracks))
+        let json = String(data: data, encoding: .utf8) ?? "{}"
+        return try run(["intel-panorama", json], as: IntelPanoramaResponse.self)
+    }
+
     /// 把已生成的 AI digest 写入沉淀库（md+json）。
     func intelDigestSave(
         trackKey: String,
@@ -303,7 +313,7 @@ struct BridgeClient {
     // perilla-enrichment 走外网(Tushare+yFinance)耗时常 >3s，跳过 sidecar 避免超时双跑。
     private static let subprocessOnlyCommands: Set<String> = [
         "run", "import", "perilla-enrichment",
-        "intel-radar", "intel-digest", "intel-digest-save",
+        "intel-radar", "intel-digest", "intel-panorama", "intel-digest-save",
         "intel-article", "intel-rewrite", "intel-rewrite-run",
         "cron-catchup", "cron-rerun", "cron-rerun-many", "cron-enable", "cron-disable",
     ]
