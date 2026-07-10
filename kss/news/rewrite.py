@@ -33,7 +33,9 @@ from kss.storage.rewrite_pool import (
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT_INVESTMENT = 30.0
+# deepseek-v4-pro 等慢模型 + 数 KB 正文时 30s 易超时（见 storage/intel_rewrites 超时失败）。
+# 与中文改写对齐到 90s；max_retries=0 避免串行叠超时。
+_TIMEOUT_INVESTMENT = 90.0
 _TIMEOUT_CHINESE = 90.0  # 长文改写
 _MAX_RETRIES = 0
 _MAX_INPUT_CHARS = 12_000
@@ -268,12 +270,18 @@ def run_rewrite(
         client = LLMClient(model=_model_name(), timeout=timeout, max_retries=_MAX_RETRIES)
         text = client.complete(system=system, user=user)
     except LLMUnavailable as e:
+        err = str(e)
+        et = (
+            "timeout"
+            if "timeout" in err.lower() or "timed out" in err.lower()
+            else "unavailable"
+        )
         failed = {
             **draft,
             "kind": kind,
             "status": "failed",
-            "error": str(e),
-            "error_type": "unavailable",
+            "error": err,
+            "error_type": et,
             "body_text": body,
             "body_mode": body_mode,
             "body_char_count": char_count,

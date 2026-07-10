@@ -6,7 +6,7 @@ prompt 调 LLM 生成 3-5 条要点。Sync fire-and-forget（不流式、不走 
 设计要点：
 - 不复用 chat-turn 流式长连（chat-turn 是 streaming + confirm gate 的交互协议，
   digest 是单轮 sync 调用，shape 完全不同；我们只复用底层 LLMClient 与凭据）
-- 30s 超时由 LLMClient(timeout=30, max_retries=0) 强制
+- 超时由 LLMClient(timeout=…, max_retries=0) 强制；pro 模型默认 90s
 - 25 条截断 + 字符数兜底（≤12k chars）
 - 沉淀库写入完全由调用方触发，本模块只返回 text
 """
@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 
 _MAX_ITEMS = 25
 _MAX_CHARS = 12_000  # prompt 上限兜底（25 条平均 ~480 char，留余量给指令）
-_TIMEOUT_SEC = 30.0
+# deepseek-v4-pro + 25 条列表，30s 偏紧；与 rewrite 中文/投研超时对齐
+_TIMEOUT_SEC = 90.0
 _MAX_RETRIES = 0
 
 _SYSTEM_PROMPT = """你是「资讯雷达」要点提炼助手。任务：从用户提供的资讯列表中提炼「今日要点」。
