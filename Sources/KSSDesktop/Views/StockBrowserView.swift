@@ -727,26 +727,30 @@ extension StockDetailView {
         defer { intradayLoading = false }
         let interval = mode == .m5 ? 5 : 1
         guard let bridge else { intradayError = "无法定位 bridge"; return }
-        let bars = try? await Task.detached {
-            try bridge.intradayBars(symbol: symbol, interval: interval)
-        }.value
-        if let bars {
-            if bars.isRenderable { intradayBars = bars; intradayError = nil }
-            else {
-                // 失败时保留日线主图；文案对 auth / 无存档 给可操作提示
+        do {
+            let bars = try await Task.detached {
+                try bridge.intradayBars(symbol: symbol, interval: interval)
+            }.value
+            if bars.isRenderable {
+                intradayBars = bars
+                intradayError = nil
+            } else {
+                // 失败时保留日线主图；禁止笼统「bridge 调用失败」
                 switch bars.error {
                 case "auth_failed":
-                    intradayError = "实时源未连接 · 打开「网络与凭据」检查 Longbridge"
+                    intradayError = bars.hint
+                        ?? "实时源未连接 · 打开「网络与凭据」或等交易时段缓存"
                 case "not_covered", "unsupported_symbol":
                     intradayError = "该标的暂无分钟线覆盖"
                 case let e? where !e.isEmpty:
-                    intradayError = bars.hint.map { "\($0)（\(e)）" } ?? e
+                    if let h = bars.hint, !h.isEmpty { intradayError = "\(h)（\(e)）" }
+                    else { intradayError = e }
                 default:
                     intradayError = bars.hint ?? "暂无分钟线 · 无本地存档"
                 }
             }
-        } else {
-            intradayError = "bridge 调用失败"
+        } catch {
+            intradayError = error.localizedDescription
         }
     }
 }

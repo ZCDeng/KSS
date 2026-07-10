@@ -1466,6 +1466,62 @@ struct OHLCBar: Codable, Hashable {
     var close: Double?
     var volume: Double?
     var turnover: Double?
+
+    init(
+        timestamp: String? = nil,
+        open: Double? = nil,
+        high: Double? = nil,
+        low: Double? = nil,
+        close: Double? = nil,
+        volume: Double? = nil,
+        turnover: Double? = nil
+    ) {
+        self.timestamp = timestamp
+        self.open = open
+        self.high = high
+        self.low = low
+        self.close = close
+        self.volume = volume
+        self.turnover = turnover
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case timestamp, time, open, high, low, close, volume, turnover, amount
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // Longbridge: timestamp；东财/部分 cache: time
+        timestamp = try c.decodeIfPresent(String.self, forKey: .timestamp)
+            ?? c.decodeIfPresent(String.self, forKey: .time)
+        open = try Self.decodeFlexibleDouble(c, .open)
+        high = try Self.decodeFlexibleDouble(c, .high)
+        low = try Self.decodeFlexibleDouble(c, .low)
+        close = try Self.decodeFlexibleDouble(c, .close)
+        volume = try Self.decodeFlexibleDouble(c, .volume)
+        turnover = try Self.decodeFlexibleDouble(c, .turnover)
+            ?? Self.decodeFlexibleDouble(c, .amount)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(timestamp, forKey: .timestamp)
+        try c.encodeIfPresent(open, forKey: .open)
+        try c.encodeIfPresent(high, forKey: .high)
+        try c.encodeIfPresent(low, forKey: .low)
+        try c.encodeIfPresent(close, forKey: .close)
+        try c.encodeIfPresent(volume, forKey: .volume)
+        try c.encodeIfPresent(turnover, forKey: .turnover)
+    }
+
+    private static func decodeFlexibleDouble(
+        _ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys
+    ) throws -> Double? {
+        if let v = try? c.decodeIfPresent(Double.self, forKey: key) { return v }
+        if let i = try? c.decodeIfPresent(Int.self, forKey: key) { return Double(i) }
+        if let s = try? c.decodeIfPresent(String.self, forKey: key), let v = Double(s) { return v }
+        return nil
+    }
 }
 
 /// 最新分钟 bar 快照（bridge `intraday-snapshot`）。R2。
