@@ -136,6 +136,21 @@ def main() -> None:
             north_date = str(last["trade_date"])
 
     overnight_us = _fetch_overnight_us(pro, _fetch_with_retry)
+    index_stacks = _fetch_index_stacks(pro, _fetch_with_retry)
+    # 兼容：indices = 每列当前顶层（第一项），供旧 UI；新 UI 用 indexStacks
+    stack_tops = []
+    for col in index_stacks:
+        items = col.get("items") or []
+        if items:
+            stack_tops.append({
+                "code": items[0]["code"],
+                "name": items[0]["name"],
+                "close": items[0]["close"],
+                "pct": items[0]["pct"],
+                "date": items[0].get("date", ""),
+            })
+    if stack_tops:
+        indices = stack_tops
 
     payload = {
         "date": etf_date or north_date,
@@ -146,10 +161,15 @@ def main() -> None:
         "indices": indices,
         "indexBoard": index_board,
         "overnightUS": overnight_us,
+        "indexStacks": index_stacks,
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    print(f"✅ 写入 {OUT.name}: etfs={len(etfs)} indices={len(indices)} board={len(index_board)} overnightUS={len(overnight_us)}")
+    n_stack = sum(len(c.get("items") or []) for c in index_stacks)
+    print(
+        f"✅ 写入 {OUT.name}: etfs={len(etfs)} indices={len(indices)} board={len(index_board)} "
+        f"overnightUS={len(overnight_us)} indexStacks={n_stack}"
+    )
 
 
 def _fetch_overnight_us(pro, fetch_with_retry) -> list[dict]:
@@ -190,6 +210,115 @@ def _quote_index_global(pro, fetch_with_retry, code: str, name: str) -> dict | N
         "date": str(r["trade_date"]),
         "source": "index_global",
     }
+
+
+def _fetch_index_stacks(pro, fetch_with_retry) -> list[dict]:
+    """三列堆叠：日线价 + 尽力 1m sparkline。"""
+    import sys
+    sys.path.insert(0, str(ROOT))
+    from scripts.index_stack_universe import INDEX_STACKS, YF_TICKERS
+
+    out_cols: list[dict] = []
+    for col in INDEX_STACKS:
+        items: list[dict] = []
+        for it in col["items"]:
+            code, name, kind = it["code"], it["name"], it["kind"]
+            quote = None
+            try:
+                if kind == "index_daily":
+                    quote = _quote_index_daily(pro, fetch_with_retry, code, name)
+                elif kind == "index_global":
+                    quote = _quote_index_global(pro, fetch_with_retry, code, name)
+                else:
+                    yf_code = YF_TICKERS.get(code, code)
+                    quote = _quote_yfinance(yf_code, name)
+                    if quote:
+                        quote["code"] = code  # 保持产品码
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("indexStack quote %s: %s", code, exc)
+            if not quote:
+                continue
+            spark = _sparkline_1m(code, kind)
+            quote["sparkline"] = spark
+            items.append(quote)
+        out_cols.append({"id": col["id"], "items": items})
+    return out_cols
+
+
+def _quote_index_daily(pro, fetch_with_retry, code: str, name: str) -> dict | None:
+    df = fetch_with_retry(
+        lambda: pro.index_daily(ts_code=code, start_date="20260101", end_date="20261231"),
+        f"index_daily {code}",
+    )
+    if df is None or df.empty:
+        return None
+    df = df.sort_values("trade_date")
+    r = df.iloc[-1]
+    return {
+        "code": code,
+        "name": name,
+        "close": round(float(r["close"]), 2),
+        "pct": round(float(r["pct_chg"]), 2),
+        "date": str(r["trade_date"]),
+        "source": "index_daily",
+    }
+
+
+def _sparkline_1m(code: str, kind: str) -> list[dict]:
+    """当日 1 分钟收盘序列；失败返回 []。降采样 ≤120 点。"""
+    pts: list[float] = []
+    if kind == "index_daily" and "." in code:
+        bare = code.split(".")[0]
+        pts = _ak_index_min_closes(bare)
+    elif kind in ("index_global", "yfinance"):
+        yf_code = code if kind == "yfinance" else code
+        from scripts.index_stack_universe import YF_TICKERS
+        yf_code = YF_TICKERS.get(code, yf_code if kind == "yfinance" else f"^{code}")
+        pts = _yf_intraday_closes(yf_code)
+    if not pts:
+        return []
+    # downsample
+    if len(pts) > 120:
+        step = max(1, len(pts) // 120)
+        pts = pts[::step][:120]
+    return [{"c": round(float(c), 2)} for c in pts]
+
+
+def _ak_index_min_closes(symbol_6: str) -> list[float]:
+    try:
+        import akshare as ak
+        # 东财指数分钟：symbol 为 6 位
+        end = pd.Timestamp.now()
+        start = end.normalize()  # 当日 00:00
+        df = ak.index_zh_a_hist_min_em(
+            symbol=symbol_6,
+            period="1",
+            start_date=start.strftime("%Y-%m-%d %H:%M:%S"),
+            end_date=end.strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        if df is None or df.empty:
+            return []
+        # 列名随版本：收盘 / close
+        col = "收盘" if "收盘" in df.columns else ("close" if "close" in df.columns else None)
+        if not col:
+            return []
+        return [float(x) for x in df[col].dropna().tolist()]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("ak index min %s: %s", symbol_6, exc)
+        return []
+
+
+def _yf_intraday_closes(ticker: str) -> list[float]:
+    try:
+        import yfinance as yf
+        t = yf.Ticker(ticker)
+        hist = t.history(period="1d", interval="1m", auto_adjust=False)
+        if hist is None or hist.empty or "Close" not in hist.columns:
+            return []
+        return [float(x) for x in hist["Close"].dropna().tolist()]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("yf 1m %s: %s", ticker, exc)
+        return []
 
 
 def _quote_yfinance(code: str, name: str) -> dict | None:

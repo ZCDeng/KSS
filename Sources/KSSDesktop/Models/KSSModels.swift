@@ -611,6 +611,30 @@ struct MarketStrip: Codable, Hashable {
     var globalIndices: [GlobalIndex]? // U5b 全球隔夜指数
     /// 隔夜美股跑马灯（固定名单顺序；refresh_market_strip 写入）
     var overnightUS: [IndexQuote]?
+    /// 第二行三列指数堆叠（含 sparkline）
+    var indexStacks: [IndexStackColumn]?
+}
+
+/// 一列堆叠（main / growth / hk）
+struct IndexStackColumn: Codable, Hashable, Identifiable {
+    var id: String
+    var items: [IndexStackItem]
+}
+
+struct IndexStackItem: Codable, Hashable, Identifiable {
+    var id: String { code }
+    var code: String
+    var name: String
+    var close: Double
+    var pct: Double
+    var date: String?
+    var source: String?
+    /// 当日 1m 收盘点；仅 c 字段
+    var sparkline: [SparkPoint]?
+}
+
+struct SparkPoint: Codable, Hashable {
+    var c: Double
 }
 
 struct LimitBoard: Codable, Hashable {
