@@ -11,6 +11,8 @@ struct IntelView: View {
     @State private var readerTab: IntelReaderTab = .investment
     /// 全景热点条默认折叠（约 2 行）
     @State private var panoramaExpanded = false
+    /// 当前赛道「今日要点」默认折叠，给下方列表/正文腾高
+    @State private var digestExpanded = false
 
     private var digest: NewsDigestResponse? { store.intelDigest }
     private var tracks: [IntelTrack] { digest?.tracks ?? [] }
@@ -94,6 +96,7 @@ struct IntelView: View {
         .background(theme.canvas)
         .onAppear { Task { await store.loadIntel() } }
         .onChange(of: activeTrack) { _, _ in
+            digestExpanded = false  // 切赛道收起要点，优先阅读区
             store.selectIntelItem(nil, trackKey: activeTrack, trackName: currentTrack?.name ?? "")
             // 切赛道时尝试拉要点（池优先）
             if let cur = currentTrack, let items = cur.items, !items.isEmpty {
@@ -994,7 +997,7 @@ struct IntelView: View {
         return comp?.url
     }
 
-    // MARK: - AI digest 卡片（plan 2026-07-09-001）
+    // MARK: - AI digest 卡片（全宽可折叠，操作在右上角）
 
     @ViewBuilder
     private func digestCardView(track: IntelTrack, items: [IntelItem]) -> some View {
@@ -1002,14 +1005,16 @@ struct IntelView: View {
         let isLoading = store.intelDigestLoadingKeys.contains(track.key)
         let isSaved = state?.fromCache == true
         let isNeedKey = !store.hasLLMCredentials
-        let showSavedBadge = isSaved
         let bodyText = (state?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasBody = !bodyText.isEmpty
+        let canToggle = hasBody || isLoading || state?.error != nil || state?.skipped == true || state != nil
 
-        VStack(alignment: .leading, spacing: 10) {
-            // header
+        VStack(alignment: .leading, spacing: digestExpanded ? 10 : 4) {
+            // header：标题左，操作/折叠右上
             HStack(spacing: 8) {
                 Image(systemName: "lightbulb.fill")
                     .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(theme.accent)
                 Text("今日要点 · \(track.name)")
                     .font(KSSFont.title(14, .bold, design: theme.titleDesign))
                     .foregroundStyle(theme.accent)
@@ -1020,135 +1025,132 @@ struct IntelView: View {
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(theme.accent.opacity(mode == "pool" ? 0.12 : 0.06), in: Capsule())
                 }
-                Spacer()
+                if !digestExpanded, hasBody {
+                    Text(bodyText.replacingOccurrences(of: "\n", with: " · "))
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+
+                // 右上角：状态 + 操作 + 折叠
                 if isLoading {
                     ProgressView().scaleEffect(0.65)
                 }
-                if showSavedBadge {
-                    Label("已存入沉淀", systemImage: "checkmark.circle.fill")
-                        .font(.system(size: 11, weight: .semibold))
+                if isSaved {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 12))
                         .foregroundStyle(theme.textSecondary)
+                        .help("已存入沉淀")
+                }
+                if !isNeedKey {
+                    Button {
+                        Task { await store.summarizeIntelTrack(track.key, name: track.name, items: items) }
+                    } label: {
+                        Image(systemName: hasBody ? "arrow.clockwise" : "sparkles")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(theme.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .help(hasBody ? "重新提炼" : "让 AI 提炼今日要点")
+                    .disabled(isLoading)
+                }
+                if hasBody, !isSaved, let state {
+                    Button {
+                        Task {
+                            _ = await store.saveIntelDigestToNotes(
+                                trackKey: track.key,
+                                trackName: track.name,
+                                prompt: state.prompt ?? "",
+                                response: state.text,
+                                model: state.model ?? "",
+                                items: items
+                            )
+                        }
+                    } label: {
+                        Image(systemName: "bookmark")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("存入沉淀")
+                }
+                if canToggle {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            digestExpanded.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text(digestExpanded ? "收起" : "展开")
+                                .font(.system(size: 11, weight: .semibold))
+                            Image(systemName: digestExpanded ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 10, weight: .bold))
+                        }
+                        .foregroundStyle(theme.accent)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
 
-            // body：有正文优先展示（loading 时保留上一版 + 顶栏小转圈）
-            if let err = state?.error, bodyText.isEmpty, !isLoading {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 12))
+            // 展开后正文区（操作已上移，不再在底部占行）
+            if digestExpanded {
+                if let err = state?.error, bodyText.isEmpty, !isLoading {
                     Text("提炼失败：\(err)")
                         .font(.system(size: 12.5))
+                        .foregroundStyle(theme.down)
                         .lineLimit(3)
-                }
-                .foregroundStyle(theme.down)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                HStack(spacing: 8) {
-                    digestActionButton(track: track, items: items, label: "重试", icon: "arrow.clockwise", isPrimary: true)
-                }
-            } else if !bodyText.isEmpty {
-                digestMarkdownView(bodyText)
-                if let model = state?.model, !model.isEmpty {
-                    HStack(spacing: 8) {
-                        Text(model)
-                            .font(.system(size: 10.5, design: .monospaced))
-                            .foregroundStyle(theme.textSecondary)
-                        if let at = state?.generatedAt, !at.isEmpty {
-                            Text(at)
+                } else if hasBody {
+                    digestMarkdownView(bodyText)
+                    if let model = state?.model, !model.isEmpty {
+                        HStack(spacing: 8) {
+                            Text(model)
                                 .font(.system(size: 10.5, design: .monospaced))
-                                .foregroundStyle(theme.textSecondary.opacity(0.7))
+                                .foregroundStyle(theme.textSecondary)
+                            if let at = state?.generatedAt, !at.isEmpty {
+                                Text(at)
+                                    .font(.system(size: 10.5, design: .monospaced))
+                                    .foregroundStyle(theme.textSecondary.opacity(0.7))
+                            }
                         }
                     }
-                }
-                if let err = state?.error {
-                    Text("最近一次重提失败：\(err)")
-                        .font(.system(size: 11))
-                        .foregroundStyle(theme.down)
-                        .lineLimit(2)
-                }
-                HStack(spacing: 8) {
-                    digestActionButton(track: track, items: items, label: "重新提炼", icon: "arrow.clockwise", isPrimary: false)
-                    if !isSaved, let state {
-                        digestSaveButton(track: track, items: items, state: state)
+                    if let err = state?.error {
+                        Text("最近一次重提失败：\(err)")
+                            .font(.system(size: 11))
+                            .foregroundStyle(theme.down)
+                            .lineLimit(2)
                     }
-                }
-            } else if isLoading {
-                HStack(spacing: 8) {
-                    ProgressView().scaleEffect(0.8)
+                } else if isLoading {
                     Text("AI 正在读 \(min(items.count, 25)) 条资讯…")
                         .font(.system(size: 12.5))
                         .foregroundStyle(theme.textSecondary)
+                } else if state?.skipped == true {
+                    Text("该赛道资讯过少，跳过提炼")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(theme.textSecondary)
+                } else if state != nil {
+                    Text("未生成要点正文，可点右上角重试")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(theme.textSecondary)
+                } else if isNeedKey {
+                    Text("未接入 AI — 前往设置")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(theme.ma5)
+                } else {
+                    Text("点右上角 ✨ 提炼今日要点")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(theme.textSecondary)
                 }
-            } else if state?.skipped == true {
-                Text("该赛道资讯过少，跳过提炼")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(theme.textSecondary)
-            } else if state != nil {
-                // 已回包但无正文：勿静默空白
-                Text("未生成要点正文，可重试")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(theme.textSecondary)
-                digestActionButton(track: track, items: items, label: "重试", icon: "arrow.clockwise", isPrimary: true)
-            } else {
-                if isNeedKey {
-                    HStack(spacing: 6) {
-                        Image(systemName: "key.fill")
-                            .font(.system(size: 11))
-                        Text("未接入 AI — 前往设置")
-                            .font(.system(size: 12.5))
-                    }
-                    .foregroundStyle(theme.ma5)
-                }
-                digestActionButton(track: track, items: items, label: "让 AI 提炼今日要点", icon: "sparkles", isPrimary: true)
             }
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, digestExpanded ? 12 : 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(theme.accentSoft, in: RoundedRectangle(cornerRadius: theme.cardRadius))
         .overlay(
             RoundedRectangle(cornerRadius: theme.cardRadius)
                 .strokeBorder(theme.accent.opacity(0.35), lineWidth: 1)
         )
-    }
-
-    @ViewBuilder
-    private func digestActionButton(track: IntelTrack, items: [IntelItem], label: String, icon: String, isPrimary: Bool) -> some View {
-        Button(action: {
-            Task { await store.summarizeIntelTrack(track.key, name: track.name, items: items) }
-        }) {
-            HStack(spacing: 5) {
-                Image(systemName: icon).font(.system(size: 11, weight: .bold))
-                Text(label).font(.system(size: 12, weight: .semibold))
-            }
-            .foregroundStyle(isPrimary ? theme.accent : theme.textSecondary)
-            .padding(.horizontal, 10).padding(.vertical, 5)
-            .background(theme.accentSoft, in: RoundedRectangle(cornerRadius: theme.chipRadius))
-        }
-        .buttonStyle(.plain)
-    }
-
-    @ViewBuilder
-    private func digestSaveButton(track: IntelTrack, items: [IntelItem], state: IntelDigestResponse) -> some View {
-        Button(action: {
-            Task {
-                _ = await store.saveIntelDigestToNotes(
-                    trackKey: track.key,
-                    trackName: track.name,
-                    prompt: state.prompt ?? "",
-                    response: state.text,
-                    model: state.model ?? "",
-                    items: items,
-                )
-            }
-        }) {
-            HStack(spacing: 5) {
-                Image(systemName: "bookmark.fill").font(.system(size: 11, weight: .bold))
-                Text("存入沉淀").font(.system(size: 12, weight: .semibold))
-            }
-            .foregroundStyle(theme.accent)
-            .padding(.horizontal, 10).padding(.vertical, 5)
-            .background(theme.accentSoft, in: RoundedRectangle(cornerRadius: theme.chipRadius))
-        }
-        .buttonStyle(.plain)
     }
 
     /// 把 LLM 返回的 markdown bullet 文本渲染为列表（不依赖 AttributedString markdown）
