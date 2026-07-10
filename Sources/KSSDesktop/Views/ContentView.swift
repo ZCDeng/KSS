@@ -196,6 +196,7 @@ struct ContentView: View {
                     onOpenSection: { section in store.selectedSection = section },
                     realtimeQuote: store.realtimeQuote,
                     realtimeQuotes: store.realtimeQuotesBySymbol,
+                    realtimeSparklines: store.realtimeSparklinesBySymbol,
                     tradingHours: store.tradingHours,
                     realtimeAuthFailed: store.realtimeAuthFailed,
                     realtimeUpdatedAt: store.realtimeUpdatedAt,

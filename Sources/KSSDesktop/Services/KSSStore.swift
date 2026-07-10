@@ -84,6 +84,8 @@ final class KSSStore: ObservableObject {
     // MARK: Longbridge 实时（U1/U2）—— 页面加载时拉取，失败保持 nil（UI 回退存量 + 标注"非实时"）
     @Published var realtimeQuote: LongbridgeQuote?     // 兼容 canary（上证 / 任一 live）
     @Published var realtimeQuotesBySymbol: [String: LongbridgeQuote] = [:]  // 多标的 map，供 今日看盘 overlay
+    /// 堆叠卡等分时线：产品码 → 当日 1m 收盘序列（Longbridge intraday-bars）
+    @Published var realtimeSparklinesBySymbol: [String: [Double]] = [:]
     @Published var tradingHours: TradingHours?         // 交易时段门控（R13）
     @Published var realtimeAuthFailed = false          // auth_failed → 停定时刷新 + "实时源未连接"（R4）
     @Published var realtimeUpdatedAt: Date?            // 最近一次实时拉取成功时间（"更新于 HH:MM"）
@@ -281,9 +283,10 @@ final class KSSStore: ObservableObject {
     }
 
     /// 多标的实时刷新（KTD1）：不得循环 `loadRealtimeData`（旧实现会写穿单槽）。
-    /// - `symbols == nil`：priority=选中股+推荐+主题龙头，再并 marketStrip
+    /// - `symbols == nil`：priority=选中股+推荐+主题龙头+堆叠指数，再并 marketStrip
     /// - `symbols != nil`：以传入列表为 priority（页内 onAppear 聚焦）
-    /// - 每标 `longbridge-quote` + 30s coalesce；成功 merge 进 map；一次发布
+    /// - 每标产品码 → Longbridge 码请求；**map key 仍为产品码**（HSI / 000001.SH）
+    /// - 堆叠卡另拉 intraday-bars 作 live sparkline
     func refreshRealtimeQuotes(symbols: [String]? = nil) async {
         guard let bridge else { return }
         let inSession = await loadTradingHours()
@@ -299,7 +302,7 @@ final class KSSStore: ObservableObject {
 
         var list: [String]
         if let symbols {
-            // 页内聚焦：优先这些，仍补 canary + 少量 strip 热区
+            // 页内聚焦：优先这些，仍补 canary + strip 热区（含 indexStacks）
             list = RealtimeMerge.harvestSymbols(
                 strip: snapshot?.marketStrip,
                 priority: symbols,
@@ -308,6 +311,8 @@ final class KSSStore: ObservableObject {
         } else {
             var priority: [String] = []
             if let sel = selectedSymbol { priority.append(sel) }
+            // 今日看盘堆叠卡：优先进 20 槽（实盘主视觉）
+            priority.append(contentsOf: RealtimeMerge.symbolsFromIndexStacks(snapshot?.marketStrip?.indexStacks))
             priority.append(contentsOf: RealtimeMerge.symbolsFromRecommendations(snapshot?.recommendations ?? []))
             priority.append(contentsOf: RealtimeMerge.symbolsFromThemes(themeLeaders))
             list = RealtimeMerge.harvestSymbols(
@@ -329,14 +334,15 @@ final class KSSStore: ObservableObject {
         var anySuccess = false
         var sawAuthFailed = false
 
-        for sym in list {
-            if shouldSkipDispatch(cmd: "longbridge-quote", symbol: sym) {
-                // coalesce 命中：若 map 已有该标 live，仍算「有实时」用于 badge 时间不必强制推进
-                if updated[sym]?.isLive == true { anySuccess = true }
+        for displaySym in list {
+            guard let lbSym = RealtimeMerge.toLongbridgeSymbol(displaySym) else { continue }
+            // coalesce 键用产品码，避免 HSI 与 HSI.HK 双槽
+            if shouldSkipDispatch(cmd: "longbridge-quote", symbol: displaySym) {
+                if updated[displaySym]?.isLive == true { anySuccess = true }
                 continue
             }
             let quote = try? await Task.detached {
-                try bridge.longbridgeQuote(symbol: sym)
+                try bridge.longbridgeQuote(symbol: lbSym)
             }.value
             guard let quote else { continue }
             if quote.error == "auth_failed" {
@@ -344,7 +350,7 @@ final class KSSStore: ObservableObject {
                 break
             }
             if quote.isLive {
-                updated[sym] = quote
+                updated[displaySym] = quote
                 anySuccess = true
             }
             // 软失败：不删除 map 已有项
@@ -367,7 +373,39 @@ final class KSSStore: ObservableObject {
                 realtimeQuote = first
             }
         }
+
+        // 堆叠卡分时：与 quote 同 tick 尽力刷新（失败保留旧线）
+        await refreshRealtimeSparklines(
+            displaySymbols: RealtimeMerge.symbolsFromIndexStacks(snapshot?.marketStrip?.indexStacks)
+        )
         reevaluateTimer()
+    }
+
+    /// 堆叠卡 live sparkline：产品码 → Longbridge `intraday-bars` 1m 收盘序列。
+    private func refreshRealtimeSparklines(displaySymbols: [String]) async {
+        guard let bridge else { return }
+        guard !displaySymbols.isEmpty else { return }
+        var sparks = realtimeSparklinesBySymbol
+        var changed = false
+        for displaySym in displaySymbols {
+            guard let lbSym = RealtimeMerge.toLongbridgeSymbol(displaySym) else { continue }
+            if shouldSkipDispatch(cmd: "intraday-bars", symbol: displaySym) {
+                continue
+            }
+            let bars = try? await Task.detached {
+                try bridge.intradayBars(symbol: lbSym, interval: 1)
+            }.value
+            // 失败保留旧 sparkline；auth_failed 由 quote 路径停表
+            guard let bars, bars.error != "auth_failed" else { continue }
+            let closes = RealtimeMerge.sparklineCloses(from: bars.bars)
+            if !closes.isEmpty {
+                sparks[displaySym] = closes
+                changed = true
+            }
+        }
+        if changed {
+            realtimeSparklinesBySymbol = sparks
+        }
     }
 
     /// 手动重试实时源（R4：avoid "未连接"状态永久滞留）。

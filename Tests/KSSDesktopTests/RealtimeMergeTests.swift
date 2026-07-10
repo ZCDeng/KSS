@@ -3,20 +3,31 @@ import XCTest
 
 final class RealtimeMergeTests: XCTestCase {
 
-    // MARK: isLiveableSymbol
+    // MARK: isLiveableSymbol / toLongbridgeSymbol
 
     func testLiveableSHAndSZ() {
         XCTAssertTrue(RealtimeMerge.isLiveableSymbol("000001.SH"))
         XCTAssertTrue(RealtimeMerge.isLiveableSymbol("159361.sz"))
         XCTAssertTrue(RealtimeMerge.isLiveableSymbol("563360.SH"))
+        XCTAssertEqual(RealtimeMerge.toLongbridgeSymbol("159361.sz"), "159361.SZ")
+    }
+
+    func testLiveableHKAndAliases() {
+        XCTAssertTrue(RealtimeMerge.isLiveableSymbol("HSI"))
+        XCTAssertTrue(RealtimeMerge.isLiveableSymbol("HSTECH"))
+        XCTAssertTrue(RealtimeMerge.isLiveableSymbol("02828.HK"))
+        XCTAssertEqual(RealtimeMerge.toLongbridgeSymbol("HSI"), "HSI.HK")
+        XCTAssertEqual(RealtimeMerge.toLongbridgeSymbol("HSTECH"), "HSTECH.HK")
+        XCTAssertEqual(RealtimeMerge.toLongbridgeSymbol("02828.HK"), "02828.HK")
     }
 
     func testRejectsBJGlobalBare() {
         XCTAssertFalse(RealtimeMerge.isLiveableSymbol("830799.BJ"))
         XCTAssertFalse(RealtimeMerge.isLiveableSymbol("IXIC"))
-        XCTAssertFalse(RealtimeMerge.isLiveableSymbol("HSI"))
         XCTAssertFalse(RealtimeMerge.isLiveableSymbol("AAPL"))
         XCTAssertFalse(RealtimeMerge.isLiveableSymbol(""))
+        XCTAssertNil(RealtimeMerge.toLongbridgeSymbol("IXIC"))
+        XCTAssertNil(RealtimeMerge.toLongbridgeSymbol("899050.BJ"))
     }
 
     // MARK: harvestSymbols
@@ -49,11 +60,41 @@ final class RealtimeMergeTests: XCTestCase {
         XCTAssertTrue(symbols.contains("563360.SH"))
         XCTAssertTrue(symbols.contains("000001.SH"))
         XCTAssertTrue(symbols.contains("399006.SZ"))
+        XCTAssertTrue(symbols.contains("HSI"))  // 港股别名可实时
         XCTAssertFalse(symbols.contains("IXIC"))
-        XCTAssertFalse(symbols.contains("HSI"))
         XCTAssertFalse(symbols.contains("830799.BJ"))
         // 去重：上证只一次
         XCTAssertEqual(symbols.filter { $0 == "000001.SH" }.count, 1)
+    }
+
+    func testHarvestIncludesIndexStacksEarly() {
+        let stacks = [
+            IndexStackColumn(id: "main", items: [
+                IndexStackItem(code: "000001.SH", name: "上证", close: 1, pct: 0),
+                IndexStackItem(code: "899050.BJ", name: "北证", close: 1, pct: 0),
+            ]),
+            IndexStackColumn(id: "hk", items: [
+                IndexStackItem(code: "HSI", name: "恒生", close: 1, pct: 0),
+                IndexStackItem(code: "HSTECH", name: "恒科", close: 1, pct: 0),
+            ]),
+        ]
+        let strip = MarketStrip(
+            date: nil, northMoney: nil, northDate: nil,
+            etfs: [ETFQuote(code: "563360.SH", name: "A500", close: 1, pct: 0)],
+            indices: nil, indexBoard: nil,
+            limitBoard: nil, turnoverTop: nil, globalIndices: nil,
+            overnightUS: nil, indexStacks: stacks
+        )
+        let symbols = RealtimeMerge.harvestSymbols(strip: strip, priority: [], maxCount: 10)
+        XCTAssertTrue(symbols.contains("000001.SH"))
+        XCTAssertTrue(symbols.contains("HSI"))
+        XCTAssertTrue(symbols.contains("HSTECH"))
+        XCTAssertTrue(symbols.contains("563360.SH"))
+        XCTAssertFalse(symbols.contains("899050.BJ"))  // 北交所无 Longbridge
+        // stacks 在 ETF 之前：000001 应早于或等于 ETF（priority 空时 stacks 先）
+        let iSH = symbols.firstIndex(of: "000001.SH")!
+        let iETF = symbols.firstIndex(of: "563360.SH")!
+        XCTAssertLessThan(iSH, iETF)
     }
 
     func testPriorityBeatsIndexBoardCap() {
@@ -147,9 +188,24 @@ final class RealtimeMergeTests: XCTestCase {
         live.lastDone = 1
         var dead = LongbridgeQuote()
         dead.error = "x"
-        let map = ["000001.SH": live, "IXIC": dead]
+        let map = ["000001.SH": live, "IXIC": dead, "HSI": live]
         XCTAssertTrue(RealtimeMerge.hasAnyLive(symbols: ["000001.SH", "IXIC"], quotes: map))
-        XCTAssertFalse(RealtimeMerge.hasAnyLive(symbols: ["IXIC", "HSI"], quotes: map))
+        XCTAssertTrue(RealtimeMerge.hasAnyLive(symbols: ["HSI"], quotes: map))
+        XCTAssertFalse(RealtimeMerge.hasAnyLive(symbols: ["IXIC"], quotes: map))
         XCTAssertFalse(RealtimeMerge.hasAnyLive(symbols: ["399006.SZ"], quotes: map))
+    }
+
+    // MARK: sparklineCloses
+
+    func testSparklineClosesDownsample() {
+        let bars = (0..<300).map { i -> OHLCBar in
+            var b = OHLCBar()
+            b.close = Double(i)
+            return b
+        }
+        let pts = RealtimeMerge.sparklineCloses(from: bars, maxPoints: 120)
+        XCTAssertLessThanOrEqual(pts.count, 120)
+        XCTAssertFalse(pts.isEmpty)
+        XCTAssertEqual(pts.first, 0)
     }
 }
