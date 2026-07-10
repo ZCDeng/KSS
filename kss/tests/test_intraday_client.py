@@ -374,6 +374,8 @@ class _FakeSecurityQuote:
     def __init__(self, symbol, last_done, ts):
         self.symbol = symbol
         self.last_done = last_done
+        # 真 SDK 用 prev_close；旧 fake 用 prev_close_price — 适配层两者都认
+        self.prev_close = last_done
         self.prev_close_price = last_done
         self.open = last_done
         self.high = last_done

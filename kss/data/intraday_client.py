@@ -680,30 +680,47 @@ _LONGBRIDGE_QUOTE_COLUMNS: tuple[str, ...] = (
 )
 
 
+def _lb_num(value: Any) -> float | None:
+    """SDK 数值 → float（Decimal/int/str 可 JSON 序列化；None 保留）。"""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _longbridge_bar_to_dict(bar: Any) -> dict[str, Any]:
     """SDK Candlestick → canonical dict（getattr 兜底，容忍字段缺失）。"""
     return {
         "timestamp": getattr(bar, "timestamp", None),
-        "open": getattr(bar, "open", None),
-        "high": getattr(bar, "high", None),
-        "low": getattr(bar, "low", None),
-        "close": getattr(bar, "close", None),
-        "volume": getattr(bar, "volume", None),
-        "turnover": getattr(bar, "turnover", None),
+        "open": _lb_num(getattr(bar, "open", None)),
+        "high": _lb_num(getattr(bar, "high", None)),
+        "low": _lb_num(getattr(bar, "low", None)),
+        "close": _lb_num(getattr(bar, "close", None)),
+        "volume": _lb_num(getattr(bar, "volume", None)),
+        "turnover": _lb_num(getattr(bar, "turnover", None)),
     }
 
 
 def _longbridge_quote_to_dict(quote: Any) -> dict[str, Any]:
-    """SDK SecurityQuote → canonical dict（getattr 兜底）。"""
+    """SDK SecurityQuote → canonical dict（getattr 兜底）。
+
+    真 SDK 字段为 ``prev_close``（Decimal）；历史 fake/旧文档用 ``prev_close_price``。
+    数值统一 float，避免 bridge ``json.dumps`` 遇 Decimal 直接炸（实时整链失败）。
+    """
+    prev = getattr(quote, "prev_close", None)
+    if prev is None:
+        prev = getattr(quote, "prev_close_price", None)
     return {
         "symbol": getattr(quote, "symbol", None),
-        "last_done": getattr(quote, "last_done", None),
-        "prev_close": getattr(quote, "prev_close_price", None),
-        "open": getattr(quote, "open", None),
-        "high": getattr(quote, "high", None),
-        "low": getattr(quote, "low", None),
-        "volume": getattr(quote, "volume", None),
-        "turnover": getattr(quote, "turnover", None),
+        "last_done": _lb_num(getattr(quote, "last_done", None)),
+        "prev_close": _lb_num(prev),
+        "open": _lb_num(getattr(quote, "open", None)),
+        "high": _lb_num(getattr(quote, "high", None)),
+        "low": _lb_num(getattr(quote, "low", None)),
+        "volume": _lb_num(getattr(quote, "volume", None)),
+        "turnover": _lb_num(getattr(quote, "turnover", None)),
         "timestamp": getattr(quote, "timestamp", None),
         "trade_status": str(getattr(quote, "trade_status", "") or ""),
     }
