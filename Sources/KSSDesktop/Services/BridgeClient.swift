@@ -471,7 +471,15 @@ struct BridgeClient {
         guard var request = try? JSONSerialization.data(
             withJSONObject: ["cmd": cmd, "args": rest]) else { return nil }
         request.append(0x0A)
-        guard let respData = Self.unixSocketRoundtrip(path: socketPath, request: request, timeout: 3.0),
+        // Longbridge 首连/行情常 >3s；过短会超时回退 subprocess（冷启 SDK 更慢）。
+        let timeout: TimeInterval
+        switch cmd {
+        case "longbridge-quote", "intraday-snapshot", "intraday-bars", "trading-hours":
+            timeout = 20.0
+        default:
+            timeout = 3.0
+        }
+        guard let respData = Self.unixSocketRoundtrip(path: socketPath, request: request, timeout: timeout),
               let resp = try? JSONDecoder().decode(SidecarResponse.self, from: respData)
         else { return nil }   // 连不上/超时/响应不可解 → 回退 subprocess
         if resp.code == 0, let out = resp.stdout {
@@ -681,16 +689,54 @@ struct BridgeClient {
     /// 版本化信封两段解码（KTD3，可测 seam）：先探 schemaVersion，不匹配 throw
     /// `.schemaMismatch`（可读横幅）；缺字段视为 v0（旧/未包裹）；再解 `data` 为 T。
     static func decodeEnvelope<T: Decodable>(_ data: Data) throws -> T {
-        let probe = try? JSONDecoder().decode(SchemaProbe.self, from: data)
+        // 兼容 SDK/第三方往 stdout 夹带杂讯：取首个完整 JSON 对象再解码。
+        let jsonData = Self.extractJSONObject(from: data) ?? data
+        let probe = try? JSONDecoder().decode(SchemaProbe.self, from: jsonData)
         let version = probe?.schemaVersion ?? 0
         guard version == supportedSchemaVersion else {
             throw BridgeError.schemaMismatch(bridge: version, app: supportedSchemaVersion)
         }
         do {
-            return try JSONDecoder().decode(Envelope<T>.self, from: data).data
+            return try JSONDecoder().decode(Envelope<T>.self, from: jsonData).data
         } catch {
             throw BridgeError.invalidOutput
         }
+    }
+
+    /// 从可能含前缀/后缀杂讯的 stdout 中切出第一个顶层 `{...}` JSON 对象。
+    static func extractJSONObject(from data: Data) -> Data? {
+        guard let text = String(data: data, encoding: .utf8) else { return nil }
+        guard let start = text.firstIndex(of: "{") else { return nil }
+        var depth = 0
+        var inString = false
+        var escape = false
+        var i = start
+        while i < text.endIndex {
+            let ch = text[i]
+            if inString {
+                if escape {
+                    escape = false
+                } else if ch == "\\" {
+                    escape = true
+                } else if ch == "\"" {
+                    inString = false
+                }
+            } else {
+                switch ch {
+                case "\"": inString = true
+                case "{": depth += 1
+                case "}":
+                    depth -= 1
+                    if depth == 0 {
+                        let slice = text[start...i]
+                        return Data(slice.utf8)
+                    }
+                default: break
+                }
+            }
+            i = text.index(after: i)
+        }
+        return nil
     }
 
     /// dev-mode 判定：`KSS_PROJECT_ROOT` env 存在即 dev（build_and_run.sh 注入）。

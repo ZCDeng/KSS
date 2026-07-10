@@ -411,8 +411,10 @@ final class KSSStore: ObservableObject {
     /// 手动重试实时源（R4：avoid "未连接"状态永久滞留）。
     func retryRealtime() async {
         realtimeAuthFailed = false
-        // 清 coalesce，保证重试真正打到 bridge
-        lastDispatchCache = lastDispatchCache.filter { !$0.key.hasPrefix("longbridge-quote:") }
+        // 清 coalesce，保证重试真正打到 bridge（quote + bars）
+        lastDispatchCache = lastDispatchCache.filter {
+            !$0.key.hasPrefix("longbridge-quote:") && !$0.key.hasPrefix("intraday-bars:")
+        }
         await refreshRealtimeQuotes(symbols: nil)
     }
 

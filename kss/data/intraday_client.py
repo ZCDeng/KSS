@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -530,8 +531,10 @@ class LongbridgeProvider:
         try:
             from longbridge.openapi import Config, QuoteContext  # noqa: PLC0415
 
-            config = Config.from_apikey(*creds)
-            self._ctx = QuoteContext(config)
+            # SDK 建连时往 stdout 打权限表，污染 bridge JSON → App 解码失败。
+            with _suppress_stdio():
+                config = Config.from_apikey(*creds)
+                self._ctx = QuoteContext(config)
         except Exception as exc:  # noqa: BLE001 — 建连失败走 error，不抛
             self._ctx = None
             self._ctx_error = _classify_longbridge_error(exc)
@@ -614,7 +617,8 @@ class LongbridgeProvider:
         lb_symbol = _resolve_longbridge_symbol(symbol)
         count = 1000 if (start or end) else 240  # 近端窗口；PIT 回填非本源职责
         try:
-            bars = ctx.candlesticks(lb_symbol, period, count, self._no_adjust())
+            with _suppress_stdio():
+                bars = ctx.candlesticks(lb_symbol, period, count, self._no_adjust())
         except Exception as exc:  # noqa: BLE001 — 数据层不抛
             return FetchResult(
                 rows=[], raw_columns=(), source_asof_ts=None, status_code=None,
@@ -649,7 +653,8 @@ class LongbridgeProvider:
             )
         lb_symbol = _resolve_longbridge_symbol(symbol)
         try:
-            quotes = ctx.quote([lb_symbol])
+            with _suppress_stdio():
+                quotes = ctx.quote([lb_symbol])
         except Exception as exc:  # noqa: BLE001
             return FetchResult(
                 rows=[], raw_columns=(), source_asof_ts=None, status_code=None,
@@ -688,6 +693,35 @@ def _lb_num(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+@contextlib.contextmanager
+def _suppress_stdio():
+    """吞掉 longbridge SDK 写到 stdout 的权限表等杂讯（否则污染 bridge JSON）。
+
+    必须 dup2 到 OS fd=1：SDK 原生扩展不走 sys.stdout，仅重定向 Python 层无效。
+    """
+    import os
+    import sys
+
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    saved_fd = os.dup(1)
+    old_stdout = sys.stdout
+    try:
+        sys.stdout.flush()
+        os.dup2(devnull, 1)
+        sys.stdout = open(os.devnull, "w")  # noqa: SIM115 — 与 fd 对齐的 Python 层
+        yield
+    finally:
+        try:
+            sys.stdout.flush()
+            sys.stdout.close()
+        except Exception:  # noqa: BLE001
+            pass
+        os.dup2(saved_fd, 1)
+        os.close(saved_fd)
+        os.close(devnull)
+        sys.stdout = old_stdout
 
 
 def _longbridge_bar_to_dict(bar: Any) -> dict[str, Any]:
