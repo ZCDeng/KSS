@@ -34,11 +34,6 @@ enum KSSFont {
         .system(size: size, weight: weight, design: .serif)
     }
 
-    /// 主题感知标题字体：设计系统决定 serif / 默认 / 等宽。
-    static func title(_ size: CGFloat, _ weight: Font.Weight = .semibold, design: Font.Design) -> Font {
-        .system(size: size, weight: weight, design: design)
-    }
-
     /// HarmonyOS Sans SC Bold（打包进 app，AppDelegate 启动时注册）。大数字专用。
     static func harmonyNumber(_ size: CGFloat) -> Font {
         .custom("HarmonyOS_Sans_SC_Bold", size: size)

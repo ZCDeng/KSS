@@ -174,7 +174,7 @@ struct IntelView: View {
                     .font(KSSFont.themed(12, .bold, theme: theme))
                     .foregroundStyle(theme.accent)
                 Text("12 赛道 · 当日热点")
-                    .font(KSSFont.title(13, .bold, design: theme.titleDesign))
+                    .font(KSSFont.themed(13, .bold, theme: theme, design: theme.titleDesign))
                     .foregroundStyle(theme.textPrimary)
                 Spacer()
                 if store.intelPanoramaLoading {
@@ -1016,7 +1016,7 @@ struct IntelView: View {
                     .font(KSSFont.themed(12, .bold, theme: theme))
                     .foregroundStyle(theme.accent)
                 Text("今日要点 · \(track.name)")
-                    .font(KSSFont.title(14, .bold, design: theme.titleDesign))
+                    .font(KSSFont.themed(14, .bold, theme: theme, design: theme.titleDesign))
                     .foregroundStyle(theme.accent)
                 if let mode = state?.mode {
                     Text(mode == "pool" ? "改写池" : "列表提炼")
