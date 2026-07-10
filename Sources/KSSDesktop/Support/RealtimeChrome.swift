@@ -111,7 +111,8 @@ struct DailyFreshnessLabel: View {
 
     private func labelRow(tappable: Bool) -> some View {
         HStack(spacing: 4) {
-            if isRunning {
+            // 列表紧凑态避免 N 行 ProgressView 同时转；详情才显示 spinner
+            if isRunning && !compact {
                 ProgressView().controlSize(.mini)
             } else if status == .stale {
                 Image(systemName: "exclamationmark.triangle.fill")

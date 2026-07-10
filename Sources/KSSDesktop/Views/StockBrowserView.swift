@@ -116,45 +116,46 @@ struct StockBrowserView: View {
                         barDate: stock.latestDate,
                         referenceTradeDate: ref
                     )
-                    Button { onSelect(stock.symbol) } label: {
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack(spacing: 6) {
-                                Text(stock.name.isEmpty ? stock.symbol : stock.name)
-                                    .font(.system(size: 15, weight: .bold))
-                                    .foregroundStyle(isOn ? theme.accent : theme.textPrimary)
-                                    .lineLimit(1)
-                                if watchlist.contains(stock.symbol) {
-                                    Image(systemName: "star.fill")
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(theme.ma5)
+                    // 行选与陈旧「更新」必须是兄弟 hit target：外层 Button 包住内层 Button
+                    // 时 macOS List 会吞掉内层点击（只触发 onSelect）。
+                    HStack(alignment: .center, spacing: 6) {
+                        Button { onSelect(stock.symbol) } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 6) {
+                                    Text(stock.name.isEmpty ? stock.symbol : stock.name)
+                                        .font(.system(size: 15, weight: .bold))
+                                        .foregroundStyle(isOn ? theme.accent : theme.textPrimary)
+                                        .lineLimit(1)
+                                    if watchlist.contains(stock.symbol) {
+                                        Image(systemName: "star.fill")
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(theme.ma5)
+                                    }
+                                    Spacer()
+                                    Text(KSSFormat.pctPoints(stock.pctChange))
+                                        .font(.system(size: 12.5, weight: .bold, design: .monospaced))
+                                        .foregroundStyle(theme.signColor(stock.pctChange))
                                 }
-                                Spacer()
-                                Text(KSSFormat.pctPoints(stock.pctChange))
-                                    .font(.system(size: 12.5, weight: .bold, design: .monospaced))
-                                    .foregroundStyle(theme.signColor(stock.pctChange))
-                            }
-                            HStack(spacing: 6) {
                                 Text("\(stock.symbol) · \(stock.industry)")
                                     .font(.system(size: 11.5, design: .monospaced))
                                     .foregroundStyle(theme.textSecondary)
                                     .lineLimit(1)
-                                Spacer(minLength: 4)
-                                // 日线末日期 / 陈旧点（陈旧可点 → 确认日更）
-                                DailyFreshnessLabel(
-                                    barDate: stock.latestDate,
-                                    referenceTradeDate: ref,
-                                    compact: true,
-                                    isRunning: isRunningTask,
-                                    onRequestUpdate: { showUpdateCsConfirm = true }
-                                )
                             }
+                            .padding(.vertical, 2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                            .opacity(barFresh == .stale ? 0.95 : 1)
                         }
-                        .padding(.vertical, 2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                        .opacity(barFresh == .stale ? 0.95 : 1)
+                        .buttonStyle(.plain)
+                        // 日线末日期 / 陈旧点（陈旧可点 → 确认日更）；独立 Button 不嵌套
+                        DailyFreshnessLabel(
+                            barDate: stock.latestDate,
+                            referenceTradeDate: ref,
+                            compact: true,
+                            isRunning: isRunningTask,
+                            onRequestUpdate: { showUpdateCsConfirm = true }
+                        )
                     }
-                    .buttonStyle(.plain)
                     .listRowBackground(
                         isOn
                             ? theme.accent.opacity(0.16)

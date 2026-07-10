@@ -22,6 +22,9 @@ final class KSSStore: ObservableObject {
     // 「运行中」过早清零——只有全部完成才回到 idle。
     @Published private(set) var runningTasks = 0
     var isRunningTask: Bool { runningTasks > 0 }
+    /// 进行中的形式任务 id（`KSSTask.rawValue`）；用于日线徽标只绑 update-cs-data，避免其它任务冒充「日线更新中」。
+    @Published private(set) var activeFormalTaskId: String?
+    var isUpdatingCsData: Bool { isRunningTask && activeFormalTaskId == KSSTask.updateCsData.rawValue }
     @Published var taskResults: [TaskRunResult] = []
     @Published var scheduledJobs: [ScheduledJob] = []
     // 分类展示顺序由 bridge cron-list 下发(清单单一真源,U5);默认值仅作首帧/失败兜底。
@@ -890,19 +893,29 @@ final class KSSStore: ObservableObject {
             return
         }
         runningTasks += 1
+        activeFormalTaskId = task.rawValue
         errorMessage = nil
+        defer {
+            if activeFormalTaskId == task.rawValue { activeFormalTaskId = nil }
+            runningTasks -= 1
+        }
         do {
             let result = try await Task.detached {
                 try bridge.runTask(task)
             }.value
             taskResults.insert(result, at: 0)
-            if result.status != "failed" {
+            if result.status == "failed" {
+                // R6：自选一键日更与 Runbook 共用此通道；失败须可感知（对齐 generateReview）。
+                let summary = result.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+                errorMessage = summary.isEmpty
+                    ? "任务失败：\(task.title)"
+                    : "任务失败：\(task.title) — \(summary)"
+            } else {
                 await loadSnapshot()
             }
         } catch {
             errorMessage = error.localizedDescription
         }
-        runningTasks -= 1
     }
 
     /// U5: 加自选即时生成该股复盘，完成后刷新 snapshot 使个股复盘列表即时纳入。
