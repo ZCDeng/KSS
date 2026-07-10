@@ -52,8 +52,11 @@ struct DashboardView: View {
                         MarketStripRow(strip: strip, quotes: realtimeQuotes)
                     }
 
-                    // 第二行：指数（上证 / 纳斯达克 / 恒生）
-                    if let indices = snapshot.marketStrip?.indices, !indices.isEmpty {
+                    // 第二行：三列指数堆叠（主板 / 成长 / 港股）+ 分时 sparkline
+                    if let stacks = snapshot.marketStrip?.indexStacks, !stacks.isEmpty {
+                        IndexStackRow(stacks: stacks, quotes: realtimeQuotes)
+                    } else if let indices = snapshot.marketStrip?.indices, !indices.isEmpty {
+                        // 兼容旧 strip（无 indexStacks）
                         MarketIndexRow(indices: indices, quotes: realtimeQuotes)
                     }
 
@@ -991,7 +994,7 @@ struct OvernightUSMarquee: View {
     }
 }
 
-/// 总览第二行：上证 / 纳斯达克 / 恒生 指数当日。
+/// 总览第二行（旧）：上证 / 纳斯达克 / 恒生 — 无 stacks 时回退。
 struct MarketIndexRow: View {
     @Environment(\.kssTheme) private var theme
     var indices: [IndexQuote]
@@ -1042,6 +1045,130 @@ struct MarketIndexRow: View {
     private func dateLabel(_ raw: String?) -> String {
         guard let raw, raw.count == 8 else { return raw ?? "" }
         return "\(raw.prefix(4))-\(raw.dropFirst(4).prefix(2))-\(raw.suffix(2))"
+    }
+}
+
+/// 三列指数堆叠：自动 4s 轮播 + 轻点切下一张；各自独立。
+struct IndexStackRow: View {
+    var stacks: [IndexStackColumn]
+    var quotes: [String: LongbridgeQuote] = [:]
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ForEach(stacks) { col in
+                IndexStackColumnView(column: col, quotes: quotes)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+}
+
+struct IndexStackColumnView: View {
+    @Environment(\.kssTheme) private var theme
+    var column: IndexStackColumn
+    var quotes: [String: LongbridgeQuote] = [:]
+
+    @State private var page = 0
+    private let interval: TimeInterval = 4
+
+    private var items: [IndexStackItem] { column.items }
+    private var current: IndexStackItem? {
+        guard !items.isEmpty else { return nil }
+        return items[page % items.count]
+    }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            // 背后叠层提示
+            if items.count > 1 {
+                RoundedRectangle(cornerRadius: KSSTheme.shapeM)
+                    .fill(theme.surfaceRaised)
+                    .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeM).stroke(theme.hairline))
+                    .offset(x: 4, y: 6)
+                    .opacity(0.55)
+                    .padding(.trailing, 4)
+            }
+            if let item = current {
+                stackCard(item)
+            } else {
+                Text("—")
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(maxWidth: .infinity, minHeight: 88)
+                    .kssCard(padding: 14)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { advance() }
+        .onReceive(Timer.publish(every: interval, on: .main, in: .common).autoconnect()) { _ in
+            guard items.count > 1 else { return }
+            advance()
+        }
+        .onChange(of: column.id) { _, _ in page = 0 }
+        .onChange(of: items.count) { _, _ in page = 0 }
+    }
+
+    private func advance() {
+        guard !items.isEmpty else { return }
+        withAnimation(.easeInOut(duration: 0.22)) {
+            page = (page + 1) % items.count
+        }
+    }
+
+    private func stackCard(_ item: IndexStackItem) -> some View {
+        let live = RealtimeMerge.applyLive(
+            close: item.close,
+            pct: item.pct,
+            quote: quotes[item.code.uppercased()]
+        )
+        let spark = (item.sparkline ?? []).map(\.c)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(item.name)
+                    .font(.system(size: 13.5, weight: .bold))
+                    .foregroundStyle(theme.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if items.count > 1 {
+                    Text("\(page % items.count + 1)/\(items.count)")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                Text(dateLabel(item.date))
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary)
+                    .lineLimit(1)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                LivePriceText(
+                    value: live.close,
+                    text: String(format: "%.2f", live.close),
+                    baseColor: theme.signColor(live.pct),
+                    isLive: live.isLive,
+                    font: KSSFont.harmonyNumber(22)
+                )
+                .lineLimit(1)
+                LivePriceText(
+                    value: live.pct,
+                    text: String(format: "%+.2f%%", live.pct),
+                    baseColor: theme.signColor(live.pct),
+                    isLive: live.isLive,
+                    font: .system(size: 12, weight: .semibold, design: .monospaced)
+                )
+                .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            IntradaySparkline(points: spark, height: 36)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .kssCard(padding: 14)
+    }
+
+    private func dateLabel(_ raw: String?) -> String {
+        guard let raw, !raw.isEmpty else { return "" }
+        if raw.count == 8 {
+            return "\(raw.prefix(4))-\(raw.dropFirst(4).prefix(2))-\(raw.suffix(2))"
+        }
+        return raw
     }
 }
 
