@@ -87,7 +87,7 @@ struct NewsDigestView: View {
 
     private func placeholder(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 14))
+            .font(KSSFont.themed(14, theme: theme))
             .foregroundStyle(theme.textSecondary)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -117,17 +117,17 @@ struct NewsDigestIndexRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: "newspaper.fill")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(KSSFont.themed(10, .semibold, theme: theme))
                     .foregroundStyle(theme.accent)
                 Text(dateLabel)
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundStyle(theme.textSecondary)
             }
             Text("舆情热点")
-                .font(.system(size: 15, weight: .bold))
+                .font(KSSFont.themed(15, .bold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
             Text(entry.scene)
-                .font(.system(size: 12.5))
+                .font(KSSFont.themed(12.5, theme: theme))
                 .foregroundStyle(theme.textSecondary)
                 .lineLimit(1)
         }
@@ -194,7 +194,7 @@ struct NewsDigestPanel: View {
             HStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 2).fill(theme.accent).frame(width: 4, height: 16)
                 Text("\(icon) \(title)")
-                    .font(KSSFont.serif(16, .semibold))
+                    .font(KSSFont.themed(16, .semibold, theme: theme, design: .serif))
                     .foregroundStyle(theme.textPrimary)
             }
             content()
@@ -203,7 +203,7 @@ struct NewsDigestPanel: View {
 
     private func emptyHint(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 12.5))
+            .font(KSSFont.themed(12.5, theme: theme))
             .foregroundStyle(theme.textSecondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .kssCard(padding: 14)
@@ -238,7 +238,7 @@ struct NewsDirectionCard: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(direction.label)
-                    .font(.system(size: 15, weight: .bold))
+                    .font(KSSFont.themed(15, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
                 sentimentBadge
                 Spacer(minLength: 4)
@@ -246,7 +246,7 @@ struct NewsDirectionCard: View {
 
             if let heat = direction.heatLine, !heat.isEmpty {
                 Text(newsAttributed(heat))
-                    .font(.system(size: 12.5))
+                    .font(KSSFont.themed(12.5, theme: theme))
                     .foregroundStyle(theme.textBody)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -259,9 +259,9 @@ struct NewsDirectionCard: View {
                 Button { withAnimation(.easeInOut(duration: 0.18)) { showPosts.toggle() } } label: {
                     HStack(spacing: 4) {
                         Image(systemName: showPosts ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(KSSFont.themed(9, .bold, theme: theme))
                         Text("信息源帖 \(posts.count)")
-                            .font(.system(size: 11.5, weight: .semibold))
+                            .font(KSSFont.themed(11.5, .semibold, theme: theme))
                     }
                     .foregroundStyle(theme.accent)
                 }
@@ -337,11 +337,11 @@ struct NewsDirectionCard: View {
     private func stockRow(_ title: String, _ stocks: [NewsStock], tint: Color) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(title)
-                .font(.system(size: 10.5, weight: .bold))
+                .font(KSSFont.themed(10.5, .bold, theme: theme))
                 .foregroundStyle(tint)
                 .frame(width: 40, alignment: .leading)
             Text(stocks.map { "\($0.name)(\($0.symbol))" }.joined(separator: " · "))
-                .font(.system(size: 12))
+                .font(KSSFont.themed(12, theme: theme))
                 .foregroundStyle(theme.textBody)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -357,18 +357,18 @@ struct NewsPostLine: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(post.source ?? "—")
-                .font(.system(size: 10.5, weight: .semibold))
+                .font(KSSFont.themed(10.5, .semibold, theme: theme))
                 .foregroundStyle(theme.textSecondary)
                 .frame(width: 52, alignment: .leading)
                 .lineLimit(1)
             if let urlString = post.url, let url = URL(string: urlString) {
                 Link(post.title, destination: url)
-                    .font(.system(size: 11.5))
+                    .font(KSSFont.themed(11.5, theme: theme))
                     .foregroundStyle(theme.accent)
                     .lineLimit(2)
             } else {
                 Text(post.title)
-                    .font(.system(size: 11.5))
+                    .font(KSSFont.themed(11.5, theme: theme))
                     .foregroundStyle(theme.textBody)
                     .lineLimit(2)
             }
@@ -385,16 +385,16 @@ struct NewsCatalystRow: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("[\(catalyst.type)]")
-                    .font(.system(size: 10.5, weight: .bold))
+                    .font(KSSFont.themed(10.5, .bold, theme: theme))
                     .foregroundStyle(theme.accent)
                 if let urlString = catalyst.url, let url = URL(string: urlString) {
                     Link(catalyst.title, destination: url)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(KSSFont.themed(13, .semibold, theme: theme))
                         .foregroundStyle(theme.textPrimary)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text(catalyst.title)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(KSSFont.themed(13, .semibold, theme: theme))
                         .foregroundStyle(theme.textPrimary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -403,12 +403,12 @@ struct NewsCatalystRow: View {
             HStack(spacing: 8) {
                 if let source = catalyst.source, !source.isEmpty {
                     Text("— \(source)")
-                        .font(.system(size: 11))
+                        .font(KSSFont.themed(11, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                 }
                 if catalyst.attachStocks == false {
                     Text("不挂个股")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(KSSFont.themed(10, .semibold, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(theme.surfaceRaised, in: Capsule())

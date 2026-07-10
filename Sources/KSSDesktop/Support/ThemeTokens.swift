@@ -39,6 +39,9 @@ struct KSSThemeTokens: Equatable {
     let cardRadius: CGFloat
     let chipRadius: CGFloat
     let titleDesign: Font.Design
+    /// nil = 8 套经典主题,沿用系统字体;非 nil(如 "Chirp")时 `KSSFont.themed` 走自定义字体 + CJK 级联。
+    let nativeFontFamily: String?
+    let nativeCJKFallback: String?
     let shadowOpacity: Double
     let shadowRadius: CGFloat
     let shadowY: CGFloat
@@ -82,6 +85,8 @@ extension KSSPalette {
             cardRadius: cardRadius,
             chipRadius: chipRadius,
             titleDesign: typography.titleDesign,
+            nativeFontFamily: typography.nativeFontFamily,
+            nativeCJKFallback: typography.nativeCJKFallback,
             shadowOpacity: elevation.opacity,
             shadowRadius: elevation.radius,
             shadowY: elevation.y,

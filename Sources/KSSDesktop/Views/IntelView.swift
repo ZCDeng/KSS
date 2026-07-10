@@ -44,8 +44,8 @@ struct IntelView: View {
                 statsRefreshRow
                 if let err = store.errorMessage {
                     HStack(spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 12))
-                        Text(err).font(.system(size: 12.5)).lineLimit(4)
+                        Image(systemName: "exclamationmark.triangle.fill").font(KSSFont.themed(12, theme: theme))
+                        Text(err).font(KSSFont.themed(12.5, theme: theme)).lineLimit(4)
                     }
                     .foregroundStyle(theme.down)
                     .padding(10)
@@ -111,7 +111,7 @@ struct IntelView: View {
         VStack(spacing: 14) {
             ProgressView().scaleEffect(1.2)
             Text("正在抓取 12 赛道 RSS 资讯…")
-                .font(.system(size: 13.5, weight: .medium))
+                .font(KSSFont.themed(13.5, .medium, theme: theme))
                 .foregroundStyle(theme.textSecondary)
             Text("约 20–40 秒，108 个公开源并发获取")
                 .font(.system(size: 11.5, design: .monospaced))
@@ -138,9 +138,9 @@ struct IntelView: View {
                         ProgressView().scaleEffect(0.75)
                     }
                     Image(systemName: store.isLoadingIntel ? "" : "arrow.clockwise")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(KSSFont.themed(11, .bold, theme: theme))
                     Text(store.isLoadingIntel ? "抓取中…" : "刷新")
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(KSSFont.themed(12.5, .semibold, theme: theme))
                 }
                 .foregroundStyle(store.isLoadingIntel ? theme.textSecondary : theme.accent)
                 .padding(.horizontal, 12).padding(.vertical, 6)
@@ -171,16 +171,16 @@ struct IntelView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "globe.asia.australia.fill")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(KSSFont.themed(12, .bold, theme: theme))
                     .foregroundStyle(theme.accent)
                 Text("12 赛道 · 当日热点")
-                    .font(KSSFont.title(13, .bold, design: theme.titleDesign))
+                    .font(KSSFont.themed(13, .bold, theme: theme, design: theme.titleDesign))
                     .foregroundStyle(theme.textPrimary)
                 Spacer()
                 if store.intelPanoramaLoading {
                     ProgressView().scaleEffect(0.65)
                     Text("生成中…")
-                        .font(.system(size: 11))
+                        .font(KSSFont.themed(11, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                 } else if !body.isEmpty {
                     Button {
@@ -189,7 +189,7 @@ struct IntelView: View {
                         }
                     } label: {
                         Text(panoramaExpanded ? "收起" : "展开")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(KSSFont.themed(11, .semibold, theme: theme))
                             .foregroundStyle(theme.accent)
                     }
                     .buttonStyle(.plain)
@@ -197,7 +197,7 @@ struct IntelView: View {
                         Task { await store.generateIntelPanorama() }
                     } label: {
                         Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(KSSFont.themed(11, .bold, theme: theme))
                             .foregroundStyle(theme.textSecondary)
                     }
                     .buttonStyle(.plain)
@@ -207,28 +207,28 @@ struct IntelView: View {
 
             if store.intelPanoramaLoading && body.isEmpty {
                 Text("一键提炼全部要点时将生成跨赛道全景…")
-                    .font(.system(size: 12.5))
+                    .font(KSSFont.themed(12.5, theme: theme))
                     .foregroundStyle(theme.textSecondary)
             } else if let err = pan?.error, body.isEmpty {
                 Text("全景生成失败：\(err)")
-                    .font(.system(size: 12.5))
+                    .font(KSSFont.themed(12.5, theme: theme))
                     .foregroundStyle(theme.down)
                     .lineLimit(2)
                 Button {
                     Task { await store.generateIntelPanorama() }
                 } label: {
                     Text("重试")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(KSSFont.themed(12, .semibold, theme: theme))
                         .foregroundStyle(theme.accent)
                 }
                 .buttonStyle(.plain)
             } else if body.isEmpty {
                 Text("点右上角「一键提炼全部要点」生成 12 赛道全景热点")
-                    .font(.system(size: 12.5))
+                    .font(KSSFont.themed(12.5, theme: theme))
                     .foregroundStyle(theme.textSecondary)
             } else {
                 Text(body)
-                    .font(.system(size: 13))
+                    .font(KSSFont.themed(13, theme: theme))
                     .foregroundStyle(theme.textBody)
                     .lineLimit(panoramaExpanded ? nil : 2)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -268,9 +268,9 @@ struct IntelView: View {
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "arrow.counterclockwise")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(KSSFont.themed(11, .bold, theme: theme))
                     Text("重试 \(bulk.failedCount) 个失败赛道")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(KSSFont.themed(12, .semibold, theme: theme))
                         .lineLimit(1).fixedSize()
                 }
                 .foregroundStyle(theme.ma5)
@@ -289,7 +289,7 @@ struct IntelView: View {
                     store.cancelBulkDigest()
                 } label: {
                     Text("取消")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(KSSFont.themed(11, .medium, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                 }
                 .buttonStyle(.plain)
@@ -300,9 +300,9 @@ struct IntelView: View {
                 Task { await store.summarizeAllIntelTracks() }
             } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: "sparkles").font(.system(size: 11, weight: .bold))
+                    Image(systemName: "sparkles").font(KSSFont.themed(11, .bold, theme: theme))
                     Text("一键提炼全部要点")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(KSSFont.themed(12, .semibold, theme: theme))
                         .lineLimit(1).fixedSize()
                 }
                 .foregroundStyle(theme.accent)
@@ -319,13 +319,13 @@ struct IntelView: View {
         let bulk = store.bulkDigest
         HStack(spacing: 8) {
             Image(systemName: bulk.failedCount > 0 ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
-                .font(.system(size: 12))
+                .font(KSSFont.themed(12, theme: theme))
             if bulk.running {
                 Text("正在提炼 \(bulk.done)/\(bulk.total)...")
-                    .font(.system(size: 12))
+                    .font(KSSFont.themed(12, theme: theme))
             } else {
                 Text("完成 \(bulk.done)/\(bulk.total) · 失败 \(bulk.failedCount)")
-                    .font(.system(size: 12))
+                    .font(KSSFont.themed(12, theme: theme))
             }
         }
         .foregroundStyle(bulk.failedCount > 0 ? theme.ma5 : theme.accent)
@@ -361,7 +361,7 @@ struct IntelView: View {
         return HStack(spacing: 5) {
             Circle().fill(pillColor).frame(width: 7, height: 7)
             Text(track.name)
-                .font(.system(size: 12, weight: isActive ? .semibold : .medium))
+                .font(KSSFont.themed(12, isActive ? .semibold : .medium, theme: theme))
             Text("\(track.items?.count ?? 0)")
                 .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                 .foregroundStyle(isActive ? theme.textSecondary : theme.textSecondary.opacity(0.6))
@@ -390,7 +390,7 @@ struct IntelView: View {
                 RoundedRectangle(cornerRadius: 2)
                     .fill(pillColor).frame(width: 3, height: 14)
                 Text(cur.name)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(KSSFont.themed(13, .semibold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
                 Spacer()
                 Text("\(items.count)")
@@ -402,7 +402,7 @@ struct IntelView: View {
 
             if items.isEmpty {
                 Text("近 \(digest?.recentDays ?? 7) 天该赛道暂无更新")
-                    .font(.system(size: 13))
+                    .font(KSSFont.themed(13, theme: theme))
                     .foregroundStyle(theme.textSecondary.opacity(0.7))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(.top, 40)
@@ -428,7 +428,7 @@ struct IntelView: View {
                 // header sticky-ish top
                 VStack(alignment: .leading, spacing: 0) {
                     Text(item.title)
-                        .font(.system(size: 22, weight: .bold))
+                        .font(KSSFont.themed(22, .bold, theme: theme))
                         .foregroundStyle(theme.textPrimary)
                         .lineSpacing(4)
                         .fixedSize(horizontal: false, vertical: true)
@@ -437,7 +437,7 @@ struct IntelView: View {
                     HStack(spacing: 10) {
                         sourceFavicon(item: item, size: 16)
                         if let s = item.source {
-                            Text(s).font(.system(size: 12.5, weight: .semibold))
+                            Text(s).font(KSSFont.themed(12.5, .semibold, theme: theme))
                         }
                         if let t = item.time {
                             Text("·").foregroundStyle(theme.textSecondary.opacity(0.4))
@@ -450,7 +450,7 @@ struct IntelView: View {
                         if let urlString = item.url, let url = URL(string: urlString) {
                             Link(destination: url) {
                                 Label("外链打开", systemImage: "arrow.up.right.square")
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(KSSFont.themed(12, .semibold, theme: theme))
                             }
                             .foregroundStyle(theme.accent)
                         }
@@ -492,14 +492,14 @@ struct IntelView: View {
                         .fill(theme.surfaceContainer)
                         .frame(width: 64, height: 64)
                     Image(systemName: "doc.text.magnifyingglass")
-                        .font(.system(size: 28, weight: .medium))
+                        .font(KSSFont.themed(28, .medium, theme: theme))
                         .foregroundStyle(theme.textSecondary.opacity(0.55))
                 }
                 Text("选择左侧一条资讯开始阅读")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(KSSFont.themed(14, .medium, theme: theme))
                     .foregroundStyle(theme.textSecondary)
                 Text("投研改写 · 中文改写 · 原文")
-                    .font(.system(size: 12.2))
+                    .font(KSSFont.themed(12.2, theme: theme))
                     .foregroundStyle(theme.textSecondary.opacity(0.65))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -516,7 +516,7 @@ struct IntelView: View {
                     withAnimation(.easeOut(duration: 0.15)) { readerTab = tab }
                 } label: {
                     Text(tab.label)
-                        .font(.system(size: 13, weight: readerTab == tab ? .semibold : .medium))
+                        .font(KSSFont.themed(13, readerTab == tab ? .semibold : .medium, theme: theme))
                         .foregroundStyle(readerTab == tab ? theme.textPrimary : theme.textSecondary)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
@@ -575,7 +575,7 @@ struct IntelView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Text("原文")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(KSSFont.themed(12, .bold, theme: theme))
                 Text(bodyModeLabel(bodyMode))
                     .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                     .foregroundStyle(theme.textSecondary)
@@ -585,21 +585,21 @@ struct IntelView: View {
             Group {
                 if let body = article?.body, !body.isEmpty {
                     Text(body)
-                        .font(.system(size: 16.5))
+                        .font(KSSFont.themed(16.5, theme: theme))
                         .foregroundStyle(theme.textBody)
                         .lineSpacing(16.5 * 0.88)
                         .fixedSize(horizontal: false, vertical: true)
                 } else if let sum = item.summary, !sum.isEmpty {
                     Text(sum)
-                        .font(.system(size: 16.5))
+                        .font(KSSFont.themed(16.5, theme: theme))
                         .foregroundStyle(theme.textBody)
                         .lineSpacing(16.5 * 0.88)
                     Text("全文抓取失败或未完成，以上为 RSS 摘要")
-                        .font(.system(size: 12))
+                        .font(KSSFont.themed(12, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                 } else {
                     Text("暂无正文，可尝试外链打开")
-                        .font(.system(size: 14))
+                        .font(KSSFont.themed(14, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                 }
             }
@@ -630,7 +630,7 @@ struct IntelView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
                 Text(title)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(KSSFont.themed(13, .bold, theme: theme))
                     .foregroundStyle(isChinese
                         ? Color(red: 0.48, green: 0.39, blue: 0.18) // qmreader amber-ish
                         : theme.accent)
@@ -648,7 +648,7 @@ struct IntelView: View {
                         }
                     } label: {
                         Label("重新生成", systemImage: "arrow.clockwise")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(KSSFont.themed(12, .semibold, theme: theme))
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(theme.accent)
@@ -659,7 +659,7 @@ struct IntelView: View {
                 HStack(spacing: 8) {
                     ProgressView().scaleEffect(0.85)
                     Text(isChinese ? "正在生成中文改写…" : "正在生成投研改写…")
-                        .font(.system(size: 13))
+                        .font(KSSFont.themed(13, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                 }
                 .padding(.vertical, 24)
@@ -678,9 +678,9 @@ struct IntelView: View {
                 }
             } else if status == "failed" {
                 HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 12))
+                    Image(systemName: "exclamationmark.triangle.fill").font(KSSFont.themed(12, theme: theme))
                     Text(rw?.error ?? "生成失败")
-                        .font(.system(size: 12.5))
+                        .font(KSSFont.themed(12.5, theme: theme))
                         .lineLimit(4)
                 }
                 .foregroundStyle(theme.down)
@@ -693,7 +693,7 @@ struct IntelView: View {
                     }
                 } label: {
                     Label("重试", systemImage: "arrow.clockwise")
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(KSSFont.themed(12.5, .semibold, theme: theme))
                         .foregroundStyle(theme.accent)
                         .padding(.horizontal, 12).padding(.vertical, 7)
                         .background(theme.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
@@ -702,7 +702,7 @@ struct IntelView: View {
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(emptyHint)
-                        .font(.system(size: 13.5))
+                        .font(KSSFont.themed(13.5, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                     if store.hasLLMCredentials {
@@ -715,7 +715,7 @@ struct IntelView: View {
                             }
                         } label: {
                             Label(generateLabel, systemImage: "sparkles")
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(KSSFont.themed(13, .semibold, theme: theme))
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 14).padding(.vertical, 8)
                                 .background(theme.accent, in: RoundedRectangle(cornerRadius: 8))
@@ -723,7 +723,7 @@ struct IntelView: View {
                         .buttonStyle(.plain)
                     } else {
                         Text("未接入 AI — 前往设置")
-                            .font(.system(size: 12))
+                            .font(KSSFont.themed(12, theme: theme))
                             .foregroundStyle(theme.ma5)
                     }
                 }
@@ -744,7 +744,7 @@ struct IntelView: View {
     /// 正文阅读样式（16.5 / ~1.88 行距）；支持 **加粗**，不显示 * 号。
     private func readingBodyText(_ text: String) -> some View {
         Text(attributedReading(text))
-            .font(.system(size: 16.5))
+            .font(KSSFont.themed(16.5, theme: theme))
             .foregroundStyle(theme.textBody)
             .lineSpacing(16.5 * 0.88)
             .fixedSize(horizontal: false, vertical: true)
@@ -790,7 +790,7 @@ struct IntelView: View {
                 switch block {
                 case .heading(let title):
                     Text(title)
-                        .font(.system(size: 13, weight: .bold))
+                        .font(KSSFont.themed(13, .bold, theme: theme))
                         .foregroundStyle(theme.accent)
                         .tracking(0.3)
                         .padding(.top, 4)
@@ -818,7 +818,7 @@ struct IntelView: View {
                     if !body.isEmpty {
                         VStack(alignment: .leading, spacing: 10) {
                             Text(key)
-                                .font(.system(size: 13, weight: .bold))
+                                .font(KSSFont.themed(13, .bold, theme: theme))
                                 .foregroundStyle(theme.accent)
                                 .tracking(0.3)
                             sectionBodyLines(body)
@@ -965,7 +965,7 @@ struct IntelView: View {
                         img.resizable().scaledToFill()
                     default:
                         Text(letter)
-                            .font(.system(size: size * 0.48, weight: .bold))
+                            .font(KSSFont.themed(size * 0.48, .bold, theme: theme))
                             .foregroundStyle(theme.textSecondary)
                     }
                 }
@@ -973,7 +973,7 @@ struct IntelView: View {
                 .clipShape(RoundedRectangle(cornerRadius: size * 0.28))
             } else {
                 Text(letter)
-                    .font(.system(size: size * 0.48, weight: .bold))
+                    .font(KSSFont.themed(size * 0.48, .bold, theme: theme))
                     .foregroundStyle(theme.textSecondary)
             }
         }
@@ -1013,10 +1013,10 @@ struct IntelView: View {
             // header：标题左，操作/折叠右上
             HStack(spacing: 8) {
                 Image(systemName: "lightbulb.fill")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(KSSFont.themed(12, .bold, theme: theme))
                     .foregroundStyle(theme.accent)
                 Text("今日要点 · \(track.name)")
-                    .font(KSSFont.title(14, .bold, design: theme.titleDesign))
+                    .font(KSSFont.themed(14, .bold, theme: theme, design: theme.titleDesign))
                     .foregroundStyle(theme.accent)
                 if let mode = state?.mode {
                     Text(mode == "pool" ? "改写池" : "列表提炼")
@@ -1027,7 +1027,7 @@ struct IntelView: View {
                 }
                 if !digestExpanded, hasBody {
                     Text(bodyText.replacingOccurrences(of: "\n", with: " · "))
-                        .font(.system(size: 12))
+                        .font(KSSFont.themed(12, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                 }
@@ -1039,7 +1039,7 @@ struct IntelView: View {
                 }
                 if isSaved {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 12))
+                        .font(KSSFont.themed(12, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                         .help("已存入沉淀")
                 }
@@ -1048,7 +1048,7 @@ struct IntelView: View {
                         Task { await store.summarizeIntelTrack(track.key, name: track.name, items: items) }
                     } label: {
                         Image(systemName: hasBody ? "arrow.clockwise" : "sparkles")
-                            .font(.system(size: 12, weight: .bold))
+                            .font(KSSFont.themed(12, .bold, theme: theme))
                             .foregroundStyle(theme.accent)
                     }
                     .buttonStyle(.plain)
@@ -1069,7 +1069,7 @@ struct IntelView: View {
                         }
                     } label: {
                         Image(systemName: "bookmark")
-                            .font(.system(size: 12, weight: .bold))
+                            .font(KSSFont.themed(12, .bold, theme: theme))
                             .foregroundStyle(theme.textSecondary)
                     }
                     .buttonStyle(.plain)
@@ -1083,9 +1083,9 @@ struct IntelView: View {
                     } label: {
                         HStack(spacing: 3) {
                             Text(digestExpanded ? "收起" : "展开")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(KSSFont.themed(11, .semibold, theme: theme))
                             Image(systemName: digestExpanded ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 10, weight: .bold))
+                                .font(KSSFont.themed(10, .bold, theme: theme))
                         }
                         .foregroundStyle(theme.accent)
                     }
@@ -1097,7 +1097,7 @@ struct IntelView: View {
             if digestExpanded {
                 if let err = state?.error, bodyText.isEmpty, !isLoading {
                     Text("提炼失败：\(err)")
-                        .font(.system(size: 12.5))
+                        .font(KSSFont.themed(12.5, theme: theme))
                         .foregroundStyle(theme.down)
                         .lineLimit(3)
                 } else if hasBody {
@@ -1116,29 +1116,29 @@ struct IntelView: View {
                     }
                     if let err = state?.error {
                         Text("最近一次重提失败：\(err)")
-                            .font(.system(size: 11))
+                            .font(KSSFont.themed(11, theme: theme))
                             .foregroundStyle(theme.down)
                             .lineLimit(2)
                     }
                 } else if isLoading {
                     Text("AI 正在读 \(min(items.count, 25)) 条资讯…")
-                        .font(.system(size: 12.5))
+                        .font(KSSFont.themed(12.5, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                 } else if state?.skipped == true {
                     Text("该赛道资讯过少，跳过提炼")
-                        .font(.system(size: 12.5))
+                        .font(KSSFont.themed(12.5, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                 } else if state != nil {
                     Text("未生成要点正文，可点右上角重试")
-                        .font(.system(size: 12.5))
+                        .font(KSSFont.themed(12.5, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                 } else if isNeedKey {
                     Text("未接入 AI — 前往设置")
-                        .font(.system(size: 12.5))
+                        .font(KSSFont.themed(12.5, theme: theme))
                         .foregroundStyle(theme.ma5)
                 } else {
                     Text("点右上角 ✨ 提炼今日要点")
-                        .font(.system(size: 12.5))
+                        .font(KSSFont.themed(12.5, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                 }
             }
@@ -1186,12 +1186,12 @@ struct IntelView: View {
                             return s
                         }()
                         if bullet {
-                            Text("•").font(.system(size: 12, weight: .bold)).foregroundStyle(theme.accent)
+                            Text("•").font(KSSFont.themed(12, .bold, theme: theme)).foregroundStyle(theme.accent)
                         } else {
-                            Text("•").font(.system(size: 12, weight: .bold)).foregroundStyle(theme.accent.opacity(0.55))
+                            Text("•").font(KSSFont.themed(12, .bold, theme: theme)).foregroundStyle(theme.accent.opacity(0.55))
                         }
                         Text(body)
-                            .font(.system(size: 13))
+                            .font(KSSFont.themed(13, theme: theme))
                             .foregroundStyle(theme.textBody)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -1216,7 +1216,7 @@ struct IntelView: View {
                         sourceFavicon(item: item, size: 13)
                         if let source = item.source, !source.isEmpty {
                             Text(source)
-                                .font(.system(size: 11.3, weight: .medium))
+                                .font(KSSFont.themed(11.3, .medium, theme: theme))
                                 .lineLimit(1)
                         }
                         if let time = item.time, !time.isEmpty {
@@ -1246,7 +1246,7 @@ struct IntelView: View {
                     .padding(.bottom, 6)
 
                     Text(item.title)
-                        .font(.system(size: 13.5, weight: isOn ? .semibold : .medium))
+                        .font(KSSFont.themed(13.5, isOn ? .semibold : .medium, theme: theme))
                         .foregroundStyle(isOn ? theme.textPrimary : theme.textBody)
                         .lineLimit(2)
                         .lineSpacing(2)
@@ -1255,7 +1255,7 @@ struct IntelView: View {
 
                     if let sum = item.summary, !sum.isEmpty {
                         Text(sum)
-                            .font(.system(size: 12.2))
+                            .font(KSSFont.themed(12.2, theme: theme))
                             .foregroundStyle(theme.textSecondary.opacity(0.92))
                             .lineLimit(2)
                             .lineSpacing(2)
@@ -1291,17 +1291,17 @@ struct IntelView: View {
     private var emptyState: some View {
         VStack(spacing: 10) {
             Text("暂无资讯雷达数据")
-                .font(.system(size: 15, weight: .semibold))
+                .font(KSSFont.themed(15, .semibold, theme: theme))
                 .foregroundStyle(theme.textSecondary)
             Text("点击上方「刷新」拉取 12 赛道 RSS 资讯（约 20–40 秒）")
-                .font(.system(size: 12.5))
+                .font(KSSFont.themed(12.5, theme: theme))
                 .foregroundStyle(theme.textSecondary.opacity(0.6))
             Button(action: {
                 store.errorMessage = nil
                 Task { await store.refreshIntelRadar() }
             }) {
                 Text("立即拉取")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(KSSFont.themed(13, .semibold, theme: theme))
                     .foregroundStyle(theme.accent)
                     .padding(.horizontal, 16).padding(.vertical, 7)
                     .background(theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: theme.chipRadius))

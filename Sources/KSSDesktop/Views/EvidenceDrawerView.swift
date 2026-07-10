@@ -47,7 +47,7 @@ struct EvidenceDrawerView: View {
     private func chip(_ text: String, icon: String, color: Color) -> some View {
         Button { expanded.toggle() } label: {
             Label(text, systemImage: icon)
-                .font(.system(size: 10, weight: .semibold))
+                .font(KSSFont.themed(10, .semibold, theme: theme))
                 .foregroundStyle(color)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
@@ -77,14 +77,14 @@ struct EvidenceDrawerView: View {
                 ForEach(drawer.kssTruth) { item in
                     VStack(alignment: .leading, spacing: 4) {
                         Text(item.label)
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(KSSFont.themed(11, .semibold, theme: theme))
                             .foregroundStyle(theme.textPrimary)
                         Text("tool: \(item.tool) · provenance: \(item.provenance)")
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(theme.textSecondary)
                         if !item.fields.isEmpty {
                             Text("fields: \(item.fields.prefix(8).joined(separator: ", "))")
-                                .font(.system(size: 10))
+                                .font(KSSFont.themed(10, theme: theme))
                                 .foregroundStyle(theme.textSecondary)
                                 .lineLimit(2)
                         }
@@ -99,7 +99,7 @@ struct EvidenceDrawerView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text(source.title.isEmpty ? source.url : source.title)
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(KSSFont.themed(11, .semibold, theme: theme))
                                 .foregroundStyle(theme.textPrimary)
                                 .lineLimit(2)
                             Spacer(minLength: 8)
@@ -121,7 +121,7 @@ struct EvidenceDrawerView: View {
                             .foregroundStyle(theme.textSecondary)
                         if !source.excerpt.isEmpty {
                             Text(source.excerpt)
-                                .font(.system(size: 11))
+                                .font(KSSFont.themed(11, theme: theme))
                                 .foregroundStyle(theme.textSecondary)
                                 .lineLimit(3)
                         }
@@ -135,14 +135,14 @@ struct EvidenceDrawerView: View {
                 ForEach(drawer.warnings) { warning in
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: warning.severity == "danger" ? "shield.lefthalf.filled" : "exclamationmark.triangle.fill")
-                            .font(.system(size: 12))
+                            .font(KSSFont.themed(12, theme: theme))
                             .foregroundStyle(theme.up)
                         VStack(alignment: .leading, spacing: 3) {
                             Text(warning.type)
                                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                                 .foregroundStyle(theme.textPrimary)
                             Text(warningDisplayMessage(warning))
-                                .font(.system(size: 11))
+                                .font(KSSFont.themed(11, theme: theme))
                                 .foregroundStyle(theme.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -158,7 +158,7 @@ struct EvidenceDrawerView: View {
 
     private func sectionTitle(_ text: String, icon: String) -> some View {
         Label(text, systemImage: icon)
-            .font(.system(size: 11, weight: .bold))
+            .font(KSSFont.themed(11, .bold, theme: theme))
             .foregroundStyle(theme.textPrimary)
     }
 

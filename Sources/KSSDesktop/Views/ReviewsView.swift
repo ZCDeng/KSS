@@ -114,8 +114,8 @@ struct ReviewsView: View {
                     }
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: "calendar").font(.system(size: 11, weight: .semibold))
-                        Text(range.rawValue).font(.system(size: 12.5, weight: .semibold))
+                        Image(systemName: "calendar").font(KSSFont.themed(11, .semibold, theme: theme))
+                        Text(range.rawValue).font(KSSFont.themed(12.5, .semibold, theme: theme))
                     }
                 }
                 .menuStyle(.borderlessButton)
@@ -123,8 +123,8 @@ struct ReviewsView: View {
                 Spacer()
                 Button { ascending.toggle() } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: ascending ? "arrow.up" : "arrow.down").font(.system(size: 11, weight: .bold))
-                        Text(ascending ? "最早" : "最新").font(.system(size: 12.5, weight: .semibold))
+                        Image(systemName: ascending ? "arrow.up" : "arrow.down").font(KSSFont.themed(11, .bold, theme: theme))
+                        Text(ascending ? "最早" : "最新").font(KSSFont.themed(12.5, .semibold, theme: theme))
                     }
                 }
                 .buttonStyle(.plain)
@@ -244,7 +244,7 @@ struct ReviewsView: View {
 
     private func placeholder(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 14))
+            .font(KSSFont.themed(14, theme: theme))
             .foregroundStyle(theme.textSecondary)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -269,17 +269,17 @@ struct SectorReviewRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: "square.grid.2x2.fill")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(KSSFont.themed(10, .semibold, theme: theme))
                     .foregroundStyle(theme.accent)
                 Text(dateLabel)
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundStyle(theme.textSecondary)
             }
             Text("板块复盘")
-                .font(.system(size: 15, weight: .bold))
+                .font(KSSFont.themed(15, .bold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
             Text(summary)
-                .font(.system(size: 12.5))
+                .font(KSSFont.themed(12.5, theme: theme))
                 .foregroundStyle(theme.textSecondary)
                 .lineLimit(2)
         }
@@ -314,7 +314,7 @@ struct SectorReviewPanel: View {
                 }
                 if let regime = regimeLine {
                     Text(regime)
-                        .font(.system(size: 12.5, weight: .medium))
+                        .font(KSSFont.themed(12.5, .medium, theme: theme))
                         .foregroundStyle(theme.textBody)
                 }
 
@@ -330,7 +330,7 @@ struct SectorReviewPanel: View {
                         HStack(spacing: 8) {
                             RoundedRectangle(cornerRadius: 2).fill(theme.accent).frame(width: 4, height: 16)
                             Text("投顾点评")
-                                .font(KSSFont.serif(16, .semibold))
+                                .font(KSSFont.themed(16, .semibold, theme: theme, design: .serif))
                                 .foregroundStyle(theme.textPrimary)
                         }
                         CommentaryView(markdown: commentary)
@@ -342,10 +342,10 @@ struct SectorReviewPanel: View {
                 if !pulse.note.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("一年回测语义")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(KSSFont.themed(11, .bold, theme: theme))
                             .foregroundStyle(theme.textSecondary)
                         Text(pulse.note)
-                            .font(.system(size: 12))
+                            .font(KSSFont.themed(12, theme: theme))
                             .foregroundStyle(theme.textBody)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -403,12 +403,12 @@ struct CommentaryView: View {
             ForEach(blocks) { block in
                 if block.isHeader {
                     Text(block.text)
-                        .font(.system(size: 14, weight: .bold))
+                        .font(KSSFont.themed(14, .bold, theme: theme))
                         .foregroundStyle(theme.accent)
                         .padding(.top, 2)
                 } else {
                     Text(attributed(block.text))
-                        .font(.system(size: 13))
+                        .font(KSSFont.themed(13, theme: theme))
                         .foregroundStyle(theme.textBody)
                         .lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -492,7 +492,7 @@ struct SectorReviewTable: View {
             Spacer(minLength: 8)
             Text("分级").frame(width: 84, alignment: .trailing)
         }
-        .font(.system(size: 10.5, weight: .medium))
+        .font(KSSFont.themed(10.5, .medium, theme: theme))
         .foregroundStyle(theme.textSecondary)
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
@@ -501,7 +501,7 @@ struct SectorReviewTable: View {
     private func row(_ t: SectorTheme) -> some View {
         HStack(spacing: 10) {
             Text(t.name)
-                .font(.system(size: 13.5, weight: .bold))
+                .font(KSSFont.themed(13.5, .bold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
                 .frame(width: 96, alignment: .leading)
             num(t.past5Ret.map { KSSFormat.percent($0 / 100) }, tint: theme.signColor(t.past5Ret ?? 0))
@@ -516,7 +516,7 @@ struct SectorReviewTable: View {
                 .frame(width: 64, alignment: .trailing)
             Spacer(minLength: 8)
             Text(t.divergence ? "见顶预警" : t.grade)
-                .font(.system(size: 10.5, weight: .bold))
+                .font(KSSFont.themed(10.5, .bold, theme: theme))
                 .foregroundStyle(gradeColor(t))
                 .frame(width: 84, alignment: .trailing)
         }
@@ -546,18 +546,18 @@ struct ReviewRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: "calendar")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(KSSFont.themed(10, .semibold, theme: theme))
                     .foregroundStyle(theme.accent)
                 Text(review.date)
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundStyle(theme.textSecondary)
             }
             Text(review.title)
-                .font(.system(size: 15, weight: .bold))
+                .font(KSSFont.themed(15, .bold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
                 .lineLimit(1)
             Text(review.excerpt)
-                .font(.system(size: 12.5))
+                .font(KSSFont.themed(12.5, theme: theme))
                 .foregroundStyle(theme.textSecondary)
                 .lineLimit(2)
         }
@@ -574,17 +574,17 @@ struct HotspotRotationHistoryRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: "flame.fill")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(KSSFont.themed(10, .semibold, theme: theme))
                     .foregroundStyle(theme.accent)
                 Text(dateLabel)
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundStyle(theme.textSecondary)
             }
             Text("妖板情绪")
-                .font(.system(size: 15, weight: .bold))
+                .font(KSSFont.themed(15, .bold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
             Text(summary)
-                .font(.system(size: 12.5))
+                .font(KSSFont.themed(12.5, theme: theme))
                 .foregroundStyle(theme.textSecondary)
                 .lineLimit(2)
         }
@@ -640,7 +640,7 @@ struct HotspotRotationPanel: View {
                         HStack(spacing: 8) {
                             RoundedRectangle(cornerRadius: 2).fill(theme.accent).frame(width: 4, height: 16)
                             Text("妖王榜")
-                                .font(KSSFont.serif(16, .semibold))
+                                .font(KSSFont.themed(16, .semibold, theme: theme, design: .serif))
                                 .foregroundStyle(theme.textPrimary)
                         }
                         HotspotLeaderTable(boards: snap.leaderBoards)
@@ -681,7 +681,7 @@ struct HotspotRotationPanel: View {
     private func classificationTile(_ title: String, _ count: Int, _ tint: Color) -> some View {
         VStack(spacing: 4) {
             Text(title)
-                .font(.system(size: 11, weight: .bold))
+                .font(KSSFont.themed(11, .bold, theme: theme))
                 .foregroundStyle(tint)
             Text("\(count)")
                 .font(KSSFont.harmonyNumber(20))
@@ -764,7 +764,7 @@ struct HotspotBoardTable: View {
             Spacer(minLength: 8)
             Text("龙头").frame(width: 120, alignment: .leading)
         }
-        .font(.system(size: 10.5, weight: .medium))
+        .font(KSSFont.themed(10.5, .medium, theme: theme))
         .foregroundStyle(theme.textSecondary)
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
@@ -773,7 +773,7 @@ struct HotspotBoardTable: View {
     private func row(_ b: HotspotBoard) -> some View {
         HStack(spacing: 10) {
             Text(b.name)
-                .font(.system(size: 13.5, weight: .bold))
+                .font(KSSFont.themed(13.5, .bold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
                 .frame(width: 96, alignment: .leading)
             num(b.pctChange.map { KSSFormat.percent($0 / 100) }, tint: theme.signColor(b.pctChange ?? 0))
@@ -781,12 +781,12 @@ struct HotspotBoardTable: View {
             num("#\(b.todayRank)", tint: theme.textSecondary)
                 .frame(width: 48, alignment: .trailing)
             Text(classificationLabel(b.classification))
-                .font(.system(size: 10.5, weight: .bold))
+                .font(KSSFont.themed(10.5, .bold, theme: theme))
                 .foregroundStyle(classificationColor(b.classification))
                 .frame(width: 84, alignment: .trailing)
             Spacer(minLength: 8)
             Text(topLeadersText(b.leaderStocks))
-                .font(.system(size: 11))
+                .font(KSSFont.themed(11, theme: theme))
                 .foregroundStyle(theme.textBody)
                 .frame(width: 120, alignment: .leading)
                 .lineLimit(1)
@@ -864,7 +864,7 @@ struct HotspotLeaderTable: View {
             Text("频次").frame(width: 56, alignment: .trailing)
             Spacer(minLength: 8)
         }
-        .font(.system(size: 10.5, weight: .medium))
+        .font(KSSFont.themed(10.5, .medium, theme: theme))
         .foregroundStyle(theme.textSecondary)
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
@@ -873,7 +873,7 @@ struct HotspotLeaderTable: View {
     private func row(_ leader: LeaderRow) -> some View {
         HStack(spacing: 10) {
             Text(leader.boardName)
-                .font(.system(size: 13.5, weight: .bold))
+                .font(KSSFont.themed(13.5, .bold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
                 .frame(width: 96, alignment: .leading)
             Text(leader.symbol)
@@ -882,7 +882,7 @@ struct HotspotLeaderTable: View {
                 .frame(width: 72, alignment: .leading)
                 .lineLimit(1)
             Text(leader.name)
-                .font(.system(size: 12.5))
+                .font(KSSFont.themed(12.5, theme: theme))
                 .foregroundStyle(theme.textBody)
                 .frame(width: 96, alignment: .leading)
                 .lineLimit(1)

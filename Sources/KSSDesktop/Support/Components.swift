@@ -92,7 +92,7 @@ struct PageTitle: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
-                .font(KSSFont.title(28, .bold, design: theme.titleDesign))
+                .font(KSSFont.themed(28, .bold, theme: theme, design: theme.titleDesign))
                 .foregroundStyle(theme.textPrimary)
             if let subtitle, !subtitle.isEmpty {
                 Text(subtitle)

@@ -47,7 +47,7 @@ struct TrendsView: View {
                     unifiedGrid
                     if !loading, (month?.days ?? []).isEmpty {
                         Text("本月暂无归档数据")
-                            .font(.system(size: 12))
+                            .font(KSSFont.themed(12, theme: theme))
                             .foregroundStyle(theme.textSecondary)
                     }
 
@@ -59,7 +59,7 @@ struct TrendsView: View {
                         dayDetail(d)
                     } else if selectedDate != nil {
                         Text("该日暂无归档数据")
-                            .font(.system(size: 13))
+                            .font(KSSFont.themed(13, theme: theme))
                             .foregroundStyle(theme.textSecondary)
                     }
                 }
@@ -84,7 +84,7 @@ struct TrendsView: View {
     private var monthHeader: some View {
         HStack(spacing: 12) {
             Button { shiftMonth(-1) } label: {
-                Image(systemName: "chevron.left").font(.system(size: 14, weight: .bold))
+                Image(systemName: "chevron.left").font(KSSFont.themed(14, .bold, theme: theme))
             }
             .buttonStyle(.bordered)
             Text(currentMonth)
@@ -92,7 +92,7 @@ struct TrendsView: View {
                 .foregroundStyle(theme.textPrimary)
                 .frame(minWidth: 92)
             Button { shiftMonth(1) } label: {
-                Image(systemName: "chevron.right").font(.system(size: 14, weight: .bold))
+                Image(systemName: "chevron.right").font(KSSFont.themed(14, .bold, theme: theme))
             }
             .buttonStyle(.bordered)
             .disabled(currentMonth >= Self.monthString(Date()))   // 不越过本月
@@ -138,25 +138,25 @@ struct TrendsView: View {
                     Spacer(minLength: 0)
                     if let c = cell, let s = c.inflowScore, abs(s) >= 0.45 {
                         Image(systemName: (c.inflowDir == "out") ? "arrowtriangle.down.fill" : "arrowtriangle.up.fill")
-                            .font(.system(size: 7, weight: .bold))
+                            .font(KSSFont.themed(7, .bold, theme: theme))
                             .foregroundStyle((c.inflowDir == "out") ? theme.down : theme.up)
                     }
                 }
                 Spacer(minLength: 0)
                 if let c = cell, let top = c.topSector {
                     Text(top)
-                        .font(.system(size: 10.5, weight: .bold))
+                        .font(KSSFont.themed(10.5, .bold, theme: theme))
                         .foregroundStyle(sectorInk)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                     if c.sectorCount > 1 {
                         Text("+\(c.sectorCount - 1)")
-                            .font(.system(size: 8.5))
+                            .font(KSSFont.themed(8.5, theme: theme))
                             .foregroundStyle(theme.textSecondary)
                     }
                 } else if cell != nil {
                     Text("—")
-                        .font(.system(size: 10))
+                        .font(KSSFont.themed(10, theme: theme))
                         .foregroundStyle(theme.textSecondary.opacity(0.5))
                 }
             }
@@ -206,7 +206,7 @@ struct TrendsView: View {
     private func weekdayHeader(size: CGFloat) -> some View {
         HStack(spacing: 6) {
             ForEach(["一", "二", "三", "四", "五", "六", "日"], id: \.self) { wd in
-                Text(wd).font(.system(size: size, weight: .semibold))
+                Text(wd).font(KSSFont.themed(size, .semibold, theme: theme))
                     .foregroundStyle(theme.textSecondary)
                     .frame(maxWidth: .infinity)
             }
@@ -221,7 +221,7 @@ struct TrendsView: View {
             HStack(spacing: 10) {
                 if recent.isEmpty {
                     Text(loading ? "加载中…" : "本月暂无交易日数据")
-                        .font(.system(size: 12))
+                        .font(KSSFont.themed(12, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                 }
                 ForEach(recent) { c in weekCard(c) }
@@ -238,16 +238,16 @@ struct TrendsView: View {
                     .foregroundStyle(theme.textPrimary)
                 if let n = c.north {
                     Text(String(format: "北向 %+.1f亿", n.money))
-                        .font(.system(size: 12, weight: .heavy))
+                        .font(KSSFont.themed(12, .heavy, theme: theme))
                         .foregroundStyle(n.dir == "out" ? theme.down : theme.up)
                 }
-                if c.flags.sector { Text("板块 \(c.sectorCount)").font(.system(size: 10.5)).foregroundStyle(theme.textSecondary) }
+                if c.flags.sector { Text("板块 \(c.sectorCount)").font(KSSFont.themed(10.5, theme: theme)).foregroundStyle(theme.textSecondary) }
                 if c.recCount > 0 {
                     HStack(spacing: 4) {
-                        Text("推荐 \(c.recCount)").font(.system(size: 10.5)).foregroundStyle(theme.textSecondary)
+                        Text("推荐 \(c.recCount)").font(KSSFont.themed(10.5, theme: theme)).foregroundStyle(theme.textSecondary)
                         if let avg = c.recAvgFwd {
                             Text(String(format: "T+5 %+.1f%%", avg))
-                                .font(.system(size: 10.5, weight: .semibold))
+                                .font(KSSFont.themed(10.5, .semibold, theme: theme))
                                 .foregroundStyle(avg >= 0 ? theme.up : theme.down)
                         }
                     }
@@ -272,20 +272,20 @@ struct TrendsView: View {
         VStack(alignment: .leading, spacing: 12) {
             // 1) 热点板块
             if !d.sectorTop.isEmpty {
-                Text("热点强势板块").font(.system(size: 12, weight: .bold)).foregroundStyle(theme.textSecondary)
+                Text("热点强势板块").font(KSSFont.themed(12, .bold, theme: theme)).foregroundStyle(theme.textSecondary)
                 FlowChipsTrends(themes: d.sectorTop)
             }
 
             // 2) 代表股 = 当日推荐 recs
             if !d.recs.isEmpty {
-                Text("代表股 · 后续表现").font(.system(size: 12, weight: .bold)).foregroundStyle(theme.textSecondary)
+                Text("代表股 · 后续表现").font(KSSFont.themed(12, .bold, theme: theme)).foregroundStyle(theme.textSecondary)
                 VStack(spacing: 6) {
                     recHeaderRow
                     ForEach(sortedRecs(d.recs)) { r in recRow(r) }
                 }
             } else if d.sectorTop.isEmpty {
                 Text("该日暂无板块与代表股明细")
-                    .font(.system(size: 12))
+                    .font(KSSFont.themed(12, theme: theme))
                     .foregroundStyle(theme.textSecondary)
             }
 
@@ -321,7 +321,7 @@ struct TrendsView: View {
             } label: {
                 HStack(spacing: 8) {
                     Text("资金摘要")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(KSSFont.themed(12, .bold, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                     if let n = d.north {
                         Text(String(format: "北向 %+.1f亿", n.money))
@@ -341,7 +341,7 @@ struct TrendsView: View {
 
     private func statTile(_ label: String, _ value: String, _ tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+            Text(label).font(KSSFont.themed(11, theme: theme)).foregroundStyle(theme.textSecondary)
             Text(value).font(KSSFont.harmonyNumber(18)).foregroundStyle(tint)
         }
         .frame(minWidth: 96, alignment: .leading)
@@ -394,7 +394,7 @@ struct TrendsView: View {
         Button { onSelectSymbol(r.symbol) } label: {
             HStack(spacing: 8) {
                 HStack(spacing: 6) {
-                    Text(r.name).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(theme.textPrimary).lineLimit(1)
+                    Text(r.name).font(KSSFont.themed(12.5, .semibold, theme: theme)).foregroundStyle(theme.textPrimary).lineLimit(1)
                     Text(r.symbol).font(.system(size: 10, design: .monospaced)).foregroundStyle(theme.textSecondary)
                 }
                 .frame(width: 150, alignment: .leading)
@@ -466,7 +466,7 @@ struct FlowChipsTrends: View {
         FlexWrap(spacing: 8, lineSpacing: 8) {
             ForEach(themes) { t in
                 HStack(spacing: 5) {
-                    Text(t.name).font(.system(size: 12, weight: .bold)).foregroundStyle(theme.textPrimary)
+                    Text(t.name).font(KSSFont.themed(12, .bold, theme: theme)).foregroundStyle(theme.textPrimary)
                     if let r = t.past5Ret {
                         Text(String(format: "%+.1f%%", r))
                             .font(.system(size: 10.5, weight: .semibold, design: .monospaced))

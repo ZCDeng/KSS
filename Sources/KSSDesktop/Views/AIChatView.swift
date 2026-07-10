@@ -60,10 +60,10 @@ struct AIChatView: View {
                 Spacer(minLength: 40)
                 orb.padding(.bottom, 22)
                 Text("你好")
-                    .font(.system(size: 26, weight: .bold))
+                    .font(KSSFont.themed(26, .bold, theme: theme))
                     .foregroundStyle(theme.accent)
                 Text("今天复盘点什么？")
-                    .font(.system(size: 30, weight: .bold))
+                    .font(KSSFont.themed(30, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
                     .padding(.bottom, 28)
 
@@ -73,7 +73,7 @@ struct AIChatView: View {
                 capabilityCards(width: width)
                 Spacer(minLength: 32)
                 Text("AI 仅解释与复盘，不给个性化买卖建议")
-                    .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                    .font(KSSFont.themed(11, theme: theme)).foregroundStyle(theme.textSecondary)
                     .padding(.bottom, 18)
             }
             .frame(maxWidth: .infinity)
@@ -103,13 +103,13 @@ struct AIChatView: View {
         VStack(spacing: 12) {
             TextField("问问盘面…（回车发送）", text: $input, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: 15))
+                .font(KSSFont.themed(15, theme: theme))
                 .lineLimit(1...4)
                 .disabled(store.isChatStreaming)
                 .onSubmit(send)
             HStack(spacing: 8) {
                 Label("只解释 · 不荐买卖", systemImage: "shield.lefthalf.filled")
-                    .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                    .font(KSSFont.themed(11, theme: theme)).foregroundStyle(theme.textSecondary)
                     .padding(.horizontal, 10).padding(.vertical, 5)
                     .background(theme.surface, in: Capsule())
                 Spacer()
@@ -125,7 +125,7 @@ struct AIChatView: View {
     private var sendButton: some View {
         Button(action: send) {
             Image(systemName: store.isChatStreaming ? "ellipsis" : "arrow.up")
-                .font(.system(size: 15, weight: .bold))
+                .font(KSSFont.themed(15, .bold, theme: theme))
                 .foregroundStyle(.white)
                 .frame(width: 34, height: 34)
                 .background(Circle().fill(canSend ? theme.accent : theme.accent.opacity(0.4)))
@@ -171,14 +171,14 @@ struct AIChatView: View {
         Button { input = cap.prompt; send() } label: {
             VStack(alignment: .leading, spacing: 8) {
                 Image(systemName: cap.icon)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(KSSFont.themed(15, .semibold, theme: theme))
                     .foregroundStyle(theme.accent)
                     .frame(width: 32, height: 32)
                     .background(theme.accentSoft, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
                 Text(cap.title)
-                    .font(.system(size: 13, weight: .bold)).foregroundStyle(theme.textPrimary)
+                    .font(KSSFont.themed(13, .bold, theme: theme)).foregroundStyle(theme.textPrimary)
                 Text(cap.desc)
-                    .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                    .font(KSSFont.themed(11, theme: theme)).foregroundStyle(theme.textSecondary)
                     .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
                 Spacer(minLength: 0)
@@ -229,7 +229,7 @@ struct AIChatView: View {
             HStack {
                 Spacer(minLength: 60)
                 Text(msg.text)
-                    .font(.system(size: 13)).foregroundStyle(.white)
+                    .font(KSSFont.themed(13, theme: theme)).foregroundStyle(.white)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
@@ -241,10 +241,10 @@ struct AIChatView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     if msg.text.isEmpty && store.isChatStreaming {
                         HStack(spacing: 8) { ProgressView().controlSize(.small); Text("思考中…")
-                            .font(.system(size: 12)).foregroundStyle(theme.textSecondary) }
+                            .font(KSSFont.themed(12, theme: theme)).foregroundStyle(theme.textSecondary) }
                     } else {
                         markdownText(msg.text)
-                            .font(.system(size: 13))
+                            .font(KSSFont.themed(13, theme: theme))
                             .foregroundStyle(msg.isError ? theme.up : theme.textPrimary)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
@@ -252,7 +252,7 @@ struct AIChatView: View {
                     }
                     if msg.numbersUnverified && store.isChatStreaming {
                         Label("数字校验中（以工具真值为准）", systemImage: "exclamationmark.triangle")
-                            .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                            .font(KSSFont.themed(11, theme: theme)).foregroundStyle(theme.textSecondary)
                     }
                     if msg.evidenceSummary.hasEvidence || msg.evidenceSummary.provider != nil {
                         EvidenceDrawerView(summary: msg.evidenceSummary, drawer: msg.evidenceDrawer)
@@ -287,7 +287,7 @@ struct AIChatView: View {
     private func toolIndicator(_ tool: String) -> some View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small)
-            Text("正在调用 \(tool) …").font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+            Text("正在调用 \(tool) …").font(KSSFont.themed(12, theme: theme)).foregroundStyle(theme.textSecondary)
             Spacer()
         }
         .padding(.horizontal, 14)
@@ -301,7 +301,7 @@ struct AIChatView: View {
             }
             HStack(spacing: 10) {
                 TextField("继续问…（回车发送）", text: $input, axis: .vertical)
-                    .textFieldStyle(.plain).font(.system(size: 14)).lineLimit(1...4)
+                    .textFieldStyle(.plain).font(KSSFont.themed(14, theme: theme)).lineLimit(1...4)
                     .disabled(store.isChatStreaming)
                     .onSubmit(send)
                 sendButton
@@ -332,16 +332,16 @@ struct WriteConfirmView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
-                Image(systemName: "exclamationmark.shield").font(.system(size: 18))
+                Image(systemName: "exclamationmark.shield").font(KSSFont.themed(18, theme: theme))
                     .foregroundStyle(theme.accent)
-                Text("确认写操作").font(.system(size: 16, weight: .bold))
+                Text("确认写操作").font(KSSFont.themed(16, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
             }
             Text(pending.effect)
-                .font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                .font(KSSFont.themed(14, .semibold, theme: theme)).foregroundStyle(theme.textPrimary)
             if !pending.argsText.isEmpty && pending.argsText != "{}" {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("参数").font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                    Text("参数").font(KSSFont.themed(11, theme: theme)).foregroundStyle(theme.textSecondary)
                     Text(pending.argsText).font(.system(size: 12, design: .monospaced))
                         .foregroundStyle(theme.textPrimary)
                         .textSelection(.enabled)
@@ -352,7 +352,7 @@ struct WriteConfirmView: View {
             }
             if !pending.contextLine.isEmpty {
                 Text("助手上下文：\(pending.contextLine.suffix(140))")
-                    .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                    .font(KSSFont.themed(11, theme: theme)).foregroundStyle(theme.textSecondary)
                     .lineLimit(3)
             }
             Text("命令：\(pending.command)").font(.system(size: 11, design: .monospaced))

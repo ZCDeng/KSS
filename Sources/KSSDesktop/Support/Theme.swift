@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import CoreText
 
 /// 主题几何与动效常量。颜色/卡片半径已迁入 `ThemeCatalog` + 环境 `kssTheme` token；
 /// 这里只保留与设计系统无关的形状比例（M3 spacing 标度）与运动曲线。
@@ -33,14 +34,42 @@ enum KSSFont {
         .system(size: size, weight: weight, design: .serif)
     }
 
-    /// 主题感知标题字体：设计系统决定 serif / 默认 / 等宽。
-    static func title(_ size: CGFloat, _ weight: Font.Weight = .semibold, design: Font.Design) -> Font {
-        .system(size: size, weight: weight, design: design)
-    }
-
     /// HarmonyOS Sans SC Bold（打包进 app，AppDelegate 启动时注册）。大数字专用。
     static func harmonyNumber(_ size: CGFloat) -> Font {
         .custom("HarmonyOS_Sans_SC_Bold", size: size)
+    }
+
+    /// 主题感知正文/标题字体。8 套经典主题 `nativeFontFamily` 为 nil，行为与 `.system(size:weight:design:)`
+    /// 完全一致（零回归）；xcom 模式下按 weight 分桶取 "<family>-<Weight>" PostScript 名，并给中文字形
+    /// 挂一个级联到 `nativeCJKFallback` 的 `CTFontDescriptor`，单个 Text 内中英文混排各走各的字体。
+    /// `design: .monospaced` 场景（K 线/表格数字对齐）不走自定义字体——等宽是功能性选择，跳过。
+    /// `chirpWeight`：可选，仅覆盖 Chirp 路径的字重文件选择（不影响经典模式的 `.system(...)` 回退，
+    /// 那条分支永远只看 `weight`）。用于像侧边栏选中态这种"经典模式字重差异化、xcom 模式想要不同字重
+    /// 差异化"的场景，不必为了改 xcom 视觉而牵动经典模式。
+    static func themed(_ size: CGFloat, _ weight: Font.Weight = .regular, chirpWeight: Font.Weight? = nil, theme: KSSThemeTokens, design: Font.Design = .default) -> Font {
+        guard design != .monospaced, let family = theme.nativeFontFamily, let cjkFallback = theme.nativeCJKFallback else {
+            return .system(size: size, weight: weight, design: design)
+        }
+        let psName = "\(family)-\(weightSuffix(chirpWeight ?? weight))"
+        guard let baseDescriptor = CTFontDescriptorCreateWithNameAndSize(psName as CFString, size) as CTFontDescriptor? else {
+            return .system(size: size, weight: weight, design: design)
+        }
+        let cjkDescriptor = CTFontDescriptorCreateWithNameAndSize(cjkFallback as CFString, size)
+        let cascaded = CTFontDescriptorCreateCopyWithAttributes(
+            baseDescriptor,
+            [kCTFontCascadeListAttribute: [cjkDescriptor]] as CFDictionary
+        )
+        let ctFont = CTFontCreateWithFontDescriptor(cascaded, size, nil)
+        return Font(ctFont)
+    }
+
+    private static func weightSuffix(_ weight: Font.Weight) -> String {
+        switch weight {
+        case .black, .heavy: return "Heavy"
+        case .bold, .semibold: return "Bold"
+        case .medium: return "Medium"
+        default: return "Regular"
+        }
     }
 }
 

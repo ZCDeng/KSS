@@ -13,7 +13,7 @@ struct ArchitectureView: View {
                 if let url = URL(string: "https://github.com/ZCDeng/KSS") {
                     Link(destination: url) {
                         Label("GitHub", systemImage: "arrow.up.forward.square")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(KSSFont.themed(13, .semibold, theme: theme))
                     }
                     .tint(theme.accent)
                 }

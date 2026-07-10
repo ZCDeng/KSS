@@ -42,14 +42,14 @@ struct ImportStocksView: View {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("导入股票")
-                        .font(KSSFont.serif(22, .bold))
+                        .font(KSSFont.themed(22, .bold, theme: theme, design: .serif))
                         .foregroundStyle(theme.textPrimary)
                     Text("手工输入名称/代码，或图片识别导入 · 识别后拉取日线进入股票池")
-                        .font(.system(size: 12))
+                        .font(KSSFont.themed(12, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                 }
                 Spacer()
-                Button { onClose() } label: { Label("关闭", systemImage: "xmark").font(.system(size: 13, weight: .semibold)) }
+                Button { onClose() } label: { Label("关闭", systemImage: "xmark").font(KSSFont.themed(13, .semibold, theme: theme)) }
                     .buttonStyle(.bordered)
                     .keyboardShortcut(.cancelAction)
             }
@@ -65,7 +65,7 @@ struct ImportStocksView: View {
                     .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeS).stroke(theme.hairline))
                 if text.isEmpty {
                     Text("例：贵州茅台  600519  平安银行  000001.SZ … 或把截图拖进来")
-                        .font(.system(size: 12.5))
+                        .font(KSSFont.themed(12.5, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                         .padding(.horizontal, 14).padding(.vertical, 14)
                         .allowsHitTesting(false)
@@ -78,14 +78,14 @@ struct ImportStocksView: View {
             HStack(spacing: 10) {
                 Button { pickImageAndOCR() } label: {
                     Label(ocrBusy ? "识别中…" : "识别图片导入", systemImage: "text.viewfinder")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(KSSFont.themed(13, .semibold, theme: theme))
                 }
                 .buttonStyle(.bordered)
                 .disabled(ocrBusy)
 
                 Button { resolve() } label: {
                     Label(resolving ? "解析中…" : "解析", systemImage: "wand.and.stars")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(KSSFont.themed(13, .semibold, theme: theme))
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(theme.accent)
@@ -105,7 +105,7 @@ struct ImportStocksView: View {
 
                 HStack {
                     Text("可导入 \(importable.count) 只 · 已识别 \(resolved.filter{ $0.ok }.count)/\(resolved.count)")
-                        .font(.system(size: 12.5))
+                        .font(KSSFont.themed(12.5, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                     Spacer()
                     Button {
@@ -117,7 +117,7 @@ struct ImportStocksView: View {
                         }
                     } label: {
                         Label(importing ? "导入同步中…" : "导入并同步 \(importable.count) 只", systemImage: "square.and.arrow.down")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(KSSFont.themed(13, .semibold, theme: theme))
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(theme.accent)
@@ -136,15 +136,15 @@ struct ImportStocksView: View {
         HStack(spacing: 10) {
             Image(systemName: item.ok ? (item.inPool ? "checkmark.circle" : "checkmark.circle.fill") : "questionmark.circle")
                 .foregroundStyle(item.ok ? (item.inPool ? theme.textSecondary : theme.down) : theme.up)
-                .font(.system(size: 14))
+                .font(KSSFont.themed(14, theme: theme))
             Text(item.query)
-                .font(.system(size: 13, weight: .medium))
+                .font(KSSFont.themed(13, .medium, theme: theme))
                 .foregroundStyle(theme.textBody)
                 .frame(width: 120, alignment: .leading)
                 .lineLimit(1)
             if item.ok {
                 Text(item.name)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(KSSFont.themed(13, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
                 Text(item.code)
@@ -152,20 +152,20 @@ struct ImportStocksView: View {
                     .foregroundStyle(theme.textSecondary)
                 if let tag = kindTag(item.kind) {
                     Text(tag.0)
-                        .font(.system(size: 9.5, weight: .bold))
+                        .font(KSSFont.themed(9.5, .bold, theme: theme))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 5).padding(.vertical, 1.5)
                         .background(tag.1, in: Capsule())
                 }
             } else {
                 Text("未匹配")
-                    .font(.system(size: 12))
+                    .font(KSSFont.themed(12, theme: theme))
                     .foregroundStyle(theme.up)
             }
             Spacer()
             if item.inPool {
                 Text("已在池")
-                    .font(.system(size: 10.5, weight: .semibold))
+                    .font(KSSFont.themed(10.5, .semibold, theme: theme))
                     .foregroundStyle(theme.textSecondary)
                     .padding(.horizontal, 7).padding(.vertical, 2)
                     .background(theme.textSecondary.opacity(0.15), in: Capsule())

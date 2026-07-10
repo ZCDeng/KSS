@@ -66,11 +66,11 @@ struct StockBrowserView: View {
             VStack(spacing: 0) {
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
-                        .font(.system(size: 12))
+                        .font(KSSFont.themed(12, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                     TextField("搜索代码 / 名称 / 行业", text: $searchText)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 13))
+                        .font(KSSFont.themed(13, theme: theme))
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
@@ -88,7 +88,7 @@ struct StockBrowserView: View {
                     Spacer()
                     Button { showImport = true } label: {
                         Label("导入", systemImage: "plus.circle")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(KSSFont.themed(12, .semibold, theme: theme))
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(theme.accent)
@@ -123,12 +123,12 @@ struct StockBrowserView: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 HStack(spacing: 6) {
                                     Text(stock.name.isEmpty ? stock.symbol : stock.name)
-                                        .font(.system(size: 15, weight: .bold))
+                                        .font(KSSFont.themed(15, .bold, theme: theme))
                                         .foregroundStyle(isOn ? theme.accent : theme.textPrimary)
                                         .lineLimit(1)
                                     if watchlist.contains(stock.symbol) {
                                         Image(systemName: "star.fill")
-                                            .font(.system(size: 10))
+                                            .font(KSSFont.themed(10, theme: theme))
                                             .foregroundStyle(theme.ma5)
                                     }
                                     Spacer()
@@ -190,7 +190,7 @@ struct StockBrowserView: View {
                     .onChange(of: detail.symbol) { _, sym in onLoadRealtimeForSymbol(sym) }
                 } else {
                     Text("选择一只股票查看详情")
-                        .font(.system(size: 14))
+                        .font(KSSFont.themed(14, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -291,7 +291,7 @@ struct StockDetailView: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(detail.name.isEmpty ? detail.symbol : detail.name)
-                            .font(KSSFont.serif(30, .bold))
+                            .font(KSSFont.themed(30, .bold, theme: theme, design: .serif))
                             .foregroundStyle(theme.textPrimary)
                         Text("\(detail.symbol) · \(detail.industry)")
                             .font(.system(size: 14, weight: .medium, design: .monospaced))
@@ -316,7 +316,7 @@ struct StockDetailView: View {
                         )
                         Button(action: onToggleWatchlist) {
                             Label(isWatched ? "取消自选" : "加自选", systemImage: isWatched ? "star.fill" : "star")
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(KSSFont.themed(13, .semibold, theme: theme))
                         }
                         .tint(theme.accent)
                     }
@@ -381,7 +381,7 @@ struct StockDetailView: View {
                                 .foregroundStyle(theme.textSecondary)
                         } else if let err = intradayError {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.system(size: 11))
+                                .font(KSSFont.themed(11, theme: theme))
                                 .foregroundStyle(theme.ma5)
                             Text(err)
                                 .font(.caption2)
@@ -399,7 +399,7 @@ struct StockDetailView: View {
                         onZoom()
                     } label: {
                         Label("放大", systemImage: "arrow.up.left.and.arrow.down.right")
-                            .font(.system(size: 12.5, weight: .semibold))
+                            .font(KSSFont.themed(12.5, .semibold, theme: theme))
                     }
                     .buttonStyle(.bordered)
                     .tint(theme.accent)
@@ -437,7 +437,7 @@ struct StockDetailView: View {
 
                 if !detail.concept.isEmpty {
                     Text(detail.concept)
-                        .font(.system(size: 13.5))
+                        .font(KSSFont.themed(13.5, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                 }
             }
@@ -460,14 +460,14 @@ struct StockReviewCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "doc.text.magnifyingglass")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(KSSFont.themed(13, .semibold, theme: theme))
                     .foregroundStyle(theme.accent)
                 Text("复盘结论")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(KSSFont.themed(15, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
                 if !review.headline.isEmpty {
                     Text(review.headline)
-                        .font(.system(size: 11.5, weight: .semibold))
+                        .font(KSSFont.themed(11.5, .semibold, theme: theme))
                         .foregroundStyle(theme.onAccent)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
@@ -487,7 +487,7 @@ struct StockReviewCard: View {
                     }
                     if !review.expectation.isEmpty {
                         Text("预期区间 · " + review.expectation)
-                            .font(.system(size: 12.5))
+                            .font(KSSFont.themed(12.5, theme: theme))
                             .foregroundStyle(theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -500,7 +500,7 @@ struct StockReviewCard: View {
                         HStack(alignment: .top, spacing: 7) {
                             Circle().fill(theme.accent).frame(width: 5, height: 5).padding(.top, 6)
                             Text(s)
-                                .font(.system(size: 13))
+                                .font(KSSFont.themed(13, theme: theme))
                                 .foregroundStyle(theme.textBody)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -522,11 +522,11 @@ struct PerillaEnrichmentCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Text("🌿 紫苏叶富化")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(KSSFont.themed(15, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
                 if let tier = data.tier {
                     Text(tier == "core" ? "核心" : "国产替代主线")
-                        .font(.system(size: 11.5, weight: .semibold))
+                        .font(KSSFont.themed(11.5, .semibold, theme: theme))
                         .foregroundStyle(theme.onAccent)
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(theme.accent, in: Capsule())
@@ -545,7 +545,7 @@ struct PerillaEnrichmentCard: View {
     private func row(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label)
-                .font(.system(size: 11.5, weight: .semibold))
+                .font(KSSFont.themed(11.5, .semibold, theme: theme))
                 .foregroundStyle(theme.textSecondary)
             Text(value)
                 .font(.system(size: 13, weight: .medium, design: .monospaced))
@@ -606,7 +606,7 @@ struct ChartFullscreenView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(detail.name.isEmpty ? detail.symbol : detail.name)
-                        .font(.system(size: 20, weight: .heavy))
+                        .font(KSSFont.themed(20, .heavy, theme: theme))
                         .foregroundStyle(theme.textPrimary)
                     Text("\(detail.symbol) · 滚轮缩放 · 拖动平移")
                         .font(.system(size: 12, design: .monospaced))
@@ -617,7 +617,7 @@ struct ChartFullscreenView: View {
                     onClose()
                 } label: {
                     Label("关闭", systemImage: "xmark")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(KSSFont.themed(13, .semibold, theme: theme))
                 }
                 .buttonStyle(.bordered)
                 .keyboardShortcut(.cancelAction)

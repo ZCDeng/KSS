@@ -121,7 +121,7 @@ struct RecommendationsView: View {
                 SortHeaderCell(title: "跟踪", key: RecSort.tracking, selection: $sort, ascending: $ascending,
                                alignment: .trailing, width: 72)
             }
-            .font(.system(size: 11, weight: .semibold))
+            .font(KSSFont.themed(11, .semibold, theme: theme))
             .foregroundStyle(theme.textSecondary)
             .padding(.horizontal, 16)
             .padding(.bottom, 6)
@@ -135,7 +135,7 @@ struct RecommendationsView: View {
                             .frame(width: 44, alignment: .leading)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(item.name.isEmpty ? item.symbol : item.name)
-                                .font(.system(size: 15.5, weight: .bold))
+                                .font(KSSFont.themed(15.5, .bold, theme: theme))
                                 .foregroundStyle(theme.textPrimary)
                             Text("\(item.symbol) · \(item.industry)")
                                 .font(.system(size: 11.5, design: .monospaced))
@@ -219,7 +219,7 @@ struct RecommendationsView: View {
         return Group {
             if days.isEmpty {
                 Text("暂无往期推荐记录")
-                    .font(.system(size: 13))
+                    .font(KSSFont.themed(13, theme: theme))
                     .foregroundStyle(theme.textSecondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -233,7 +233,7 @@ struct RecommendationsView: View {
                             Text("月 (20d)").frame(maxWidth: .infinity, alignment: .trailing)
                             Spacer().frame(width: 20)
                         }
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(KSSFont.themed(11, .semibold, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                         .padding(.horizontal, 14)
 
@@ -263,8 +263,8 @@ struct TrackingDayCard: View {
                 HStack(spacing: 12) {
                     HStack(spacing: 6) {
                         Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 10, weight: .bold)).foregroundStyle(theme.textSecondary)
-                        Image(systemName: "calendar").font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.accent)
+                            .font(KSSFont.themed(10, .bold, theme: theme)).foregroundStyle(theme.textSecondary)
+                        Image(systemName: "calendar").font(KSSFont.themed(11, .semibold, theme: theme)).foregroundStyle(theme.accent)
                         Text(day.date).font(.system(size: 14, weight: .bold, design: .monospaced)).foregroundStyle(theme.textPrimary).lineLimit(1).fixedSize()
                     }
                     .frame(width: 150, alignment: .leading)
@@ -289,7 +289,7 @@ struct TrackingDayCard: View {
                             HStack(spacing: 12) {
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(pick.name.isEmpty ? pick.symbol : pick.name)
-                                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.textPrimary)
+                                        .font(KSSFont.themed(13, .semibold, theme: theme)).foregroundStyle(theme.textPrimary)
                                     Text(pick.symbol)
                                         .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(theme.textSecondary)
                                 }
