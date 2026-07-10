@@ -464,16 +464,16 @@ enum ThemeCatalog {
                    surfaceContainer: c(0x16181C), surfaceRaised: c(0x1E2732), surfaceHighest: c(0x273340),
                    surfaceTint: c(0x1D9BF0), chartSurface: c(0x000000),
                    hairline: c(0x2F3336), outlineVariant: c(0x2F3336),
-                   ink: c(0xE7E9EA), body: c(0xE7E9EA), muted: c(0x71767B),
-                   accent: c(0x1D9BF0), onAccent: c(0xFFFFFF), secondary: c(0x8B98A5),
+                   ink: c(0xE7E9EA), body: c(0xE7E9EA), muted: c(0x8B98A5),
+                   accent: c(0x1D9BF0), onAccent: c(0x00151F), secondary: c(0x8B98A5),
                    cardRadius: 16, chipRadius: 999, typography: .xcomChirp,
                    elevation: ThemeElevation(opacity: 0, radius: 0, y: 0))
-            : Seed(canvas: c(0xFFFFFF), surfaceLowest: c(0xFFFFFF), surface: c(0xF7F9F9),
-                   surfaceContainer: c(0xF7F9F9), surfaceRaised: c(0xEFF3F4), surfaceHighest: c(0xE5E8E8),
+            : Seed(canvas: c(0xFFFFFF), surfaceLowest: c(0xFFFFFF), surface: c(0xFFFFFF),
+                   surfaceContainer: c(0xF2F5F6), surfaceRaised: c(0xE8ECED), surfaceHighest: c(0xDEE3E4),
                    surfaceTint: c(0x1D9BF0), chartSurface: c(0xFFFFFF),
-                   hairline: c(0xEFF3F4), outlineVariant: c(0xEFF3F4),
+                   hairline: c(0xE1E7E8), outlineVariant: c(0xE1E7E8),
                    ink: c(0x0F1419), body: c(0x0F1419), muted: c(0x536471),
-                   accent: c(0x1D9BF0), onAccent: c(0xFFFFFF), secondary: c(0x536471),
+                   accent: c(0x1D9BF0), onAccent: c(0x00151F), secondary: c(0x536471),
                    cardRadius: 16, chipRadius: 999, typography: .xcomChirp,
                    elevation: ThemeElevation(opacity: 0, radius: 0, y: 0))
         }
