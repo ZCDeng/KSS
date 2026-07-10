@@ -64,23 +64,31 @@ struct SidebarView: View {
         .padding(.top, 4)
     }
 
+    /// 选中态渲染分两支：经典模式沿用背景色块；xcom 模式不铺背景，改用图标填充 + 加粗 label
+    /// 表达选中(x.com「选中项图标填充变化」规范)。
     private func navRow(_ section: WorkspaceSection) -> some View {
         let isOn = selection == section
+        let isXcom = theme.system == .xcom
         return Button { selection = section } label: {
             HStack(spacing: 11) {
                 Image(systemName: section.symbol)
+                    .symbolVariant(isXcom && isOn ? .fill : .none)
                     .font(KSSFont.themed(15, .semibold, theme: theme))
                     .frame(width: 22)
-                    .foregroundStyle(isOn ? theme.onAccent : theme.accent)
+                    .foregroundStyle(isXcom
+                        ? (isOn ? theme.accent : theme.textSecondary)
+                        : (isOn ? theme.onAccent : theme.accent))
                 Text(section.displayName)
-                    .font(KSSFont.themed(15, .semibold, theme: theme))
-                    .foregroundStyle(isOn ? theme.onAccent : theme.textBody)
+                    .font(KSSFont.themed(15, isXcom && isOn ? .bold : .semibold, theme: theme))
+                    .foregroundStyle(isXcom
+                        ? (isOn ? theme.textPrimary : theme.textBody)
+                        : (isOn ? theme.onAccent : theme.textBody))
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 9)
             .background(
-                isOn ? theme.accent : Color.clear,
+                (!isXcom && isOn) ? theme.accent : Color.clear,
                 in: RoundedRectangle(cornerRadius: KSSTheme.shapeS)
             )
             .contentShape(Rectangle())
@@ -88,18 +96,22 @@ struct SidebarView: View {
         .buttonStyle(.plain)
     }
 
-    /// 折叠态：仅图标导航，跟随同一顺序（无拖拽）。
+    /// 折叠态：仅图标导航，跟随同一顺序（无拖拽）。选中态视觉分支同 `navRow`。
     private var collapsedNav: some View {
-        VStack(spacing: 4) {
+        let isXcom = theme.system == .xcom
+        return VStack(spacing: 4) {
             ForEach(sections) { section in
                 let isOn = selection == section
                 Button { selection = section } label: {
                     Image(systemName: section.symbol)
+                        .symbolVariant(isXcom && isOn ? .fill : .none)
                         .font(KSSFont.themed(17, .semibold, theme: theme))
                         .frame(width: 46, height: 38)
-                        .foregroundStyle(isOn ? theme.onAccent : theme.accent)
+                        .foregroundStyle(isXcom
+                            ? (isOn ? theme.accent : theme.textSecondary)
+                            : (isOn ? theme.onAccent : theme.accent))
                         .background(
-                            isOn ? theme.accent : Color.clear,
+                            (!isXcom && isOn) ? theme.accent : Color.clear,
                             in: RoundedRectangle(cornerRadius: KSSTheme.shapeS)
                         )
                 }
