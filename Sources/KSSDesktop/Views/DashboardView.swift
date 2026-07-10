@@ -1128,19 +1128,25 @@ struct IndexStackColumnView: View {
 
     private func stackCard(_ item: IndexStackItem) -> some View {
         let code = item.code.uppercased()
+        let quote = quotes[code]
         let live = RealtimeMerge.applyLive(
             close: item.close,
             pct: item.pct,
-            quote: quotes[code]
+            quote: quote
         )
-        // 实盘 1m 优先；无则回退 strip 快照 sparkline（cron 尽力写入）
+        // 实盘 1m 优先；无则回退 strip 快照 sparkline
         let liveSpark = liveSparklines[code] ?? []
         let spark = !liveSpark.isEmpty ? liveSpark : (item.sparkline ?? []).map(\.c)
-        return VStack(alignment: .leading, spacing: 6) {
+        let hasSpark = spark.count >= 2
+        let absChg = absoluteChange(close: live.close, pct: live.pct, quote: quote)
+        let sign = theme.signColor(live.pct)
+
+        // 参考终端「名 / 大号价 / 涨跌额+涨跌幅 | 右侧分时」；无分时不占空底栏
+        return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(item.name)
-                    .font(.system(size: 13.5, weight: .bold))
-                    .foregroundStyle(theme.textPrimary)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(theme.accent)
                     .lineLimit(1)
                 if live.isLive {
                     Text("实时")
@@ -1157,33 +1163,73 @@ struct IndexStackColumnView: View {
                         .foregroundStyle(theme.textSecondary)
                 }
                 Text(live.isLive ? "盘中" : dateLabel(item.date))
-                    .font(.system(size: 10.5, design: .monospaced))
+                    .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(theme.textSecondary)
                     .lineLimit(1)
             }
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                LivePriceText(
-                    value: live.close,
-                    text: String(format: "%.2f", live.close),
-                    baseColor: theme.signColor(live.pct),
-                    isLive: live.isLive,
-                    font: KSSFont.harmonyNumber(22)
-                )
-                .lineLimit(1)
-                LivePriceText(
-                    value: live.pct,
-                    text: String(format: "%+.2f%%", live.pct),
-                    baseColor: theme.signColor(live.pct),
-                    isLive: live.isLive,
-                    font: .system(size: 12, weight: .semibold, design: .monospaced)
-                )
-                .lineLimit(1)
-                Spacer(minLength: 0)
+
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    LivePriceText(
+                        value: live.close,
+                        text: formatIndexPrice(live.close),
+                        baseColor: theme.textPrimary,
+                        isLive: live.isLive,
+                        font: KSSFont.harmonyNumber(22)
+                    )
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+
+                    HStack(spacing: 6) {
+                        LivePriceText(
+                            value: absChg,
+                            text: String(format: "%+.2f", absChg),
+                            baseColor: sign,
+                            isLive: live.isLive,
+                            font: .system(size: 12, weight: .semibold, design: .monospaced)
+                        )
+                        .lineLimit(1)
+                        LivePriceText(
+                            value: live.pct,
+                            text: String(format: "%+.2f%%", live.pct),
+                            baseColor: sign,
+                            isLive: live.isLive,
+                            font: .system(size: 12, weight: .semibold, design: .monospaced)
+                        )
+                        .lineLimit(1)
+                    }
+                }
+                .layoutPriority(1)
+
+                if hasSpark {
+                    IntradaySparkline(points: spark, height: 40, showEmptyPlaceholder: false)
+                        .frame(width: 88, height: 40)
+                        .layoutPriority(0)
+                }
             }
-            IntradaySparkline(points: spark, height: 36)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .kssCard(padding: 14)
+    }
+
+    /// 涨跌额：优先 quote last−prev；否则由现价与涨跌幅反推昨收。
+    private func absoluteChange(close: Double, pct: Double, quote: LongbridgeQuote?) -> Double {
+        if let quote, quote.isLive, let last = quote.lastDone, let prev = quote.prevClose, prev > 0 {
+            return last - prev
+        }
+        if pct <= -100 { return 0 }
+        let prev = close / (1 + pct / 100.0)
+        return close - prev
+    }
+
+    private func formatIndexPrice(_ value: Double) -> String {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.maximumFractionDigits = 2
+        f.minimumFractionDigits = 2
+        f.groupingSeparator = ","
+        f.usesGroupingSeparator = true
+        return f.string(from: NSNumber(value: value)) ?? String(format: "%.2f", value)
     }
 
     private func dateLabel(_ raw: String?) -> String {
