@@ -161,20 +161,32 @@ struct ContentView: View {
         }
     }
 
-    /// 工具栏「主题」入口：只读当前摘要 + 设计系统区 + 外观区，全部带勾选状态。
+    /// 工具栏「主题」入口：只读当前摘要 + 模式区(新版/经典版) + 设计系统区(仅经典版展开) + 外观区。
     /// 选中状态由文本/勾选表达，不依赖颜色；明确的亮/暗条目取代了原二元切换按钮。
     private var themeMenu: some View {
         Menu {
             Section("当前：\(themeController.summary)") {
                 EmptyView()
             }
-            Section("设计系统") {
-                ForEach(KSSDesignSystem.allCases) { system in
+            Section("模式") {
+                ForEach(KSSUIGeneration.allCases) { generation in
                     Button {
-                        themeController.select(system: system)
+                        themeController.select(generation: generation)
                     } label: {
-                        Label(system.displayName,
-                              systemImage: themeController.designSystem == system ? "checkmark" : "")
+                        Label(generation.displayName,
+                              systemImage: themeController.uiGeneration == generation ? "checkmark" : "")
+                    }
+                }
+            }
+            if themeController.uiGeneration == .classic {
+                Section("设计系统") {
+                    ForEach(KSSDesignSystem.classicCases) { system in
+                        Button {
+                            themeController.select(system: system)
+                        } label: {
+                            Label(system.displayName,
+                                  systemImage: themeController.designSystem == system ? "checkmark" : "")
+                        }
                     }
                 }
             }
