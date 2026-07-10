@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>KSS · 日线存储是否上数据库 — Ideation 2026-07-10</title>
+<style>
+  :root {
+    --ink: #1a1a1a; --muted: #5c5c5c; --line: #e6e2d8;
+    --bg: #f7f4ed; --card: #fffdf8; --accent: #1e4d8c;
+    --up: #0b6e4f; --down: #a33; --warn: #8a6d1d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    color: var(--ink); background: var(--bg); line-height: 1.55;
+  }
+  header {
+    max-width: 820px; margin: 0 auto; padding: 2.5rem 1.5rem 1rem;
+    border-bottom: 1px solid var(--line);
+  }
+  header h1 { font-size: 1.65rem; font-weight: 600; margin: 0 0 .4rem; letter-spacing: -.02em; }
+  header .meta { color: var(--muted); font-size: .9rem; }
+  header .verdict {
+    margin-top: 1.1rem; padding: .9rem 1rem; background: #eef4fb;
+    border-left: 3px solid var(--accent); font-size: .98rem;
+  }
+  main { max-width: 820px; margin: 0 auto; padding: 1.5rem 1.5rem 3rem; }
+  h2 { font-size: 1.15rem; margin: 2rem 0 .75rem; border-bottom: 1px solid var(--line); padding-bottom: .35rem; }
+  h3 { font-size: 1.02rem; margin: 0 0 .4rem; }
+  p, li { font-size: .96rem; }
+  .muted { color: var(--muted); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .86em;
+    background: #efece4; padding: .08em .28em; border-radius: 3px; }
+  ul.axes { padding-left: 1.2rem; }
+  .jump { display: flex; flex-wrap: wrap; gap: .4rem .7rem; margin: .5rem 0 1.2rem; font-size: .88rem; }
+  .jump a { color: var(--accent); text-decoration: none; border-bottom: 1px solid #c5d4e8; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 1rem 1.1rem; margin: 0 0 1rem;
+  }
+  .card .rank { color: var(--accent); font-weight: 600; font-size: .85rem; letter-spacing: .04em; }
+  .card .tags { font-size: .82rem; color: var(--muted); margin: .35rem 0 .5rem; }
+  .card .basis { font-size: .88rem; background: #f3f0e8; padding: .55rem .7rem; border-radius: 4px; margin: .5rem 0; }
+  .card .down { color: var(--down); font-size: .88rem; }
+  table.reject { width: 100%; border-collapse: collapse; font-size: .88rem; }
+  table.reject th, table.reject td { text-align: left; padding: .45rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.reject th { color: var(--muted); font-weight: 600; }
+  footer { max-width: 820px; margin: 0 auto; padding: 0 1.5rem 2.5rem; color: var(--muted); font-size: .85rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>日线「停在 6 月」现象 → 是否升级数据库？</h1>
+  <div class="meta">2026-07-10 · topic: <code>cs-data-storage-db</code> · mode: repo-grounded · focus: 从 git 冲盘 / 自选图陈旧分析是否上库</div>
+  <div class="verdict">
+    <strong>结论先说：</strong>仅凭这次现象<strong>不必</strong>为了「别被 git 冲掉」去上数据库——根因是<strong>跟踪态 + checkout</strong>，不是 CSV 存不了数。
+    上库有独立价值（新鲜度契约、多读路径一致性、查询），但应另立目标，不要把运维事故当成架构刚需。
+    当前正确第一刀（已做）：<code>cs_data_*.csv</code> 脱钩 + 只保留日更/cron 写盘。
+  </div>
+</header>
+<main>
+
+<section>
+  <h2>Grounding Context</h2>
+  <p><strong>现象链：</strong>自选图读 <code>detail.history</code> ← bridge 读 <code>cs_data_&lt;code&gt;.csv</code>；文件末日期停在 2026-06-26 → 图停 6 月。日更曾拉到 7 月，随后 <code>git checkout -f</code> 把<strong>已跟踪</strong>的 ~102 个 csv 还原成仓库种子。</p>
+  <p><strong>规模：</strong>约 115 只池子、合计 ~14MB 行数级 9 万；不是大数据问题。</p>
+  <p><strong>既有存储形态：</strong>CSV 日线（App 热路径 stdlib 读）+ 已有 SQLite（<code>storage/kss_quotes.db</code>、<code>intraday_quotes.db</code>、ledger 等）+ parquet（ETF 回测）+ JSON 归档（paper_trade / bj50_scan）。<code>kss/data/sqlite_store.py</code> 自述为「CSV 的可选加速通道，旧路径保留」。</p>
+  <p><strong>App 约束：</strong>snapshot / stock 热路径故意避 pandas、避网络；数字纪律要求真值来自本地产物。</p>
+  <p><strong>Past learnings：</strong>PIT 分钟层方案已在 <code>docs/solutions/pit_versioned_intraday_data_layer.md</code>；包装 ideation 已点名 path/state 分离；agent 框架 ideation 要 data catalog，而非「先上库再说」。</p>
+  <p class="muted">本次 grounding 主要来自会话内故障复盘 + 仓库扫描；未另开外部调研（问题边界清楚）。</p>
+</section>
+
+<section>
+  <h2>Topic Axes</h2>
+  <ul class="axes">
+    <li><strong>A1 抗冲盘 / 运维安全</strong> — checkout、clone、工作区脏状态</li>
+    <li><strong>A2 新鲜度契约</strong> — 图表 / 纸交易结算 / 扫描「最新可交易日」是否可观测、可告警</li>
+    <li><strong>A3 App 读路径</strong> — stock history、snapshot 列表、热启动成本</li>
+    <li><strong>A4 多消费者一致</strong> — 日更、paper settle、复盘、北证、回测是否读同一真源</li>
+    <li><strong>A5 迁移与复杂度</strong> — bridge 零 pandas、并发 writer、bundle 体积</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Ranked Ideas</h2>
+  <div class="jump">
+    <a href="#i1">1. 现象≠上库：运维层先做完</a>
+    <a href="#i2">2. 新鲜度契约 + 脏数据 UI</a>
+    <a href="#i3">3. 双写轻 SQLite 读副本</a>
+    <a href="#i4">4. State-root 单仓，与 git 根物理分离</a>
+    <a href="#i5">5. 按资产分层存储</a>
+    <a href="#i6">6. 统一 quotes 表 + catalog 门面</a>
+    <a href="#i7">7. 拒绝：为这次事故全量迁库</a>
+  </div>
+
+  <article class="card" id="i1">
+    <div class="rank">#1 · Conf 92% · Complexity Low</div>
+    <h3>现象≠上库：把「抗冲盘」做完再谈架构</h3>
+    <div class="tags">axis: A1 抗冲盘 · frame: assumption-breaking</div>
+    <p>这次失败的充分原因是「被跟踪的运行态文件」。脱钩 + gitignore（PR #58）后，checkout 已不再抹日更。数据库解决不了「人把真源提交进 git」的流程问题——SQLite 若误入库同样会被冲。</p>
+    <div class="basis"><strong>basis</strong> <code>direct:</code> 会话复盘：日更到 7 月后 <code>git checkout -f</code> 还原 tracked csv；脱钩后 <code>tracked=0</code> 且 checkout 保留 2026-07-10 末行。</div>
+    <p><strong>rationale：</strong>先分清「事故类型」：运维/版本控制 vs 存储引擎。错误归因会浪费一个季度做迁库。</p>
+    <p class="down"><strong>downsides：</strong>看起来「不够架构」；新人仍可能 <code>git add -f</code> 强制入库。</p>
+  </article>
+
+  <article class="card" id="i2">
+    <div class="rank">#2 · Conf 88% · Complexity Low–Med</div>
+    <h3>新鲜度契约：末日期门禁 + 自选图「数据日」徽标</h3>
+    <div class="tags">axis: A2 新鲜度 · frame: pain / leverage</div>
+    <p>无论 CSV 还是 SQLite，缺的是<strong>产品级新鲜度</strong>：stock 详情顶栏显示 <code>latestDate</code>；若 <code>today−latestDate ≥ N</code> 交易日，徽标「日线陈旧 · 去刷新」并链到 Runbook <code>update-cs-data</code>。纸交易结算同口径（已有 stale_gap 日志，未进 UI）。</p>
+    <div class="basis"><strong>basis</strong> <code>direct:</code> bridge stock 已返回 <code>latest.latestDate</code>；update_cs_data 已写 <code>update_cs_data_last.json</code> stale_gap ALERT，但 App 自选图不展示。</div>
+    <p><strong>rationale：</strong>用户感知的是「停在 6 月」，不是「引擎是 CSV」。可观测性比换存储更能防复现。</p>
+    <p class="down"><strong>downsides：</strong>不提升查询性能；交易日历边界要小心（休市日）。</p>
+  </article>
+
+  <article class="card" id="i3">
+    <div class="rank">#3 · Conf 78% · Complexity Med</div>
+    <h3>日更双写：CSV 保留 + SQLite 读副本（复用 SQLiteStore）</h3>
+    <div class="tags">axis: A3 读路径 / A4 一致 · frame: leverage</div>
+    <p><code>update_cs_data</code> 成功写 CSV 后 <code>INSERT OR REPLACE</code> 进 <code>storage/kss_quotes.db</code>。App stock history 优先 SQLite（按 ts_code 索引），失败回落 CSV。不改 cron 语义、不强制一次性迁移。</p>
+    <div class="basis"><strong>basis</strong> <code>direct:</code> <code>kss/data/sqlite_store.py</code> 已声明「CSV 可选加速、schema 对齐、stdlib sqlite3」；<code>storage/kss_quotes.db</code> 已存在。</div>
+    <p><strong>rationale：</strong>若下一痛点是「全池扫描慢 / 多票 join」，再上库有现成落点；双写降低风险。</p>
+    <p class="down"><strong>downsides：</strong>双写漂移；App 热路径若引 pandas 会违 bridge 约束（需纯 sqlite3 读）。</p>
+  </article>
+
+  <article class="card" id="i4">
+    <div class="rank">#4 · Conf 80% · Complexity Med</div>
+    <h3>State-root 与 git 根物理分离（默认 Application Support）</h3>
+    <div class="tags">axis: A1 抗冲盘 · frame: inversion</div>
+    <p>即使 CSV 脱钩，开发机仍常在 clone 根写 <code>cs_data_*</code>。打包路径已有 <code>KSS_STATE_ROOT</code>；统一默认：日更与 App 都写 <code>~/Library/Application Support/KSS/</code>，repo 只剩代码。git 操作物理上碰不到真源。</p>
+    <div class="basis"><strong>basis</strong> <code>direct:</code> bridge <code>STATE_ROOT = KSS_STATE_ROOT or PROJECT_ROOT</code>；breadcrumb 曾指向 repo；包装 ideation 已痛「storage 相对仓库」。</div>
+    <p><strong>rationale：</strong>防御深度：gitignore 是约定，分离是物理隔离。</p>
+    <p class="down"><strong>downsides：</strong>迁移旧 clone 数据；cron/plist 要改路径；调试时要知道「数据不在仓库旁」。</p>
+  </article>
+
+  <article class="card" id="i5">
+    <div class="rank">#5 · Conf 74% · Complexity Med–High</div>
+    <h3>按资产分层：日线 CSV、分钟 SQLite、归档 JSON/parquet 不动</h3>
+    <div class="tags">axis: A5 迁移 · frame: constraint-flipping</div>
+    <p>不「全库统一」。日频池子小 → 保持 CSV（或双写）。高频/版本化 → 继续 PIT 分钟 SQLite（已有方案）。扫描/纸交易 → JSON 审计底稿可保留。拒绝 one-size-fits-all 数据库。</p>
+    <div class="basis"><strong>basis</strong> <code>direct:</code> <code>pit_versioned_intraday_data_layer.md</code> 已说明日频 SQLiteStore 不能承担分钟 PIT；多形态已在 storage/ 并存。</div>
+    <p><strong>rationale：</strong>KSS 的痛点是<strong>语义分层</strong>（PIT / 前向 / 审计），不是「少一种文件格式」。</p>
+    <p class="down"><strong>downsides：</strong>心智负担多源；catalog 必须跟上（否则 agent 仍猜）。</p>
+  </article>
+
+  <article class="card" id="i6">
+    <div class="rank">#6 · Conf 65% · Complexity High</div>
+    <h3>统一 quotes 表 + data_catalog 门面（中长期）</h3>
+    <div class="tags">axis: A4 一致 · frame: cross-domain / leverage</div>
+    <p>当出现「多池扩张到千票、跨表 join、服务化读」时：统一 <code>(ts_code, trade_date)</code> 表、writer 仅日更、reader 仅 catalog/bridge。配合已有 <code>storage/data_catalog.json</code> 刷新。</p>
+    <div class="basis"><strong>basis</strong> <code>external:</code> 量化平台常见「文件落盘 + 库内查询」分层；<code>direct:</code> agent ideation 已要 catalog 列级字典。</div>
+    <p><strong>rationale：</strong>这是<strong>增长触发</strong>的架构，不是今天事故的修复。</p>
+    <p class="down"><strong>downsides：</strong>全量读路径改造；与「bridge 无 pandas」张力；回测脚本大面积改动。</p>
+  </article>
+
+  <article class="card" id="i7">
+    <div class="rank">#7（显式否决项）· Conf 90%</div>
+    <h3>「立刻把日线全迁数据库，替换 CSV」——不推荐作为本现象的回应</h3>
+    <div class="tags">axis: A5 · frame: pain（误诊）</div>
+    <p>全量迁库<strong>不</strong>解决 git 误跟踪；14MB 池子上性能收益弱；违反「最小改动 + 热路径简单」；已有 sqlite_store 未成为默认读路径说明优先级本就不高。</p>
+    <div class="basis"><strong>basis</strong> <code>reasoned:</code> 根因已由脱钩验证消除；迁库成本 ≫ 本事故复发概率（若坚持 no-add 政策）。</div>
+    <p class="down">若强行上：延期真正需要的新鲜度 UI 与 state-root 分离。</p>
+  </article>
+</section>
+
+<section>
+  <h2>Rejection Summary</h2>
+  <table class="reject">
+    <thead><tr><th>砍掉的方向</th><th>原因</th></tr></thead>
+    <tbody>
+      <tr><td>Postgres / 远程 DB</td><td>单人桌面工作台；违背本地优先与热路径简单；overkill</td></tr>
+      <tr><td>只用 parquet 替代全部 CSV</td><td>App 热路径避 pandas；与 bridge 约束冲突</td></tr>
+      <tr><td>把 paper_trade/bj scan 也立刻入库</td><td>审计底稿要可读 JSON；与本次图陈旧无关</td></tr>
+      <tr><td>「再跟踪一份种子 CSV」</td><td>重蹈覆盖；与 #1 矛盾</td></tr>
+      <tr><td>为 agent 单独再做一个向量库存行情</td><td>subject overrun；行情不是语义检索问题</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Suggested Sequencing</h2>
+  <ol>
+    <li><strong>已完成：</strong>脱钩 + gitignore 纪律（PR #58）+ 本机日更到 T。</li>
+    <li><strong>下一刀（高 ROI）：</strong>Idea #2 新鲜度徽标 / 一键 update-cs-data。</li>
+    <li><strong>防御深度：</strong>Idea #4 state-root 默认出仓（与打包路径对齐）。</li>
+    <li><strong>有性能/join 证据再开：</strong>Idea #3 双写 SQLite。</li>
+    <li><strong>池子/产品形态变了再谈：</strong>Idea #6 统一库。</li>
+  </ol>
+</section>
+
+</main>
+<footer>
+  ce-ideate · 2026-07-10 · 不写需求、不写实现计划 · 下一跳：<code>ce-brainstorm</code> 锁定其中一条
+</footer>
+</body>
+</html>

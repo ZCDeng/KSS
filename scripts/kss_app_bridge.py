@@ -4022,6 +4022,7 @@ def _trading_hours() -> dict[str, Any]:
     """交易时段查询（F007）：Swift 侧门控实时拉取/定时器，不在 Swift 内嵌日历.
 
     复用既有 trade_cal 模块判断交易日 + 时段（9:25–15:05）。
+    额外返回 ``reference_trade_date``（应有日线日，供自选/详情日线新鲜度）。
     """
     from datetime import datetime  # noqa: PLC0415
     from zoneinfo import ZoneInfo  # noqa: PLC0415
@@ -4033,12 +4034,53 @@ def _trading_hours() -> dict[str, Any]:
     minutes = now.hour * 60 + now.minute
     in_window = (9 * 60 + 25) <= minutes <= (15 * 60 + 5)
     is_trading_session = is_trade_day and in_window
+    ref = _reference_trade_date(now=now, is_trade_day=is_trade_day)
     return {
         "is_trade_day": is_trade_day,
         "is_trading_session": is_trading_session,
         "session_end": "15:05",
         "now": now.isoformat(timespec="seconds"),
+        "reference_trade_date": ref,  # YYYY-MM-DD
     }
+
+
+def _reference_trade_date(*, now: Any | None = None, is_trade_day: bool | None = None) -> str:
+    """应有日线日（YYYY-MM-DD）：盘中/盘后早期取上一交易日，18:00 后取当日（若交易日）。
+
+    供 DailyBarFreshness：barDate < reference → 陈旧。
+    """
+    from datetime import datetime, timedelta  # noqa: PLC0415
+    from zoneinfo import ZoneInfo  # noqa: PLC0415
+
+    if now is None:
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+    today = now.strftime("%Y%m%d")
+    if is_trade_day is None:
+        is_trade_day = _is_trade_day(today)
+    minutes = now.hour * 60 + now.minute
+    after_eod = minutes >= (18 * 60)
+
+    def _fmt(yyyymmdd: str) -> str:
+        return f"{yyyymmdd[:4]}-{yyyymmdd[4:6]}-{yyyymmdd[6:8]}"
+
+    def _prev_open(before: str) -> str:
+        """before 为 YYYYMMDD，向前找最近交易日（含 before 本身若 open）。"""
+        # 先试 before，再往前最多 20 个自然日
+        d0 = datetime.strptime(before, "%Y%m%d")
+        for i in range(0, 21):
+            cand = (d0 - timedelta(days=i)).strftime("%Y%m%d")
+            if _is_trade_day(cand):
+                return cand
+        return before
+
+    if is_trade_day and after_eod:
+        return _fmt(today)
+    if is_trade_day:
+        # 盘中 / 18:00 前：日线通常尚无当日完整 bar → 上一交易日
+        yday = (now - timedelta(days=1)).strftime("%Y%m%d")
+        return _fmt(_prev_open(yday))
+    # 非交易日：≤ 今天的最近交易日
+    return _fmt(_prev_open(today))
 
 
 def _is_trade_day(yyyymmdd: str) -> bool:

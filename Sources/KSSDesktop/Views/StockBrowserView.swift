@@ -29,11 +29,15 @@ struct StockBrowserView: View {
     var realtimeUpdatedAt: Date? = nil
     var onRetryRealtime: () -> Void = {}
     var onLoadRealtimeForSymbol: (String) -> Void = { _ in }
+    /// 日线新鲜度：一键 update-cs-data
+    var isRunningTask: Bool = false
+    var onUpdateCsData: () -> Void = {}
 
     @State private var sort: StockSort = .symbol
     @State private var ascending = true
     @State private var showChartFullscreen = false
     @State private var showImport = false
+    @State private var showUpdateCsConfirm = false
 
     private var filteredStocks: [StockSummary] {
         var items = stocks
@@ -107,6 +111,11 @@ struct StockBrowserView: View {
 
                 List(filteredStocks) { stock in
                     let isOn = stock.symbol == selectedSymbol
+                    let ref = tradingHours?.referenceTradeDate
+                    let barFresh = DailyBarFreshness.status(
+                        barDate: stock.latestDate,
+                        referenceTradeDate: ref
+                    )
                     Button { onSelect(stock.symbol) } label: {
                         VStack(alignment: .leading, spacing: 3) {
                             HStack(spacing: 6) {
@@ -124,16 +133,33 @@ struct StockBrowserView: View {
                                     .font(.system(size: 12.5, weight: .bold, design: .monospaced))
                                     .foregroundStyle(theme.signColor(stock.pctChange))
                             }
-                            Text("\(stock.symbol) · \(stock.industry)")
-                                .font(.system(size: 11.5, design: .monospaced))
-                                .foregroundStyle(theme.textSecondary)
+                            HStack(spacing: 6) {
+                                Text("\(stock.symbol) · \(stock.industry)")
+                                    .font(.system(size: 11.5, design: .monospaced))
+                                    .foregroundStyle(theme.textSecondary)
+                                    .lineLimit(1)
+                                Spacer(minLength: 4)
+                                // 日线末日期 / 陈旧点（陈旧可点 → 确认日更）
+                                DailyFreshnessLabel(
+                                    barDate: stock.latestDate,
+                                    referenceTradeDate: ref,
+                                    compact: true,
+                                    isRunning: isRunningTask,
+                                    onRequestUpdate: { showUpdateCsConfirm = true }
+                                )
+                            }
                         }
                         .padding(.vertical, 2)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
+                        .opacity(barFresh == .stale ? 0.95 : 1)
                     }
                     .buttonStyle(.plain)
-                    .listRowBackground(isOn ? theme.accent.opacity(0.16) : Color.clear)
+                    .listRowBackground(
+                        isOn
+                            ? theme.accent.opacity(0.16)
+                            : (barFresh == .stale ? theme.ma5.opacity(0.08) : Color.clear)
+                    )
                 }
                 .scrollContentBackground(.hidden)
                 .background(theme.canvas)
@@ -155,7 +181,9 @@ struct StockBrowserView: View {
                         tradingHours: tradingHours,
                         realtimeAuthFailed: realtimeAuthFailed,
                         realtimeUpdatedAt: realtimeUpdatedAt,
-                        onRetryRealtime: onRetryRealtime
+                        onRetryRealtime: onRetryRealtime,
+                        isRunningTask: isRunningTask,
+                        onRequestUpdateCsData: { showUpdateCsConfirm = true }
                     )
                     .onAppear { onLoadRealtimeForSymbol(detail.symbol) }
                     .onChange(of: detail.symbol) { _, sym in onLoadRealtimeForSymbol(sym) }
@@ -172,6 +200,20 @@ struct StockBrowserView: View {
         .background(theme.canvas)
         .sheet(isPresented: $showImport) {
             ImportStocksView { showImport = false }
+        }
+        .confirmationDialog(
+            "更新日线数据",
+            isPresented: $showUpdateCsConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("开始更新") {
+                guard !isRunningTask else { return }
+                onUpdateCsData()
+            }
+            .disabled(isRunningTask)
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("将全池更新日线，约数分钟。任务进行中请勿重复点击。")
         }
         // 放大：铺满整个浏览区（列表+详情，随窗口尺寸动态最大化），而非尺寸受限的 sheet。
         .overlay {
@@ -199,6 +241,8 @@ struct StockDetailView: View {
     var realtimeAuthFailed: Bool = false
     var realtimeUpdatedAt: Date? = nil
     var onRetryRealtime: () -> Void = {}
+    var isRunningTask: Bool = false
+    var onRequestUpdateCsData: () -> Void = {}
     // U3 分钟 K 线模式（R7/R15）
     @State private var chartMode: ChartDataMode = .daily
     @State private var intradayBars: IntradayBars? = nil
@@ -207,6 +251,12 @@ struct StockDetailView: View {
 
     private var analysis: StockAnalysis {
         StockAnalysis(points: detail.history, latest: detail.latest)
+    }
+
+    /// 日线末日期：summary → history 末日（北证等无 summary 时回退）
+    private var barLatestDate: String? {
+        if let d = detail.latest?.latestDate, !d.isEmpty { return d }
+        return detail.history.last?.date
     }
 
     /// 推给 chart 状态条；失败时主图仍为日线。
@@ -247,6 +297,14 @@ struct StockDetailView: View {
                             authFailed: realtimeAuthFailed,
                             updatedAt: realtimeUpdatedAt,
                             onRetry: onRetryRealtime
+                        )
+                        // 日线底稿新鲜度（与实时 badge 语义分离，可同时展示）
+                        DailyFreshnessLabel(
+                            barDate: barLatestDate,
+                            referenceTradeDate: tradingHours?.referenceTradeDate,
+                            compact: false,
+                            isRunning: isRunningTask,
+                            onRequestUpdate: onRequestUpdateCsData
                         )
                         Button(action: onToggleWatchlist) {
                             Label(isWatched ? "取消自选" : "加自选", systemImage: isWatched ? "star.fill" : "star")
@@ -299,6 +357,14 @@ struct StockDetailView: View {
                 HStack {
                     SectionHeader("行情")
                     Spacer()
+                    // 图区旁再挂一次日线截至日，便于扫图时看到底稿日期
+                    DailyFreshnessLabel(
+                        barDate: barLatestDate,
+                        referenceTradeDate: tradingHours?.referenceTradeDate,
+                        compact: false,
+                        isRunning: isRunningTask,
+                        onRequestUpdate: onRequestUpdateCsData
+                    )
                     if chartMode != .daily {
                         if intradayLoading {
                             ProgressView().controlSize(.small)
