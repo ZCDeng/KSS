@@ -323,6 +323,12 @@ window.kssSetTheme = function (payload) {
       r.setProperty('--serif', p.typography.serif);
       r.setProperty('--sans', p.typography.sans);
       r.setProperty('--mono', p.typography.mono);
+      // xcom 中文级联字体加载核实（不影响渲染，仅供调试排查用）。
+      if (p.typography.sans && p.typography.sans.includes('TsangerJinKai02') && document.fonts) {
+        document.fonts.ready.then(() => {
+          console.log('[KSS] TsangerJinKai02 loaded:', document.fonts.check('16px "TsangerJinKai02"'));
+        });
+      }
     }
   } catch (e) { /* 主题失败不破坏交互图 */ }
 };

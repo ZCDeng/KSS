@@ -180,8 +180,12 @@ struct ThemeTypography: Equatable {
     )
     /// x.com 模式:英文走 Chirp,中文走仓耳今楷,WebView 侧 CSS 字体栈同顺序级联。
     static let xcomChirp = ThemeTypography(
-        serif: "\"Chirp\", -apple-system, \"TsangerJinKai02\", sans-serif",
-        sans: "\"Chirp\", -apple-system, \"TsangerJinKai02\", sans-serif",
+        // TsangerJinKai02 紧跟 Chirp 之后、系统泛型字体之前:WebKit 的 -apple-system 对
+        // 不在 Chirp 覆盖范围内的字符(含中文)会先走自己内部的系统级联(通常落到苹方),
+        // 若排在 TsangerJinKai02 之前,CSS 引擎会认为它"已经有这个字形"而不再往后找,
+        // 导致中文永远轮不到 TsangerJinKai02。
+        serif: "\"Chirp\", \"TsangerJinKai02\", -apple-system, sans-serif",
+        sans: "\"Chirp\", \"TsangerJinKai02\", -apple-system, sans-serif",
         mono: "ui-monospace, \"SF Mono\", Menlo, monospace",
         titleDesign: .default,
         nativeFontFamily: "Chirp",
