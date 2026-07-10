@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>KSS — 架构全景</title>
 <style>
+  /* x.com「新版」字体：原生注册的字体不跨进程可见给 WebContent，WebView 侧独立走 @font-face。 */
+  @font-face { font-family: "Chirp"; src: url("chirp-regular-web.woff") format("woff"); font-weight: 400; font-style: normal; }
+  @font-face { font-family: "Chirp"; src: url("chirp-medium-web.woff") format("woff"); font-weight: 500; font-style: normal; }
+  @font-face { font-family: "Chirp"; src: url("chirp-bold-web.woff") format("woff"); font-weight: 700; font-style: normal; }
+  @font-face { font-family: "Chirp"; src: url("chirp-heavy-web.woff") format("woff"); font-weight: 900; font-style: normal; }
+  @font-face { font-family: "TsangerJinKai02"; src: url("%E4%BB%93%E8%80%B3%E4%BB%8A%E6%A5%B702-W02.ttf") format("truetype"); font-weight: 400; font-style: normal; }
   :root {
     --bg: #FAF9F5; --surface: #FFFFFF; --surface2: #F0EEE6;
     --ink: #141413; --body: #3D3D3A; --muted: #87867F;
