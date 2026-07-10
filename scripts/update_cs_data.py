@@ -5,6 +5,9 @@
 本脚本直接用 :class:`TushareClient` 拉日线 OHLCV + daily_basic（市值/PE/PB），
 按 ``cs_data_<code>.csv`` 格式写盘，与现有 `paper_trade_log_mv.py` 兼容.
 
+**运行态数据**：根目录 ``cs_data_*.csv`` 已 gitignore，只由本脚本 / cron
+``run_update_data_daily.sh`` 写盘；不要 ``git add`` 进库（``checkout`` 会冲掉日更）。
+
 用法::
 
     python3 scripts/update_cs_data.py                  # 增量更新所有 cs_data_*.csv

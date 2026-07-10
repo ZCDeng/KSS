@@ -209,8 +209,16 @@ def test_advice_stop_is_position_semantics():
 # --------------------------------------------------------------------------- #
 
 
+def _require_cs_data_688322() -> Path:
+    """cs_data 已 gitignore：仅本机/有日更环境跑依赖真实 CSV 的用例。"""
+    path = PROJECT_ROOT / "cs_data_688322.csv"
+    if not path.exists():
+        pytest.skip("缺少 cs_data_688322.csv（运行态，由 update_cs_data 生成）")
+    return path
+
+
 def _render_one_stock(monkeypatch, enabled: bool) -> str:
-    df = pd.read_csv(PROJECT_ROOT / "cs_data_688322.csv")
+    df = pd.read_csv(_require_cs_data_688322())
     df["trade_date"] = pd.to_datetime(df["trade_date"])
     df = df.sort_values("trade_date").reset_index(drop=True)
     df = dr.add_indicators(df)
@@ -236,7 +244,7 @@ def test_scenario_segment_removed_when_disabled(monkeypatch):
 
 
 def test_scenario_header_shows_regime(monkeypatch):
-    df = pd.read_csv(PROJECT_ROOT / "cs_data_688322.csv")
+    df = pd.read_csv(_require_cs_data_688322())
     df["trade_date"] = pd.to_datetime(df["trade_date"])
     df = df.sort_values("trade_date").reset_index(drop=True)
     df = dr.add_indicators(df)
