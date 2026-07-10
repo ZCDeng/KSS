@@ -8,6 +8,8 @@ struct DashboardView: View {
     // U2 实时接线：页面加载触发 Longbridge 实时拉取，展示新鲜度徽标。
     var realtimeQuote: LongbridgeQuote? = nil
     var realtimeQuotes: [String: LongbridgeQuote] = [:]
+    /// 堆叠卡 live 分时（产品码 → 1m 收盘）
+    var realtimeSparklines: [String: [Double]] = [:]
     var tradingHours: TradingHours? = nil
     var realtimeAuthFailed: Bool = false
     var realtimeUpdatedAt: Date? = nil
@@ -52,9 +54,13 @@ struct DashboardView: View {
                         MarketStripRow(strip: strip, quotes: realtimeQuotes)
                     }
 
-                    // 第二行：三列指数堆叠（主板 / 成长 / 港股）+ 分时 sparkline
+                    // 第二行：三列指数堆叠（主板 / 成长 / 港股）+ Longbridge 实盘 + 分时
                     if let stacks = snapshot.marketStrip?.indexStacks, !stacks.isEmpty {
-                        IndexStackRow(stacks: stacks, quotes: realtimeQuotes)
+                        IndexStackRow(
+                            stacks: stacks,
+                            quotes: realtimeQuotes,
+                            liveSparklines: realtimeSparklines
+                        )
                     } else if let indices = snapshot.marketStrip?.indices, !indices.isEmpty {
                         // 兼容旧 strip（无 indexStacks）
                         MarketIndexRow(indices: indices, quotes: realtimeQuotes)
@@ -1048,15 +1054,20 @@ struct MarketIndexRow: View {
     }
 }
 
-/// 三列指数堆叠：自动 4s 轮播 + 轻点切下一张；各自独立。
+/// 三列指数堆叠：自动 4s 轮播 + 轻点切下一张；各自独立；价/线优先 Longbridge 实盘。
 struct IndexStackRow: View {
     var stacks: [IndexStackColumn]
     var quotes: [String: LongbridgeQuote] = [:]
+    var liveSparklines: [String: [Double]] = [:]
 
     var body: some View {
         HStack(spacing: 12) {
             ForEach(stacks) { col in
-                IndexStackColumnView(column: col, quotes: quotes)
+                IndexStackColumnView(
+                    column: col,
+                    quotes: quotes,
+                    liveSparklines: liveSparklines
+                )
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -1067,6 +1078,7 @@ struct IndexStackColumnView: View {
     @Environment(\.kssTheme) private var theme
     var column: IndexStackColumn
     var quotes: [String: LongbridgeQuote] = [:]
+    var liveSparklines: [String: [Double]] = [:]
 
     @State private var page = 0
     private let interval: TimeInterval = 4
@@ -1115,25 +1127,36 @@ struct IndexStackColumnView: View {
     }
 
     private func stackCard(_ item: IndexStackItem) -> some View {
+        let code = item.code.uppercased()
         let live = RealtimeMerge.applyLive(
             close: item.close,
             pct: item.pct,
-            quote: quotes[item.code.uppercased()]
+            quote: quotes[code]
         )
-        let spark = (item.sparkline ?? []).map(\.c)
+        // 实盘 1m 优先；无则回退 strip 快照 sparkline（cron 尽力写入）
+        let liveSpark = liveSparklines[code] ?? []
+        let spark = !liveSpark.isEmpty ? liveSpark : (item.sparkline ?? []).map(\.c)
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Text(item.name)
                     .font(.system(size: 13.5, weight: .bold))
                     .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
+                if live.isLive {
+                    Text("实时")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(theme.accent)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(theme.accent.opacity(0.12), in: Capsule())
+                }
                 Spacer(minLength: 4)
                 if items.count > 1 {
                     Text("\(page % items.count + 1)/\(items.count)")
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
                         .foregroundStyle(theme.textSecondary)
                 }
-                Text(dateLabel(item.date))
+                Text(live.isLive ? "盘中" : dateLabel(item.date))
                     .font(.system(size: 10.5, design: .monospaced))
                     .foregroundStyle(theme.textSecondary)
                     .lineLimit(1)
