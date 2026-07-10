@@ -230,6 +230,40 @@ def _expected_bar_ends(store: IntradayStore, session_profile_version: str) -> tu
     return tuple(prof["legal_bar_ends"])
 
 
+def _load_watchlist_symbols() -> list[str]:
+    """App 同步的自选列表（state-root/storage/watchlist_symbols.txt，一行一码）。"""
+    try:
+        from kss.config.paths import STORAGE_ROOT  # noqa: PLC0415
+
+        path = STORAGE_ROOT / "watchlist_symbols.txt"
+        if not path.is_file():
+            return []
+        out: list[str] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            s = line.strip()
+            if s and not s.startswith("#"):
+                out.append(s)
+        return out
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _prioritize_watchlist(
+    symbols: list[tuple[str, str]],
+) -> list[tuple[str, str]]:
+    """自选优先：watchlist 中且已注册的票排前，其余保持相对序。"""
+    wl = _load_watchlist_symbols()
+    if not wl:
+        return symbols
+    wl_set = set(wl)
+    head = [p for p in symbols if p[0] in wl_set]
+    # 按 watchlist 文件序稳定排序 head
+    order = {s: i for i, s in enumerate(wl)}
+    head.sort(key=lambda p: order.get(p[0], 10_000))
+    tail = [p for p in symbols if p[0] not in wl_set]
+    return head + tail
+
+
 def _drift_seconds(retrieved_at: str, bar_end_ts: str) -> float:
     """``retrieved_at - bar_end_ts`` 秒数（M1 漂移自报）。两者皆带时区 ISO。"""
     return (
@@ -411,6 +445,8 @@ def _collect_one_day(
     **跳过取数与 canonical**（不靠写一次守卫兜底），杜绝改写 PIT 冻结历史。
     """
     symbols = store.list_registered_symbols(provider.name)
+    # 自选优先（App 写 storage/watchlist_symbols.txt）：加厚队列，失败后全池仍跑
+    symbols = _prioritize_watchlist(symbols)
     observations: list[ObservationInput] = []
     obs_instrument_ids: list[int] = []
     skipped: list[str] = []

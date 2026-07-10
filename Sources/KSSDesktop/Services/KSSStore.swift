@@ -293,8 +293,12 @@ final class KSSStore: ObservableObject {
     func refreshRealtimeQuotes(symbols: [String]? = nil) async {
         guard let bridge else { return }
         let inSession = await loadTradingHours()
-        guard inSession else {
+        // 非交易时段：不刷 live 价，但仍刷堆叠卡会话分时（live→local，KTD4）
+        if !inSession {
             realtimeQuote = nil
+            await refreshRealtimeSparklines(
+                displaySymbols: RealtimeMerge.symbolsFromIndexStacks(snapshot?.marketStrip?.indexStacks)
+            )
             reevaluateTimer()
             return
         }

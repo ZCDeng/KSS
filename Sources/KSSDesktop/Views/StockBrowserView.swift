@@ -265,7 +265,14 @@ struct StockDetailView: View {
         if chartMode == .daily { return nil }
         if intradayLoading { return "加载分钟线…" }
         if let err = intradayError { return err }
-        if intradayBars?.isRenderable == true { return nil }
+        if let bars = intradayBars, bars.isRenderable {
+            // 来源标签：本地 / 源·部分 / 源
+            if let label = bars.sourceLabel {
+                let tf = chartMode == .m5 ? "5分" : "1分"
+                return "\(label) · \(tf)"
+            }
+            return nil
+        }
         return nil
     }
 
@@ -726,16 +733,16 @@ extension StockDetailView {
         if let bars {
             if bars.isRenderable { intradayBars = bars; intradayError = nil }
             else {
-                // 失败时保留日线主图；文案对 auth 给可操作提示
+                // 失败时保留日线主图；文案对 auth / 无存档 给可操作提示
                 switch bars.error {
                 case "auth_failed":
                     intradayError = "实时源未连接 · 打开「网络与凭据」检查 Longbridge"
                 case "not_covered", "unsupported_symbol":
                     intradayError = "该标的暂无分钟线覆盖"
                 case let e? where !e.isEmpty:
-                    intradayError = e
+                    intradayError = bars.hint.map { "\($0)（\(e)）" } ?? e
                 default:
-                    intradayError = bars.hint ?? "暂无成交数据"
+                    intradayError = bars.hint ?? "暂无分钟线 · 无本地存档"
                 }
             }
         } else {
