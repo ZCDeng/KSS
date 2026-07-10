@@ -213,7 +213,11 @@ def _quote_index_global(pro, fetch_with_retry, code: str, name: str) -> dict | N
 
 
 def _fetch_index_stacks(pro, fetch_with_retry) -> list[dict]:
-    """三列堆叠：日线价 + 尽力 1m sparkline。"""
+    """三列堆叠：日线价 + 尽力 1m sparkline。
+
+    产品码（UI/Longbridge）用 ``code``；拉数可用 ``fetch_code``（如 HSTECH→HKTECH）。
+    主源失败时按 kind 做短后备链，避免整层被静默丢弃。
+    """
     import sys
     sys.path.insert(0, str(ROOT))
     from scripts.index_stack_universe import INDEX_STACKS, YF_TICKERS
@@ -223,26 +227,66 @@ def _fetch_index_stacks(pro, fetch_with_retry) -> list[dict]:
         items: list[dict] = []
         for it in col["items"]:
             code, name, kind = it["code"], it["name"], it["kind"]
+            fetch_code = it.get("fetch_code") or code
             quote = None
             try:
                 if kind == "index_daily":
-                    quote = _quote_index_daily(pro, fetch_with_retry, code, name)
+                    quote = _quote_index_daily(pro, fetch_with_retry, fetch_code, name)
                 elif kind == "index_global":
-                    quote = _quote_index_global(pro, fetch_with_retry, code, name)
+                    quote = _quote_index_global(pro, fetch_with_retry, fetch_code, name)
+                    if not quote:
+                        # 后备：yfinance（恒生科技曾误绑 ETF；仍优于整层缺失）
+                        yf_code = YF_TICKERS.get(code, fetch_code)
+                        quote = _quote_yfinance(yf_code, name)
+                        if quote:
+                            quote["source"] = f"yfinance:{yf_code}"
+                    if not quote:
+                        quote = _quote_hstech_sina(name) if code == "HSTECH" else None
                 else:
-                    yf_code = YF_TICKERS.get(code, code)
+                    yf_code = YF_TICKERS.get(code, fetch_code)
                     quote = _quote_yfinance(yf_code, name)
-                    if quote:
-                        quote["code"] = code  # 保持产品码
             except Exception as exc:  # noqa: BLE001
-                logger.warning("indexStack quote %s: %s", code, exc)
+                logger.warning("indexStack quote %s (fetch=%s): %s", code, fetch_code, exc)
             if not quote:
+                logger.warning("indexStack skip %s (%s) — 无可用价源", code, name)
                 continue
+            quote["code"] = code  # 始终产品码（不泄漏 HKTECH 到 UI）
+            quote["name"] = name
             spark = _sparkline_1m(code, kind)
             quote["sparkline"] = spark
             items.append(quote)
         out_cols.append({"id": col["id"], "items": items})
     return out_cols
+
+
+def _quote_hstech_sina(name: str) -> dict | None:
+    """akshare 新浪港股指数日线（HSTECH 真指数后备）。"""
+    try:
+        import akshare as ak
+    except ImportError:
+        return None
+    try:
+        df = ak.stock_hk_index_daily_sina(symbol="HSTECH")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("sina HSTECH: %s", exc)
+        return None
+    if df is None or df.empty:
+        return None
+    # 列：date open high ... close
+    df = df.sort_values("date")
+    r = df.iloc[-1]
+    close = float(r["close"])
+    prev = float(df.iloc[-2]["close"]) if len(df) >= 2 else None
+    pct = 0.0 if not prev else (close - prev) / prev * 100.0
+    date_s = str(r["date"]).replace("-", "")[:8]
+    return {
+        "code": "HSTECH",
+        "name": name,
+        "close": round(close, 2),
+        "pct": round(pct, 2),
+        "date": date_s,
+        "source": "akshare_sina",
+    }
 
 
 def _quote_index_daily(pro, fetch_with_retry, code: str, name: str) -> dict | None:

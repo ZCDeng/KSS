@@ -1,13 +1,15 @@
 """今日看盘第二行：三列指数堆叠名单（产品锁定）。"""
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 
 class StackItem(TypedDict):
     code: str
     name: str
     kind: str  # index_daily | index_global | yfinance
+    # 拉数用码（与产品展示码不同时设，如 恒生科技 产品码 HSTECH / Tushare HKTECH）
+    fetch_code: NotRequired[str]
 
 
 class StackCol(TypedDict):
@@ -36,13 +38,18 @@ INDEX_STACKS: tuple[StackCol, ...] = (
         "id": "hk",
         "items": [
             {"code": "HSI", "name": "恒生指数", "kind": "index_global"},
-            {"code": "HSTECH", "name": "恒生科技", "kind": "yfinance"},  # yf: ^HSTECH
+            # Tushare index_global 真源码为 HKTECH（非 HSTECH）；产品/UI/Longbridge 仍用 HSTECH
+            {
+                "code": "HSTECH",
+                "name": "恒生科技",
+                "kind": "index_global",
+                "fetch_code": "HKTECH",
+            },
         ],
     },
 )
 
-# yfinance 代码映射（strip code → ticker）。恒生科技指数 Yahoo 常无稳定代码；
-# 用恒生科技 ETF 02828.HK 作价源代理，展示名仍为「恒生科技」。
+# yfinance 后备 ticker（strip 产品码 → yf）。恒生科技指数无稳定 ^ 码时用 ETF 代理分时。
 YF_TICKERS: dict[str, str] = {
     "HSTECH": "2828.HK",
 }
