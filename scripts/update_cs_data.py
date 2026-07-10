@@ -347,7 +347,9 @@ def main() -> None:
 
     end_s = (args.end or datetime.now().strftime("%Y-%m-%d")).replace("-", "")
     end_ts = pd.Timestamp(f"{end_s[:4]}-{end_s[4:6]}-{end_s[6:8]}")
-    stale = _scan_stale_cs_files(files, end_ts, min_gap_days=4)
+    stale, suspended = _scan_stale_cs_files(
+        files, end_ts, client=client, min_gap_days=4
+    )
     status_path = _KSS_STATE / "storage" / "logs" / "cron" / "update_cs_data_last.json"
     status_path.parent.mkdir(parents=True, exist_ok=True)
     status = {
@@ -358,12 +360,21 @@ def main() -> None:
         "failed": n_failed,
         "staleCount": len(stale),
         "stale": stale[:40],
+        "suspendedCount": len(suspended),
+        "suspended": suspended[:40],
         "elapsedSec": round(elapsed, 1),
     }
     status_path.write_text(
         __import__("json").dumps(status, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+    if suspended:
+        logger.info(
+            "停牌导致日线未推进 %d 只（不计入 stale 失败，示例 %s）",
+            len(suspended),
+            ", ".join(s["file"] for s in suspended[:8]),
+        )
 
     if n_failed > 0:
         sys.exit(1)
@@ -378,13 +389,60 @@ def main() -> None:
         sys.exit(2)  # 2 = 完成但有缺口；wrapper 不重试整批，只告警
 
 
+def _ts_code_from_cs_file(path: Path) -> str | None:
+    """从 cs_data_*.csv 读 ts_code（首行）。"""
+    try:
+        df = pd.read_csv(path, usecols=["ts_code"], nrows=1)
+        if df.empty:
+            return None
+        code = str(df["ts_code"].iloc[0]).strip()
+        return code or None
+    except Exception:  # noqa: BLE001
+        # 文件名回退 cs_data_688072.csv → 688072.SH（默认 SH 科创/主板猜测不稳，仅作兜底）
+        stem = path.stem.replace("cs_data_", "")
+        if not stem:
+            return None
+        if "." in stem:
+            return stem
+        if stem.startswith(("5", "6", "9")):
+            return f"{stem}.SH"
+        if stem.startswith(("0", "1", "3")):
+            return f"{stem}.SZ"
+        if stem.startswith(("4", "8")):
+            return f"{stem}.BJ"
+        return f"{stem}.SH"
+
+
+def _is_suspended_on(
+    client: TushareClient, ts_code: str, trade_date_yyyymmdd: str
+) -> bool:
+    """Tushare suspend_d：该交易日是否停牌（S）。"""
+    try:
+        pro = client.get_pro()
+        df = pro.suspend_d(
+            ts_code=ts_code,
+            start_date=trade_date_yyyymmdd,
+            end_date=trade_date_yyyymmdd,
+        )
+        return df is not None and not df.empty
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _scan_stale_cs_files(
     files: list[Path],
     end_ts: pd.Timestamp,
+    *,
+    client: TushareClient | None = None,
     min_gap_days: int = 4,
-) -> list[dict[str, object]]:
-    """扫描本地 max(trade_date) 落后 end 超过 min_gap_days 的文件。"""
-    out: list[dict[str, object]] = []
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """扫描本地 max(trade_date) 落后 end 超过 min_gap_days 的文件。
+
+    返回 ``(stale, suspended)``：end 日仍停牌的票进 suspended，**不**触发 exit 2。
+    """
+    stale: list[dict[str, object]] = []
+    suspended: list[dict[str, object]] = []
+    end_yyyymmdd = end_ts.strftime("%Y%m%d")
     for f in files:
         try:
             df = pd.read_csv(f, usecols=["trade_date"])
@@ -392,15 +450,27 @@ def _scan_stale_cs_files(
                 continue
             mx = pd.to_datetime(df["trade_date"]).max()
             gap = int((end_ts - mx).days)
-            if gap >= min_gap_days:
-                out.append({
-                    "file": f.name,
-                    "maxDate": mx.strftime("%Y-%m-%d"),
-                    "gapDays": gap,
-                })
+            if gap < min_gap_days:
+                continue
+            entry: dict[str, object] = {
+                "file": f.name,
+                "maxDate": mx.strftime("%Y-%m-%d"),
+                "gapDays": gap,
+            }
+            ts_code = _ts_code_from_cs_file(f)
+            if ts_code and client is not None and _is_suspended_on(
+                client, ts_code, end_yyyymmdd
+            ):
+                entry["ts_code"] = ts_code
+                entry["reason"] = "suspended"
+                suspended.append(entry)
+            else:
+                if ts_code:
+                    entry["ts_code"] = ts_code
+                stale.append(entry)
         except Exception as exc:  # noqa: BLE001
-            out.append({"file": f.name, "error": str(exc)})
-    return out
+            stale.append({"file": f.name, "error": str(exc)})
+    return stale, suspended
 
 
 if __name__ == "__main__":
