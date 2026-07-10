@@ -3019,11 +3019,19 @@ _WEEKDAY_CN = {0: "日", 1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "�
 
 
 def _launchd_plists() -> dict[str, Path]:
-    """label → plist 路径。白名单的唯一事实源。"""
+    """label → plist 路径。
+
+    优先 ``deploy/launchd``（仓库/已拷入 bundle 的模板）。
+    若目录为空（旧签名包未带 deploy/）：回退已装的 ``~/Library/LaunchAgents``，
+    避免 App 内「重跑」全部变成 unknown label。
+    """
     out: dict[str, Path] = {}
-    for path in sorted(LAUNCHD_DIR.glob("com.zcdeng.kss.*.plist")):
-        label = path.stem  # 文件名去 .plist == Label
-        out[label] = path
+    if LAUNCHD_DIR.is_dir():
+        for path in sorted(LAUNCHD_DIR.glob("com.zcdeng.kss.*.plist")):
+            out[path.stem] = path
+    if not out and LAUNCHAGENTS_DIR.is_dir():
+        for path in sorted(LAUNCHAGENTS_DIR.glob("com.zcdeng.kss.*.plist")):
+            out[path.stem] = path
     return out
 
 
