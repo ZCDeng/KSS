@@ -18,6 +18,16 @@ struct ContentView: View {
             .filter { !$0.isEmpty }
     }
 
+    /// 给盘后 collect_intraday 读：state-root/storage/watchlist_symbols.txt（一行一码）
+    private func syncWatchlistFile(_ symbols: [String]) {
+        guard let root = store.bridge?.stateRoot else { return }
+        let dir = root.appending(path: "storage")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appending(path: "watchlist_symbols.txt")
+        let body = symbols.joined(separator: "\n") + (symbols.isEmpty ? "" : "\n")
+        try? body.write(to: url, atomically: true, encoding: .utf8)
+    }
+
     /// 价格页：完整四态 badge（页内）。其余页仅工具栏 status dot。
     private static let priceSections: Set<WorkspaceSection> = [
         .dashboard, .stocks, .watchlist, .recommendations, .themes
@@ -115,6 +125,7 @@ struct ContentView: View {
             NetworkSettingsView()
         }
         .frame(minWidth: 1080, minHeight: 720)
+        .onAppear { syncWatchlistFile(watchlist) }
         .onChange(of: scenePhase) { _, phase in store.updateSceneActive(phase == .active) }   // U5: Timer lifecycle gate
         .overlay(alignment: .bottom) {
             if let sym = store.importingSymbol {
@@ -348,6 +359,7 @@ struct ContentView: View {
         let result = WatchlistToggle.apply(watchlist, toggling: symbol)
         // watchlist 先持久化，生成失败不回滚自选。
         watchlistSymbols = result.list.joined(separator: ",")
+        syncWatchlistFile(result.list)
         // U5: 仅「加入」分支触发即时复盘（取消不触发）。
         if result.generate {
             Task { await store.generateReview(for: symbol) }

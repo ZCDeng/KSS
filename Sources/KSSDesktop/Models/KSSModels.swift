@@ -1503,6 +1503,10 @@ struct IntradayBars: Codable, Hashable {
     var manifestStale: Bool?
     var error: String?
     var hint: String?
+    /// live | local | live_partial（非交易时段降级）
+    var source: String?
+    /// 会话日 YYYY-MM-DD
+    var sessionDate: String?
 
     enum CodingKeys: String, CodingKey {
         case symbol
@@ -1513,10 +1517,27 @@ struct IntradayBars: Codable, Hashable {
         case routedProvider = "routed_provider"
         case manifestStale = "manifest_stale"
         case error, hint
+        case source
+        case sessionDate = "session_date"
     }
 
-    /// K 线可渲染（无 error 且有序列）。R15 empty/error 状态据此判定。
-    var isRenderable: Bool { error == nil && !bars.isEmpty }
+    /// K 线可渲染：有序列即可（local 可能仍带 hint；error 仅在 bars 空时阻断）。
+    var isRenderable: Bool { !bars.isEmpty }
+
+    /// 图上/状态条来源文案。
+    var sourceLabel: String? {
+        switch source {
+        case "local":
+            if let d = sessionDate, !d.isEmpty { return "本地 · \(d)" }
+            return "本地会话"
+        case "live_partial":
+            return "源 · 部分"
+        case "live":
+            return "源"
+        default:
+            return nil
+        }
+    }
 }
 
 /// 交易时段查询（bridge `trading-hours`，门控实时拉取 / 定时器）。R13/F007。

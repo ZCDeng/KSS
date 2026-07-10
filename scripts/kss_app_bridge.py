@@ -3977,8 +3977,178 @@ def _intraday_bars(symbol: str, interval_minutes: int = 1, asset_kind: str = "st
     return _call_with_retry(lambda: _intraday_bars_inner(symbol, interval_minutes, asset_kind))
 
 
+def _intraday_expected_bars(interval_minutes: int) -> int:
+    """全日 A 股会话期望 bar 数近似（上午 120 + 下午 120 = 240 根 1m）。"""
+    if interval_minutes <= 0:
+        return 240
+    return max(1, 240 // int(interval_minutes))
+
+
+def _intraday_session_cache_path(symbol: str, interval_minutes: int) -> Path:
+    from kss.config.paths import STORAGE_ROOT  # noqa: PLC0415
+
+    safe = symbol.replace("/", "_").replace("\\", "_")
+    d = STORAGE_ROOT / "intraday_session_cache"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{safe}_{int(interval_minutes)}m.json"
+
+
+def _save_intraday_session_cache(
+    symbol: str, interval_minutes: int, bars: list[dict[str, Any]], session_date: str | None
+) -> None:
+    """页内成功拉取附带沉淀（KTD6 R7）：轻量 JSON，供非交易时段 local 降级。"""
+    if not bars:
+        return
+    try:
+        import json as _json  # noqa: PLC0415
+        from datetime import datetime  # noqa: PLC0415
+        from zoneinfo import ZoneInfo  # noqa: PLC0415
+
+        path = _intraday_session_cache_path(symbol, interval_minutes)
+        payload = {
+            "symbol": symbol,
+            "interval_minutes": interval_minutes,
+            "session_date": session_date,
+            "saved_at": datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(timespec="seconds"),
+            "bars": bars,
+        }
+        path.write_text(_json.dumps(payload, ensure_ascii=False, default=str), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _infer_session_date_from_bars(bars: list[dict[str, Any]]) -> str | None:
+    """从 bar 时间戳推断会话日 YYYY-MM-DD（取最晚 bar 的日期）。"""
+    if not bars:
+        return None
+    last = bars[-1]
+    for key in ("time", "bar_ts", "bar_end_ts", "datetime", "date"):
+        raw = last.get(key)
+        if raw is None:
+            continue
+        s = str(raw).strip()
+        digits = "".join(ch for ch in s if ch.isdigit())
+        if len(digits) >= 8:
+            return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
+        if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+            return s[:10]
+    return None
+
+
+def _load_local_session_bars(
+    symbol: str, interval_minutes: int
+) -> tuple[list[dict[str, Any]], str | None]:
+    """本地降级：session cache JSON → 可选 canonical_bars（若库有 complete 会话）。"""
+    # 1) 页内 cache（最常命中）
+    try:
+        import json as _json  # noqa: PLC0415
+
+        path = _intraday_session_cache_path(symbol, interval_minutes)
+        if path.is_file():
+            data = _json.loads(path.read_text(encoding="utf-8"))
+            bars = data.get("bars") or []
+            if isinstance(bars, list) and bars:
+                sd = data.get("session_date") or _infer_session_date_from_bars(bars)
+                return bars, sd
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 2) 5m：无 5m cache 时从 1m 聚合
+    if interval_minutes == 5:
+        bars1, sd = _load_local_session_bars(symbol, 1)
+        if bars1:
+            return _aggregate_bars_to_interval(bars1, 5), sd
+
+    # 3) canonical_bars（盘后 close 写入后）
+    try:
+        import sqlite3  # noqa: PLC0415
+        from kss.config.paths import INTRADAY_DB  # noqa: PLC0415
+
+        if not INTRADAY_DB.is_file():
+            return [], None
+        conn = sqlite3.connect(str(INTRADAY_DB), timeout=5)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT trade_date, COUNT(*) AS n FROM canonical_bars "
+            "WHERE symbol=? AND interval_minutes=? "
+            "GROUP BY trade_date ORDER BY trade_date DESC LIMIT 1",
+            (symbol, interval_minutes),
+        ).fetchone()
+        if not row or int(row["n"] or 0) < 10:
+            # try 1m then aggregate for 5m
+            if interval_minutes != 1:
+                conn.close()
+                return [], None
+            conn.close()
+            return [], None
+        trade_date = str(row["trade_date"])
+        rows = conn.execute(
+            "SELECT bar_end_ts, open, high, low, close, volume, amount "
+            "FROM canonical_bars WHERE symbol=? AND interval_minutes=? AND trade_date=? "
+            "ORDER BY bar_end_ts, revision",
+            (symbol, interval_minutes, trade_date),
+        ).fetchall()
+        conn.close()
+        # 每 bar_end_ts 取最高 revision（ORDER 后后写覆盖）
+        by_ts: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            d = dict(r)
+            by_ts[str(d["bar_end_ts"])] = {
+                "time": d["bar_end_ts"],
+                "open": d["open"],
+                "high": d["high"],
+                "low": d["low"],
+                "close": d["close"],
+                "volume": d["volume"],
+                "amount": d.get("amount"),
+            }
+        bars = [by_ts[k] for k in sorted(by_ts)]
+        if len(trade_date) == 8 and trade_date.isdigit():
+            sd = f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:8]}"
+        else:
+            sd = trade_date
+        return bars, sd
+    except Exception:  # noqa: BLE001
+        return [], None
+
+
+def _aggregate_bars_to_interval(
+    bars: list[dict[str, Any]], interval_minutes: int
+) -> list[dict[str, Any]]:
+    """将 1m bars 粗聚合为 N 分钟 OHLCV（按时间序分桶）。"""
+    if interval_minutes <= 1 or not bars:
+        return bars
+    out: list[dict[str, Any]] = []
+    bucket: list[dict[str, Any]] = []
+
+    def _flush() -> None:
+        nonlocal bucket
+        if not bucket:
+            return
+        o = bucket[0].get("open", bucket[0].get("close"))
+        c = bucket[-1].get("close")
+        highs = [b.get("high", b.get("close")) for b in bucket]
+        lows = [b.get("low", b.get("close")) for b in bucket]
+        vol = sum(float(b.get("volume") or 0) for b in bucket)
+        amt = sum(float(b.get("amount") or 0) for b in bucket)
+        t = bucket[-1].get("time") or bucket[-1].get("bar_ts") or bucket[-1].get("bar_end_ts")
+        out.append({
+            "time": t, "open": o, "high": max(x for x in highs if x is not None),
+            "low": min(x for x in lows if x is not None), "close": c,
+            "volume": vol, "amount": amt if amt else None,
+        })
+        bucket = []
+
+    for i, b in enumerate(bars):
+        bucket.append(b)
+        if len(bucket) >= interval_minutes:
+            _flush()
+    _flush()
+    return out
+
+
 def _intraday_bars_inner(symbol: str, interval_minutes: int = 1, asset_kind: str = "stock") -> dict[str, Any]:
-    """intraday-bars 核心逻辑（不含 retry）。"""
+    """intraday-bars 核心逻辑（不含 retry）。live 优先 → 本地会话降级（KTD1）。"""
     from kss.data.intraday_client import (  # noqa: PLC0415
         EastmoneyAkshareProvider,
         LongbridgeProvider,
@@ -3993,26 +4163,76 @@ def _intraday_bars_inner(symbol: str, interval_minutes: int = 1, asset_kind: str
     res = provider.fetch_bars(
         symbol, interval_minutes=interval_minutes, asset_kind=asset_kind
     )
-    if not res.ok:
+    expected = _intraday_expected_bars(interval_minutes)
+    live_bars = list(res.rows) if res.ok and res.rows else []
+    live_n = len(live_bars)
+    live_sufficient = live_n >= max(10, int(expected * 0.5))
+
+    if live_sufficient:
+        session_date = _infer_session_date_from_bars(live_bars)
+        _persist_page_pull(meta["normalized_symbol"], provider.name, interval_minutes,
+                           asset_kind, live_bars)
+        _save_intraday_session_cache(
+            meta["normalized_symbol"], interval_minutes, live_bars, session_date
+        )
         return {
             "symbol": meta["normalized_symbol"],
             "interval_minutes": interval_minutes,
-            "bars": [],
-            "error": res.error or "empty",
-            "hint": (
-                "东财备源本机当前不可达 = 无数据（非错数据，KTD6）"
-                if meta["routed_provider"] != PROVIDER_LONGBRIDGE
-                else "取数失败"
-            ),
+            "bars": live_bars,
+            "source": "live",
+            "session_date": session_date,
+            "source_asof_ts": res.source_asof_ts,
+            "eligibility": "forward_observed",
             **meta,
         }
-    _persist_page_pull(meta["normalized_symbol"], provider.name, interval_minutes,
-                       asset_kind, res.rows)
+
+    # live 空/不充分 → 本地 complete/cache
+    local_bars, session_date = _load_local_session_bars(
+        meta["normalized_symbol"], interval_minutes
+    )
+    if local_bars and len(local_bars) >= max(10, live_n + 1):
+        return {
+            "symbol": meta["normalized_symbol"],
+            "interval_minutes": interval_minutes,
+            "bars": local_bars,
+            "source": "local",
+            "session_date": session_date,
+            "source_asof_ts": None,
+            "eligibility": "forward_observed",
+            "hint": "源不足，已降级本地会话存档",
+            **meta,
+        }
+
+    if live_bars:
+        # 半截 live 仍可渲染
+        session_date = _infer_session_date_from_bars(live_bars)
+        _save_intraday_session_cache(
+            meta["normalized_symbol"], interval_minutes, live_bars, session_date
+        )
+        return {
+            "symbol": meta["normalized_symbol"],
+            "interval_minutes": interval_minutes,
+            "bars": live_bars,
+            "source": "live_partial",
+            "session_date": session_date,
+            "source_asof_ts": res.source_asof_ts,
+            "eligibility": "forward_observed",
+            "hint": "源仅返回部分分钟线",
+            **meta,
+        }
+
     return {
         "symbol": meta["normalized_symbol"],
         "interval_minutes": interval_minutes,
-        "bars": res.rows,  # 全序列真值透传（chart candlestick 消费）
-        "source_asof_ts": res.source_asof_ts,
+        "bars": [],
+        "source": None,
+        "session_date": None,
+        "error": (res.error if not res.ok else "empty") or "empty",
+        "hint": (
+            "无分钟存档且源不可用；可待盘后 collect_intraday 或交易时段打开一次缓存"
+            if meta["routed_provider"] != PROVIDER_LONGBRIDGE
+            else "无分钟存档且源取数失败"
+        ),
         "eligibility": "forward_observed",
         **meta,
     }
