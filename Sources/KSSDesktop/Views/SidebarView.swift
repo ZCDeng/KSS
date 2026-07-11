@@ -209,20 +209,24 @@ struct SidebarView: View {
         return Button { selection = .aiChat } label: {
             if collapsed {
                 Image(systemName: WorkspaceSection.aiChat.symbol)
-                    .font(KSSFont.themed(17, .semibold, chirpWeight: .semibold, theme: theme))
+                    .font(KSSFont.themed(19, .semibold, chirpWeight: .semibold, theme: theme))
                     .foregroundStyle(isXcom ? .white : theme.onAccent)
-                    .frame(width: 46, height: 44)
+                    .frame(width: 50, height: 50)
                     .background(theme.accent, in: Circle())
             } else {
+                // Capsule() 的圆角半径 = min(width, height)/2，是从高度算出来的——之前
+                // 15pt 字号 + 11pt 竖向 padding 撑出来的高度太矮，胶囊弧度看着比 x.com
+                // 的「Post」按钮扁很多。加高 + 加大字号，弧度跟着高度自动变圆，不用
+                // 单独覆盖 cornerRadius。
                 HStack(spacing: 8) {
                     Image(systemName: WorkspaceSection.aiChat.symbol)
-                        .font(KSSFont.themed(15, .semibold, chirpWeight: .semibold, theme: theme))
+                        .font(KSSFont.themed(17, .semibold, chirpWeight: .semibold, theme: theme))
                     Text(WorkspaceSection.aiChat.displayName)
-                        .font(KSSFont.themed(15, .bold, chirpWeight: .bold, theme: theme))
+                        .font(KSSFont.themed(17, .bold, chirpWeight: .bold, theme: theme))
                 }
                 .foregroundStyle(isXcom ? .white : theme.onAccent)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 11)
+                .padding(.vertical, 14)
                 .background(theme.accent, in: Capsule())
             }
         }

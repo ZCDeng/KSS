@@ -184,6 +184,7 @@ U1(侧边栏收缩)、U2(工具栏任务/架构 + 分隔线)、U3(侧边栏 Sees
   - `navRow`/`collapsedRow` 图标与文字的 `chirpWeight` 从 `isOn ? .semibold : .medium` 改为 `isOn ? .heavy : .regular`;图标额外叠 `.fontWeight(isXcom ? (isOn ? .heavy : .regular) : nil)`。
   - `navRow` 按 `isXcom` 拆两支:xcom 分支把 `Spacer(minLength: 0)` 移到背景层(`.background(hoverTint...)`)外面,让 hover 胶囊只包住图标+文字;经典分支保持原结构(`Spacer` 留在背景层内,整行通栏)不变。`collapsedRow` 不需要改(本来就是贴合图标本身的固定尺寸)。
   - `seesawCTA` 加 `.padding(.bottom, 52)`,前景色改 `isXcom ? .white : theme.onAccent`。
+  - 实机核对后用户又指出展开态胶囊跟 x.com 参考图里的"Post"按钮相比:高度不够、字号偏小,圆角弧度显得扁——`Capsule()` 的圆角半径是 `min(width, height)/2` 从高度算出来的,不用单独覆盖 cornerRadius,只需把撑高度的两个输入(字号、竖向 padding)调大,弧度自动跟着变圆。展开态字号 15→17、`.padding(.vertical, 11)`→`14`;折叠态圆形同步放大 46×44→50×50、图标字号 17→19,保持两种形态比例一致。
 - **Test scenarios:**
   - xcom 亮色/暗色下,选中导航行(如"今日看盘")与未选中行并排截图对比,标题字重与图标粗细形成肉眼可辨的差异(不要求量化对比度,人工判断"一眼能看出选中是哪个"即可)。
   - xcom 下鼠标悬停任一非选中导航行,hover 灰色胶囊只包住图标+文字,右侧空白区域不显示胶囊背景。
