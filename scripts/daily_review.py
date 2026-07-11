@@ -910,6 +910,30 @@ def render(stocks: list[dict], idx_dfs: dict, today_str: str, t1_str: str,
             lines.extend(sanitize_validator_anchors(line) for line in history_recap)
             lines.append("")
 
+        # MI 滚动信号（Signal Pack；无包则占位）
+        try:
+            from kss.strategies.mi_pack import format_mi_section, read_pack
+
+            pack = read_pack(s["sym"])
+            if pack is None:
+                pack = {
+                    "status": "missing",
+                    "reason": "暂无 MI 信号包（请先 run_mi_signal_pack）",
+                    "unpinned": False,
+                }
+            mi_md = format_mi_section(pack)
+            # format 输出是 markdown 标题；推送体用缩进列表风格
+            for ln in mi_md.splitlines():
+                if ln.startswith("###"):
+                    lines.append(f"  *{ln.lstrip('#').strip()}*")
+                elif ln.strip():
+                    lines.append(f"  {ln}" if not ln.startswith("|") else ln)
+                else:
+                    lines.append("")
+            lines.append("")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("MI 段注入失败 %s: %s", s.get("sym"), exc)
+
         # 操作建议
         lines.extend(_advice_block(s))
         chunks.append("\n".join(lines))

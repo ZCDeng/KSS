@@ -14,6 +14,8 @@ struct ChartWebView: NSViewRepresentable {
     var activeMode: ChartDataMode = .daily
     /// 状态条文案（加载中 / 错误）；空则不改 legend。
     var statusText: String? = nil
+    /// MI Signal Pack overlay（JSON 字串，null 清除）。
+    var miOverlayJSON: String? = nil
     /// 用户点 HTML TF 条时回调（含 1m/5m/日线结构）。
     var onSelectMode: ((ChartDataMode) -> Void)? = nil
 
@@ -81,6 +83,11 @@ struct ChartWebView: NSViewRepresentable {
                 coord.bumpContent()
             }
         }
+        let ov = miOverlayJSON ?? "null"
+        if ov != coord.latestMiOverlayJSON {
+            coord.latestMiOverlayJSON = ov
+            coord.bumpContent()
+        }
         webView.underPageBackgroundColor = theme.chartSurfaceNS
         coord.requestSync()
     }
@@ -116,6 +123,7 @@ struct ChartWebView: NSViewRepresentable {
     final class Coordinator: BridgedWebCoordinator, WKScriptMessageHandler {
         var latestJSON = "[]"
         var latestIntradayJSON = "[]"
+        var latestMiOverlayJSON = "null"
         var isIntraday = false
         var latestTFKey = "D"
         var latestStatus = ""
@@ -139,6 +147,8 @@ struct ChartWebView: NSViewRepresentable {
             } else {
                 parts.append("window.kssSetData(\(latestJSON));")
             }
+            // setData 之后再注入 overlay（renderTF 内也会 re-apply lastMiOverlay）
+            parts.append("window.kssSetMiOverlay && window.kssSetMiOverlay(\(latestMiOverlayJSON));")
             if let st = pendingStatusScript {
                 parts.append(st)
                 pendingStatusScript = nil

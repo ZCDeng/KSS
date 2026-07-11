@@ -1052,6 +1052,93 @@ struct StockDetail: Codable {
     var latest: StockSummary?
     var history: [PricePoint]
     var reviewConclusion: StockReview?
+    /// MI 滚动信号（Signal Pack 投影；缺省为 nil）
+    var miSignal: MISignal?
+    /// 图表 overlay 载荷（与 miSignal 同源 pack）
+    var miOverlay: MIOverlay?
+}
+
+/// 自选个股详情 · MI 研究级卡片字段
+struct MISignal: Codable, Hashable {
+    var asof: String?
+    var status: String?
+    var reason: String?
+    var action: String?
+    var prevAction: String?
+    var position: String?
+    var predScore: Double?
+    var predBias: String?
+    var n: Int?
+    var unpinned: Bool?
+    var entry: String?
+    /// 退出规则名（避免属性名 `exit` 与 Darwin.exit 冲突导致诊断失败）
+    var exitRule: String?
+    var filter: String?
+    var close: Double?
+    var mi: Double?
+    var miZ: Double?
+    var adx: Double?
+    var execNote: String?
+
+    enum CodingKeys: String, CodingKey {
+        case asof, status, reason, action, position, n, unpinned, entry, filter, close, mi, adx
+        case prevAction = "prev_action"
+        case predScore = "pred_score"
+        case predBias = "pred_bias"
+        case miZ = "mi_z"
+        case execNote = "exec_note"
+        case exitRule = "exit"
+    }
+}
+
+/// 透传给 chart.html 的 overlay（markers 等用 AnyCodable 太重 → 用 JSON 字典字串由 bridge 原样传也可）
+/// 这里用轻量结构 + 可选 markers 数组。
+struct MIOverlay: Codable, Hashable {
+    var status: String?
+    var reason: String?
+    var banner: MIBanner?
+    var badge: MIBadge?
+    var markers: [MIMarker]?
+    var mi: [MIPoint]?
+}
+
+struct MIBanner: Codable, Hashable {
+    var action: String?
+    var reason: String?
+    var predScore: Double?
+    var unpinned: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case action, reason, unpinned
+        case predScore = "pred_score"
+    }
+}
+
+struct MIBadge: Codable, Hashable {
+    var n: Int?
+    var entry: String?
+    var exitRule: String?
+    var filter: String?
+    var asof: String?
+    var unpinned: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case n, entry, filter, asof, unpinned
+        case exitRule = "exit"
+    }
+}
+
+struct MIMarker: Codable, Hashable {
+    var time: String
+    var position: String?
+    var color: String?
+    var shape: String?
+    var text: String?
+}
+
+struct MIPoint: Codable, Hashable {
+    var time: String
+    var value: Double
 }
 
 /// 个股复盘结论（从 daily_review 抽取）：标题 / 快照 / 预期区间 / 建议。

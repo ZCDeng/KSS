@@ -82,6 +82,8 @@ class FactorPipeline:
         factors.update(TechnicalFactors.bollinger(c))
         factors.update(TechnicalFactors.candlestick(o, h, l, c))
         factors.update(TechnicalFactors.price_position(c, h, l))
+        # MI 动量指标（通达信/tqsdk 口径）；默认 N=12，额外输出 6/20 供研究
+        factors.update(TechnicalFactors.mi(c, periods=(6, 12, 20)))
 
         # 2. 波动率因子
         factors.update(VolatilityFactors.volatility(c))

@@ -413,6 +413,7 @@ struct StockDetailView: View {
                             ? intradayBars?.bars : nil,
                         activeMode: chartMode,
                         statusText: chartStatusText,
+                        miOverlayJSON: Self.encodeMiOverlay(detail.miOverlay),
                         onSelectMode: { mode in
                             chartMode = mode
                             if mode == .daily {
@@ -434,6 +435,10 @@ struct StockDetailView: View {
                     RoundedRectangle(cornerRadius: theme.cardRadius)
                         .stroke(theme.hairline)
                 )
+
+                if let mi = detail.miSignal {
+                    MISignalCard(signal: mi)
+                }
 
                 if !detail.concept.isEmpty {
                     Text(detail.concept)
@@ -625,7 +630,14 @@ struct ChartFullscreenView: View {
             .padding(14)
             ChartLegend()
             // 全屏同样嵌入完整 TF 条；分钟需 Longbridge，此处仅日线结构
-            ChartWebView(points: detail.history, activeMode: .daily)
+            ChartWebView(
+                points: detail.history,
+                intradayBars: nil,
+                activeMode: .daily,
+                statusText: nil,
+                miOverlayJSON: StockDetailView.encodeMiOverlay(detail.miOverlay),
+                onSelectMode: nil
+            )
         }
         // 作为浏览区上的覆盖层铺满：随 app 窗口尺寸动态最大化。
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -720,7 +732,78 @@ enum ChartDataMode: Hashable {
     case daily, m1, m5
 }
 
+/// MI 滚动信号研究级卡片
+struct MISignalCard: View {
+    @Environment(\.kssTheme) private var theme
+    var signal: MISignal
+
+    private var predText: String {
+        guard let s = signal.predScore else { return "—" }
+        return String(format: "%.2f", s)
+    }
+
+    private var nText: String {
+        signal.n.map(String.init) ?? "—"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("MI 滚动信号")
+                    .font(KSSFont.themed(15, .bold, theme: theme))
+                Spacer()
+                if signal.unpinned == true {
+                    Text("默认形态·未钉死")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.orange)
+                }
+            }
+            if let st = signal.status, st != "ok" {
+                Text("状态 \(st)：\(signal.reason ?? "")")
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.textSecondary)
+            } else {
+                Text("\(signal.action ?? "—") · \(signal.position ?? "") · pred \(predText)")
+                    .font(KSSFont.themed(16, .semibold, theme: theme))
+                if let r = signal.reason, !r.isEmpty {
+                    Text(r)
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                Text("N=\(nText) · \(signal.entry ?? "") / \(signal.exitRule ?? "") · asof \(signal.asof ?? "—")")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary)
+                if let prev = signal.prevAction {
+                    Text("昨动作 \(prev) → \(signal.action ?? "")")
+                        .font(.system(size: 11))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                if let note = signal.execNote {
+                    Text(note)
+                        .font(.system(size: 10))
+                        .foregroundStyle(theme.textSecondary)
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.surfaceRaised)
+        .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
+    }
+}
+
 extension StockDetailView {
+    static func encodeMiOverlay(_ overlay: MIOverlay?) -> String {
+        guard let overlay else { return "null" }
+        let enc = JSONEncoder()
+        enc.keyEncodingStrategy = .convertToSnakeCase
+        guard let data = try? enc.encode(overlay),
+              let s = String(data: data, encoding: .utf8) else {
+            return "null"
+        }
+        return s
+    }
     /// 拉取日内分钟 bar 序列（U3/R2/R7/F006）。切到 1m/5m 时触发。
     func loadIntraday(symbol: String, mode: ChartDataMode) async {
         intradayLoading = true; intradayError = nil; intradayBars = nil

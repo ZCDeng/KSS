@@ -1532,10 +1532,32 @@ def _run_daily_review_symbol(args: dict[str, str | bool]) -> dict[str, Any]:
     )
 
 
+def _run_mi_signal_pack(args: dict[str, str | bool]) -> dict[str, Any]:
+    """日终 MI Signal Pack：自选 walk-forward 后写 storage/mi_signals."""
+    started = _now_iso()
+    python = _full_python()
+    if python is None:
+        return _missing_full_env_result("mi-signal-pack", "MI Signal Pack", started)
+    command = [str(python), "scripts/run_mi_signal_pack.py"]
+    symbols_raw = args.get("symbols")
+    if isinstance(symbols_raw, str) and symbols_raw.strip():
+        command += ["--symbols", symbols_raw.strip()]
+    return _run_process_task(
+        "mi-signal-pack",
+        "MI Signal Pack",
+        command,
+        started,
+        artifacts=["storage/mi_signals/latest"],
+        timeout=900,
+    )
+
+
 def run_task(task_id: str, argv: list[str]) -> dict[str, Any]:
     args = _parse_args(argv)
     if task_id == "daily-review-symbol":
         return _run_daily_review_symbol(args)
+    if task_id == "mi-signal-pack":
+        return _run_mi_signal_pack(args)
     if task_id == "daily-picks":
         return _run_daily_picks(args)
     if task_id == "daily-picks-preview":
@@ -2997,6 +3019,17 @@ def stock_detail(symbol: str) -> dict[str, Any]:
         })
     latest = _stock_summary(path, names)
     meta = names.get(symbol, {})
+    mi_signal = None
+    mi_overlay = None
+    try:
+        from kss.strategies.mi_pack import read_pack, to_mi_overlay, to_mi_signal
+
+        pack = read_pack(symbol)
+        if pack is not None:
+            mi_signal = to_mi_signal(pack)
+            mi_overlay = to_mi_overlay(pack)
+    except Exception as exc:  # noqa: BLE001
+        print(f"mi pack for {symbol}: {exc}", file=sys.stderr)
     return {
         "symbol": symbol,
         "name": meta.get("name", ""),
@@ -3005,6 +3038,8 @@ def stock_detail(symbol: str) -> dict[str, Any]:
         "latest": latest,
         "history": history,
         "reviewConclusion": _stock_review(symbol),
+        "miSignal": mi_signal,
+        "miOverlay": mi_overlay,
     }
 
 
@@ -3698,7 +3733,7 @@ COMMANDS = {
 # run_task 白名单 —— orientation 报此清单。须与 run_task() if-chain 实际接受集合一致
 # （test_bridge_orientation 断言相等）。
 RUN_TASKS = (
-    "daily-review-symbol", "daily-picks", "daily-picks-preview", "logmv-backtest",
+    "daily-review-symbol", "mi-signal-pack", "daily-picks", "daily-picks-preview", "logmv-backtest",
     "radar-archive-analysis", "paper-summary", "formal-daily-picks", "formal-paper-summary",
     "formal-daily-review", "formal-sector-review", "formal-etf-radar-backtest",
     "refresh-bj-daily", "refresh-daily-basic", "refresh-market-strip",
