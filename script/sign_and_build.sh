@@ -77,11 +77,17 @@ RESOURCE_BUNDLE="${APP_NAME}_${APP_NAME}.bundle"
 # deploy/launchd：cron-rerun 白名单真源；缺则 App 内重跑报 unknown label。
 for item in scripts kss deploy pyproject.toml uv.lock backtest_etf_radar.py run_scanner.sh; do
   if [ -e "$ROOT_DIR/$item" ]; then
-    # rsync 排除缓存/状态，避免脏文件进签名包
+    # rsync 排除缓存/状态，避免脏文件进签名包。
+    # 不排除 'storage/'：这个 for 循环从不拷贝仓库顶层 storage/（不在 item 列表里），
+    # 无锚点的 --exclude 'storage/' 会匹配树内任意深度同名目录——之前把 kss/storage/
+    # （真实 Python 子包，kss.news.rewrite 运行期 import 它）也一并排除掉了，
+    # 打包出的 app 点开资讯雷达切换赛道就 ModuleNotFoundError: No module named
+    # 'kss.storage'。顶层 storage/ 真正的兜底是下面 `rm -rf "$APP_RESOURCES/storage"`
+    # （只删顶层路径，不影响 kss/storage/）。
     if command -v rsync >/dev/null 2>&1; then
       rsync -a --delete \
         --exclude '__pycache__/' --exclude '*.py[cod]' --exclude '.DS_Store' \
-        --exclude 'storage/' --exclude '.pytest_cache/' --exclude '*.egg-info/' \
+        --exclude '.pytest_cache/' --exclude '*.egg-info/' \
         "$ROOT_DIR/$item" "$APP_RESOURCES/"
     else
       cp -R "$ROOT_DIR/$item" "$APP_RESOURCES/$item"
