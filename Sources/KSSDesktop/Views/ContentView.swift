@@ -106,6 +106,27 @@ struct ContentView: View {
                                 )
                                 .padding(.trailing, 4)
                             }
+                            Button {
+                                store.selectedSection = .runbook
+                            } label: {
+                                Label(WorkspaceSection.runbook.displayName, systemImage: WorkspaceSection.runbook.symbol)
+                            }
+                            .foregroundStyle(store.selectedSection == .runbook ? theme.accent : theme.textSecondary)
+                            .help(WorkspaceSection.runbook.displayName)
+                            Button {
+                                store.selectedSection = .architecture
+                            } label: {
+                                Label(WorkspaceSection.architecture.displayName, systemImage: WorkspaceSection.architecture.symbol)
+                            }
+                            .foregroundStyle(store.selectedSection == .architecture ? theme.accent : theme.textSecondary)
+                            .help(WorkspaceSection.architecture.displayName)
+                            // Divider() 在这个 ToolbarItemGroup 里渲染成水平短横线而非竖线分隔符（KTD5 预见到的风险），
+                            // 改用固定宽度的竖线 Text 代替。分隔管理组（任务/架构）与用户组（主题/网络与凭据/刷新）。
+                            // Seesaw 不在工具栏——它是全应用唯一的 AI 入口，改成侧边栏里常驻的 Post 式大按钮
+                            // （SidebarView.seesawCTA），比工具栏小图标更醒目。
+                            Text("|")
+                                .foregroundStyle(theme.textSecondary.opacity(0.4))
+                                .padding(.horizontal, 2)
                             themeMenu
                             Button {
                                 showNetworkSettings = true

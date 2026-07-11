@@ -27,6 +27,14 @@ struct SidebarView: View {
             } else {
                 expandedNav
             }
+            seesawCTA
+                .padding(.horizontal, collapsed ? 8 : 8)
+                .padding(.top, 8)
+                // 展开态 navRow 的 hover 胶囊高度 ≈ 14×2(vertical padding)+22(内容行高) ≈ 50pt；
+                // Seesaw 不能贴着页脚——用固定下边距兜底，比 Spacer(minLength:) 更可靠：导航区
+                // ScrollView 本身是贪婪撑满剩余空间的 flexible view，跟 Spacer 抢空间时经常把
+                // Spacer 挤到 0，固定 padding 不受这个抢占影响。
+                .padding(.bottom, 52)
             Spacer(minLength: 0)
 
             SidebarFooter(collapsed: collapsed)
@@ -87,35 +95,58 @@ struct SidebarView: View {
         }
     }
 
-    /// 选中态渲染分两支：经典模式沿用背景色块；xcom 模式不铺背景，改用图标填充 + 加粗 label
-    /// 表达选中(x.com「选中项图标填充变化」规范)。hover 是额外叠加的中性灰胶囊，与选中态互不覆盖。
+    /// 选中态渲染分两支：经典模式沿用背景色块（hover 胶囊铺满整行，与选中色块共用同一层背景）；
+    /// xcom 模式不铺选中背景，改用图标填充+加粗 label 表达选中(x.com「选中项图标填充变化」规范)，
+    /// hover 胶囊改为只包住图标+文字本身（x.com 实际观感是内容自适应宽度，不是整行通栏）——
+    /// 因此 hover 胶囊单独拆一层背景，Spacer 挪到胶囊外面，整行仍靠外层 contentShape 保持可点击。
+    /// 字重差异：Chirp 字重分桶只有 Regular/Medium/Bold/Heavy 四档(见 Theme.swift weightSuffix)，
+    /// 之前 semibold/medium 只隔一档、肉眼难辨，改用 regular/heavy 拉满四档差距。
+    /// 图标差异：`.symbolVariant(.fill)` 对没有 filled 变体的符号(如 dashboard 的
+    /// gauge.with.dots.needle.50percent)是静默 no-op，选中态会看起来和未选中一样——额外叠一层
+    /// `.fontWeight` 兜底，SF Symbol 的粗细渲染走独立轴，不依赖 filled 变体是否存在。
     private func navRow(_ section: WorkspaceSection) -> some View {
         let isOn = selection == section
         let isXcom = theme.system == .xcom
         let isHovered = isXcom && hoveredSection == section && dragging != section
+
+        let icon = Image(systemName: section.symbol)
+            .symbolVariant(isXcom && isOn ? .fill : .none)
+            .font(KSSFont.themed(isXcom ? 16 : 15, .semibold, chirpWeight: isOn ? .heavy : .regular, theme: theme))
+            .fontWeight(isXcom ? (isOn ? .heavy : .regular) : nil)
+            .frame(width: isXcom ? 24 : 22)
+            .foregroundStyle(isXcom
+                ? (isOn ? theme.accent : theme.textSecondary)
+                : (isOn ? theme.onAccent : theme.accent))
+        let label = Text(section.displayName)
+            .font(KSSFont.themed(isXcom ? 16 : 15, isXcom && isOn ? .bold : .semibold, chirpWeight: isOn ? .heavy : .regular, theme: theme))
+            .foregroundStyle(isXcom
+                ? (isOn ? theme.textPrimary : theme.textBody)
+                : (isOn ? theme.onAccent : theme.textBody))
+
         return Button { selection = section } label: {
-            HStack(spacing: isXcom ? 18 : 11) {
-                Image(systemName: section.symbol)
-                    .symbolVariant(isXcom && isOn ? .fill : .none)
-                    .font(KSSFont.themed(isXcom ? 16 : 15, .semibold, chirpWeight: isOn ? .semibold : .medium, theme: theme))
-                    .frame(width: isXcom ? 24 : 22)
-                    .foregroundStyle(isXcom
-                        ? (isOn ? theme.accent : theme.textSecondary)
-                        : (isOn ? theme.onAccent : theme.accent))
-                Text(section.displayName)
-                    .font(KSSFont.themed(isXcom ? 16 : 15, isXcom && isOn ? .bold : .semibold, chirpWeight: isOn ? .semibold : .medium, theme: theme))
-                    .foregroundStyle(isXcom
-                        ? (isOn ? theme.textPrimary : theme.textBody)
-                        : (isOn ? theme.onAccent : theme.textBody))
-                Spacer(minLength: 0)
+            if isXcom {
+                HStack(spacing: 0) {
+                    HStack(spacing: 18) {
+                        icon
+                        label
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 14)
+                    .background(isHovered ? hoverTint : Color.clear, in: RoundedRectangle(cornerRadius: theme.chipRadius))
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            } else {
+                HStack(spacing: 11) {
+                    icon
+                    label
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 9)
+                .background(isOn ? theme.accent : Color.clear, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, isXcom ? 12 : 10)
-            .padding(.vertical, isXcom ? 14 : 9)
-            .background(
-                isHovered ? hoverTint : ((!isXcom && isOn) ? theme.accent : Color.clear),
-                in: RoundedRectangle(cornerRadius: isXcom ? theme.chipRadius : KSSTheme.shapeS)
-            )
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering in
@@ -149,7 +180,8 @@ struct SidebarView: View {
         return Button { selection = section } label: {
             Image(systemName: section.symbol)
                 .symbolVariant(isXcom && isOn ? .fill : .none)
-                .font(KSSFont.themed(isXcom ? 18 : 17, .semibold, chirpWeight: isOn ? .semibold : .medium, theme: theme))
+                .font(KSSFont.themed(isXcom ? 18 : 17, .semibold, chirpWeight: isOn ? .heavy : .regular, theme: theme))
+                .fontWeight(isXcom ? (isOn ? .heavy : .regular) : nil)
                 .frame(width: 46, height: isXcom ? 44 : 38)
                 .foregroundStyle(isXcom
                     ? (isOn ? theme.accent : theme.textSecondary)
@@ -164,6 +196,42 @@ struct SidebarView: View {
         .onHover { hovering in
             hoveredSection = hovering ? section : (hoveredSection == section ? nil : hoveredSection)
         }
+    }
+
+    /// Seesaw 是全应用唯一的 AI 入口，比照 x.com 侧边栏的「Post」按钮做成常驻强调色大按钮，
+    /// 不再是工具栏里跟其他图标同款的小按钮——展开态图标+文字居中，折叠态收成圆形图标按钮。
+    /// 点击行为跟其余导航项一致：直接切主内容区，不弹窗、不开新窗口。
+    /// 文字/图标固定用字面白色（仅 xcom）复刻 x.com「Post」按钮的观感；其余 8 套经典主题的
+    /// accent 不少是浅色（如 #E48A6E、#D0BCFF、#F0B90B），`onAccent` 在那些主题里特意配了深色
+    /// 前景保证对比度——固定白色会在这些主题下拉低可读性，所以经典主题继续吃 `theme.onAccent`。
+    private var seesawCTA: some View {
+        let isXcom = theme.system == .xcom
+        return Button { selection = .aiChat } label: {
+            if collapsed {
+                Image(systemName: WorkspaceSection.aiChat.symbol)
+                    .font(KSSFont.themed(19, .semibold, chirpWeight: .semibold, theme: theme))
+                    .foregroundStyle(isXcom ? .white : theme.onAccent)
+                    .frame(width: 50, height: 50)
+                    .background(theme.accent, in: Circle())
+            } else {
+                // Capsule() 的圆角半径 = min(width, height)/2，是从高度算出来的——之前
+                // 15pt 字号 + 11pt 竖向 padding 撑出来的高度太矮，胶囊弧度看着比 x.com
+                // 的「Post」按钮扁很多。加高 + 加大字号，弧度跟着高度自动变圆，不用
+                // 单独覆盖 cornerRadius。
+                HStack(spacing: 8) {
+                    Image(systemName: WorkspaceSection.aiChat.symbol)
+                        .font(KSSFont.themed(17, .semibold, chirpWeight: .semibold, theme: theme))
+                    Text(WorkspaceSection.aiChat.displayName)
+                        .font(KSSFont.themed(17, .bold, chirpWeight: .bold, theme: theme))
+                }
+                .foregroundStyle(isXcom ? .white : theme.onAccent)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(theme.accent, in: Capsule())
+            }
+        }
+        .buttonStyle(.plain)
+        .help(WorkspaceSection.aiChat.displayName)
     }
 }
 
