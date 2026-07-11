@@ -1323,9 +1323,10 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     /// 永久置顶、不参与排序的 section。
     static let pinned: [WorkspaceSection] = [.dashboard]
 
-    /// 暂时隐藏的 section：代码保留、不上侧栏。舆情 digest 未达预期,等改进方案定了再恢复
-    /// （从本数组移除即重新显示）。enum case / NewsDigestView / ContentView 路由均完整保留。
-    static let hidden: [WorkspaceSection] = []
+    /// 不上侧栏的 section：代码、视图、路由均完整保留。两种排除原因不同——
+    /// 暂停类（如曾经的舆情 digest）是"未达预期，等改进方案定了再恢复，从本数组移除即重新显示"；
+    /// 任务/架构/Seesaw 属于永久挪走类（改到右上角工具栏），不预期再回到侧边栏。
+    static let hidden: [WorkspaceSection] = [.runbook, .architecture, .aiChat]
 
     /// 可被用户拖拽重排的 section（enum 原序，去掉置顶项与隐藏项）。
     static var reorderable: [WorkspaceSection] {

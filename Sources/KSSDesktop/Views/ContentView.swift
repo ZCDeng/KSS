@@ -106,6 +106,32 @@ struct ContentView: View {
                                 )
                                 .padding(.trailing, 4)
                             }
+                            Button {
+                                store.selectedSection = .runbook
+                            } label: {
+                                Label(WorkspaceSection.runbook.displayName, systemImage: WorkspaceSection.runbook.symbol)
+                            }
+                            .foregroundStyle(store.selectedSection == .runbook ? theme.accent : theme.textSecondary)
+                            .help(WorkspaceSection.runbook.displayName)
+                            Button {
+                                store.selectedSection = .architecture
+                            } label: {
+                                Label(WorkspaceSection.architecture.displayName, systemImage: WorkspaceSection.architecture.symbol)
+                            }
+                            .foregroundStyle(store.selectedSection == .architecture ? theme.accent : theme.textSecondary)
+                            .help(WorkspaceSection.architecture.displayName)
+                            // Divider() 在这个 ToolbarItemGroup 里渲染成水平短横线而非竖线分隔符（KTD5 预见到的风险），
+                            // 改用固定宽度的竖线 Text 代替。
+                            Text("|")
+                                .foregroundStyle(theme.textSecondary.opacity(0.4))
+                                .padding(.horizontal, 2)
+                            Button {
+                                store.selectedSection = .aiChat
+                            } label: {
+                                Label(WorkspaceSection.aiChat.displayName, systemImage: WorkspaceSection.aiChat.symbol)
+                            }
+                            .foregroundStyle(store.selectedSection == .aiChat ? theme.accent : theme.textSecondary)
+                            .help(WorkspaceSection.aiChat.displayName)
                             themeMenu
                             Button {
                                 showNetworkSettings = true
