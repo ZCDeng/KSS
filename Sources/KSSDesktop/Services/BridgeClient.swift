@@ -339,6 +339,9 @@ struct BridgeClient {
         env["KSS_PROJECT_ROOT"] = projectRoot.path
         env["KSS_STATE_ROOT"] = stateRoot.path
         env["KSS_PYTHON"] = python.path
+        // 禁止在 .app/Resources 写 __pycache__（会破坏 codesign sealed resources → 无法打开）
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        env["PYTHONPYCACHEPREFIX"] = stateRoot.appending(path: ".cache/pycache").path
         // U3：注入 Keychain 凭据（优先于 .env/network.env，见 bridge setdefault）。
         for (key, value) in KeychainStore.injectedEnvironment() { env[key] = value }
         process.environment = env
@@ -361,7 +364,6 @@ struct BridgeClient {
         let data = output.fileHandleForReading.readDataToEndOfFile()
         errorQueue.sync {}
         process.waitUntilExit()
-
         if process.terminationStatus != 0 {
             let message = String(data: errorData, encoding: .utf8) ?? "Bridge failed"
             throw BridgeError.processFailed(message.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -454,6 +456,8 @@ struct BridgeClient {
         env["KSS_PROJECT_ROOT"] = projectRoot.path
         env["KSS_STATE_ROOT"] = stateRoot.path
         env["KSS_PYTHON"] = python.path
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        env["PYTHONPYCACHEPREFIX"] = stateRoot.appending(path: ".cache/pycache").path
         for (key, value) in KeychainStore.injectedEnvironment() { env[key] = value }
         p.environment = env
         p.standardOutput = FileHandle.nullDevice

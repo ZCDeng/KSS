@@ -60,12 +60,26 @@ RESOURCE_BUNDLE="${APP_NAME}_${APP_NAME}.bundle"
 # deploy/launchd：cron-rerun 白名单真源；缺则 App 内重跑报 unknown label。
 for item in scripts kss deploy pyproject.toml uv.lock backtest_etf_radar.py run_scanner.sh; do
   if [ -e "$ROOT_DIR/$item" ]; then
-    cp -R "$ROOT_DIR/$item" "$APP_RESOURCES/$item"
+    # rsync 排除缓存/状态，避免脏文件进签名包
+    if command -v rsync >/dev/null 2>&1; then
+      rsync -a --delete \
+        --exclude '__pycache__/' --exclude '*.py[cod]' --exclude '.DS_Store' \
+        --exclude 'storage/' --exclude '.pytest_cache/' --exclude '*.egg-info/' \
+        "$ROOT_DIR/$item" "$APP_RESOURCES/"
+    else
+      cp -R "$ROOT_DIR/$item" "$APP_RESOURCES/$item"
+    fi
   fi
 done
-# 清理拷入的字节码缓存，避免签名包含易变内容。
-find "$APP_RESOURCES" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
-
+# 签名前硬清：任何事后写入（pyc / 误拷 storage）都会让 sealed resource 失效 → Gatekeeper 拒开
+find "$APP_RESOURCES" \( -name '__pycache__' -o -name '.pytest_cache' -o -name '*.egg-info' \) \
+  -type d -prune -exec rm -rf {} + 2>/dev/null || true
+find "$APP_RESOURCES" \( -name '*.py[cod]' -o -name '.DS_Store' -o -name '*.db' \) \
+  -type f -delete 2>/dev/null || true
+# 禁止把可变状态打进包（ledger / mi_signals 等）
+rm -rf "$APP_RESOURCES/storage" 2>/dev/null || true
+# 资源只读属性（尽力；不阻塞）
+chmod -R a-w "$APP_RESOURCES/kss" "$APP_RESOURCES/scripts" 2>/dev/null || true
 cat >"$INFO_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
