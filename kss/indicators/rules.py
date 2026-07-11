@@ -115,3 +115,132 @@ def compute_positions(df: pd.DataFrame, spec: IndicatorSpec) -> pd.DataFrame:
     feat = build_features(df, spec.family, spec.params)
     feat["position"] = positions_from_spec(feat, spec).values
     return feat
+
+
+# ---------------------------------------------------------------------------
+# 全样本重放：交易明细 + 当前动作（与 mi_signal.replay/extract_trades/current_action 同构）。
+# ---------------------------------------------------------------------------
+
+
+def extract_trades(df: pd.DataFrame, pos: pd.Series) -> list[dict[str, Any]]:
+    """从仓位提取完整买卖回合（exec = 信号次 bar 开盘）；只用 open/close/trade_date 通用列。"""
+    trades: list[dict[str, Any]] = []
+    entry_i: int | None = None
+    opens = df["open"].values
+    dates = df["trade_date"].values
+    closes = df["close"].values
+    p = pos.values
+    for i in range(1, len(p)):
+        if p[i - 1] <= 0 and p[i] > 0:
+            entry_i = i
+        elif p[i - 1] > 0 and p[i] <= 0 and entry_i is not None:
+            buy_i = min(entry_i + 1, len(df) - 1)
+            sell_i = min(i + 1, len(df) - 1)
+            buy_px = (
+                float(opens[buy_i])
+                if np.isfinite(opens[buy_i])
+                else float(closes[entry_i])
+            )
+            sell_px = (
+                float(opens[sell_i]) if np.isfinite(opens[sell_i]) else float(closes[i])
+            )
+            ret = sell_px / buy_px - 1.0 if buy_px > 0 else np.nan
+            trades.append(
+                {
+                    "signal_buy_date": str(pd.Timestamp(dates[entry_i]).date()),
+                    "exec_buy_date": str(pd.Timestamp(dates[buy_i]).date()),
+                    "signal_sell_date": str(pd.Timestamp(dates[i]).date()),
+                    "exec_sell_date": str(pd.Timestamp(dates[sell_i]).date()),
+                    "buy_open": round(buy_px, 3),
+                    "sell_open": round(sell_px, 3),
+                    "trade_return": None if not np.isfinite(ret) else round(float(ret), 4),
+                    "hold_days": int(i - entry_i),
+                }
+            )
+            entry_i = None
+    return trades
+
+
+def signal_strength(feat: pd.DataFrame, family: str) -> pd.Series:
+    """族内信号强度代理，约 [-1,1]，供动作展示用；不参与 U2 GO/NO-GO 裁决。"""
+    if family == FAMILY_MA_CROSS:
+        spread = feat["ma_fast"] - feat["ma_slow"]
+        z = (spread - spread.rolling(60, min_periods=20).mean()) / (
+            spread.rolling(60, min_periods=20).std() + 1e-8
+        )
+        return np.tanh(z / 2)
+    if family == FAMILY_RSI_THRESHOLD:
+        return np.tanh((feat["rsi"] - 50.0) / 25.0)
+    if family == FAMILY_BOLL_ATR:
+        width = (feat["boll_upper"] - feat["boll_lower"]).replace(0, np.nan)
+        pos = (feat["close"] - feat["boll_mid"]) / width
+        return np.tanh(pos * 2)
+    raise ValueError(f"未知基元族: {family!r}")  # pragma: no cover
+
+
+_ACTION_TEMPLATES = {
+    FAMILY_MA_CROSS: ("金叉入场、死叉离场", "均线交叉"),
+    FAMILY_RSI_THRESHOLD: ("RSI 上穿入场阈值入场、下穿离场阈值离场", "RSI 阈值"),
+    FAMILY_BOLL_ATR: ("突破布林上轨入场、ATR 追踪止损或回归中轨离场", "布林·ATR"),
+}
+
+
+def rule_sentence(spec: IndicatorSpec) -> str:
+    """一句话规则描述（可解释性维度消费）。"""
+    desc, label = _ACTION_TEMPLATES[spec.family]
+    return f"{label}（{spec.params}）：{desc}"
+
+
+def current_action(feat: pd.DataFrame, pos: pd.Series, spec: IndicatorSpec) -> dict[str, Any]:
+    """最新有效 bar 的动作与信号强度代理。"""
+    i = len(feat) - 1
+    while i > 0 and pd.isna(feat["close"].iloc[i]):
+        i -= 1
+    entry, exit_ = _entry_exit_signals(feat, spec)
+    holding = float(pos.iloc[i]) > 0
+    enter = bool(entry.iloc[i]) if pd.notna(entry.iloc[i]) else False
+    leave = bool(exit_.iloc[i]) if pd.notna(exit_.iloc[i]) else False
+
+    if holding and leave:
+        action, reason = "SELL", f"触发退出（{spec.family}）"
+    elif (not holding) and enter:
+        action, reason = "BUY", f"触发入场（{spec.family}）"
+    elif holding:
+        action, reason = "HOLD_LONG", "持仓中，未触发退出"
+    else:
+        action, reason = "STAY_FLAT", "空仓，未触发入场"
+
+    strength = signal_strength(feat, spec.family)
+    score = float(strength.iloc[i]) if pd.notna(strength.iloc[i]) else 0.0
+    close = float(feat["close"].iloc[i]) if pd.notna(feat["close"].iloc[i]) else 1.0
+
+    return {
+        "asof": str(pd.Timestamp(feat["trade_date"].iloc[i]).date()),
+        "close": round(close, 3),
+        "position": "LONG" if holding else "FLAT",
+        "action": action,
+        "reason": reason,
+        "pred_score": round(score, 3),
+        "pred_bias": "bullish" if score > 0.15 else ("bearish" if score < -0.15 else "neutral"),
+        "exec_note": "BUY/SELL 按纪律于下一交易日开盘执行",
+    }
+
+
+def replay(df: pd.DataFrame, spec: IndicatorSpec) -> dict[str, Any]:
+    """全样本重放：仓位、trades、当前动作（与 mi_signal.replay 同构）。"""
+    feat = build_features(df, spec.family, spec.params)
+    pos = positions_from_spec(feat, spec)
+    feat["position"] = pos.values
+    trades = extract_trades(feat, pos)
+    action = current_action(feat, pos, spec)
+    preview_n = 10
+    return {
+        "family": spec.family,
+        "params": dict(spec.params),
+        "feat": feat,
+        "positions": pos,
+        "trades": trades,
+        "trades_preview": trades[-preview_n:],
+        "action": action,
+        "rule_sentence": rule_sentence(spec),
+    }
