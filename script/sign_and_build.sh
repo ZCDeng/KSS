@@ -44,10 +44,27 @@ pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 # resource_bundle_accessor.swift 启动即 SIGTRAP。native 落平铺资源包，布局可被找到。
 SWIFT_BUILD_FLAGS="-c release --build-system native"
 swift build $SWIFT_BUILD_FLAGS
-BUILD_BIN_PATH="$(swift build $SWIFT_BUILD_FLAGS --show-bin-path)"
+# 不调用 `swift build --show-bin-path`：native 会在 release/KSSDesktop 上 mkdir，
+# 与已链接的同名二进制冲突（File exists）。
+BUILD_BIN_PATH=""
+for cand in \
+  "$ROOT_DIR/.build/arm64-apple-macosx/release" \
+  "$ROOT_DIR/.build/release" \
+  "$ROOT_DIR/.build/x86_64-apple-macosx/release"; do
+  if [ -x "$cand/$APP_NAME" ]; then BUILD_BIN_PATH="$cand"; break; fi
+done
+if [ -z "$BUILD_BIN_PATH" ]; then
+  echo "ERROR：找不到 release 二进制 $APP_NAME" >&2
+  exit 1
+fi
+echo "二进制：$BUILD_BIN_PATH/$APP_NAME"
 
 # ---- 组装 bundle ----
-rm -rf "$APP_BUNDLE"
+# 上次若误 chmod a-w Resources，普通 rm 会 Permission denied
+if [ -d "$APP_BUNDLE" ]; then
+  chmod -R u+w "$APP_BUNDLE" 2>/dev/null || true
+  rm -rf "$APP_BUNDLE"
+fi
 mkdir -p "$APP_MACOS" "$APP_RESOURCES"
 cp "$BUILD_BIN_PATH/$APP_NAME" "$APP_BINARY"
 chmod +x "$APP_BINARY"
@@ -78,8 +95,8 @@ find "$APP_RESOURCES" \( -name '*.py[cod]' -o -name '.DS_Store' -o -name '*.db' 
   -type f -delete 2>/dev/null || true
 # 禁止把可变状态打进包（ledger / mi_signals 等）
 rm -rf "$APP_RESOURCES/storage" 2>/dev/null || true
-# 资源只读属性（尽力；不阻塞）
-chmod -R a-w "$APP_RESOURCES/kss" "$APP_RESOURCES/scripts" 2>/dev/null || true
+# 不 chmod a-w：只读会让下次 rm -rf dist/*.app 失败，且 Python 写 pyc 应靠 env 禁写而非锁目录
+
 cat >"$INFO_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

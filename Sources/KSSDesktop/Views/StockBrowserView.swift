@@ -407,48 +407,33 @@ struct StockDetailView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     // TF 全部在 chart.html 内（1分/5分/日/周/月/年）；主图始终全高
                     ChartLegend()
-                    ZStack(alignment: .topLeading) {
-                        ChartWebView(
-                            points: detail.history,
-                            intradayBars: (chartMode != .daily && intradayBars?.isRenderable == true)
-                                ? intradayBars?.bars : nil,
-                            activeMode: chartMode,
-                            statusText: chartStatusText,
-                            miOverlayJSON: Self.encodeMiOverlay(detail.miOverlay),
-                            onSelectMode: { mode in
-                                chartMode = mode
-                                if mode == .daily {
-                                    intradayBars = nil
-                                    intradayError = nil
-                                    intradayLoading = false
-                                } else {
-                                    Task { await loadIntraday(symbol: detail.symbol, mode: mode) }
-                                }
-                            }
-                        )
-                        .frame(minHeight: 640)
-                        // 原生兜底横幅：JS 横幅未画时仍可见动作/pred/N
-                        if chartMode == .daily, let mi = detail.miSignal, mi.status == "ok" || mi.status == nil {
-                            let pred: String = {
-                                guard let s = mi.predScore else { return "—" }
-                                return String(format: "%.2f", s)
-                            }()
-                            let nText = mi.n.map(String.init) ?? "—"
-                            let marks = detail.miOverlay?.markers?.count ?? 0
-                            Text("\(mi.action ?? "—") · pred \(pred) · N=\(nText) · 标\(marks)")
-                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(theme.textPrimary)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-                                .padding(.leading, 12)
-                                .padding(.top, 52)
-                                .allowsHitTesting(false)
-                        }
+                    // MI 横幅放在图区外（图例与 K 线之间），绝不叠在 OHLC/K 线上
+                    if chartMode == .daily, let mi = detail.miSignal,
+                       mi.status == "ok" || mi.status == nil || mi.status == "stale" {
+                        MiChartBanner(signal: mi, markerCount: detail.miOverlay?.markers?.count ?? 0)
                     }
+                    ChartWebView(
+                        points: detail.history,
+                        intradayBars: (chartMode != .daily && intradayBars?.isRenderable == true)
+                            ? intradayBars?.bars : nil,
+                        activeMode: chartMode,
+                        statusText: chartStatusText,
+                        miOverlayJSON: Self.encodeMiOverlay(detail.miOverlay),
+                        onSelectMode: { mode in
+                            chartMode = mode
+                            if mode == .daily {
+                                intradayBars = nil
+                                intradayError = nil
+                                intradayLoading = false
+                            } else {
+                                Task { await loadIntraday(symbol: detail.symbol, mode: mode) }
+                            }
+                        }
+                    )
+                    .frame(minHeight: 600)
                 }
                 .id(detail.symbol)  // 切换标的时重建 chart
-                .frame(height: 700)
+                .frame(height: 720)
                 .background(theme.chartSurface)
                 .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
                 .overlay(
@@ -794,6 +779,59 @@ struct ChartLegend: View {
         HStack(spacing: 5) {
             Circle().fill(color).frame(width: 7, height: 7)
             Text(label).foregroundStyle(theme.textSecondary)
+        }
+    }
+}
+
+/// 图区外 MI 状态条：动作 / pred / N / 标注数（不叠 K 线）
+struct MiChartBanner: View {
+    @Environment(\.kssTheme) private var theme
+    var signal: MISignal
+    var markerCount: Int
+
+    private var predText: String {
+        guard let s = signal.predScore else { return "—" }
+        return String(format: "%.2f", s)
+    }
+
+    private var nText: String {
+        signal.n.map(String.init) ?? "—"
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(signal.action ?? "—")
+                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                .foregroundStyle(theme.textPrimary)
+            Text("pred \(predText)")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(theme.textSecondary)
+            Text("N=\(nText)")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(theme.textSecondary)
+            if markerCount > 0 {
+                Text("买/卖 \(markerCount)")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary)
+            }
+            if let r = signal.reason, !r.isEmpty {
+                Text(r)
+                    .font(.system(size: 11))
+                    .foregroundStyle(theme.textSecondary)
+                    .lineLimit(1)
+            }
+            if signal.unpinned == true {
+                Text("默认形态·未钉死")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.orange)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(theme.surfaceRaised.opacity(0.55))
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(theme.hairline).frame(height: 1)
         }
     }
 }
