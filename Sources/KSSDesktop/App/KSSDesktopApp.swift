@@ -24,29 +24,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSLog("[KSS] 字体注册失败 \(name): \(String(describing: error?.takeRetainedValue()))")
             }
         }
-        // CTFontManagerRegisterFontsForURL 同步返回成功，但字体真正能被 PostScript 名查询到是异步生效的
-        // （已实测确认的 macOS 行为：注册调用刚返回时按名查找会静默落到 Helvetica，约 1s 后才稳定可查）。
-        // 不等它就绪的话，App 首帧渲染的标题/侧边栏会永久卡在 Helvetica——SwiftUI 算出的 Font 值不会
-        // 因为字体后来可用了就自动重算。这里在显示窗口前同步轮询到全部就绪，上限 500ms 防止极端情况卡启动。
-        waitForFontsAvailable(["Chirp-Regular", "Chirp-Medium", "Chirp-Bold", "Chirp-Heavy"], timeoutMs: 500)
+        // CTFontManagerRegisterFontsForURL 同步返回成功，但字体真正"可被按名解析"和"可被当作级联
+        // fallback 参与字形替换"是两件不同的事，且后者就绪得更晚（实测：单纯按名解析约几百毫秒内
+        // 就绪，但级联替换要到近 2s 后才稳定生效——期间同一段代码反复跑,前面全部落到 Helvetica/
+        // PingFang SC 兜底，之后才正确解析到目标字体）。不等到级联本身就绪的话，App 首帧渲染的标题/
+        // 侧边栏会永久卡在错误字体——SwiftUI 算出的 Font 值不会因为字体后来可用了就自动重算。这里在
+        // 显示窗口前同步轮询「实际级联行为」本身（而不是单纯查字体名是否存在），上限 3s 防止极端情况卡启动。
+        waitForCascadeReady(
+            baseName: "Chirp-Regular",
+            cjkName: "TsangerJinKai02-W02",
+            testCharacter: "字",
+            timeoutMs: 3000
+        )
     }
 
-    private static func waitForFontsAvailable(_ postScriptNames: [String], timeoutMs: Int) {
+    /// 轮询直到「Chirp 级联到 TsangerJinKai02」这个具体行为在当前进程里真正生效——
+    /// 用一个真实汉字测试解析结果，而不是只检查字体名是否能被找到（两者就绪时机不同）。
+    private static func waitForCascadeReady(baseName: String, cjkName: String, testCharacter: Character, timeoutMs: Int) {
         let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000)
-        var pending = Set(postScriptNames)
-        while !pending.isEmpty && Date() < deadline {
-            for name in pending {
-                let descriptor = CTFontDescriptorCreateWithNameAndSize(name as CFString, 12)
-                let font = CTFontCreateWithFontDescriptor(descriptor, 12, nil)
-                if (CTFontCopyPostScriptName(font) as String) == name {
-                    pending.remove(name)
-                }
+        let size: CGFloat = 16
+        let testChar = String(testCharacter) as CFString
+        let range = CFRangeMake(0, CFStringGetLength(testChar))
+        while Date() < deadline {
+            let baseDescriptor = CTFontDescriptorCreateWithNameAndSize(baseName as CFString, size)
+            let cjkDescriptor = CTFontDescriptorCreateWithNameAndSize(cjkName as CFString, size)
+            let cascaded = CTFontDescriptorCreateCopyWithAttributes(
+                baseDescriptor, [kCTFontCascadeListAttribute: [cjkDescriptor]] as CFDictionary
+            )
+            let ctFont = CTFontCreateWithFontDescriptor(cascaded, size, nil)
+            let resolvedFont = CTFontCreateForString(ctFont, testChar, range)
+            if (CTFontCopyPostScriptName(resolvedFont) as String) == cjkName {
+                return
             }
-            if !pending.isEmpty { usleep(10_000) }
+            usleep(20_000)
         }
-        if !pending.isEmpty {
-            NSLog("[KSS] 字体就绪等待超时，未确认可查询: \(pending.sorted().joined(separator: ", "))")
-        }
+        NSLog("[KSS] 中文字体级联就绪等待超时（\(timeoutMs)ms），可能仍会回退到系统字体")
     }
 }
 
