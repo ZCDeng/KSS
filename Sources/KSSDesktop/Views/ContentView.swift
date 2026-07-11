@@ -125,12 +125,17 @@ struct ContentView: View {
                             Text("|")
                                 .foregroundStyle(theme.textSecondary.opacity(0.4))
                                 .padding(.horizontal, 2)
+                            // Seesaw 是全应用唯一的 AI 入口，用常驻的强调色胶囊把它跟其余纯图标按钮区分开，
+                            // 而不是只在选中时才变色——胶囊本身就是"这是 AI 助手"的视觉标记，不依赖选中态。
                             Button {
                                 store.selectedSection = .aiChat
                             } label: {
                                 Label(WorkspaceSection.aiChat.displayName, systemImage: WorkspaceSection.aiChat.symbol)
                             }
-                            .foregroundStyle(store.selectedSection == .aiChat ? theme.accent : theme.textSecondary)
+                            .foregroundStyle(theme.onAccent)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(theme.accent.opacity(store.selectedSection == .aiChat ? 1.0 : 0.8), in: Capsule())
                             .help(WorkspaceSection.aiChat.displayName)
                             themeMenu
                             Button {
