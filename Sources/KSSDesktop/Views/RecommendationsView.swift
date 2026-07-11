@@ -65,15 +65,10 @@ struct RecommendationsView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 18)
 
-                Picker("", selection: $tab) {
-                    ForEach(RecTab.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                .padding(.horizontal, 16)
-                .padding(.top, 10)
-                .padding(.bottom, 4)
+                KSSSegmentedControl(options: RecTab.allCases.map { ($0, $0.rawValue) }, selection: $tab)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, 4)
 
                 if tab == .current {
                     currentTab

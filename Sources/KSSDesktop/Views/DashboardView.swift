@@ -393,12 +393,7 @@ struct PerillaPicksTable: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
-                Picker("", selection: $tab) {
-                    ForEach(PerillaTier.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
+                KSSSegmentedControl(options: PerillaTier.allCases.map { ($0, $0.rawValue) }, selection: $tab)
                 Text(tab == .core
                      ? "全球供应商≤2家·垄断/双寡头·深链锁定"
                      : "全球三家寡头·深链锁定·国产替代赛道")
