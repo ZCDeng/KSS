@@ -151,8 +151,10 @@ struct ThemeTypography: Equatable {
     /// 原生自定义字体家族（PostScript 名前缀，如 "Chirp"）；nil = 8 套经典主题原样走系统字体。
     /// 非 nil 时 `KSSFont.themed(_:_:theme:)` 按 weight 分桶取 "<family>-<Weight>" PostScript 名。
     var nativeFontFamily: String? = nil
-    /// 中文字形级联回退的 PostScript 名（如 "HarmonyOS_Sans_SC_Bold"），仅在 nativeFontFamily 非 nil 时生效。
-    var nativeCJKFallback: String? = nil
+    /// 中文字形级联回退的字族前缀（如 "HarmonyOS_Sans_SC"）；仅在 nativeFontFamily 非 nil 时生效。
+    /// `KSSFont.themed(_:_:theme:)` 按 weight 分桶取对应粗细档，粗细跟随请求的 weight（而非固定死一档），
+    /// 避免正文/侧边栏这些非标题场景也被强制显示成粗体中文。
+    var nativeCJKFamily: String? = nil
 
     static let claySerif = ThemeTypography(
         serif: "ui-serif, Georgia, \"Songti SC\", serif",
@@ -189,7 +191,7 @@ struct ThemeTypography: Equatable {
         mono: "ui-monospace, \"SF Mono\", Menlo, monospace",
         titleDesign: .default,
         nativeFontFamily: "Chirp",
-        nativeCJKFallback: "HarmonyOS_Sans_SC_Bold"
+        nativeCJKFamily: "HarmonyOS_Sans_SC"
     )
 }
 
