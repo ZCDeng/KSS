@@ -27,6 +27,9 @@ struct SidebarView: View {
             } else {
                 expandedNav
             }
+            seesawCTA
+                .padding(.horizontal, collapsed ? 8 : 8)
+                .padding(.top, 8)
             Spacer(minLength: 0)
 
             SidebarFooter(collapsed: collapsed)
@@ -164,6 +167,34 @@ struct SidebarView: View {
         .onHover { hovering in
             hoveredSection = hovering ? section : (hoveredSection == section ? nil : hoveredSection)
         }
+    }
+
+    /// Seesaw 是全应用唯一的 AI 入口，比照 x.com 侧边栏的「Post」按钮做成常驻强调色大按钮，
+    /// 不再是工具栏里跟其他图标同款的小按钮——展开态图标+文字居中，折叠态收成圆形图标按钮。
+    /// 点击行为跟其余导航项一致：直接切主内容区，不弹窗、不开新窗口。
+    private var seesawCTA: some View {
+        Button { selection = .aiChat } label: {
+            if collapsed {
+                Image(systemName: WorkspaceSection.aiChat.symbol)
+                    .font(KSSFont.themed(17, .semibold, chirpWeight: .semibold, theme: theme))
+                    .foregroundStyle(theme.onAccent)
+                    .frame(width: 46, height: 44)
+                    .background(theme.accent, in: Circle())
+            } else {
+                HStack(spacing: 8) {
+                    Image(systemName: WorkspaceSection.aiChat.symbol)
+                        .font(KSSFont.themed(15, .semibold, chirpWeight: .semibold, theme: theme))
+                    Text(WorkspaceSection.aiChat.displayName)
+                        .font(KSSFont.themed(15, .bold, chirpWeight: .bold, theme: theme))
+                }
+                .foregroundStyle(theme.onAccent)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(theme.accent, in: Capsule())
+            }
+        }
+        .buttonStyle(.plain)
+        .help(WorkspaceSection.aiChat.displayName)
     }
 }
 

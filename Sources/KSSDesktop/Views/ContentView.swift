@@ -121,22 +121,12 @@ struct ContentView: View {
                             .foregroundStyle(store.selectedSection == .architecture ? theme.accent : theme.textSecondary)
                             .help(WorkspaceSection.architecture.displayName)
                             // Divider() 在这个 ToolbarItemGroup 里渲染成水平短横线而非竖线分隔符（KTD5 预见到的风险），
-                            // 改用固定宽度的竖线 Text 代替。
+                            // 改用固定宽度的竖线 Text 代替。分隔管理组（任务/架构）与用户组（主题/网络与凭据/刷新）。
+                            // Seesaw 不在工具栏——它是全应用唯一的 AI 入口，改成侧边栏里常驻的 Post 式大按钮
+                            // （SidebarView.seesawCTA），比工具栏小图标更醒目。
                             Text("|")
                                 .foregroundStyle(theme.textSecondary.opacity(0.4))
                                 .padding(.horizontal, 2)
-                            // Seesaw 是全应用唯一的 AI 入口，用常驻的强调色胶囊把它跟其余纯图标按钮区分开，
-                            // 而不是只在选中时才变色——胶囊本身就是"这是 AI 助手"的视觉标记，不依赖选中态。
-                            Button {
-                                store.selectedSection = .aiChat
-                            } label: {
-                                Label(WorkspaceSection.aiChat.displayName, systemImage: WorkspaceSection.aiChat.symbol)
-                            }
-                            .foregroundStyle(theme.onAccent)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(theme.accent.opacity(store.selectedSection == .aiChat ? 1.0 : 0.8), in: Capsule())
-                            .help(WorkspaceSection.aiChat.displayName)
                             themeMenu
                             Button {
                                 showNetworkSettings = true
