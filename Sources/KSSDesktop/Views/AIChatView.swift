@@ -58,7 +58,7 @@ struct AIChatView: View {
         ScrollView {
             VStack(spacing: 0) {
                 Spacer(minLength: 40)
-                orb.padding(.bottom, 22)
+                SeesawWordmark().padding(.bottom, 22)
                 Text("你好")
                     .font(KSSFont.themed(26, .bold, theme: theme))
                     .foregroundStyle(theme.accent)
@@ -80,23 +80,6 @@ struct AIChatView: View {
         }
     }
 
-    /// 光晕球(径向渐变 + 外发光),accent 着色随主题。
-    private var orb: some View {
-        ZStack {
-            Circle()
-                .fill(RadialGradient(colors: [theme.accent.opacity(0.45), theme.accent.opacity(0)],
-                                     center: .center, startRadius: 4, endRadius: 85))
-                .frame(width: 180, height: 180).blur(radius: 14)
-            Circle()
-                .fill(RadialGradient(
-                    colors: [theme.accentSoft, theme.accent],
-                    center: UnitPoint(x: 0.35, y: 0.3), startRadius: 3, endRadius: 70))
-                .frame(width: 92, height: 92)
-                .overlay(Circle().stroke(.white.opacity(0.25), lineWidth: 1))
-                .shadow(color: theme.accent.opacity(0.5), radius: 22, y: 8)
-        }
-        .frame(height: 110)
-    }
 
     /// 突出的圆角输入卡(空态)。
     private var heroInputCard: some View {
