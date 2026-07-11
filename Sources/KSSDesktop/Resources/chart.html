@@ -582,50 +582,73 @@
       lastMiOverlay = payload || null;
       const ban = document.getElementById("miBanner");
       const badge = document.getElementById("miBadge");
+      const clearMarks = () => {
+        try {
+          if (candleSeries && typeof candleSeries.setMarkers === "function") {
+            candleSeries.setMarkers([]);
+          }
+        } catch (e) { /* ignore */ }
+        try { if (miSeries) miSeries.setData([]); } catch (e) { /* ignore */ }
+      };
       if (!payload || (payload.status && payload.status !== "ok")) {
-        if (candleSeries && candleSeries.setMarkers) candleSeries.setMarkers([]);
-        if (miSeries) miSeries.setData([]);
+        clearMarks();
         if (ban) {
-          ban.style.display = payload && payload.reason ? "block" : "none";
-          ban.textContent = payload && payload.reason
-            ? ("MI: " + payload.status + " · " + payload.reason)
+          ban.style.display = payload && (payload.reason || payload.status) ? "block" : "none";
+          ban.textContent = payload
+            ? ("MI: " + (payload.status || "?") + (payload.reason ? (" · " + payload.reason) : ""))
             : "";
         }
-        if (badge) {
-          badge.style.display = "none";
-        }
+        if (badge) badge.style.display = "none";
         return;
       }
       // 仅日线显示坐标标注
       if (currentTF !== "D" || intradayMode) {
-        if (candleSeries && candleSeries.setMarkers) candleSeries.setMarkers([]);
-        if (miSeries) miSeries.setData([]);
+        clearMarks();
         if (ban) {
           ban.style.display = "block";
-          ban.textContent = "MI 标注仅日线（当前 " + currentTF + "）";
+          ban.textContent = "MI 标注仅日线（当前 " + currentTF + "）· "
+            + ((payload.banner && payload.banner.action) || "");
         }
         return;
       }
-      const markers = (payload.markers || []).map(m => ({
-        time: m.time,
-        position: m.position || "belowBar",
-        color: m.color || "#26a69a",
-        shape: m.shape || "circle",
-        text: m.text || "",
-      }));
-      if (candleSeries && candleSeries.setMarkers) candleSeries.setMarkers(markers);
+      // 只画 K 线里存在的时间键（防止整批 markers 被 LWC 丢弃）
+      const barTimes = new Set((rawBars || []).map(b => b && b.date).filter(Boolean));
+      const markers = (payload.markers || [])
+        .filter(m => m && m.time && (barTimes.size === 0 || barTimes.has(m.time)))
+        .map(m => ({
+          time: m.time,
+          position: m.position || "belowBar",
+          color: m.color || "#26a69a",
+          shape: m.shape || "circle",
+          text: m.text || "",
+        }));
+      try {
+        if (candleSeries && typeof candleSeries.setMarkers === "function") {
+          candleSeries.setMarkers(markers);
+        }
+      } catch (e) {
+        if (ban) { ban.style.display = "block"; ban.textContent = "MI markers error: " + e; }
+      }
       if (miSeries) {
-        miSeries.setData((payload.mi || []).filter(p => p && p.value != null));
+        const miData = (payload.mi || [])
+          .filter(p => p && p.value != null && (barTimes.size === 0 || barTimes.has(p.time)))
+          .map(p => ({ time: p.time, value: +p.value }));
+        try { miSeries.setData(miData); } catch (e) { /* ignore */ }
+        // 强制 MI 副图可见
+        try { miSeries.applyOptions({ visible: indState.mi !== false }); } catch (e) { /* ignore */ }
       }
       if (ban) {
         const b = payload.banner || {};
+        // 兼容 pred_score / predScore
+        const pred = (b.pred_score != null) ? b.pred_score : b.predScore;
         const parts = [];
-        if (b.action) parts.push(b.action);
-        if (b.pred_score != null) parts.push("pred " + b.pred_score);
-        if (b.reason) parts.push(b.reason);
+        if (b.action) parts.push(String(b.action));
+        if (pred != null) parts.push("pred " + pred);
+        if (b.reason) parts.push(String(b.reason));
         if (b.unpinned) parts.push("⚠️默认形态·未钉死");
+        parts.push("标" + markers.length);
         ban.textContent = parts.join(" · ");
-        ban.style.display = parts.length ? "block" : "none";
+        ban.style.display = "block";
       }
       if (badge) {
         const g = payload.badge || {};
@@ -633,8 +656,8 @@
         if (g.n != null) bits.push("N=" + g.n);
         if (g.entry) bits.push(g.entry);
         if (g.asof) bits.push(g.asof);
-        badge.textContent = bits.join(" · ");
-        badge.style.display = bits.length ? "block" : "none";
+        badge.textContent = bits.join(" · ") || "MI";
+        badge.style.display = "block";
         badge.classList.toggle("warn", !!g.unpinned);
       }
     }
@@ -697,6 +720,8 @@
       wireInd();
       if (pending) { setData(pending); pending = null; }
       if (pendingIntraday) { setIntradayData(pendingIntraday); pendingIntraday = null; }
+      // 若 overlay 先于 chart 就绪到达，此处补画
+      if (lastMiOverlay) applyMiOverlay(lastMiOverlay);
     });
   })();
   </script>

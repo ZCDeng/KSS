@@ -910,11 +910,19 @@ def render(stocks: list[dict], idx_dfs: dict, today_str: str, t1_str: str,
             lines.extend(sanitize_validator_anchors(line) for line in history_recap)
             lines.append("")
 
-        # MI 滚动信号（Signal Pack；无包则占位）
+        # MI 滚动信号（Signal Pack；键为 ts_code 如 688017.SH）
         try:
             from kss.strategies.mi_pack import format_mi_section, read_pack
 
-            pack = read_pack(s["sym"])
+            pack_key = s.get("ts_code") or s.get("sym")
+            pack = read_pack(str(pack_key)) if pack_key else None
+            if pack is None and s.get("sym"):
+                # 兜底：裸代码 + 常见交易所后缀
+                bare = str(s["sym"]).split(".")[0]
+                for suf in (".SH", ".SZ", ".BJ"):
+                    pack = read_pack(bare + suf)
+                    if pack is not None:
+                        break
             if pack is None:
                 pack = {
                     "status": "missing",
@@ -922,7 +930,6 @@ def render(stocks: list[dict], idx_dfs: dict, today_str: str, t1_str: str,
                     "unpinned": False,
                 }
             mi_md = format_mi_section(pack)
-            # format 输出是 markdown 标题；推送体用缩进列表风格
             for ln in mi_md.splitlines():
                 if ln.startswith("###"):
                     lines.append(f"  *{ln.lstrip('#').strip()}*")
@@ -932,7 +939,7 @@ def render(stocks: list[dict], idx_dfs: dict, today_str: str, t1_str: str,
                     lines.append("")
             lines.append("")
         except Exception as exc:  # noqa: BLE001
-            logger.warning("MI 段注入失败 %s: %s", s.get("sym"), exc)
+            logger.warning("MI 段注入失败 %s: %s", s.get("ts_code") or s.get("sym"), exc)
 
         # 操作建议
         lines.extend(_advice_block(s))
@@ -1004,6 +1011,7 @@ def main():
         s['_df'] = df
         s['category'] = category
         ts_code = f'{sym}.{exch}'
+        s['ts_code'] = ts_code  # MI pack 键带交易所后缀
         s['history_recap'] = build_history_recap(
             ts_code,
             today_features_from_stock(s),

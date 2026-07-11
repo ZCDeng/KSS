@@ -147,8 +147,13 @@ struct ChartWebView: NSViewRepresentable {
             } else {
                 parts.append("window.kssSetData(\(latestJSON));")
             }
-            // setData 之后再注入 overlay（renderTF 内也会 re-apply lastMiOverlay）
-            parts.append("window.kssSetMiOverlay && window.kssSetMiOverlay(\(latestMiOverlayJSON));")
+            // 以 JSON 字符串注入，避免大对象字面量/特殊字符破坏 evaluateJavaScript
+            let escaped = latestMiOverlayJSON
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "'", with: "\\'")
+                .replacingOccurrences(of: "\n", with: "\\n")
+                .replacingOccurrences(of: "\r", with: "")
+            parts.append("window.kssSetMiOverlay && window.kssSetMiOverlay('\(escaped)');")
             if let st = pendingStatusScript {
                 parts.append(st)
                 pendingStatusScript = nil

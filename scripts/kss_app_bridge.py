@@ -3027,7 +3027,9 @@ def stock_detail(symbol: str) -> dict[str, Any]:
         pack = read_pack(symbol)
         if pack is not None:
             mi_signal = to_mi_signal(pack)
-            mi_overlay = to_mi_overlay(pack)
+            # 标注时间必须落在 history 窗口内，否则 LWC setMarkers 静默丢点
+            hist_dates = {str(h.get("date") or "") for h in history}
+            mi_overlay = to_mi_overlay(pack, history_dates=hist_dates)
     except Exception as exc:  # noqa: BLE001
         print(f"mi pack for {symbol}: {exc}", file=sys.stderr)
     return {

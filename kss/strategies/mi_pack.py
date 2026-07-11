@@ -103,14 +103,20 @@ def read_pack(
     asof: str | None = None,
     root: Path | None = None,
 ) -> dict[str, Any] | None:
+    """读取信号包。``symbol`` 支持 ``688017.SH`` 或裸代码（自动试 .SH/.SZ/.BJ）."""
     root = root or (project_root() / "storage" / "mi_signals")
-    if asof:
-        p = pack_dir(asof, root) / f"{symbol}.json"
-    else:
-        p = latest_dir(root) / f"{symbol}.json"
-    if not p.exists():
-        return None
-    return json.loads(p.read_text(encoding="utf-8"))
+    candidates = [symbol]
+    if "." not in symbol:
+        candidates.extend([f"{symbol}.SH", f"{symbol}.SZ", f"{symbol}.BJ"])
+    for cand in candidates:
+        p = (
+            pack_dir(asof, root) / f"{cand}.json"
+            if asof
+            else latest_dir(root) / f"{cand}.json"
+        )
+        if p.exists():
+            return json.loads(p.read_text(encoding="utf-8"))
+    return None
 
 
 def build_pack_from_wf(
@@ -197,8 +203,15 @@ def to_mi_signal(pack: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def to_mi_overlay(pack: dict[str, Any]) -> dict[str, Any] | None:
-    """图表 kssSetMiOverlay 载荷；非 ok 返回带 status 的空态."""
+def to_mi_overlay(
+    pack: dict[str, Any],
+    history_dates: set[str] | None = None,
+) -> dict[str, Any] | None:
+    """图表 kssSetMiOverlay 载荷；非 ok 返回带 status 的空态.
+
+    ``history_dates``：K 线可见交易日集合。有传入时只保留窗口内的 markers/MI，
+    避免 LWC 因时间键对不上而整段静默不画。
+    """
     status = pack.get("status", "missing")
     badge = {
         "n": pack.get("n"),
@@ -207,7 +220,7 @@ def to_mi_overlay(pack: dict[str, Any]) -> dict[str, Any] | None:
         "filter": pack.get("filter"),
         "asof": pack.get("asof"),
         "unpinned": bool(pack.get("unpinned")),
-        "thr": pack.get("thr"),
+        "thr": pack.get("thr") or {},
     }
     if status != "ok":
         return {
@@ -218,31 +231,49 @@ def to_mi_overlay(pack: dict[str, Any]) -> dict[str, Any] | None:
             "markers": [],
             "mi": [],
         }
-    markers = []
-    for t in pack.get("trades_preview") or []:
-        markers.append(
-            {
-                "time": t["signal_buy_date"],
-                "position": "belowBar",
-                "color": "#26a69a",
-                "shape": "arrowUp",
-                "text": "B",
-            }
-        )
-        markers.append(
-            {
-                "time": t["signal_sell_date"],
-                "position": "aboveBar",
-                "color": "#ef5350",
-                "shape": "arrowDown",
-                "text": "S",
-            }
-        )
+
+    def _in_hist(d: str | None) -> bool:
+        if not d:
+            return False
+        if history_dates is None:
+            return True
+        return str(d) in history_dates
+
+    # 优先 preview，再回退全量 trades，保证窗口内有点可画
+    trade_src = list(pack.get("trades_preview") or []) or list(pack.get("trades") or [])
+    markers: list[dict[str, Any]] = []
+    for t in trade_src:
+        bd, sd = t.get("signal_buy_date"), t.get("signal_sell_date")
+        if _in_hist(bd):
+            markers.append(
+                {
+                    "time": str(bd),
+                    "position": "belowBar",
+                    "color": "#26a69a",
+                    "shape": "arrowUp",
+                    "text": "买",
+                }
+            )
+        if _in_hist(sd):
+            markers.append(
+                {
+                    "time": str(sd),
+                    "position": "aboveBar",
+                    "color": "#ef5350",
+                    "shape": "arrowDown",
+                    "text": "卖",
+                }
+            )
+
     mi = [
-        {"time": p["date"], "value": p["mi"]}
+        {"time": str(p["date"]), "value": float(p["mi"])}
         for p in (pack.get("mi_series") or [])
-        if p.get("mi") is not None
+        if p.get("mi") is not None and _in_hist(str(p.get("date")))
     ]
+    # 控制体积：日线最多回传约一年半
+    if len(mi) > 400:
+        mi = mi[-400:]
+
     return {
         "status": "ok",
         "reason": pack.get("reason") or "",
