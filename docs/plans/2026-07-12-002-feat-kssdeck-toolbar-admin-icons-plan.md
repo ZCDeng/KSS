@@ -35,6 +35,7 @@ KSSDeck 侧边栏目前有 12 个 `WorkspaceSection`,全部显示在侧边栏(`W
 - **KD4 — 点击行为不变。** 任务/架构/Seesaw 点击后,效果与现在点侧边栏完全一致:直接把主内容区切换过去,不弹 sheet、不开新窗口。
 - **KD5 — 任务/架构需要"当前选中"视觉反馈。** 侧边栏行原本会高亮当前选中项,任务/架构挪出侧边栏后失去了这个"你在哪"的提示;工具栏按钮需要在 `store.selectedSection` 命中对应 section 时给出视觉区分(如图标着色),不能是永远同一个样子的静态图标。
 - **KD6 — Seesaw 按钮不需要"当前选中"反馈,常驻同一样式。** 跟任务/架构不同,Seesaw 是"随时可以呼出 AI"的入口而不是要在多个同类项里区分"你在哪"的导航项(应用里只有一个 Seesaw 入口),比照 x.com 的"Post"按钮——它也不会因为用户正处在发帖界面就换一种样式。选中与未选中视觉一致,不叠加 KD5 那套着色开关。
+- **KD7 — xcom 侧边栏三处细节按 x.com 实际观感对齐,不满足于"字段值不同"这个表层标准。** U3 落地并实机验证后,用户指出三处离 x.com 真实观感还有差距:①选中态标题字重、图标 glyph 差异在实机上几乎看不出来;②hover 背景胶囊贯穿整行,x.com 是贴合图标+文字内容的窄胶囊;③Seesaw 大按钮几乎贴着页脚 GitHub 行。这三处此前的实现(U2/U3 阶段)在代码层面"有差异化字段",但没有对齐 x.com 的实际视觉效果——按用户原话"以上优化的目的是充分复刻x.com的设计",这轮改动的验收标准是实机截图比对,不是字段是否存在。
 
 ### Requirements
 
@@ -53,6 +54,11 @@ KSSDeck 侧边栏目前有 12 个 `WorkspaceSection`,全部显示在侧边栏(`W
 **Seesaw 侧边栏大按钮**
 - R7. 侧边栏导航列表正下方、页脚 GitHub 行上方,新增一个贯穿边栏宽度的 Seesaw 按钮:强调色圆角胶囊背景、图标 + "Seesaw" 文字,点击后主内容区切换到 Seesaw 对话页。不管是否选中都保持同一醒目样式(见 KD3、KD6)。
 - R8. 折叠态侧边栏下,Seesaw 按钮收成强调色填充的圆形图标按钮,同样位于图标导航列表下方、页脚上方,点击行为与展开态一致。
+
+**xcom 侧边栏 x.com 保真度细节(第三轮)**
+- R9. xcom 模式展开态导航行,选中态标题的字重与图标粗细都要与未选中态形成实机可辨的差异,不能停留在"代码里数值不同、肉眼看不出来"。
+- R10. xcom 模式 hover 背景胶囊的宽度跟随图标+文字内容自适应,不铺满整行；折叠态图标导航行不受影响(本来就是贴合图标本身的固定尺寸)。
+- R11. Seesaw 大按钮与页脚 GitHub 行之间保持不小于一个展开态 hover 胶囊高度的间距,不贴着页脚；按钮文字/图标改用字面白色(仅 xcom——经典设计系统继续用各自的 `onAccent`,详见 KTD9)。
 
 ```mermaid
 flowchart TB
@@ -91,7 +97,7 @@ flowchart TB
 
 ## Planning Contract
 
-**Product Contract preservation:** changed — Summary、Problem Frame、KD3(重写)、R2/R3/R4/R7(重写)；新增 KD6、R8。Doc review 发现 `WorkspaceSection.hidden` 当前实际为空(舆情 digest 已恢复显示,不在其中),已订正 Problem Frame 与 R4 的过时描述,R4 剩余项清单从 8 项改为 9 项。第一轮实现后,用户两次追加需求:(1) Seesaw 需要独立视觉设计突出重要性——先给了工具栏内的常驻胶囊背景(旧 R7/KD3/KTD6,已实现验证);(2) 用户进一步反馈工具栏本身是弱化区域、样式也不好看,参照 x.com "Post" 按钮把 Seesaw 整个移出工具栏、改成侧边栏导航列表下方的常驻大按钮——本次改写取代了第一版的工具栏胶囊方案。R1、R5、R6、KD1、KD2、KD4、KD5、Scope Boundaries 其余内容未变。
+**Product Contract preservation:** changed — Summary、Problem Frame、KD3(重写)、R2/R3/R4/R7(重写)；新增 KD6、R8。Doc review 发现 `WorkspaceSection.hidden` 当前实际为空(舆情 digest 已恢复显示,不在其中),已订正 Problem Frame 与 R4 的过时描述,R4 剩余项清单从 8 项改为 9 项。第一轮实现后,用户两次追加需求:(1) Seesaw 需要独立视觉设计突出重要性——先给了工具栏内的常驻胶囊背景(旧 R7/KD3/KTD6,已实现验证);(2) 用户进一步反馈工具栏本身是弱化区域、样式也不好看,参照 x.com "Post" 按钮把 Seesaw 整个移出工具栏、改成侧边栏导航列表下方的常驻大按钮——本次改写取代了第一版的工具栏胶囊方案。R1、R5、R6、KD1、KD2、KD4、KD5、Scope Boundaries 其余内容未变。第三轮(U3 落地后)用户在实机上又提出三点 x.com 保真度细节——新增 KD7、R9-R11、U4,见下方 KTD7-KTD9。
 
 ### Key Technical Decisions
 
@@ -102,9 +108,13 @@ flowchart TB
 - **KTD5 — `Divider()` 实机验证后弃用,改用固定宽度竖线 `Text("|")`。** `ToolbarItemGroup` 里的 `Divider()` 在本代码库没有先例(全仓库唯一一处 `ToolbarItemGroup`);实机验证发现它渲染成一条水平短横线,不是预期的竖线分隔符,已改用 `Text("|")`(`theme.textSecondary.opacity(0.4)`,左右各 2pt padding)。
 - **KTD6 — Seesaw 按钮在 `SidebarView.swift` 内实现,展开态 `Capsule()` 全宽、折叠态 `Circle()` 图标,均为常驻 `theme.accent` 填充,不做选中态透明度切换。** 对应 R7/R8/KD3/KD6。展开态:`HStack(icon + Text) .frame(maxWidth: .infinity) .padding(.vertical, 11) .background(theme.accent, in: Capsule())`,前景色 `theme.onAccent`,位置在 `expandedNav`/`collapsedNav` 之后、`Spacer()` 之前。折叠态:同样位置,`Image .frame(width: 46, height: 44) .background(theme.accent, in: Circle())`。不像第一版工具栏胶囊那样用 `opacity(selected ? 1.0 : 0.8)` 区分选中态——按 KD6,Seesaw 不需要"选中态"语义,始终同一强度的强调色填充。取值参照用户提供的 x.com 参考截图里"Post"按钮的处理。
 
+- **KTD7 — 字重差异从"隔一档"改成"跨满四档",根因是 Chirp 字重分桶只有 4 档。** `Sources/KSSDesktop/Support/Theme.swift` 的 `weightSuffix(_:)` 把 `Font.Weight` 收窄成 Regular/Medium/Bold/Heavy 四个 PostScript 文件分桶(`.black`/`.heavy`→Heavy,`.bold`/`.semibold`→Bold,`.medium`→Medium,其余→Regular)。U3 阶段 `navRow`/`collapsedRow` 的 `chirpWeight: isOn ? .semibold : .medium` 落在 Bold/Medium 两个相邻分桶,只隔一档,实机上肉眼难辨——改成 `isOn ? .heavy : .regular`,跨满四档,拉到这套字重系统能给的最大对比度。
+- **KTD8 — 图标差异额外叠一层 `.fontWeight`,不能只依赖 `.symbolVariant(.fill)`。** `.symbolVariant(.fill)` 对没有 filled 变体的 SF Symbol(如 `WorkspaceSection.dashboard` 用的 `gauge.with.dots.needle.50percent`)是静默 no-op——症状是选中态图标看起来和未选中态一模一样,却没有任何编译期或运行期报错。`.fontWeight` 是 SF Symbol 渲染的独立轴(粗细),不依赖某个具体符号是否registered 了 filled 变体,对所有符号都生效。`navRow`/`collapsedRow` 的图标在 `.symbolVariant` 之后追加 `.fontWeight(isXcom ? (isOn ? .heavy : .regular) : nil)`——传 `nil` 时该 modifier 是纯粹的 no-op,经典模式(`isXcom == false`)分支行为不变。
+- **KTD9 — hover 胶囊内容自适应宽度,只改 xcom 分支的结构,不碰经典模式。** xcom 模式选中态本来就不铺背景(靠图标填充+加粗表达选中,见 KD3 时期的既有设计),所以 xcom 分支的背景只可能是 hover 胶囊或透明——可以放心地把 `Spacer(minLength: 0)` 挪到背景层外面,让胶囊只包住图标+文字。经典模式选中态要铺满整行的强调色色块(`(!isXcom && isOn) ? theme.accent : Color.clear`,这是经典模式的既有语义,不在本轮改动范围内),`Spacer` 必须留在背景层内部保持整行通栏——两支分开写,不共用一份 `HStack` 结构,避免用一个共享参数就近改坏另一支。Seesaw 间距用固定 `.padding(.bottom, 52)`(≈ 一个展开态 hover 胶囊高度:14×2 padding + ~22 内容行高),不是 `Spacer(minLength:)`——导航区 `ScrollView` 本身是贪婪撑满剩余空间的 flexible view,跟 `Spacer(minLength:)` 抢占空间时经常把它挤到 0,固定 padding 不受这个抢占影响。Seesaw 文字/图标颜色只在 `isXcom` 时字面 `.white`,经典模式继续吃 `theme.onAccent`——8 套经典设计系统里有几套 accent 是浅色(如 `#E48A6E`、`#D0BCFF`、`#F0B90B`),`onAccent` 在那些主题里特意配了深色前景保对比度,固定白色会在这些主题下拉低可读性。
+
 ### Sequencing
 
-U1(侧边栏收缩)、U2(工具栏任务/架构 + 分隔线)、U3(侧边栏 Seesaw 大按钮)三者代码层面互不依赖、可并行开发,但**必须同一次提交/合并落地**——U1 单独合并会让任务/架构/Seesaw 同时从侧边栏消失且工具栏/侧边栏都还没有新入口接住它们。
+U1(侧边栏收缩)、U2(工具栏任务/架构 + 分隔线)、U3(侧边栏 Seesaw 大按钮)三者代码层面互不依赖、可并行开发,但**必须同一次提交/合并落地**——U1 单独合并会让任务/架构/Seesaw 同时从侧边栏消失且工具栏/侧边栏都还没有新入口接住它们。U4(xcom 细节保真度)依赖 U3 已落地的 `seesawCTA`/`navRow`/`collapsedRow`,可独立提交,不影响 U1-U3 的既有行为。
 
 ---
 
@@ -164,6 +174,24 @@ U1(侧边栏收缩)、U2(工具栏任务/架构 + 分隔线)、U3(侧边栏 Sees
   - 展开/折叠切换时,该按钮在两种形态之间正确切换外观,不残留另一形态的布局。
 - **Verification:** 展开/折叠两种形态下点击按钮核对跳转正确;xcom/经典各一个设计系统下、亮暗各一次,截图核对按钮可辨识度。
 
+### U4. xcom 侧边栏 x.com 保真度细节:字重/glyph、hover 胶囊宽度、Seesaw 间距与配色
+
+- **Goal:** xcom 模式下,选中态标题字重与图标粗细形成实机可辨的差异;导航行 hover 胶囊宽度贴合图标+文字内容,不铺满整行;Seesaw 大按钮与页脚保持不小于一个 hover 胶囊高度的间距,文字/图标改字面白色。
+- **Requirements:** R9, R10, R11
+- **Dependencies:** U3(依赖 U3 已落地的 `seesawCTA`/`navRow`/`collapsedRow`)
+- **Files:** `Sources/KSSDesktop/Views/SidebarView.swift`
+- **Approach:**（按 KTD7/KTD8/KTD9）
+  - `navRow`/`collapsedRow` 图标与文字的 `chirpWeight` 从 `isOn ? .semibold : .medium` 改为 `isOn ? .heavy : .regular`;图标额外叠 `.fontWeight(isXcom ? (isOn ? .heavy : .regular) : nil)`。
+  - `navRow` 按 `isXcom` 拆两支:xcom 分支把 `Spacer(minLength: 0)` 移到背景层(`.background(hoverTint...)`)外面,让 hover 胶囊只包住图标+文字;经典分支保持原结构(`Spacer` 留在背景层内,整行通栏)不变。`collapsedRow` 不需要改(本来就是贴合图标本身的固定尺寸)。
+  - `seesawCTA` 加 `.padding(.bottom, 52)`,前景色改 `isXcom ? .white : theme.onAccent`。
+- **Test scenarios:**
+  - xcom 亮色/暗色下,选中导航行(如"今日看盘")与未选中行并排截图对比,标题字重与图标粗细形成肉眼可辨的差异(不要求量化对比度,人工判断"一眼能看出选中是哪个"即可)。
+  - xcom 下鼠标悬停任一非选中导航行,hover 灰色胶囊只包住图标+文字,右侧空白区域不显示胶囊背景。
+  - 经典设计系统(任选一个)下,选中态整行强调色色块与改动前一致,hover 不触发额外背景层(经典模式本来就没有 hover 胶囊)。
+  - 展开态下,Seesaw 大按钮底边与页脚 GitHub 行顶边之间的可见间距不小于一个展开态 hover 胶囊的高度(目测/截图标尺核对,不要求像素级断言)。
+  - Seesaw 按钮文字与图标在 xcom 亮/暗下均为白色;经典设计系统(至少一个浅色 accent 的,如暖纸/拟物系)下按钮文字保持原有 `onAccent` 颜色、对比度不劣化。
+- **Verification:** xcom 亮/暗各截图一次核对字重/图标/hover 胶囊/Seesaw 间距与配色;经典设计系统截图一次确认零回归;`swift build` + `swift test` 全绿。
+
 ---
 
 ## Verification Contract
@@ -178,6 +206,10 @@ U1(侧边栏收缩)、U2(工具栏任务/架构 + 分隔线)、U3(侧边栏 Sees
 | 工具栏最小宽度排布 | 窗口收缩到 `minWidth: 1080`,确认新增图标与分隔线不裁切、不换行 | U2 |
 | Seesaw 大按钮跳转 + 可辨识度 | 展开/折叠两种形态下点击按钮确认跳转正确;xcom 与经典设计系统、亮/暗外观下确认按钮清晰可辨 | U3 |
 | 回归:既有三个用户图标 | 主题/网络与凭据/刷新三个按钮的图标、点击行为与改动前一致 | U2 |
+| 选中态字重/图标可辨识度 | xcom 亮/暗下,选中与未选中导航行并排截图对比,字重与图标粗细肉眼可辨 | U4 |
+| hover 胶囊贴合内容 | xcom 下悬停任一非选中导航行,确认胶囊只包住图标+文字,行尾空白不显示背景 | U4 |
+| Seesaw 间距与配色 | 展开态下 Seesaw 按钮与页脚间距不小于一个 hover 胶囊高度;xcom 亮/暗下文字图标为白色;经典设计系统下颜色与间距无回归 | U4 |
+| 单元测试 | `swift test`,98 项全绿 | 全部 |
 
 ## Definition of Done
 
@@ -187,3 +219,4 @@ U1(侧边栏收缩)、U2(工具栏任务/架构 + 分隔线)、U3(侧边栏 Sees
 - 点击任务/架构/Seesaw 后主内容区直接切换到对应页面,不弹窗、不开新窗口(R1, R2, KD4)。
 - 主题/网络与凭据/刷新三个既有按钮的样式与行为零变化。
 - U1、U2、U3 同一次提交/合并落地,不存在任务/架构/Seesaw 同时找不到入口的中间状态。
+- xcom 模式下,选中态导航行的字重/图标差异、hover 胶囊的内容自适应宽度、Seesaw 大按钮的页脚间距与白色文字均实机可辨,经典设计系统零回归(R9, R10, R11)。
