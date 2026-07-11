@@ -59,14 +59,8 @@
     align-items: center; justify-content: center;
     color: var(--muted); font-size: 13px;
   }
-  /* 动作横幅改由 Swift 图区外渲染，HTML 内不再盖 K 线 */
-  #miBanner { display: none !important; }
-  #miBadge {
-    position: absolute; top: 8px; right: 210px; z-index: 8;
-    font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 7px;
-    background: var(--chip); color: var(--chipText); pointer-events: none; display: none;
-  }
-  #miBadge.warn { color: #B45309; background: rgba(245, 158, 11, 0.15); }
+  /* 动作/角标改由 Swift 图区外渲染，避免压住 TF / 指标钮 */
+  #miBanner, #miBadge { display: none !important; }
 </style>
 </head>
 <body>
@@ -641,18 +635,9 @@
         // 强制 MI 副图可见
         try { miSeries.applyOptions({ visible: indState.mi !== false }); } catch (e) { /* ignore */ }
       }
-      // 动作条由 Swift MiChartBanner 在图外展示；HTML 只保留右上角 badge
+      // 动作/角标均由 Swift MiChartBanner 在图外展示，不压 TF/指标钮
       if (ban) { ban.style.display = "none"; ban.textContent = ""; }
-      if (badge) {
-        const g = payload.badge || {};
-        const bits = [];
-        if (g.n != null) bits.push("N=" + g.n);
-        if (g.entry) bits.push(g.entry);
-        if (g.asof) bits.push(g.asof);
-        badge.textContent = bits.join(" · ") || "MI";
-        badge.style.display = "block";
-        badge.classList.toggle("warn", !!g.unpinned);
-      }
+      if (badge) { badge.style.display = "none"; badge.textContent = ""; }
     }
     function applyIndVisibility() {  // 重采样/主题重建后还原可见状态
       Object.keys(indState).forEach(k => {

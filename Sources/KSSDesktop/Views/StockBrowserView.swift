@@ -686,7 +686,11 @@ struct ChartFullscreenView: View {
             }
             .padding(14)
             ChartLegend()
-            // 全屏同样嵌入完整 TF 条；分钟需 Longbridge，此处仅日线结构
+            // 与详情页一致：MI 状态在图外，全屏也不压 TF 钮
+            if let mi = detail.miSignal,
+               mi.status == "ok" || mi.status == nil || mi.status == "stale" {
+                MiChartBanner(signal: mi, markerCount: detail.miOverlay?.markers?.count ?? 0)
+            }
             ChartWebView(
                 points: detail.history,
                 intradayBars: nil,
@@ -809,6 +813,17 @@ struct MiChartBanner: View {
             Text("N=\(nText)")
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundStyle(theme.textSecondary)
+            if let entry = signal.entry, !entry.isEmpty {
+                Text(entry)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary)
+                    .lineLimit(1)
+            }
+            if let asof = signal.asof, !asof.isEmpty {
+                Text(asof)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary)
+            }
             if markerCount > 0 {
                 Text("买/卖 \(markerCount)")
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
