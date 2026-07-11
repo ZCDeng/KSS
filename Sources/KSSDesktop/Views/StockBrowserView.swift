@@ -344,8 +344,8 @@ struct StockDetailView: View {
                     }
                 }
 
-                if let review = detail.reviewConclusion {
-                    StockReviewCard(review: review)
+                if detail.reviewConclusion != nil || detail.miSignal != nil {
+                    StockReviewCard(review: detail.reviewConclusion, miSignal: detail.miSignal)
                 }
 
                 if let enrichment {
@@ -407,25 +407,45 @@ struct StockDetailView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     // TF 全部在 chart.html 内（1分/5分/日/周/月/年）；主图始终全高
                     ChartLegend()
-                    ChartWebView(
-                        points: detail.history,
-                        intradayBars: (chartMode != .daily && intradayBars?.isRenderable == true)
-                            ? intradayBars?.bars : nil,
-                        activeMode: chartMode,
-                        statusText: chartStatusText,
-                        miOverlayJSON: Self.encodeMiOverlay(detail.miOverlay),
-                        onSelectMode: { mode in
-                            chartMode = mode
-                            if mode == .daily {
-                                intradayBars = nil
-                                intradayError = nil
-                                intradayLoading = false
-                            } else {
-                                Task { await loadIntraday(symbol: detail.symbol, mode: mode) }
+                    ZStack(alignment: .topLeading) {
+                        ChartWebView(
+                            points: detail.history,
+                            intradayBars: (chartMode != .daily && intradayBars?.isRenderable == true)
+                                ? intradayBars?.bars : nil,
+                            activeMode: chartMode,
+                            statusText: chartStatusText,
+                            miOverlayJSON: Self.encodeMiOverlay(detail.miOverlay),
+                            onSelectMode: { mode in
+                                chartMode = mode
+                                if mode == .daily {
+                                    intradayBars = nil
+                                    intradayError = nil
+                                    intradayLoading = false
+                                } else {
+                                    Task { await loadIntraday(symbol: detail.symbol, mode: mode) }
+                                }
                             }
+                        )
+                        .frame(minHeight: 640)
+                        // 原生兜底横幅：JS 横幅未画时仍可见动作/pred/N
+                        if chartMode == .daily, let mi = detail.miSignal, mi.status == "ok" || mi.status == nil {
+                            let pred: String = {
+                                guard let s = mi.predScore else { return "—" }
+                                return String(format: "%.2f", s)
+                            }()
+                            let nText = mi.n.map(String.init) ?? "—"
+                            let marks = detail.miOverlay?.markers?.count ?? 0
+                            Text("\(mi.action ?? "—") · pred \(pred) · N=\(nText) · 标\(marks)")
+                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(theme.textPrimary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                                .padding(.leading, 12)
+                                .padding(.top, 52)
+                                .allowsHitTesting(false)
                         }
-                    )
-                    .frame(minHeight: 640)
+                    }
                 }
                 .id(detail.symbol)  // 切换标的时重建 chart
                 .frame(height: 700)
@@ -436,9 +456,7 @@ struct StockDetailView: View {
                         .stroke(theme.hairline)
                 )
 
-                if let mi = detail.miSignal {
-                    MISignalCard(signal: mi)
-                }
+                // MI 已并入上方「复盘结论」；此处不再重复 MISignalCard
 
                 if !detail.concept.isEmpty {
                     Text(detail.concept)
@@ -456,10 +474,11 @@ struct StockDetailView: View {
 
 /// Large interactive K-line view. Mouse-wheel zoom and drag-pan work here
 /// without the surrounding ScrollView intercepting the wheel.
-/// 个股复盘结论卡：来自每日复盘的 标题 / 预期区间 / 建议。
+/// 个股复盘结论卡：每日复盘标题/预期/建议 + MI 滚动信号（同源 Signal Pack）。
 struct StockReviewCard: View {
     @Environment(\.kssTheme) private var theme
-    var review: StockReview
+    var review: StockReview?
+    var miSignal: MISignal? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -470,7 +489,7 @@ struct StockReviewCard: View {
                 Text("复盘结论")
                     .font(KSSFont.themed(15, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
-                if !review.headline.isEmpty {
+                if let review, !review.headline.isEmpty {
                     Text(review.headline)
                         .font(KSSFont.themed(11.5, .semibold, theme: theme))
                         .foregroundStyle(theme.onAccent)
@@ -480,10 +499,14 @@ struct StockReviewCard: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                StatusBadge(icon: "calendar", text: review.date, tint: theme.accent)
+                if let review {
+                    StatusBadge(icon: "calendar", text: review.date, tint: theme.accent)
+                } else if let asof = miSignal?.asof {
+                    StatusBadge(icon: "calendar", text: asof, tint: theme.accent)
+                }
             }
 
-            if !review.snapshot.isEmpty || !review.expectation.isEmpty {
+            if let review, !review.snapshot.isEmpty || !review.expectation.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     if !review.snapshot.isEmpty {
                         Text(review.snapshot)
@@ -499,7 +522,7 @@ struct StockReviewCard: View {
                 }
             }
 
-            if !review.suggestions.isEmpty {
+            if let review, !review.suggestions.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(Array(review.suggestions.enumerated()), id: \.offset) { _, s in
                         HStack(alignment: .top, spacing: 7) {
@@ -512,9 +535,58 @@ struct StockReviewCard: View {
                     }
                 }
             }
+
+            // MI 滚动信号：与复盘页 Markdown 段同源（Signal Pack）
+            if let mi = miSignal {
+                Divider().opacity(0.5)
+                miBlock(mi)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .kssCard(padding: 16)
+    }
+
+    @ViewBuilder
+    private func miBlock(_ signal: MISignal) -> some View {
+        let pred: String = {
+            guard let s = signal.predScore else { return "—" }
+            return String(format: "%.2f", s)
+        }()
+        let nText = signal.n.map(String.init) ?? "—"
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("MI 滚动信号")
+                    .font(KSSFont.themed(13, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                if signal.unpinned == true {
+                    Text("默认形态·未钉死")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.orange)
+                }
+                Spacer()
+            }
+            if let st = signal.status, st != "ok" {
+                Text("状态 \(st)：\(signal.reason ?? "")")
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.textSecondary)
+            } else {
+                Text("\(signal.action ?? "—") · \(signal.position ?? "") · pred \(pred)")
+                    .font(KSSFont.themed(14, .semibold, theme: theme))
+                if let r = signal.reason, !r.isEmpty {
+                    Text(r)
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                Text("N=\(nText) · \(signal.entry ?? "") / \(signal.exitRule ?? "") · asof \(signal.asof ?? "—")")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary)
+                if let prev = signal.prevAction {
+                    Text("昨动作 \(prev) → \(signal.action ?? "")")
+                        .font(.system(size: 11))
+                        .foregroundStyle(theme.textSecondary)
+                }
+            }
+        }
     }
 }
 

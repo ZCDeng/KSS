@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -25,11 +26,42 @@ DEFAULT_RULES: dict[str, Any] = {
 
 
 def project_root() -> Path:
+    """代码根（kss/ 所在目录）。bundle 内嵌脚本时指向 Resources，勿当 storage 根。"""
+    env = os.environ.get("KSS_PROJECT_ROOT")
+    if env:
+        return Path(env)
     return Path(__file__).resolve().parents[2]
 
 
+def state_root() -> Path:
+    """可变状态根（storage / cs_data）。bridge 注入 KSS_STATE_ROOT；缺省 = project_root。
+
+    bundle 模式：代码在 .app/Resources，信号包写在 ~/…/KSS 或 breadcrumb 指向的仓库。
+    读 pack / 写 pack / 行情 CSV 必须走 state_root，否则 UI 永远 miSignal=null。
+    """
+    env = os.environ.get("KSS_STATE_ROOT")
+    if env:
+        return Path(env)
+    return project_root()
+
+
+def signals_root(root: Path | None = None) -> Path:
+    """storage/mi_signals 根目录。"""
+    return (root or state_root()) / "storage" / "mi_signals"
+
+
 def load_rules(path: Path | None = None) -> dict[str, Any]:
-    path = path or (project_root() / "storage" / "mi_rules.yaml")
+    # 规则文件：先 state（用户钉死），再 project（bundle 内置默认）
+    if path is None:
+        for candidate in (
+            state_root() / "storage" / "mi_rules.yaml",
+            project_root() / "storage" / "mi_rules.yaml",
+        ):
+            if candidate.exists():
+                path = candidate
+                break
+        else:
+            path = state_root() / "storage" / "mi_rules.yaml"
     if not path.exists():
         return dict(DEFAULT_RULES)
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -39,7 +71,6 @@ def load_rules(path: Path | None = None) -> dict[str, Any]:
     if "symbols" in data and isinstance(data["symbols"], dict):
         out["symbols"] = data["symbols"]
     return out
-
 
 def resolve_rule(
     symbol: str, rules: dict[str, Any]
@@ -69,12 +100,13 @@ def resolve_rule(
 
 
 def pack_dir(asof: str, root: Path | None = None) -> Path:
-    root = root or (project_root() / "storage" / "mi_signals")
+    """``root`` 为 mi_signals 根（含 latest/asof 子目录），不是仓库根。"""
+    root = root or signals_root()
     return root / asof
 
 
 def latest_dir(root: Path | None = None) -> Path:
-    root = root or (project_root() / "storage" / "mi_signals")
+    root = root or signals_root()
     return root / "latest"
 
 
@@ -84,7 +116,7 @@ def write_pack(
     root: Path | None = None,
 ) -> Path:
     """写入 asof 目录与 latest 拷贝. root = storage/mi_signals."""
-    root = root or (project_root() / "storage" / "mi_signals")
+    root = root or signals_root()
     asof = pack["asof"]
     d = pack_dir(asof, root)
     d.mkdir(parents=True, exist_ok=True)
@@ -104,7 +136,7 @@ def read_pack(
     root: Path | None = None,
 ) -> dict[str, Any] | None:
     """读取信号包。``symbol`` 支持 ``688017.SH`` 或裸代码（自动试 .SH/.SZ/.BJ）."""
-    root = root or (project_root() / "storage" / "mi_signals")
+    root = root or signals_root()
     candidates = [symbol]
     if "." not in symbol:
         candidates.extend([f"{symbol}.SH", f"{symbol}.SZ", f"{symbol}.BJ"])
@@ -117,7 +149,6 @@ def read_pack(
         if p.exists():
             return json.loads(p.read_text(encoding="utf-8"))
     return None
-
 
 def build_pack_from_wf(
     symbol: str,
@@ -340,7 +371,7 @@ def format_mi_section(pack: dict[str, Any]) -> str:
 
 def load_ohlcv(symbol: str, root: Path | None = None) -> pd.DataFrame | None:
     """与 bridge 对齐：优先根目录 cs_data_{code}.csv，其次 cs_data/."""
-    root = root or project_root()
+    root = root or state_root()
     code = symbol.split(".")[0]
     for p in (
         root / f"cs_data_{code}.csv",
@@ -369,7 +400,7 @@ def run_symbol_pack(
 ) -> dict[str, Any]:
     """单票端到端：加载 → WF → pack."""
     rules = rules or load_rules()
-    root = root or project_root()
+    root = root or state_root()
     code = symbol if "." in symbol else f"{symbol}.SH"
     df = load_ohlcv(code, root)
     if df is None or len(df) < 80:
@@ -386,8 +417,8 @@ def run_symbol_pack(
     entry, exit_, filt, unpinned = resolve_rule(code, rules)
     ref = str(pd.Timestamp(df["trade_date"].iloc[-1]).date())
     asof = asof or ref
-    signals_root = root / "storage" / "mi_signals"
-    prev = read_pack(code, root=signals_root)
+    sig_root = signals_root(root)
+    prev = read_pack(code, root=sig_root)
     prev_action = (prev or {}).get("action") if prev else None
 
     wf = reestimate(df, entry, exit_, filt, cfg=cfg)
@@ -406,5 +437,5 @@ def run_symbol_pack(
     if pack["status"] == "stale" and asof == ref and wf.status == "ok":
         pack["status"] = "ok"
         pack["reason"] = (wf.replay or {}).get("action", {}).get("reason", "")
-    write_pack(pack, root=signals_root)
+    write_pack(pack, root=sig_root)
     return pack

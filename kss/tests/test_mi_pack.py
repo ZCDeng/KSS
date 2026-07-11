@@ -66,6 +66,33 @@ def test_write_read_roundtrip(tmp_path: Path) -> None:
     assert ov["status"] == "ok"
 
 
+def test_read_pack_uses_state_root_env(tmp_path: Path, monkeypatch) -> None:
+    """bundle 模式：代码在 Resources，pack 在 KSS_STATE_ROOT/storage/mi_signals。"""
+    from kss.strategies import mi_pack as mp
+
+    state = tmp_path / "state"
+    sig = state / "storage" / "mi_signals" / "latest"
+    sig.mkdir(parents=True)
+    pack = {
+        "schema_version": 1,
+        "symbol": "688017.SH",
+        "asof": "2026-07-10",
+        "status": "ok",
+        "action": "STAY_FLAT",
+        "n": 20,
+    }
+    (sig / "688017.SH.json").write_text(
+        __import__("json").dumps(pack), encoding="utf-8"
+    )
+    monkeypatch.setenv("KSS_STATE_ROOT", str(state))
+    # 模拟代码根 ≠ 状态根
+    monkeypatch.setenv("KSS_PROJECT_ROOT", str(tmp_path / "code_only"))
+    loaded = mp.read_pack("688017.SH")
+    assert loaded is not None
+    assert loaded["action"] == "STAY_FLAT"
+    assert mp.state_root() == state
+
+
 def test_format_unpinned_section() -> None:
     pack = {
         "status": "ok",

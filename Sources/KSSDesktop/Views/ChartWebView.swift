@@ -147,13 +147,17 @@ struct ChartWebView: NSViewRepresentable {
             } else {
                 parts.append("window.kssSetData(\(latestJSON));")
             }
-            // 以 JSON 字符串注入，避免大对象字面量/特殊字符破坏 evaluateJavaScript
-            let escaped = latestMiOverlayJSON
-                .replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "'", with: "\\'")
-                .replacingOccurrences(of: "\n", with: "\\n")
-                .replacingOccurrences(of: "\r", with: "")
-            parts.append("window.kssSetMiOverlay && window.kssSetMiOverlay('\(escaped)');")
+            // base64 注入：避免引号/大 JSON 破坏 evaluateJavaScript；HTML 侧 atob+parse
+            if latestMiOverlayJSON == "null" {
+                parts.append("window.kssSetMiOverlay && window.kssSetMiOverlay(null);")
+            } else if let data = latestMiOverlayJSON.data(using: .utf8) {
+                let b64 = data.base64EncodedString()
+                parts.append(
+                    "window.kssSetMiOverlayB64 && window.kssSetMiOverlayB64('\(b64)');"
+                )
+            } else {
+                parts.append("window.kssSetMiOverlay && window.kssSetMiOverlay(null);")
+            }
             if let st = pendingStatusScript {
                 parts.append(st)
                 pendingStatusScript = nil

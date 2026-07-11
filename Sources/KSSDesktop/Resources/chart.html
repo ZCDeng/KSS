@@ -60,12 +60,15 @@
     color: var(--muted); font-size: 13px;
   }
   #miBanner {
-    position: absolute; top: 58px; left: 12px; right: 120px; z-index: 7;
-    font-size: 11px; font-weight: 600; color: var(--text);
+    position: absolute; top: 58px; left: 12px; right: 120px; z-index: 8;
+    font-size: 12px; font-weight: 700; color: var(--text);
+    background: color-mix(in srgb, var(--chip) 88%, transparent);
+    padding: 4px 10px; border-radius: 8px; max-width: 72%;
     pointer-events: none; display: none;
+    border: 1px solid var(--hair);
   }
   #miBadge {
-    position: absolute; top: 8px; right: 210px; z-index: 7;
+    position: absolute; top: 8px; right: 210px; z-index: 8;
     font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 7px;
     background: var(--chip); color: var(--chipText); pointer-events: none; display: none;
   }
@@ -288,12 +291,14 @@
       obvSeries = chart.addLineSeries({ priceScaleId: "obv", color: COLORS.obv, lineWidth: 1, title: "OBV", priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false });
       chart.priceScale("obv").applyOptions({ scaleMargins: { top: 0.81, bottom: 0.03 } });
 
-      // MI 副带（日线 overlay）
+      // MI 副带（日线 overlay）—— 底部独立条带，避免被 OBV 挤没
       miSeries = chart.addLineSeries({
-        priceScaleId: "mi", color: "#D97757", lineWidth: 1, title: "MI",
+        priceScaleId: "mi", color: "#D97757", lineWidth: 2, title: "MI",
         priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: true,
       });
-      chart.priceScale("mi").applyOptions({ scaleMargins: { top: 0.88, bottom: 0.0 } });
+      chart.priceScale("mi").applyOptions({ scaleMargins: { top: 0.86, bottom: 0.0 } });
+      // 给主图/OBV 让出底部给 MI
+      chart.priceScale("obv").applyOptions({ scaleMargins: { top: 0.78, bottom: 0.14 } });
 
       window.addEventListener("resize", () => {
         chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
@@ -499,8 +504,13 @@
       }
       // 用新配色重建（renderTF 从 rawBars 还原数据，applyIndVisibility 还原指标可见性）。
       // U3：日内模式下从 intradayBars 重建，不走日线 renderTF。
+      // 重建后必须重绑 lastMiOverlay（series 句柄已失效；renderTF 末尾也会再绑一次）。
       if (chart) { chart.remove(); chart = null; }
-      if (buildChart()) { intradayMode ? renderIntraday() : renderTF(); }
+      if (buildChart()) {
+        if (intradayMode) renderIntraday();
+        else renderTF();
+        if (lastMiOverlay) applyMiOverlay(lastMiOverlay);
+      }
     }
 
     function setTFHighlight(tf) {
@@ -694,6 +704,20 @@
         applyMiOverlay(payload);
       } catch (e) {
         document.getElementById("legend").textContent = "mi overlay error: " + e;
+      }
+    };
+    // base64 注入（Swift 侧避免大 JSON 引号转义失败）
+    window.kssSetMiOverlayB64 = function (b64) {
+      try {
+        if (b64 == null || b64 === "" || b64 === "null") {
+          applyMiOverlay(null);
+          return;
+        }
+        const json = decodeURIComponent(escape(atob(b64)));
+        const payload = JSON.parse(json);
+        applyMiOverlay(payload);
+      } catch (e) {
+        document.getElementById("legend").textContent = "mi overlay b64 error: " + e;
       }
     };
     window.kssClearMiOverlay = function () { applyMiOverlay(null); };
