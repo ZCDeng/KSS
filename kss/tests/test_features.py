@@ -31,6 +31,35 @@ class TestTechnicalFactors:
         moms = TechnicalFactors.momentum(close, periods=(1,))
         assert pd.isna(moms["mom_1d"].iloc[1])
 
+    def test_mi_formula(self) -> None:
+        """测试 MI 与通达信 SMA(A,N,1) / tqsdk 递推一致."""
+        close = pd.Series(
+            [100.0, 101.0, 103.0, 102.0, 105.0, 108.0, 107.0, 110.0],
+            dtype=float,
+        )
+        n = 3
+        out = TechnicalFactors.mi(close, periods=(n,))
+        a = out[f"mi_a_{n}"]
+        mi = out[f"mi_{n}"]
+
+        # A = C_t - C_{t-3}
+        assert pd.isna(a.iloc[2])
+        assert a.iloc[3] == pytest.approx(102.0 - 100.0)
+        assert a.iloc[4] == pytest.approx(105.0 - 101.0)
+
+        # 首个有效 A 作为 MI 初值，其后 MI_t = (A_t + (N-1)*MI_{t-1}) / N
+        first_valid = a.first_valid_index()
+        assert first_valid is not None
+        assert mi.loc[first_valid] == pytest.approx(a.loc[first_valid])
+        for i in range(int(first_valid) + 1, len(close)):
+            expected = (a.iloc[i] + (n - 1) * mi.iloc[i - 1]) / n
+            assert mi.iloc[i] == pytest.approx(expected)
+
+    def test_mi_invalid_period(self) -> None:
+        """MI 周期非正时应抛错."""
+        with pytest.raises(ValueError, match="正整数"):
+            TechnicalFactors.mi(pd.Series([1.0, 2.0, 3.0]), periods=(0,))
+
 
 class TestFactorPipeline:
     """FactorPipeline 功能测试."""
@@ -57,6 +86,8 @@ class TestFactorPipeline:
         assert "mom_1d" in result.columns
         assert "macd" in result.columns
         assert "rsi_14" in result.columns
+        assert "mi_12" in result.columns
+        assert "mi_a_12" in result.columns
 
     def test_generate_missing_columns(self) -> None:
         """测试缺少必需列时抛出 ValueError."""

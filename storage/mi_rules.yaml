@@ -1,0 +1,18 @@
+# MI 钉死形态配置（WF 只滚 N 与 thr，不改 entry/exit/filter）
+# unpinned：symbols 中未出现的代码走 defaults，并在 pack 标 unpinned=true
+
+defaults:
+  entry: mi_cross_up_0
+  exit: a_cross_dn_mi
+  filter: none
+
+symbols:
+  # 会话寻优结果（形态钉死；N/thr 由日终 WF 重估）
+  "688017":
+    entry: mi_cross_up_0
+    exit: a_cross_dn_mi
+    filter: none
+  "688322":
+    entry: mi_z_gt
+    exit: mi_z_lt
+    filter: none

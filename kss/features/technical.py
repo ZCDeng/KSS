@@ -182,3 +182,36 @@ class TechnicalFactors:
             result[f"close_to_high_{p}d"] = close / high.rolling(p).max()
             result[f"close_to_low_{p}d"] = close / low.rolling(p).min()
         return result
+
+    @staticmethod
+    def mi(
+        close: pd.Series, periods: Sequence[int] = (12,)
+    ) -> dict[str, pd.Series]:
+        """计算 MI 动量指标（通达信 / 天勤 tqsdk 口径）.
+
+        公式::
+
+            A_t  = C_t - C_{t-N}
+            MI_t = (A_t + (N-1) * MI_{t-1}) / N
+
+        第二步等价于 ``SMA(A, N, 1)`` / ``ewm(alpha=1/N, adjust=False)``.
+
+        Args:
+            close: 收盘价序列.
+            periods: 回看与平滑周期列表，默认 ``(12,)``（tqsdk 默认）.
+
+        Returns:
+            字典，每个周期包含：
+            - ``mi_a_{n}``: 原始动量差 A
+            - ``mi_{n}``: 平滑后的 MI
+        """
+        result: dict[str, pd.Series] = {}
+        for n in periods:
+            if n <= 0:
+                raise ValueError(f"MI 周期必须为正整数，收到 {n}")
+            a = close.diff(n)
+            # alpha=1/n → MI_t = α·A_t + (1-α)·MI_{t-1}
+            mi = a.ewm(alpha=1.0 / n, adjust=False).mean()
+            result[f"mi_a_{n}"] = a
+            result[f"mi_{n}"] = mi
+        return result
