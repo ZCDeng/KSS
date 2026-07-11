@@ -1071,7 +1071,8 @@ struct MISignal: Codable, Hashable {
     var n: Int?
     var unpinned: Bool?
     var entry: String?
-    var exit: String?
+    /// 退出规则名（避免属性名 `exit` 与 Darwin.exit 冲突导致诊断失败）
+    var exitRule: String?
     var filter: String?
     var close: Double?
     var mi: Double?
@@ -1080,12 +1081,13 @@ struct MISignal: Codable, Hashable {
     var execNote: String?
 
     enum CodingKeys: String, CodingKey {
-        case asof, status, reason, action, position, n, unpinned, entry, exit, filter, close, mi, adx
+        case asof, status, reason, action, position, n, unpinned, entry, filter, close, mi, adx
         case prevAction = "prev_action"
         case predScore = "pred_score"
         case predBias = "pred_bias"
         case miZ = "mi_z"
         case execNote = "exec_note"
+        case exitRule = "exit"
     }
 }
 
@@ -1115,10 +1117,15 @@ struct MIBanner: Codable, Hashable {
 struct MIBadge: Codable, Hashable {
     var n: Int?
     var entry: String?
-    var exit: String?
+    var exitRule: String?
     var filter: String?
     var asof: String?
     var unpinned: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case n, entry, filter, asof, unpinned
+        case exitRule = "exit"
+    }
 }
 
 struct MIMarker: Codable, Hashable {

@@ -409,11 +409,11 @@ struct StockDetailView: View {
                     ChartLegend()
                     ChartWebView(
                         points: detail.history,
-                        miOverlayJSON: Self.encodeMiOverlay(detail.miOverlay),
                         intradayBars: (chartMode != .daily && intradayBars?.isRenderable == true)
                             ? intradayBars?.bars : nil,
                         activeMode: chartMode,
                         statusText: chartStatusText,
+                        miOverlayJSON: Self.encodeMiOverlay(detail.miOverlay),
                         onSelectMode: { mode in
                             chartMode = mode
                             if mode == .daily {
@@ -632,8 +632,11 @@ struct ChartFullscreenView: View {
             // 全屏同样嵌入完整 TF 条；分钟需 Longbridge，此处仅日线结构
             ChartWebView(
                 points: detail.history,
+                intradayBars: nil,
                 activeMode: .daily,
-                miOverlayJSON: StockDetailView.encodeMiOverlay(detail.miOverlay)
+                statusText: nil,
+                miOverlayJSON: StockDetailView.encodeMiOverlay(detail.miOverlay),
+                onSelectMode: nil
             )
         }
         // 作为浏览区上的覆盖层铺满：随 app 窗口尺寸动态最大化。
@@ -734,6 +737,15 @@ struct MISignalCard: View {
     @Environment(\.kssTheme) private var theme
     var signal: MISignal
 
+    private var predText: String {
+        guard let s = signal.predScore else { return "—" }
+        return String(format: "%.2f", s)
+    }
+
+    private var nText: String {
+        signal.n.map(String.init) ?? "—"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -751,12 +763,14 @@ struct MISignalCard: View {
                     .font(.system(size: 12))
                     .foregroundStyle(theme.textSecondary)
             } else {
-                Text("\(signal.action ?? "—") · \(signal.position ?? "") · pred \(signal.predScore.map { String(format: "%.2f" , $0) } ?? "—")")
+                Text("\(signal.action ?? "—") · \(signal.position ?? "") · pred \(predText)")
                     .font(KSSFont.themed(16, .semibold, theme: theme))
                 if let r = signal.reason, !r.isEmpty {
-                    Text(r).font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                    Text(r)
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textSecondary)
                 }
-                Text("N=\(signal.n.map(String.init) ?? "—") · \(signal.entry ?? "") / \(signal.exit ?? "") · asof \(signal.asof ?? "—")")
+                Text("N=\(nText) · \(signal.entry ?? "") / \(signal.exitRule ?? "") · asof \(signal.asof ?? "—")")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(theme.textSecondary)
                 if let prev = signal.prevAction {
@@ -765,13 +779,15 @@ struct MISignalCard: View {
                         .foregroundStyle(theme.textSecondary)
                 }
                 if let note = signal.execNote {
-                    Text(note).font(.system(size: 10)).foregroundStyle(theme.textSecondary)
+                    Text(note)
+                        .font(.system(size: 10))
+                        .foregroundStyle(theme.textSecondary)
                 }
             }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(theme.cardSurface)
+        .background(theme.surfaceRaised)
         .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
         .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
     }
