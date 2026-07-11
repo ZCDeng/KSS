@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 注册打包进 app 的字体（SwiftPM 资源在 Bundle.module，需运行时注册才能被 Font.custom 使用）。
     private static func registerBundledFonts() {
-        for name in ["HarmonyOS_Sans_SC_Bold", "chirp-regular-web", "chirp-medium-web", "chirp-bold-web", "chirp-heavy-web"] {
+        for name in ["HarmonyOS_Sans_SC_Regular", "HarmonyOS_Sans_SC_Medium", "HarmonyOS_Sans_SC_Bold", "HarmonyOS_Sans_SC_Black", "chirp-regular-web", "chirp-medium-web", "chirp-bold-web", "chirp-heavy-web"] {
             guard let url = Bundle.module.url(forResource: name, withExtension: "ttf") else {
                 NSLog("[KSS] 字体缺失，未注册: \(name).ttf")
                 continue
@@ -30,9 +30,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // PingFang SC 兜底，之后才正确解析到目标字体）。不等到级联本身就绪的话，App 首帧渲染的标题/
         // 侧边栏会永久卡在错误字体——SwiftUI 算出的 Font 值不会因为字体后来可用了就自动重算。这里在
         // 显示窗口前同步轮询「实际级联行为」本身（而不是单纯查字体名是否存在），上限 3s 防止极端情况卡启动。
+        // HarmonyOS Sans SC 的 Regular 档 PostScript 名不带粗细后缀（就是 "HarmonyOS_Sans_SC" 本身），
+        // 其余档位为 "HarmonyOS_Sans_SC_<Medium|Bold|Black>"——与 KSSFont.themed() 的取名规则一致。
         waitForCascadeReady(
             baseName: "Chirp-Regular",
-            cjkName: "HarmonyOS_Sans_SC_Bold",
+            cjkName: "HarmonyOS_Sans_SC",
             testCharacter: "字",
             timeoutMs: 3000
         )

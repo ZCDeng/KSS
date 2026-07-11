@@ -41,20 +41,22 @@ enum KSSFont {
 
     /// 主题感知正文/标题字体。8 套经典主题 `nativeFontFamily` 为 nil，行为与 `.system(size:weight:design:)`
     /// 完全一致（零回归）；xcom 模式下按 weight 分桶取 "<family>-<Weight>" PostScript 名，并给中文字形
-    /// 挂一个级联到 `nativeCJKFallback` 的 `CTFontDescriptor`，单个 Text 内中英文混排各走各的字体。
+    /// 挂一个级联到 `nativeCJKFamily` 对应粗细档的 `CTFontDescriptor`（跟随同一个 weight 分桶，而不是
+    /// 固定死一档粗细）——避免正文/侧边栏这些非标题场景的中文也被强制显示成粗体。
     /// `design: .monospaced` 场景（K 线/表格数字对齐）不走自定义字体——等宽是功能性选择，跳过。
-    /// `chirpWeight`：可选，仅覆盖 Chirp 路径的字重文件选择（不影响经典模式的 `.system(...)` 回退，
-    /// 那条分支永远只看 `weight`）。用于像侧边栏选中态这种"经典模式字重差异化、xcom 模式想要不同字重
-    /// 差异化"的场景，不必为了改 xcom 视觉而牵动经典模式。
+    /// `chirpWeight`：可选，仅覆盖 Chirp 路径（含中文级联档位）的字重文件选择（不影响经典模式的
+    /// `.system(...)` 回退，那条分支永远只看 `weight`）。用于像侧边栏选中态这种"经典模式字重差异化、
+    /// xcom 模式想要不同字重差异化"的场景，不必为了改 xcom 视觉而牵动经典模式。
     static func themed(_ size: CGFloat, _ weight: Font.Weight = .regular, chirpWeight: Font.Weight? = nil, theme: KSSThemeTokens, design: Font.Design = .default) -> Font {
-        guard design != .monospaced, let family = theme.nativeFontFamily, let cjkFallback = theme.nativeCJKFallback else {
+        guard design != .monospaced, let family = theme.nativeFontFamily, let cjkFamily = theme.nativeCJKFamily else {
             return .system(size: size, weight: weight, design: design)
         }
-        let psName = "\(family)-\(weightSuffix(chirpWeight ?? weight))"
+        let bucket = weightSuffix(chirpWeight ?? weight)
+        let psName = "\(family)-\(bucket)"
         guard let baseDescriptor = CTFontDescriptorCreateWithNameAndSize(psName as CFString, size) as CTFontDescriptor? else {
             return .system(size: size, weight: weight, design: design)
         }
-        let cjkDescriptor = CTFontDescriptorCreateWithNameAndSize(cjkFallback as CFString, size)
+        let cjkDescriptor = CTFontDescriptorCreateWithNameAndSize(harmonyOSPostScriptName(family: cjkFamily, bucket: bucket) as CFString, size)
         let cascaded = CTFontDescriptorCreateCopyWithAttributes(
             baseDescriptor,
             [kCTFontCascadeListAttribute: [cjkDescriptor]] as CFDictionary
@@ -69,6 +71,18 @@ enum KSSFont {
         case .bold, .semibold: return "Bold"
         case .medium: return "Medium"
         default: return "Regular"
+        }
+    }
+
+    /// HarmonyOS Sans SC 的粗细文件命名不规则：Regular 档 PostScript 名不带粗细后缀
+    /// （就是 "HarmonyOS_Sans_SC" 本身），其余档位为 "<family>_<Medium|Bold|Black>"；
+    /// Chirp 侧 "Heavy" 分桶对应这个字族里最重的 "Black" 档。
+    private static func harmonyOSPostScriptName(family: String, bucket: String) -> String {
+        switch bucket {
+        case "Heavy": return "\(family)_Black"
+        case "Bold": return "\(family)_Bold"
+        case "Medium": return "\(family)_Medium"
+        default: return family
         }
     }
 }
