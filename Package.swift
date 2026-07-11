@@ -32,8 +32,7 @@ let package = Package(
                 .copy("Resources/chirp-regular-web.woff"),
                 .copy("Resources/chirp-medium-web.woff"),
                 .copy("Resources/chirp-bold-web.woff"),
-                .copy("Resources/chirp-heavy-web.woff"),
-                .copy("Resources/仓耳今楷02-W02.ttf")
+                .copy("Resources/chirp-heavy-web.woff")
             ]
         ),
         .testTarget(
