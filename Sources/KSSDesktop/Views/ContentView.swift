@@ -74,7 +74,7 @@ struct ContentView: View {
                     }
                 }
             )
-            .frame(width: sidebarCollapsed ? 64 : 224)
+            .frame(width: sidebarCollapsed ? 64 : 272)
             .frame(maxHeight: .infinity)
             .background(theme.canvas)
 
