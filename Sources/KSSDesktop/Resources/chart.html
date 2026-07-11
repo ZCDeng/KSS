@@ -59,11 +59,24 @@
     align-items: center; justify-content: center;
     color: var(--muted); font-size: 13px;
   }
+  #miBanner {
+    position: absolute; top: 58px; left: 12px; right: 120px; z-index: 7;
+    font-size: 11px; font-weight: 600; color: var(--text);
+    pointer-events: none; display: none;
+  }
+  #miBadge {
+    position: absolute; top: 8px; right: 210px; z-index: 7;
+    font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 7px;
+    background: var(--chip); color: var(--chipText); pointer-events: none; display: none;
+  }
+  #miBadge.warn { color: #B45309; background: rgba(245, 158, 11, 0.15); }
 </style>
 </head>
 <body>
   <div id="chart"></div>
   <div id="legend"></div>
+  <div id="miBanner"></div>
+  <div id="miBadge"></div>
   <div id="tf">
     <button data-tf="1m">1分</button>
     <button data-tf="5m">5分</button>
@@ -78,6 +91,7 @@
     <button data-ind="bbi" class="on">BBI</button>
     <button data-ind="boll" class="on">BOLL</button>
     <button data-ind="vol" class="on">VOL</button>
+    <button data-ind="mi" class="on">MI</button>
     <button data-ind="macd" class="on">MACD</button>
     <button data-ind="obv" class="on">OBV</button>
   </div>
@@ -94,13 +108,14 @@
     let currentTheme = "dark";
     let currentTF = "D";
     // 指标可见性（用户随用随隐；跨重采样/主题重建后由 applyIndVisibility 还原）
-    let indState = { ma5: true, ma20: true, bbi: true, boll: true, vol: true, macd: true, obv: true };
+    let indState = { ma5: true, ma20: true, bbi: true, boll: true, vol: true, macd: true, obv: true, mi: true };
 
     let chart, candleSeries, volumeSeries, ma5Series, ma20Series;
     let bbiSeries, bollUpper, bollMid, bollLower;
-    let macdHist, difSeries, deaSeries, obvSeries;
+    let macdHist, difSeries, deaSeries, obvSeries, miSeries;
     let pending = null;
     let rawBars = [];
+    let lastMiOverlay = null;
     // U3 日内模式（F008）：分钟 K 线独立渲染路径，时间键用 UNIX 秒（非日线 date）。
     let intradayMode = false;
     let intradayBars = [];
@@ -273,6 +288,13 @@
       obvSeries = chart.addLineSeries({ priceScaleId: "obv", color: COLORS.obv, lineWidth: 1, title: "OBV", priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false });
       chart.priceScale("obv").applyOptions({ scaleMargins: { top: 0.81, bottom: 0.03 } });
 
+      // MI 副带（日线 overlay）
+      miSeries = chart.addLineSeries({
+        priceScaleId: "mi", color: "#D97757", lineWidth: 1, title: "MI",
+        priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: true,
+      });
+      chart.priceScale("mi").applyOptions({ scaleMargins: { top: 0.88, bottom: 0.0 } });
+
       window.addEventListener("resize", () => {
         chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
       });
@@ -392,6 +414,8 @@
       };
       renderLegendLast();
       chart.timeScale().fitContent();
+      // setData 后重绑 MI overlay，避免 markers 被冲掉
+      if (lastMiOverlay) applyMiOverlay(lastMiOverlay);
     }
 
     // U3 日内渲染（F008）：分钟 K 线独立路径——UNIX 秒时间键 + timeVisible，无 resample，
@@ -549,8 +573,70 @@
         case "vol": return [volumeSeries];
         case "macd": return [macdHist, difSeries, deaSeries];
         case "obv": return [obvSeries];
+        case "mi": return [miSeries];
       }
       return [];
+    }
+
+    function applyMiOverlay(payload) {
+      lastMiOverlay = payload || null;
+      const ban = document.getElementById("miBanner");
+      const badge = document.getElementById("miBadge");
+      if (!payload || (payload.status && payload.status !== "ok")) {
+        if (candleSeries && candleSeries.setMarkers) candleSeries.setMarkers([]);
+        if (miSeries) miSeries.setData([]);
+        if (ban) {
+          ban.style.display = payload && payload.reason ? "block" : "none";
+          ban.textContent = payload && payload.reason
+            ? ("MI: " + payload.status + " · " + payload.reason)
+            : "";
+        }
+        if (badge) {
+          badge.style.display = "none";
+        }
+        return;
+      }
+      // 仅日线显示坐标标注
+      if (currentTF !== "D" || intradayMode) {
+        if (candleSeries && candleSeries.setMarkers) candleSeries.setMarkers([]);
+        if (miSeries) miSeries.setData([]);
+        if (ban) {
+          ban.style.display = "block";
+          ban.textContent = "MI 标注仅日线（当前 " + currentTF + "）";
+        }
+        return;
+      }
+      const markers = (payload.markers || []).map(m => ({
+        time: m.time,
+        position: m.position || "belowBar",
+        color: m.color || "#26a69a",
+        shape: m.shape || "circle",
+        text: m.text || "",
+      }));
+      if (candleSeries && candleSeries.setMarkers) candleSeries.setMarkers(markers);
+      if (miSeries) {
+        miSeries.setData((payload.mi || []).filter(p => p && p.value != null));
+      }
+      if (ban) {
+        const b = payload.banner || {};
+        const parts = [];
+        if (b.action) parts.push(b.action);
+        if (b.pred_score != null) parts.push("pred " + b.pred_score);
+        if (b.reason) parts.push(b.reason);
+        if (b.unpinned) parts.push("⚠️默认形态·未钉死");
+        ban.textContent = parts.join(" · ");
+        ban.style.display = parts.length ? "block" : "none";
+      }
+      if (badge) {
+        const g = payload.badge || {};
+        const bits = [];
+        if (g.n != null) bits.push("N=" + g.n);
+        if (g.entry) bits.push(g.entry);
+        if (g.asof) bits.push(g.asof);
+        badge.textContent = bits.join(" · ");
+        badge.style.display = bits.length ? "block" : "none";
+        badge.classList.toggle("warn", !!g.unpinned);
+      }
     }
     function applyIndVisibility() {  // 重采样/主题重建后还原可见状态
       Object.keys(indState).forEach(k => {
@@ -575,6 +661,19 @@
         setData(payload);
       } catch (e) { document.getElementById("legend").textContent = "chart error: " + e; }
     };
+
+    // MI Signal Pack overlay（买卖点 / 动作条 / 角标 / MI 线）
+    window.kssSetMiOverlay = function (json) {
+      try {
+        const payload = (json == null || json === "null")
+          ? null
+          : (typeof json === "string" ? JSON.parse(json) : json);
+        applyMiOverlay(payload);
+      } catch (e) {
+        document.getElementById("legend").textContent = "mi overlay error: " + e;
+      }
+    };
+    window.kssClearMiOverlay = function () { applyMiOverlay(null); };
 
     // U3 日内数据 API（F008）：分钟 K 线走独立渲染路径，不触日线 resample。
     window.kssSetIntradayData = function (json) {

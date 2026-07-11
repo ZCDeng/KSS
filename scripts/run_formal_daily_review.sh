@@ -23,5 +23,17 @@ mkdir -p "$LOG_DIR"
 cd "$PROJECT_ROOT"
 # TUSHARE_TOKEN 从 .env 加载（KSS_STATE_ROOT=/Users/zcdeng/projects/KSS → STATE_ROOT=PROJECT_ROOT）
 TUSHARE_TOKEN=$(grep -E '^TUSHARE_TOKEN=' "$PROJECT_ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')
-KSS_STATE_ROOT="$PROJECT_ROOT" TUSHARE_TOKEN="$TUSHARE_TOKEN" \
-  "$PROJECT_ROOT/venv/bin/python" "$PROJECT_ROOT/scripts/kss_app_bridge.py" run formal-daily-review "$@" 2>&1
+export KSS_STATE_ROOT="$PROJECT_ROOT" TUSHARE_TOKEN="$TUSHARE_TOKEN"
+
+# 串行：先 MI Signal Pack，再正式复盘（pack 软失败不阻断 review）
+echo "----- $(date '+%Y-%m-%d %H:%M:%S') mi-signal-pack -----"
+set +e
+"$PROJECT_ROOT/venv/bin/python" "$PROJECT_ROOT/scripts/kss_app_bridge.py" run mi-signal-pack 2>&1
+pack_rc=$?
+set -e
+if [ "$pack_rc" -ne 0 ]; then
+  echo "WARN: mi-signal-pack exit=$pack_rc （继续 formal-daily-review）"
+fi
+
+echo "----- $(date '+%Y-%m-%d %H:%M:%S') formal-daily-review -----"
+"$PROJECT_ROOT/venv/bin/python" "$PROJECT_ROOT/scripts/kss_app_bridge.py" run formal-daily-review "$@" 2>&1
