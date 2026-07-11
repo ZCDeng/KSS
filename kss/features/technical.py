@@ -136,6 +136,28 @@ class TechnicalFactors:
         }
 
     @staticmethod
+    def atr(
+        high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14
+    ) -> pd.Series:
+        """计算 ATR 真实波幅（Wilder 平滑）.
+
+        Args:
+            high: 最高价序列.
+            low: 最低价序列.
+            close: 收盘价序列.
+            period: 平滑周期，默认 14 日.
+
+        Returns:
+            ATR 序列（绝对价格单位）.
+        """
+        prev_close = close.shift(1)
+        tr = pd.concat(
+            [(high - low).abs(), (high - prev_close).abs(), (low - prev_close).abs()],
+            axis=1,
+        ).max(axis=1)
+        return tr.ewm(alpha=1.0 / period, adjust=False).mean()
+
+    @staticmethod
     def candlestick(
         open_: pd.Series, high: pd.Series, low: pd.Series, close: pd.Series
     ) -> dict[str, pd.Series]:
