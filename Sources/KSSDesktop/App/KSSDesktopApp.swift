@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 注册打包进 app 的字体（SwiftPM 资源在 Bundle.module，需运行时注册才能被 Font.custom 使用）。
     private static func registerBundledFonts() {
-        for name in ["HarmonyOS_Sans_SC_Bold", "chirp-regular-web", "chirp-medium-web", "chirp-bold-web", "chirp-heavy-web", "仓耳今楷02-W02"] {
+        for name in ["HarmonyOS_Sans_SC_Bold", "chirp-regular-web", "chirp-medium-web", "chirp-bold-web", "chirp-heavy-web"] {
             guard let url = Bundle.module.url(forResource: name, withExtension: "ttf") else {
                 NSLog("[KSS] 字体缺失，未注册: \(name).ttf")
                 continue
@@ -32,13 +32,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 显示窗口前同步轮询「实际级联行为」本身（而不是单纯查字体名是否存在），上限 3s 防止极端情况卡启动。
         waitForCascadeReady(
             baseName: "Chirp-Regular",
-            cjkName: "TsangerJinKai02-W02",
+            cjkName: "HarmonyOS_Sans_SC_Bold",
             testCharacter: "字",
             timeoutMs: 3000
         )
     }
 
-    /// 轮询直到「Chirp 级联到 TsangerJinKai02」这个具体行为在当前进程里真正生效——
+    /// 轮询直到「Chirp 级联到 HarmonyOS Sans SC」这个具体行为在当前进程里真正生效——
     /// 用一个真实汉字测试解析结果，而不是只检查字体名是否能被找到（两者就绪时机不同）。
     private static func waitForCascadeReady(baseName: String, cjkName: String, testCharacter: Character, timeoutMs: Int) {
         let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000)

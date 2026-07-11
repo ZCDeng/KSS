@@ -151,7 +151,7 @@ struct ThemeTypography: Equatable {
     /// 原生自定义字体家族（PostScript 名前缀，如 "Chirp"）；nil = 8 套经典主题原样走系统字体。
     /// 非 nil 时 `KSSFont.themed(_:_:theme:)` 按 weight 分桶取 "<family>-<Weight>" PostScript 名。
     var nativeFontFamily: String? = nil
-    /// 中文字形级联回退的 PostScript 名（如 "TsangerJinKai02-W02"），仅在 nativeFontFamily 非 nil 时生效。
+    /// 中文字形级联回退的 PostScript 名（如 "HarmonyOS_Sans_SC_Bold"），仅在 nativeFontFamily 非 nil 时生效。
     var nativeCJKFallback: String? = nil
 
     static let claySerif = ThemeTypography(
@@ -178,18 +178,18 @@ struct ThemeTypography: Equatable {
         mono: "ui-monospace, \"Roboto Mono\", monospace",
         titleDesign: .default
     )
-    /// x.com 模式:英文走 Chirp,中文走仓耳今楷,WebView 侧 CSS 字体栈同顺序级联。
+    /// x.com 模式:英文走 Chirp(无中文字形),中文级联到 HarmonyOS Sans SC,WebView 侧 CSS 字体栈同顺序级联。
     static let xcomChirp = ThemeTypography(
-        // TsangerJinKai02 紧跟 Chirp 之后、系统泛型字体之前:WebKit 的 -apple-system 对
+        // HarmonyOS Sans SC 紧跟 Chirp 之后、系统泛型字体之前:WebKit 的 -apple-system 对
         // 不在 Chirp 覆盖范围内的字符(含中文)会先走自己内部的系统级联(通常落到苹方),
-        // 若排在 TsangerJinKai02 之前,CSS 引擎会认为它"已经有这个字形"而不再往后找,
-        // 导致中文永远轮不到 TsangerJinKai02。
-        serif: "\"Chirp\", \"TsangerJinKai02\", -apple-system, sans-serif",
-        sans: "\"Chirp\", \"TsangerJinKai02\", -apple-system, sans-serif",
+        // 若排在 HarmonyOS Sans SC 之前,CSS 引擎会认为它"已经有这个字形"而不再往后找,
+        // 导致中文永远轮不到 HarmonyOS Sans SC。
+        serif: "\"Chirp\", \"HarmonyOS Sans SC\", -apple-system, sans-serif",
+        sans: "\"Chirp\", \"HarmonyOS Sans SC\", -apple-system, sans-serif",
         mono: "ui-monospace, \"SF Mono\", Menlo, monospace",
         titleDesign: .default,
         nativeFontFamily: "Chirp",
-        nativeCJKFallback: "TsangerJinKai02-W02"
+        nativeCJKFallback: "HarmonyOS_Sans_SC_Bold"
     )
 }
 

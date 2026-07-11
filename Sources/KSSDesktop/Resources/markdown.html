@@ -9,7 +9,7 @@
   @font-face { font-family: "Chirp"; src: url("chirp-medium-web.woff") format("woff"); font-weight: 500; font-style: normal; }
   @font-face { font-family: "Chirp"; src: url("chirp-bold-web.woff") format("woff"); font-weight: 700; font-style: normal; }
   @font-face { font-family: "Chirp"; src: url("chirp-heavy-web.woff") format("woff"); font-weight: 900; font-style: normal; }
-  @font-face { font-family: "TsangerJinKai02"; src: url("%E4%BB%93%E8%80%B3%E4%BB%8A%E6%A5%B702-W02.ttf") format("truetype"); font-weight: 400; font-style: normal; }
+  @font-face { font-family: "HarmonyOS Sans SC"; src: url("HarmonyOS_Sans_SC_Bold.ttf") format("truetype"); font-weight: 700; font-style: normal; }
   :root {
     /* 默认值仅作首帧 fallback；原生 kssSetTheme 会覆盖全部 token。 */
     --bg:#FFFFFF; --ink:#141413; --body:#3D3D3A; --muted:#87867F;
@@ -91,9 +91,9 @@
           r.setProperty("--sans", p.typography.sans);
           r.setProperty("--mono", p.typography.mono);
           // xcom 中文级联字体加载核实（不影响渲染，仅供调试排查用）。
-          if (p.typography.sans && p.typography.sans.includes("TsangerJinKai02") && document.fonts) {
+          if (p.typography.sans && p.typography.sans.includes("HarmonyOS Sans SC") && document.fonts) {
             document.fonts.ready.then(() => {
-              console.log("[KSS] TsangerJinKai02 loaded:", document.fonts.check('16px "TsangerJinKai02"'));
+              console.log("[KSS] HarmonyOS Sans SC loaded:", document.fonts.check('16px "HarmonyOS Sans SC"'));
             });
           }
         }
