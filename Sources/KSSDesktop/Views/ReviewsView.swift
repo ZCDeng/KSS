@@ -54,14 +54,10 @@ struct ReviewsView: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
-                Picker("", selection: $mode) {
-                    ForEach(ReviewMode.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-                .padding(.bottom, 6)
+                KSSSegmentedControl(options: ReviewMode.allCases.map { ($0, $0.rawValue) }, selection: $mode, stretch: true)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 10)
+                    .padding(.bottom, 6)
 
                 switch mode {
                 case .stock: stockList
@@ -648,13 +644,11 @@ struct HotspotRotationPanel: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Picker("", selection: $boardKind) {
-                        ForEach(BoardKind.allCases) { kind in
-                            Text("\(kind.rawValue) \(boards(for: kind).count)").tag(kind)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
+                    KSSSegmentedControl(
+                        options: BoardKind.allCases.map { ($0, "\($0.rawValue) \(boards(for: $0).count)") },
+                        selection: $boardKind,
+                        stretch: true
+                    )
 
                     HotspotBoardTable(boards: boards(for: boardKind))
                 }

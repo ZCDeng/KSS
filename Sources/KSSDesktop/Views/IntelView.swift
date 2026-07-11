@@ -338,20 +338,23 @@ struct IntelView: View {
     }
 
     // MARK: - 赛道 Pills
+    // 分段控件共用样式（凹槽 + 浮起块）在 Support/Components.swift（KSSSegmentedGroove /
+    // kssSegmentedItemStyle），赛道行有色点+计数角标，不套简单文字标签的 KSSSegmentedControl。
 
     private var trackPills: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(tracks, id: \.key) { track in
-                    Button(action: {
-                        withAnimation(.easeInOut(duration: 0.15)) { activeTrack = track.key }
-                    }) {
-                        trackPillLabel(track)
+            KSSSegmentedGroove {
+                HStack(spacing: 4) {
+                    ForEach(tracks, id: \.key) { track in
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.15)) { activeTrack = track.key }
+                        }) {
+                            trackPillLabel(track)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 2)
         }
     }
 
@@ -368,16 +371,8 @@ struct IntelView: View {
         }
         .foregroundStyle(isActive ? theme.textPrimary : theme.textSecondary)
         .padding(.horizontal, 10).padding(.vertical, 6)
-        .background(
-            isActive
-                ? pillColor.opacity(0.12)
-                : theme.surfaceContainer,
-            in: RoundedRectangle(cornerRadius: theme.chipRadius)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: theme.chipRadius)
-                .strokeBorder(isActive ? pillColor.opacity(0.35) : theme.outlineVariant, lineWidth: 1)
-        )
+        .kssSegmentedItemStyle(isActive: isActive, theme: theme)
+        .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 
     // MARK: - 新闻列表（qmreader entry-card 节奏：卡间距 8、圆角 10、右缩略/favicon）
@@ -510,40 +505,11 @@ struct IntelView: View {
     // MARK: - Reader tabs（qmreader .reader-tabs）
 
     private var readerTabBar: some View {
-        HStack(spacing: 4) {
-            ForEach(IntelReaderTab.allCases) { tab in
-                Button {
-                    withAnimation(.easeOut(duration: 0.15)) { readerTab = tab }
-                } label: {
-                    Text(tab.label)
-                        .font(KSSFont.themed(13, readerTab == tab ? .semibold : .medium, theme: theme))
-                        .foregroundStyle(readerTab == tab ? theme.textPrimary : theme.textSecondary)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(
-                            readerTab == tab
-                                ? theme.surface
-                                : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 8)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .strokeBorder(
-                                    readerTab == tab ? theme.outlineVariant : Color.clear,
-                                    lineWidth: 1
-                                )
-                        )
-                        .shadow(
-                            color: readerTab == tab ? Color.black.opacity(0.04) : .clear,
-                            radius: 2, x: 0, y: 1
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(4)
-        .background(theme.surfaceContainer.opacity(0.65), in: RoundedRectangle(cornerRadius: 10))
+        KSSSegmentedControl(
+            options: IntelReaderTab.allCases.map { ($0, $0.label) },
+            selection: $readerTab,
+            stretch: true
+        )
     }
 
     @ViewBuilder

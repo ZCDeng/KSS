@@ -139,6 +139,75 @@ struct SortHeaderCell<Key: Hashable>: View {
     }
 }
 
+extension KSSThemeTokens {
+    /// 分段控件浮起块背景色：亮色下 `surface`，暗色下 `surfaceRaised`。
+    /// `surface` 在暗色主题下不可靠——部分设计系统（如 xcom）与 `surfaceContainer` 数值完全相同，
+    /// 逐一核对全部设计系统的暗色 Seed 后确认 `surfaceRaised` 才是恒亮于 `surfaceContainer` 的那个
+    /// （见 docs/plans/2026-07-11-006-fix-intel-radar-tab-affordance-plan.md 的教训）。
+    var segmentedActiveBackground: Color {
+        appearance == .dark ? surfaceRaised : surface
+    }
+}
+
+/// 凹槽容器：铺一层 `surfaceContainer` 底，包住一组互斥切换项。
+/// 供子项内容不只是纯文字（如 IntelView 赛道行的色点+计数角标）、无法直接套 `KSSSegmentedControl` 的场景使用。
+struct KSSSegmentedGroove<Content: View>: View {
+    @Environment(\.kssTheme) private var theme
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        content
+            .padding(4)
+            .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: theme.chipRadius))
+    }
+}
+
+extension View {
+    /// 分段控件内浮起子项的背景：激活态填充 `segmentedActiveBackground` + 轻投影，未激活态透明（无 hover 态）。
+    func kssSegmentedItemStyle(isActive: Bool, theme: KSSThemeTokens) -> some View {
+        self
+            .background(
+                RoundedRectangle(cornerRadius: theme.chipRadius)
+                    .fill(isActive ? theme.segmentedActiveBackground : Color.clear)
+            )
+            .shadow(color: isActive ? Color.black.opacity(0.08) : .clear, radius: 2, x: 0, y: 1)
+    }
+}
+
+/// 分段控件（凹槽 + 浮起块）：贴合自定义设计系统的 Tab 切换视觉，替代原生 `.pickerStyle(.segmented)`
+/// （原生分段控件走系统外观，盖不掉自定义主题）。`stretch` 关闭时内容自适应宽度（默认，对齐原生
+/// `.pickerStyle(.segmented) + .fixedSize()` 的观感）；开启时均分可用宽度（如撑满某个内容列的场景）。
+struct KSSSegmentedControl<Key: Hashable>: View {
+    @Environment(\.kssTheme) private var theme
+    var options: [(key: Key, label: String)]
+    @Binding var selection: Key
+    var stretch: Bool = false
+
+    var body: some View {
+        KSSSegmentedGroove {
+            HStack(spacing: 4) {
+                ForEach(options, id: \.key) { option in
+                    let isActive = option.key == selection
+                    Button {
+                        withAnimation(.easeOut(duration: 0.15)) { selection = option.key }
+                    } label: {
+                        Text(option.label)
+                            .font(KSSFont.themed(13, isActive ? .semibold : .medium, theme: theme))
+                            .foregroundStyle(isActive ? theme.textPrimary : theme.textSecondary)
+                            .frame(maxWidth: stretch ? .infinity : nil)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .kssSegmentedItemStyle(isActive: isActive, theme: theme)
+                            .accessibilityAddTraits(isActive ? .isSelected : [])
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .frame(maxWidth: stretch ? .infinity : nil, alignment: .leading)
+    }
+}
+
 struct SortControl<Key: Hashable>: View {
     @Environment(\.kssTheme) private var theme
     var options: [(key: Key, label: String)]
