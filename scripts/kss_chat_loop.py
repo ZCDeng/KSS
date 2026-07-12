@@ -281,8 +281,16 @@ async def run_turn(
 
         gen = client.stream_turn(convo, tools)
         # 阻塞 SDK 流在线程里逐事件取出 → 每次 await 让出事件循环,reader 任务得以并发收 confirm。
+        step_t0 = time.monotonic()
+        event_count = 0
         while True:
+            ev_t0 = time.monotonic()
             ev = await asyncio.to_thread(_next_event, gen)
+            ev_wait = time.monotonic() - ev_t0
+            if ev_wait > 5.0:   # 单次取事件明显偏慢(如模型静默/网络卡顿)才记,避免刷屏
+                logger.info("[chat-loop] step=%d 取事件耗时=%.1fs (第 %d 个事件)",
+                            step, ev_wait, event_count)
+            event_count += 1
             if ev is None:
                 break
             etype = ev["type"]
@@ -310,10 +318,14 @@ async def run_turn(
                         "numberGuard": {"unverified": unverified}})
             return
 
+        logger.info("[chat-loop] step=%d 流式耗时=%.1fs tool_calls=%s",
+                    step, time.monotonic() - step_t0, [tc.get("name") for tc in tool_calls])
         # 把本轮 assistant(含 tool_calls)记入对话,再逐个执行工具。
         convo.append(_assistant_msg(assistant_text_parts, tool_calls))
         for tc in tool_calls:
+            tool_t0 = time.monotonic()
             result = await _exec_tool(tc, read_call, request_write, emit)
+            logger.info("[chat-loop] tool=%s 耗时=%.1fs", tc.get("name"), time.monotonic() - tool_t0)
             tool_results_text.append(result)
             convo.append({"role": "tool", "tool_call_id": tc.get("id") or tc["name"],
                           "name": tc["name"], "content": result})

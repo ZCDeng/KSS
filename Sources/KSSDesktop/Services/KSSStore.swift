@@ -154,10 +154,20 @@ final class KSSStore: ObservableObject {
                         guard let self else { gate.resolve(false); return }
                         self.activeConfirmGate = gate
                         let ctx = self.chatMessages.last(where: { $0.role == .assistant })?.text ?? ""
-                        self.pendingWriteConfirm = PendingWriteConfirm(
+                        let confirm = PendingWriteConfirm(
                             callId: frame.callId ?? "", tool: frame.tool ?? "",
                             command: frame.command ?? "", effect: frame.effect ?? "执行写操作",
                             argsText: frame.argsText ?? "", contextLine: ctx)
+                        // 同一会话内连续多轮写确认时，SwiftUI 的 .sheet(item:) 有时不会为
+                        // 「非 nil → 非 nil」的直接覆盖识别出真正的状态切换——底层状态
+                        // （pendingWriteConfirm）已经设对，弹窗却悄悄不出现（实测第 2/3 轮
+                        // 均可复现，日志证实 store 状态始终正确，纯 UI 呈现层不触发）。
+                        // 显式先归零、下一 runloop tick 再赋值，强制拆成两次独立渲染，
+                        // 保证 SwiftUI 看到一次干净的 nil → 非 nil。
+                        self.pendingWriteConfirm = nil
+                        DispatchQueue.main.async { [weak self] in
+                            self?.pendingWriteConfirm = confirm
+                        }
                     }
                     return gate.wait()
                 },

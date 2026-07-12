@@ -16,6 +16,7 @@ import logging
 import os
 import signal
 import sys
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -31,6 +32,11 @@ logger = logging.getLogger(__name__)
 SOCKET_PATH = bridge.STATE_ROOT / "run" / "kss-sidecar.sock"
 PID_PATH = SOCKET_PATH.parent / "kss-sidecar.pid"
 VERSION_PATH = SOCKET_PATH.parent / "kss-sidecar.version"
+
+# Swift 端 spawn 时把 stdout/stderr 重定向进文件(见 BridgeClient.ensureSidecarRunning);
+# 这里只需保证 root logger 在 INFO 级别有输出、走 stderr 即可落进那个文件。
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
+                     stream=sys.stderr)
 
 # ---------------------------------------------------------------------------
 # U3(plan 004)：chat-turn 长连 handler + 并发 reader 任务 = 写执行唯一点。
@@ -85,6 +91,7 @@ async def _confirm_reader(reader: asyncio.StreamReader, pending: dict) -> None:
             continue
         call_id = msg.get("call_id")
         approved = bool(msg.get("approved"))
+        logger.info("[chat] 收到 chat-turn-confirm call_id=%s approved=%s", call_id, approved)
         entry = pending.pop(call_id, None)   # 单用途:取出即删,杜绝重放/串号(F1/B2)
         if entry is None:
             logger.warning("[chat] 丢弃不匹配/已消费 confirm call_id=%r", call_id)
@@ -121,14 +128,19 @@ async def _handle_chat_turn(reader: asyncio.StreamReader,
         call_id = uuid4().hex                 # handler 生成,loop 不能选值(F1)
         fut = asyncio.get_running_loop().create_future()
         pending[call_id] = {"future": fut, "command": command, "args": args}
+        logger.info("[chat] confirm_required 发出 call_id=%s command=%s", call_id, command)
         await emit({"type": "confirm_required", "call_id": call_id,
                     "tool": tool_name, "command": command, "args": tool_args,
                     "argsText": json.dumps(tool_args, ensure_ascii=False),   # Swift modal 直接显
                     "effect": chat_loop.write_effect_label(command, args)})   # 人话效果(U5)
+        t0 = time.monotonic()
         try:
-            return await asyncio.wait_for(fut, timeout=_CONFIRM_TIMEOUT)
+            result = await asyncio.wait_for(fut, timeout=_CONFIRM_TIMEOUT)
+            logger.info("[chat] confirm 收到 call_id=%s 等待=%.1fs", call_id, time.monotonic() - t0)
+            return result
         except asyncio.TimeoutError:          # 超时即拒(B3),删条目防后到 approved 复用
             pending.pop(call_id, None)
+            logger.warning("[chat] confirm 超时 call_id=%s 等待=%.1fs", call_id, time.monotonic() - t0)
             return {"error": "confirm_timeout", "hint": "确认超时,写按拒"}
 
     raw = req.get("messages") if isinstance(req, dict) else None
@@ -192,8 +204,14 @@ async def _on_connection(reader: asyncio.StreamReader, writer: asyncio.StreamWri
         if cmd == "chat-turn":               # 长连聊天:不在此 close,handler 跑完为止(KTD-3)
             await _handle_chat_turn(reader, writer, req)
             return
-        # legacy 一次性命令:单 readline→单 write→close(保原路不回归)
-        resp = _handle_request(line)
+        # legacy 一次性命令:单 readline→单 write→close(保原路不回归)。
+        # to_thread(而非直接同步调用):bridge.dispatch 可能做真实同步 I/O(pandas/文件),
+        # 若在事件循环线程上直接跑,会连带冻结本进程正服务的其它连接——包括一个正等待
+        # confirm_required 人工 tap 的长连 chat-turn(它自己的 asyncio.wait_for 超时回调
+        # 也调度在同一循环上,循环被占满时超时同样打不出来)。
+        t0 = time.monotonic()
+        resp = await asyncio.to_thread(_handle_request, line)
+        logger.info("[conn] legacy cmd=%r 耗时=%.3fs", cmd, time.monotonic() - t0)
         writer.write((resp + "\n").encode("utf-8"))
         await writer.drain()
     except (ConnectionError, asyncio.IncompleteReadError):

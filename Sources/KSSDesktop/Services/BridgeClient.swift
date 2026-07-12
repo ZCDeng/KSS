@@ -465,13 +465,29 @@ struct BridgeClient {
         env["PYTHONPYCACHEPREFIX"] = stateRoot.appending(path: ".cache/pycache").path
         for (key, value) in KeychainStore.injectedEnvironment() { env[key] = value }
         p.environment = env
-        p.standardOutput = FileHandle.nullDevice
-        p.standardError = FileHandle.nullDevice
+        let logHandle = Self.sidecarLogHandle(stateRoot: stateRoot)
+        p.standardOutput = logHandle
+        p.standardError = logHandle
         try? p.run()   // detached daemon，不 wait
         for _ in 0..<30 {
             if fm.fileExists(atPath: socketPath) { return }
             Thread.sleep(forTimeInterval: 0.1)
         }
+    }
+
+    /// sidecar 是常驻 daemon，此前 stdout/stderr 一律丢 /dev/null——排障时拿不到任何
+    /// Python logging 输出。改落 storage/logs/sidecar.log（与既有 storage/logs/cron/*.log
+    /// 同族约定），文件不存在则建；打开失败兜底回 /dev/null（不让日志问题拖垮 spawn）。
+    private static func sidecarLogHandle(stateRoot: URL) -> FileHandle {
+        let logURL = stateRoot.appending(path: "storage/logs/sidecar.log")
+        try? FileManager.default.createDirectory(
+            at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if !FileManager.default.fileExists(atPath: logURL.path) {
+            FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        }
+        guard let handle = try? FileHandle(forWritingTo: logURL) else { return .nullDevice }
+        handle.seekToEndOfFile()
+        return handle
     }
 
     private func cleanupSidecarFiles() {
