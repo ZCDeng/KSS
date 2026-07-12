@@ -1,10 +1,58 @@
 import SwiftUI
 
-/// U3：网络凭据配置面板。用户在此输入 Tushare / Telegram 凭据，存入 macOS Keychain
-/// （不再明文落 .env）。BridgeClient 启动时读出注入子进程 env。
-struct NetworkSettingsView: View {
+/// 统一"设置"工作区页面（plan 2026-07-12-005 / U1）：密钥、数据源、任务、日志四分区。
+/// 收敛原分散入口——工具栏"网络与凭据"弹窗（NetworkSettingsView）与任务页"定时任务"区块
+/// 均并入本页，不保留重复 UI（U5/U10 见 Key Decisions）。
+struct SettingsView: View {
     @Environment(\.kssTheme) private var theme
-    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = min(geo.size.width - 48, 1080)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    PageTitle("设置", subtitle: "密钥 / 数据源 / 任务 / 日志的唯一入口")
+
+                    SectionHeader("密钥")
+                    SettingsKeysSection()
+
+                    SectionHeader("数据源")
+                    SettingsPlaceholderCard(text: "数据源连通性测试（U4）即将上线")
+
+                    SectionHeader("任务")
+                    SettingsPlaceholderCard(text: "定时任务管理（U5）即将上线")
+
+                    SectionHeader("日志")
+                    SettingsPlaceholderCard(text: "应用内日志查看器（U7）即将上线")
+                }
+                .frame(width: w, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 24)
+            }
+            .scrollContentBackground(.hidden)
+            .background(theme.canvas)
+        }
+        .background(theme.canvas)
+    }
+}
+
+/// 占位卡片：后续单元（U4/U5/U7）实现前的分区占位，保证 U1 独立可交付。
+private struct SettingsPlaceholderCard: View {
+    @Environment(\.kssTheme) private var theme
+    var text: String
+
+    var body: some View {
+        Text(text)
+            .font(KSSFont.themed(13, theme: theme))
+            .foregroundStyle(theme.textSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .kssCard(padding: 14)
+    }
+}
+
+/// 密钥分区：原样承接 NetworkSettingsView 的 Keychain 读写与"保存后重启 sidecar"语义。
+struct SettingsKeysSection: View {
+    @Environment(\.kssTheme) private var theme
 
     @State private var tushareToken = ""
     @State private var telegramBotToken = ""
@@ -16,17 +64,14 @@ struct NetworkSettingsView: View {
     @State private var deepseekApiKey = ""
     @State private var llmModel = ""
     @State private var appLive = false
-    // Longbridge（U6）：实时行情凭据，注入 sidecar env 供 LongbridgeProvider 读。
+    // Longbridge（U6 历史编号）：实时行情凭据，注入 sidecar env 供 LongbridgeProvider 读。
     @State private var longbridgeAppKey = ""
     @State private var longbridgeAppSecret = ""
     @State private var longbridgeAccessToken = ""
     @State private var saved = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("网络与凭据")
-                .font(KSSFont.themed(18, .bold, theme: theme))
-                .foregroundStyle(theme.textPrimary)
+        VStack(alignment: .leading, spacing: 14) {
             Text("凭据存入 macOS Keychain，不写入磁盘明文。留空表示删除该项。")
                 .font(KSSFont.themed(12, theme: theme))
                 .foregroundStyle(theme.textSecondary)
@@ -74,7 +119,6 @@ struct NetworkSettingsView: View {
                 Text("App v\(BridgeClient.appVersion) · Python 层 v\(BridgeClient.scriptsVersionOnDisk())")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(theme.textSecondary)
-                Button("关闭") { dismiss() }
                 Button {
                     save()
                 } label: {
@@ -83,9 +127,8 @@ struct NetworkSettingsView: View {
                 .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(24)
-        .frame(width: 460)
-        .background(theme.surface)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .kssCard(padding: 16)
         .onAppear(perform: load)
     }
 

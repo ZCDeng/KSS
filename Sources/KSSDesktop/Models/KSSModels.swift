@@ -1369,6 +1369,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     case runbook = "Runbook"
     case aiChat = "AI Chat"
     case architecture = "Architecture"
+    case settings = "Settings"
 
     var id: String { rawValue }
 
@@ -1386,6 +1387,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .stocks: return "股票池"
         case .aiChat: return "Seesaw"
         case .architecture: return "架构"
+        case .settings: return "设置"
         }
     }
 
@@ -1403,6 +1405,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .stocks: return "list.bullet.rectangle"
         case .aiChat: return "scale.3d"
         case .architecture: return "circle.hexagongrid"
+        case .settings: return "gearshape"
         }
     }
 
@@ -1413,8 +1416,8 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
 
     /// 不上侧栏的 section：代码、视图、路由均完整保留。两种排除原因不同——
     /// 暂停类（如曾经的舆情 digest）是"未达预期，等改进方案定了再恢复，从本数组移除即重新显示"；
-    /// 任务/架构/Seesaw 属于永久挪走类（改到右上角工具栏），不预期再回到侧边栏。
-    static let hidden: [WorkspaceSection] = [.runbook, .architecture, .aiChat]
+    /// 任务/架构/Seesaw/设置 属于永久挪走类（改到工具栏/侧边栏页脚），不预期再回到侧边栏导航列表。
+    static let hidden: [WorkspaceSection] = [.runbook, .architecture, .aiChat, .settings]
 
     /// 可被用户拖拽重排的 section（enum 原序，去掉置顶项与隐藏项）。
     static var reorderable: [WorkspaceSection] {

@@ -9,7 +9,6 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase   // U5: Timer lifecycle gate (R14)
     @AppStorage("sidebarOrder") private var sidebarOrder = ""
     @State private var searchText = ""
-    @State private var showNetworkSettings = false
 
     private var watchlist: [String] {
         watchlistSymbols
@@ -129,10 +128,12 @@ struct ContentView: View {
                                 .padding(.horizontal, 2)
                             themeMenu
                             Button {
-                                showNetworkSettings = true
+                                store.selectedSection = .settings
                             } label: {
-                                Label("网络与凭据", systemImage: "key.fill")
+                                Label(WorkspaceSection.settings.displayName, systemImage: WorkspaceSection.settings.symbol)
                             }
+                            .foregroundStyle(store.selectedSection == .settings ? theme.accent : theme.textSecondary)
+                            .help(WorkspaceSection.settings.displayName)
                             Button {
                                 Task { await store.loadSnapshot() }
                             } label: {
@@ -141,9 +142,6 @@ struct ContentView: View {
                         }
                     }
             }
-        }
-        .sheet(isPresented: $showNetworkSettings) {
-            NetworkSettingsView()
         }
         .frame(minWidth: 1080, minHeight: 720)
         .onAppear { syncWatchlistFile(watchlist) }
@@ -378,6 +376,8 @@ struct ContentView: View {
                     .environmentObject(store)
             case .architecture:
                 ArchitectureView()
+            case .settings:
+                SettingsView()
             }
         } else {
             VStack(spacing: 12) {
