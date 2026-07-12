@@ -307,6 +307,13 @@ struct BridgeClient {
         try run(["cron-rerun-many", labels.joined(separator: ",")], as: CronBatchResult.self)
     }
 
+    /// 应用内排期编辑（设置页任务分区，plan 2026-07-12-005 / U6）。写命令，需人在环内确认。
+    /// scheduleJSON 形如 `{"hour":18,"minute":30,"weekdays":[1,2,3,4,5]}` 或
+    /// `{"weekly":{"weekday":5,"hour":20,"minute":0}}`。
+    func editCronSchedule(suffix: String, scheduleJSON: String) throws -> CronActionResult {
+        try run(["cron-edit-schedule", suffix, scheduleJSON], as: CronActionResult.self)
+    }
+
     /// 趋势页：某月月度格子。
     func trendsMonth(_ month: String) throws -> TrendMonth {
         try run(["trends-month", month], as: TrendMonth.self)

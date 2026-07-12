@@ -246,3 +246,99 @@ def test_manifest_wrapper_matches_plist_program() -> None:
         prog = data["ProgramArguments"]
         assert Path(prog[0]).name == Path(job.wrapper).name, job.suffix
         assert tuple(prog[1:]) == job.args, job.suffix
+
+
+# --------------------------------------------------------------------------- #
+# U6（plan 2026-07-12-005）：state-root 排期 overlay 合并
+# --------------------------------------------------------------------------- #
+
+def _write_overlay(tmp_path: Path, data: dict) -> Path:
+    p = tmp_path / "cron_overrides.yaml"
+    p.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    return p
+
+
+class TestOverlayMerge:
+    def test_no_overlay_file_is_normal_state(self, tmp_path: Path) -> None:
+        """overlay 文件不存在 → 空覆盖，清单原样返回（不是错误）。"""
+        manifest_path = _write(tmp_path, _doc([_minimal_job()]))
+        m = load_manifest(manifest_path, overlay_path=tmp_path / "nope.yaml")
+        assert m.jobs[0].schedule.hour == 8
+        assert m.jobs[0].schedule.minute == 30
+
+    def test_overlay_changes_schedule_hour_minute(self, tmp_path: Path) -> None:
+        manifest_path = _write(tmp_path, _doc([_minimal_job()]))
+        overlay_path = _write_overlay(
+            tmp_path, {"demo_daily": {"hour": 18, "minute": 30, "weekdays": [1, 2, 3, 4, 5]}}
+        )
+        m = load_manifest(manifest_path, overlay_path=overlay_path)
+        job = m.job("demo_daily")
+        assert job is not None
+        assert job.schedule.hour == 18
+        assert job.schedule.minute == 30
+
+    def test_overlay_only_touches_named_suffix(self, tmp_path: Path) -> None:
+        manifest_path = _write(
+            tmp_path,
+            _doc([_minimal_job(), _minimal_job(suffix="other_daily")]),
+        )
+        overlay_path = _write_overlay(tmp_path, {"demo_daily": {"hour": 9, "minute": 0}})
+        m = load_manifest(manifest_path, overlay_path=overlay_path)
+        assert m.job("demo_daily").schedule.hour == 9
+        assert m.job("other_daily").schedule.hour == 8  # 未被 overlay 提及，原样保留
+
+    def test_overlay_unknown_suffix_rejected(self, tmp_path: Path) -> None:
+        manifest_path = _write(tmp_path, _doc([_minimal_job()]))
+        overlay_path = _write_overlay(tmp_path, {"nonexistent_suffix": {"hour": 9, "minute": 0}})
+        with pytest.raises(CronManifestError, match="未知 suffix"):
+            load_manifest(manifest_path, overlay_path=overlay_path)
+
+    def test_overlay_rejects_credential_like_keys(self, tmp_path: Path) -> None:
+        manifest_path = _write(tmp_path, _doc([_minimal_job()]))
+        overlay_path = _write_overlay(
+            tmp_path, {"demo_daily": {"hour": 9, "minute": 0, "api_token": "leaked"}}
+        )
+        with pytest.raises(CronManifestError):
+            load_manifest(manifest_path, overlay_path=overlay_path)
+
+    def test_overlay_enabled_field_not_supported(self, tmp_path: Path) -> None:
+        """overlay 只覆盖 schedule；enabled 不是允许的顶层结构（拒绝 dict 形态外的字段）。
+
+        overlay 里每个 suffix 的值本身就是 schedule 原始字典（走 _parse_schedule 校验），
+        混入非 schedule 键（如凭据/enabled）会被 _parse_schedule 或凭据扫描拒绝——
+        这里验证一个非法 schedule 形态（缺 hour/minute 且非 weekly）会报错，而不是
+        被静默接受为某种「enabled」语义。
+        """
+        manifest_path = _write(tmp_path, _doc([_minimal_job()]))
+        overlay_path = _write_overlay(tmp_path, {"demo_daily": {"enabled": False}})
+        with pytest.raises(CronManifestError):
+            load_manifest(manifest_path, overlay_path=overlay_path)
+
+    def test_overlay_weekly_schedule(self, tmp_path: Path) -> None:
+        manifest_path = _write(tmp_path, _doc([_minimal_job()]))
+        overlay_path = _write_overlay(
+            tmp_path, {"demo_daily": {"weekly": {"weekday": 5, "hour": 20, "minute": 0}}}
+        )
+        m = load_manifest(manifest_path, overlay_path=overlay_path)
+        job = m.job("demo_daily")
+        assert job.schedule.is_weekly
+        assert job.schedule.weekday == 5
+
+    def test_default_manifest_cache_invalidates_on_overlay_change(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """_default_manifest 的缓存键须含 overlay mtime，排期编辑后无需进程重启即生效。"""
+        manifest_path = _write(tmp_path, _doc([_minimal_job()]))
+        overlay_path = tmp_path / "cron_overrides.yaml"
+        monkeypatch.setattr(cm, "MANIFEST_PATH", manifest_path)
+        monkeypatch.setattr(cm, "OVERLAY_PATH", overlay_path)
+        cm._cache.update(key=None, manifest=None)  # 清模块级缓存，避免跨测试污染
+
+        assert cm.title_for("demo_daily") == "示例"
+        first = cm._default_manifest().job("demo_daily").schedule.hour
+        assert first == 8
+
+        overlay_path.write_text(
+            yaml.safe_dump({"demo_daily": {"hour": 22, "minute": 0}}, allow_unicode=True),
+            encoding="utf-8",
+        )
+        second = cm._default_manifest().job("demo_daily").schedule.hour
+        assert second == 22

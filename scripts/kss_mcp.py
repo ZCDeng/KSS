@@ -232,6 +232,17 @@ if _LIVE:
         return _call(f"cron-{action}", [label])
 
     @mcp.tool
+    def cron_edit_schedule(suffix: str, schedule_json: str, confirm: bool = False) -> dict:
+        """编辑计划任务排期（写 state-root overlay + 重渲染 + 生效）。须 confirm=True。
+
+        schedule_json 形如 '{"hour":18,"minute":30,"weekdays":[1,2,3,4,5]}'（daily）
+        或 '{"weekly":{"weekday":5,"hour":20,"minute":0}}'（weekly）。
+        """
+        if not confirm:
+            return {"error": "live_write_requires_confirm", "hint": "传 confirm=True"}
+        return _call("cron-edit-schedule", [suffix, schedule_json])
+
+    @mcp.tool
     def cron_sync(confirm: bool = False) -> dict:
         """把清单与 LaunchAgents 同步（会执行 launchctl bootstrap）。须 confirm=True。"""
         if not confirm:

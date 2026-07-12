@@ -823,12 +823,42 @@ struct SectorTheme: Codable, Identifiable, Hashable {
 }
 
 /// 定时任务（launchd）一项：deploy/launchd/*.plist + launchctl 状态 + 日志末行。
+/// 排期结构化字段（bridge `cron-list` 的 `scheduleStruct`，plan 2026-07-12-005 / U6）。
+/// 供排期编辑器读初值——避免解析人读 `schedule` 文案的脆弱往返。
+struct ScheduleStruct: Codable, Hashable {
+    var hour: Int
+    var minute: Int
+    var weekdays: [Int]?   // daily 形态的工作日子集；nil＝每天
+    var weekly: Bool
+    var weekday: Int?      // weekly 形态的单一 weekday（launchd 1-7）
+
+    /// 序列化为 bridge `cron-edit-schedule` 期望的 schedule JSON。
+    func toScheduleJSON() -> String {
+        var payload: [String: Any] = [:]
+        if weekly {
+            payload["weekly"] = ["weekday": weekday ?? 1, "hour": hour, "minute": minute]
+        } else {
+            payload["hour"] = hour
+            payload["minute"] = minute
+            if let weekdays, !weekdays.isEmpty {
+                payload["weekdays"] = weekdays
+            }
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return json
+    }
+}
+
 struct ScheduledJob: Codable, Identifiable, Hashable {
     var id: String { label }
     var label: String
     var title: String
     var category: String      // 数据更新 / 扫描选股 / 板块复盘 / 纸交易 / 校验回测 / 盘中快讯 / 系统 / 其他
     var schedule: String      // 人读调度，如「工作日 17:30」
+    var scheduleStruct: ScheduleStruct?  // 编辑器初值（U6）；旧 sidecar 未带该字段时为 nil
     var script: String
     var enabled: Bool         // 是否启用（未被 launchctl disable）
     var needsInstall: Bool?   // 清单有但 ~/Library/LaunchAgents 未装 → 需同步（U4/R4）

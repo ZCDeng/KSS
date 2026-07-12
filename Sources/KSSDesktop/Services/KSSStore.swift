@@ -1133,6 +1133,13 @@ final class KSSStore: ObservableObject {
         await runScheduledAction(label) { bridge in try bridge.setJobEnabled(label, enabled: enabled) }
     }
 
+    /// 应用内编辑任务排期（设置页任务分区，plan 2026-07-12-005 / U6），就地刷新该行状态。
+    func editScheduledJob(_ label: String, suffix: String, scheduleJSON: String) async {
+        await runScheduledAction(label) { bridge in
+            try bridge.editCronSchedule(suffix: suffix, scheduleJSON: scheduleJSON)
+        }
+    }
+
     /// 漏跑任务（关机自检命中的）。
     var staleJobs: [ScheduledJob] { scheduledJobs.filter { $0.stale } }
 

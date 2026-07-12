@@ -343,7 +343,11 @@ struct SettingsTasksSection: View {
             onSync: { label in Task { await store.syncScheduledJobs(label) } },
             onCatchUp: { Task { await store.catchUpStaleJobs() } },
             onRerunMany: { labels in Task { await store.rerunScheduledJobs(labels) } },
-            onDismissBatchNote: { store.scheduledBatchNote = nil }
+            onDismissBatchNote: { store.scheduledBatchNote = nil },
+            onEditSchedule: { label, updated in
+                let suffix = label.replacingOccurrences(of: "com.zcdeng.kss.", with: "")
+                Task { await store.editScheduledJob(label, suffix: suffix, scheduleJSON: updated.toScheduleJSON()) }
+            }
         )
         .task { await store.loadScheduledJobs() }
     }

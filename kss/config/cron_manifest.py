@@ -19,17 +19,21 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from kss.config.paths import PROJECT_ROOT
+from kss.config.paths import PROJECT_ROOT, STORAGE_ROOT
 from kss.security.redaction import CREDENTIAL_KEY_RE
 
 # 默认清单路径（与 kss/config/settings.yaml 同处）。
 MANIFEST_PATH: Path = PROJECT_ROOT / "kss" / "config" / "cron_jobs.yaml"
+# state-root 排期 overlay（plan 2026-07-12-005 / U6）：应用内排期编辑落此文件，
+# 仅允许覆盖 schedule 字段——bundle 模式下 MANIFEST_PATH 在签名 .app 内部不可写，
+# 真相源仍是清单本身，overlay 只在运行期内存合并，从不回写清单。
+OVERLAY_PATH: Path = STORAGE_ROOT / "cron_overrides.yaml"
 
 # launchd Weekday 约定：1=周一 … 7=周日。0/8 越界非法。
 _MIN_WEEKDAY = 1
@@ -262,30 +266,81 @@ def _build_manifest(data: Any, *, path: Path) -> CronManifest:
     return CronManifest(jobs=tuple(jobs), category_order=category_order)
 
 
-def load_manifest(path: Path | str | None = None) -> CronManifest:
-    """加载并校验清单。``path`` 缺省读 :data:`MANIFEST_PATH`。"""
+def _load_overlay(path: Path) -> dict[str, Any]:
+    """读 overlay 文件（suffix → schedule 原始 dict）。不存在 → 空覆盖（正常态，非错误）。"""
+    if not path.is_file():
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise CronManifestError(f"overlay 不可读：{path}（{exc}）") from exc
+    data = yaml.safe_load(text) or {}
+    if not isinstance(data, dict):
+        raise CronManifestError(f"{path}: overlay 顶层须为 mapping（suffix → schedule）")
+    _reject_credential_keys(data, where=str(path))
+    return data
+
+
+def _apply_overlay(manifest: CronManifest, overlay: dict[str, Any]) -> CronManifest:
+    """按 overlay 覆盖各 job 的 ``schedule`` 字段——仅此一个字段，enabled 等其余字段
+    继续走既有 launchctl enable/disable 唯一真相源，不进 overlay（防双真相源）。
+
+    未知 suffix 拒绝（防笔误静默失配，而非悄悄无操作）。
+    """
+    if not overlay:
+        return manifest
+    known = {j.suffix for j in manifest.jobs}
+    unknown = set(overlay) - known
+    if unknown:
+        raise CronManifestError(f"overlay 引用未知 suffix：{sorted(unknown)}")
+    new_jobs = []
+    for job in manifest.jobs:
+        raw_schedule = overlay.get(job.suffix)
+        if raw_schedule is None:
+            new_jobs.append(job)
+            continue
+        new_jobs.append(replace(job, schedule=_parse_schedule(raw_schedule, suffix=job.suffix)))
+    return CronManifest(jobs=tuple(new_jobs), category_order=manifest.category_order)
+
+
+def load_manifest(
+    path: Path | str | None = None, *, overlay_path: Path | str | None = None
+) -> CronManifest:
+    """加载并校验清单，合并 state-root 排期 overlay（U6）。
+
+    ``path`` 缺省读 :data:`MANIFEST_PATH`；``overlay_path`` 缺省读 :data:`OVERLAY_PATH`。
+    渲染器/同步器/bridge 任务元数据三条下游链路均经此函数，自动吃到合并结果。
+    """
     p = Path(path) if path is not None else MANIFEST_PATH
     try:
         text = p.read_text(encoding="utf-8")
     except OSError as exc:
         raise CronManifestError(f"清单不可读：{p}（{exc}）") from exc
     data = yaml.safe_load(text)
-    return _build_manifest(data, path=p)
+    manifest = _build_manifest(data, path=p)
+
+    ov_path = Path(overlay_path) if overlay_path is not None else OVERLAY_PATH
+    overlay = _load_overlay(ov_path)
+    return _apply_overlay(manifest, overlay)
 
 
 # --------------------------------------------------------------------------- #
 # 便捷 helper（U4 bridge 元数据派生用；缺省读默认清单，带模块级缓存）
 # --------------------------------------------------------------------------- #
-_cache: dict[str, Any] = {"mtime": None, "manifest": None}
+_cache: dict[str, Any] = {"key": None, "manifest": None}
 
 
 def _default_manifest() -> CronManifest:
+    """带缓存的默认清单加载；缓存键含 overlay mtime（U6），排期编辑后 title_for 等
+    元数据 helper 无需进程重启即可拿到新排期。"""
     try:
-        mtime = MANIFEST_PATH.stat().st_mtime
+        manifest_mtime = MANIFEST_PATH.stat().st_mtime
     except OSError:
         return load_manifest()
-    if _cache["mtime"] != mtime:
-        _cache.update(mtime=mtime, manifest=load_manifest())
+    overlay_mtime = OVERLAY_PATH.stat().st_mtime if OVERLAY_PATH.is_file() else None
+    key = (manifest_mtime, overlay_mtime)
+    if _cache["key"] != key:
+        _cache.update(key=key, manifest=load_manifest())
     return _cache["manifest"]  # type: ignore[return-value]
 
 
@@ -321,6 +376,7 @@ __all__ = [
     "CronManifest",
     "CronManifestError",
     "MANIFEST_PATH",
+    "OVERLAY_PATH",
     "Schedule",
     "all_jobs",
     "catchup_eligible",

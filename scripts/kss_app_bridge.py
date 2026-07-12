@@ -16,6 +16,7 @@ import json
 import math
 import os
 import re
+import shutil
 import statistics
 import subprocess
 import sys
@@ -3139,7 +3140,26 @@ def _indicator_detail_projections(
 # 不拼接用户输入，杜绝注入。
 # ---------------------------------------------------------------------------
 
-LAUNCHD_DIR = PROJECT_ROOT / "deploy" / "launchd"
+def _launchd_deploy_dir() -> Path:
+    """deploy/launchd 双根解析（plan 2026-07-12-005 / U6 KTD2）。
+
+    dev 模式（STATE_ROOT == PROJECT_ROOT）：原样用 PROJECT_ROOT 副本，行为不变。
+    bundle 模式（STATE_ROOT != PROJECT_ROOT）：改用 STATE_ROOT 副本——签名 .app 内的
+    PROJECT_ROOT/deploy/launchd 只读，写入即破坏签名。首次访问从 bundle 内模板 seed；
+    此后 STATE_ROOT 副本是唯一可写工作态，排期编辑（cron-edit-schedule）只回写这里。
+    """
+    bundle_deploy = PROJECT_ROOT / "deploy" / "launchd"
+    if STATE_ROOT == PROJECT_ROOT:
+        return bundle_deploy
+    state_deploy = STATE_ROOT / "deploy" / "launchd"
+    if not state_deploy.is_dir() and bundle_deploy.is_dir():
+        state_deploy.mkdir(parents=True, exist_ok=True)
+        for src in bundle_deploy.glob("com.zcdeng.kss.*.plist"):
+            shutil.copy2(src, state_deploy / src.name)
+    return state_deploy
+
+
+LAUNCHD_DIR = _launchd_deploy_dir()
 # 已装副本目录（~/Library/LaunchAgents）—— 仅作「已装态」对账：loaded/running/enabled
 # 与 needsInstall 漂移判定。清单是任务枚举的唯一真源（U4 / R4）。
 LAUNCHAGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
@@ -3214,6 +3234,29 @@ def _parse_schedule(interval: Any) -> str:
         else:
             parts.append(_hm(e))
     return " / ".join(parts)
+
+
+def _schedule_struct(interval: Any) -> dict[str, Any]:
+    """StartCalendarInterval → 结构化字段（U6），供设置页排期编辑器初始化表单。
+    人读串 `schedule` 给展示用，这个给编辑器读初值——避免解析人读文案的脆弱往返。"""
+    entries = _interval_entries(interval)
+    if not entries:
+        return {"hour": 0, "minute": 0, "weekdays": None, "weekly": False, "weekday": None}
+    if len(entries) == 1 and "Weekday" in entries[0]:
+        e = entries[0]
+        return {"hour": int(e.get("Hour", 0)), "minute": int(e.get("Minute", 0)),
+                "weekdays": None, "weekly": True, "weekday": int(e["Weekday"])}
+    times = {_hm(e) for e in entries}
+    weekdays_set = {int(e["Weekday"]) for e in entries if "Weekday" in e}
+    if len(times) == 1:
+        hour, minute = (int(x) for x in next(iter(times)).split(":"))
+        weekdays = sorted(weekdays_set) if weekdays_set else None
+        return {"hour": hour, "minute": minute, "weekdays": weekdays, "weekly": False, "weekday": None}
+    # 混合形态（各 entry 时刻不同）——排期编辑器不支持这类任务，回退首条近似值，
+    # 保存时会按该近似值覆盖成单一时刻（用户在编辑器里能看到、可另行调整）。
+    e = entries[0]
+    return {"hour": int(e.get("Hour", 0)), "minute": int(e.get("Minute", 0)),
+            "weekdays": None, "weekly": False, "weekday": None}
 
 
 def _interval_entries(interval: Any) -> list[dict]:
@@ -3397,6 +3440,7 @@ def _scheduled_job(
         "title": cm.title_for(suffix),
         "category": cm.category_for(suffix),
         "schedule": schedule,
+        "scheduleStruct": _schedule_struct(interval),
         "script": script,
         "enabled": enabled,
         "loaded": status["loaded"],
@@ -3529,6 +3573,84 @@ def _cron_action(label: str, action: str) -> dict[str, Any]:
     if errors:
         return {"ok": False, "error": "; ".join(errors), "job": job}
     return {"ok": True, "job": job}
+
+
+def _cron_edit_schedule(suffix: str, schedule_json: str) -> dict[str, Any]:
+    """应用内排期编辑（R8/KTD2，plan 2026-07-12-005/U6）：写 overlay → 渲染单 plist
+    （持久安装位 + deploy 副本双写）→ bootout/bootstrap。渲染或 launchctl 任一步
+    失败即回滚 overlay 条目，不留半成品状态——面板保持原排期，用户可重试。"""
+    import yaml  # noqa: PLC0415
+
+    try:
+        schedule_raw = json.loads(schedule_json)
+    except json.JSONDecodeError as exc:
+        return {"ok": False, "error": "bad_schedule_json", "hint": str(exc)}
+    if not isinstance(schedule_raw, dict):
+        return {"ok": False, "error": "bad_schedule_json", "hint": "schedule 须为 JSON 对象"}
+
+    cm = _cron_manifest()
+    try:
+        current = cm.load_manifest()
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": "manifest_load_failed", "hint": str(exc)}
+    if current.job(suffix) is None:
+        return {"ok": False, "error": "unknown_suffix", "hint": f"未知任务: {suffix!r}"}
+
+    overlay_path = cm.OVERLAY_PATH
+    existing_overlay = cm._load_overlay(overlay_path)
+    merged_overlay = dict(existing_overlay)
+    merged_overlay[suffix] = schedule_raw
+
+    try:
+        new_manifest = cm._apply_overlay(current, merged_overlay)
+    except Exception as exc:  # noqa: BLE001 - CronManifestError 等校验失败
+        return {"ok": False, "error": "invalid_schedule", "hint": str(exc)}
+    new_job = new_manifest.job(suffix)
+
+    # 写盘前记住旧 overlay 文本，失败时原样恢复（不留半成品）。
+    old_overlay_text = overlay_path.read_text(encoding="utf-8") if overlay_path.is_file() else None
+
+    def _write_overlay(text: str | None) -> None:
+        if text is None:
+            overlay_path.unlink(missing_ok=True)
+            return
+        overlay_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = overlay_path.with_suffix(overlay_path.suffix + ".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        tmp.replace(overlay_path)
+
+    _write_overlay(yaml.safe_dump(merged_overlay, allow_unicode=True))
+
+    label = new_job.label
+    try:
+        import render_launchd_plists as render_mod  # noqa: PLC0415
+
+        agents_path = LAUNCHAGENTS_DIR / f"{label}.plist"
+        deploy_path = LAUNCHD_DIR / f"{label}.plist"
+        state_root_arg = str(STATE_ROOT) if STATE_ROOT != PROJECT_ROOT else None
+        # 持久安装位（~/Library/LaunchAgents）：launchd 重启后据此自动重载。
+        pl = render_mod.render(str(PROJECT_ROOT), new_job, agents_path, state_root=state_root_arg)
+        # deploy 副本：_launchd_plists() 枚举/bootstrap 的优先来源，双写保持一致。
+        LAUNCHD_DIR.mkdir(parents=True, exist_ok=True)
+        deploy_tmp = deploy_path.with_suffix(deploy_path.suffix + ".tmp")
+        deploy_tmp.write_bytes(render_mod._to_xml(pl))
+        deploy_tmp.replace(deploy_path)
+    except Exception as exc:  # noqa: BLE001
+        _write_overlay(old_overlay_text)
+        return {"ok": False, "error": "render_failed", "hint": str(exc)}
+
+    uid = os.getuid()
+    domain = f"gui/{uid}"
+    _run_launchctl(["bootout", f"{domain}/{label}"])
+    rc, _, err = _run_launchctl(["bootstrap", domain, str(agents_path)])
+    if rc != 0 and "already" not in err.lower():
+        _write_overlay(old_overlay_text)
+        return {"ok": False, "error": "launchctl_failed", "hint": err.strip() or f"bootstrap rc={rc}"}
+    _run_launchctl(["enable", f"{domain}/{label}"])
+
+    disabled = _disabled_labels(uid)
+    job_payload = _scheduled_job(label, agents_path, uid, disabled)
+    return {"ok": True, "job": job_payload}
 
 
 def _kickstart_labels(labels: list[str], require_stale: bool) -> dict[str, Any]:
@@ -4180,6 +4302,7 @@ def _indicator_retire(entry_id: str) -> dict[str, Any]:
 WRITE_COMMANDS = frozenset({
     "run", "import", "resolve",
     "cron-rerun", "cron-enable", "cron-disable", "cron-catchup", "cron-rerun-many", "cron-sync",
+    "cron-edit-schedule",  # 排期编辑（U6）：写 overlay + 渲染 + bootout/bootstrap
     "intel-digest-save",  # 写文件到 storage/notes/
     "intel-rewrite",      # 写 rewrite pool
     "intel-rewrite-run",  # worker 写 pool
@@ -4214,6 +4337,10 @@ COMMANDS = {
     "cron-sync": {"desc": "同步 LaunchAgents（使任务从清单进入可调度态）", "args": []},
     "cron-catchup": {"desc": "补跑漏跑任务", "args": []},
     "cron-rerun-many": {"desc": "批量重跑", "args": ["LABELS"]},
+    "cron-edit-schedule": {
+        "desc": "应用内编辑任务排期(写 state-root overlay + 重渲染 + 生效)",
+        "args": ["SUFFIX", "SCHEDULE_JSON"],
+    },
     "trends-month": {"desc": "趋势页某月日历", "args": ["YYYY-MM"]},
     "trends-day": {"desc": "趋势页某日明细", "args": ["YYYY-MM-DD"]},
     "data-catalog": {"desc": "全量数据资产字典", "args": []},
@@ -5075,6 +5202,10 @@ def dispatch(command: str, args: list[str]) -> Any:
     if command == "cron-rerun-many":
         labels = [s for s in (args[0].split(",") if args else []) if s]
         return _cron_rerun_many(labels)
+    if command == "cron-edit-schedule":
+        if len(args) < 2:
+            raise ValueError("cron-edit-schedule requires SUFFIX SCHEDULE_JSON")
+        return _cron_edit_schedule(args[0], args[1])
     if command == "trends-month":
         if not args:
             raise ValueError("trends-month requires YYYY-MM")
