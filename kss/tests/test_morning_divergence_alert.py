@@ -51,7 +51,7 @@ def test_message_none_without_divergence():
 
 
 def test_state_dedup(tmp_path, monkeypatch):
-    monkeypatch.setattr(mda, "STATE_FILE", tmp_path / "state")
+    monkeypatch.setattr(mda, "_KSS_STATE", tmp_path)
     assert not mda.already_alerted("20260605")
     mda.mark_alerted("20260605")
     assert mda.already_alerted("20260605")

@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -200,13 +201,22 @@ class PredictionLedger:
         # busy_timeout 让写锁竞争等待而非立刻抛错；WAL 让读写不互斥（fail loud 保留）。
         # journal_mode=WAL 只在库尚未是 WAL 模式时才发——U15 割接后本库与 kss.db
         # 其它域共用同一文件，冷启动并发首连都发该 pragma 会互相 database is locked
-        # （该 pragma 不吃 busy_timeout），见 kss/storage/db.py:connect() 同款修法。
+        # （该 pragma 不吃 busy_timeout）；读探测仍有 TOCTOU 窗口，短重试兜底
+        # （见 kss/storage/db.py:connect() 同款修法 + 实测记录）。
         conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=30000")
-        current_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
-        if str(current_mode).lower() != "wal":
-            conn.execute("PRAGMA journal_mode=WAL")
+        for attempt in range(5):
+            current_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+            if str(current_mode).lower() == "wal":
+                break
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                break
+            except sqlite3.OperationalError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
         try:
             yield conn
             conn.commit()

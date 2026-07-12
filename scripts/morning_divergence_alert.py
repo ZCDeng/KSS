@@ -28,6 +28,7 @@ from datetime import datetime
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_KSS_STATE = Path(__import__("os").environ.get("KSS_STATE_ROOT") or PROJECT_ROOT)  # bundle-mode 写入重定向
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from kss.data.tushare_client import TushareClient  # noqa: E402
@@ -37,8 +38,6 @@ from kss.sector.momentum_regime import build_regime_status  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
-
-STATE_FILE = PROJECT_ROOT / "storage" / "etf_radar" / ".morning_alert_state"
 
 
 def build_alert_message(radar: EtfRadar) -> str | None:
@@ -60,15 +59,15 @@ def build_alert_message(radar: EtfRadar) -> str | None:
 
 
 def already_alerted(data_date: str) -> bool:
-    try:
-        return STATE_FILE.read_text(encoding="utf-8").strip() == data_date
-    except OSError:
-        return False
+    from kss.storage.etf_radar import read_alert_state
+
+    return read_alert_state(_KSS_STATE / "storage" / "kss.db") == data_date
 
 
 def mark_alerted(data_date: str) -> None:
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(data_date, encoding="utf-8")
+    from kss.storage.etf_radar import write_alert_state
+
+    write_alert_state(data_date, _KSS_STATE / "storage" / "kss.db")
 
 
 def main() -> int:

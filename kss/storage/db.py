@@ -27,6 +27,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -49,17 +50,27 @@ def connect(db_path: str | Path | None = None) -> Iterator[sqlite3.Connection]:
     调用：journal-mode 切换本身需要短暂独占访问，若多个进程/线程在**库刚创建、尚无人设过
     WAL** 的窗口内同时首次连接，都去发 `PRAGMA journal_mode=WAL`，会彼此撞见
     ``database is locked``——且这个特定 pragma 的失败不吃 ``busy_timeout``（该 pragma 只
-    对常规读写锁生效，不对 journal-mode 切换生效），所以只能靠减少「谁去切」的次数来避免，
-    重试不是这里的正确修法。加一次读探测把切换收窄到「真正的第一个连接」。
+    对常规读写锁生效，不对 journal-mode 切换生效）。读探测把「谁去切」的次数降到最低，
+    但读-判-写之间仍有 TOCTOU 窗口（多线程同时读到「未 WAL」再都去切）——加一层短重试：
+    输的一方重试时会看到赢家已经切完，直接走「已是 WAL」分支跳过，而非在第一次撞锁就
+    直接向上抛错（见 U15 域割接期间实测：8 次重跑偶发 ~2/5 失败率，纯读探测不够）。
     """
     path = Path(db_path) if db_path is not None else KSS_DB
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=30000")
-    current_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
-    if str(current_mode).lower() != "wal":
-        conn.execute("PRAGMA journal_mode=WAL")
+    for attempt in range(5):
+        current_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        if str(current_mode).lower() == "wal":
+            break
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            break
+        except sqlite3.OperationalError:
+            if attempt == 4:
+                raise
+            time.sleep(0.05 * (attempt + 1))
     try:
         yield conn
         conn.commit()

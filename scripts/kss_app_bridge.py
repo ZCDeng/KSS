@@ -40,8 +40,6 @@ REPORT_DIR = STATE_ROOT / "storage" / "reports"
 BJ_SCAN_DIR = REPORT_DIR / "bj50_scan"
 BJ_CACHE_DIR = STATE_ROOT / "storage" / "bj_cache"
 SUPPLY_CHAIN_PATH = PROJECT_ROOT / "kss" / "config" / "supply_chain.yaml"  # config = 代码，随 bundle
-NEWS_DIGEST_DIR = STATE_ROOT / "storage" / "news_digest"  # 舆情热点 digest 归档(cron 生成)
-INTEL_RADAR_DIR = STATE_ROOT / "storage" / "intel_radar"   # 资讯雷达 12 赛道 RSS 缓存
 DATA_CATALOG_PATH = STATE_ROOT / "storage" / "data_catalog.json"  # 由 build_data_catalog.py 生成
 TOP_N = 5
 TOP_PCT = 0.2
@@ -1135,15 +1133,9 @@ def _run_logmv_backtest(args: dict[str, str | bool]) -> dict[str, Any]:
 
 
 def _load_radar_archives() -> list[dict[str, Any]]:
-    archives: list[dict[str, Any]] = []
-    for path in sorted((STATE_ROOT / "storage" / "etf_radar").glob("*.json")):
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        payload["_path"] = str(path.relative_to(STATE_ROOT))
-        archives.append(payload)
-    return archives
+    from kss.storage.etf_radar import read_all_ascending
+
+    return read_all_ascending(STATE_ROOT / "storage" / "kss.db")
 
 
 def _run_radar_archive_analysis() -> dict[str, Any]:
@@ -1879,7 +1871,6 @@ def _bj_detail(symbol: str) -> dict[str, Any] | None:
 
 _DAILYBASIC_JSON = STATE_ROOT / "storage" / "macro" / "dailybasic_latest.json"
 _MARKET_STRIP_JSON = STATE_ROOT / "storage" / "macro" / "market_strip.json"
-ETF_RADAR_DIR = STATE_ROOT / "storage" / "etf_radar"
 
 
 def _market_strip() -> dict[str, Any] | None:
@@ -2099,24 +2090,22 @@ def _commentary_to_md(raw: str) -> str:
 def _sector_reviews(limit: int = 40) -> list[dict[str, Any]]:
     """每日板块复盘序列：逐份 etf_radar 切片，新到旧。
 
-    数据源 storage/etf_radar/YYYYMMDD.json；同名 .commentary.md 为投顾点评
-    （含 概念轮动 / 七大主题 / 加减仓建议 等段落）。板块复盘与个股复盘一样每日一篇，
-    返回列表供复盘页按日期浏览；总览板块信息图取首项（最新一天）。
+    数据源 kss.db etf_radar_snapshots；同表 etf_radar_commentary_index 记投顾点评
+    （.commentary.md，仍是文件，含 概念轮动 / 七大主题 / 加减仓建议 等段落）路径。
+    板块复盘与个股复盘一样每日一篇，返回列表供复盘页按日期浏览；总览板块信息图取
+    首项（最新一天）。
     """
-    if not ETF_RADAR_DIR.exists():
-        return []
-    files = sorted(ETF_RADAR_DIR.glob("*.json"), reverse=True)[:limit]
+    from kss.storage.etf_radar import read_commentary_path, read_history
+
     out: list[dict[str, Any]] = []
-    for fp in files:
-        try:
-            d = json.loads(fp.read_text(encoding="utf-8"))
-        except Exception:
-            continue
+    for d in read_history(limit, STATE_ROOT / "storage" / "kss.db"):
         pulse = _pulse_from_dict(d)
         if not pulse:
             continue
-        commentary_path = fp.with_name(f"{fp.stem}.commentary.md")
-        if commentary_path.exists():
+        trade_date = str(d.get("trade_date") or "")
+        rel_path = read_commentary_path(trade_date, STATE_ROOT / "storage" / "kss.db")
+        commentary_path = (STATE_ROOT / rel_path) if rel_path else None
+        if commentary_path is not None and commentary_path.exists():
             try:
                 pulse["commentary"] = _commentary_to_md(commentary_path.read_text(encoding="utf-8"))
             except Exception:
@@ -2128,38 +2117,26 @@ def _sector_reviews(limit: int = 40) -> list[dict[str, Any]]:
 
 
 def _news_digest(date: str = "", scene: str = "") -> dict[str, Any]:
-    """舆情热点 digest:读 cron 归档的结构化 JSON,供 UI 两段式渲染(plan U11)。
+    """舆情热点 digest:读 kss.db 归档的结构化数据,供 UI 两段式渲染(plan U11)。
 
-    ``storage/news_digest/{date}_{scene}.json`` 由 run_news_digest.py 写出。
+    kss.db news_digest_entries 表由 run_news_digest.py 写出。
     无参 → 取最新一份;指定 date/scene → 取该份。返回:
       ``{available, selected: <digest|None>, index: [{date,scene}...]}``
     index 新到旧,供面板切换场次/历史。读舆情面板不在此实时生成(避免阻塞 UI)。
     """
-    index: list[dict[str, str]] = []
-    by_key: dict[tuple[str, str], Path] = {}
-    if NEWS_DIGEST_DIR.exists():
-        for fp in sorted(NEWS_DIGEST_DIR.glob("*.json"), reverse=True):
-            stem = fp.stem  # {date}_{scene}
-            if "_" not in stem:
-                continue
-            d, _, sc = stem.partition("_")
-            index.append({"date": d, "scene": sc})
-            by_key[(d, sc)] = fp
+    from kss.storage.news_digest import list_index, read_entry
 
-    selected_path: Path | None = None
+    db_path = STATE_ROOT / "storage" / "kss.db"
+    keys = list_index(db_path)
+    index = [{"date": k.digest_date, "scene": k.scene} for k in keys]
+
+    target: tuple[str, str] | None = None
     if date and scene:
-        selected_path = by_key.get((date, scene))
-    elif index:
-        first = index[0]
-        selected_path = by_key.get((first["date"], first["scene"]))
+        target = (date, scene)
+    elif keys:
+        target = (keys[0].digest_date, keys[0].scene)
 
-    selected: dict[str, Any] | None = None
-    if selected_path is not None:
-        try:
-            selected = json.loads(selected_path.read_text(encoding="utf-8"))
-        except Exception:
-            selected = None
-
+    selected = read_entry(target[0], target[1], db_path) if target else None
     return {"available": selected is not None, "selected": selected, "index": index}
 
 

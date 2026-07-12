@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 import sys
 from pathlib import Path
 
@@ -62,11 +61,11 @@ def test_validate_radar_grades_empty():
     assert vp.validate_radar_grades([]) is None
 
 
-def test_load_radar_archives_skips_corrupt(tmp_path, monkeypatch):
-    monkeypatch.setattr(vp, "RADAR_ARCHIVE_DIR", tmp_path)
-    (tmp_path / "20260522.json").write_text(
-        json.dumps(_arc("20260522", "偏弱")), encoding="utf-8")
-    (tmp_path / "20260523.json").write_text("{broken", encoding="utf-8")
+def test_load_radar_archives_reads_kss_db(tmp_path, monkeypatch):
+    from kss.storage.etf_radar import write_snapshot
+
+    monkeypatch.setattr(vp, "PROJECT_ROOT", tmp_path)
+    write_snapshot(_arc("20260522", "偏弱"), tmp_path / "storage" / "kss.db")
     arcs = vp.load_radar_archives()
     assert len(arcs) == 1 and arcs[0]["trade_date"] == "20260522"
 
