@@ -51,7 +51,6 @@ from kss.backtest.factor_health import (  # noqa: E402
 
 PAPER_DIR = PROJECT_ROOT / "storage" / "paper_trade"
 BJ_SCAN_DIR = PROJECT_ROOT / "storage" / "reports" / "bj50_scan"
-SECTOR_DIR = PROJECT_ROOT / "storage" / "sector_rotation"
 ALPHA_DIR = PROJECT_ROOT / "storage" / "pipeline_alpha"
 
 
@@ -178,13 +177,11 @@ def _hits_bj50() -> dict[str, list[tuple[str, float]]]:
 
 def _hits_sector_hotspot() -> dict[str, list[tuple[str, float]]]:
     """板块热点：从归档 leaderStocks 展开成分股（无 leaderStocks → 当日无命中）。"""
+    from kss.storage.sector_rotation import read_all_ascending
+
     out: dict[str, list[tuple[str, float]]] = {}
-    for fp in sorted(SECTOR_DIR.glob("*.json")):
-        try:
-            snap = json.loads(fp.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        date = snap.get("tradeDate") or fp.stem
+    for snap in read_all_ascending(PROJECT_ROOT / "storage" / "kss.db"):
+        date = snap.get("tradeDate")
         rows: list[tuple[str, float]] = []
         seen: set[str] = set()
         boards = (snap.get("leaderBoards") or [])

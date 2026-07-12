@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -141,16 +140,18 @@ def test_build_boards_missing_pct_change_logs_missing() -> None:
 def test_load_trade_calendar_from_tushare() -> None:
     dates = ["20260618", "20260617", "20260616", "20260613", "20260612"]
     client = FakeTushareClient(trade_cal_df=_trade_cal_for(dates))
-    result = _load_trade_calendar("20260618", 3, client=client, output_dir=Path("/nonexistent"))
+    result = _load_trade_calendar("20260618", 3, client=client, db_path=Path("/nonexistent/kss.db"))
     assert result == ["20260618", "20260617", "20260616"]
 
 
 def test_load_trade_calendar_fallback_to_archives(tmp_path: Path) -> None:
-    (tmp_path / "20260618.json").write_text("{}")
-    (tmp_path / "20260617.json").write_text("{}")
-    (tmp_path / "20260616.json").write_text("{}")
+    from kss.storage.sector_rotation import write_snapshot
+
+    db_path = tmp_path / "kss.db"
+    for d in ("20260618", "20260617", "20260616"):
+        write_snapshot({"tradeDate": d}, db_path)
     client = FakeTushareClient(trade_cal_df=None)
-    result = _load_trade_calendar("20260618", 3, client=client, output_dir=tmp_path)
+    result = _load_trade_calendar("20260618", 3, client=client, db_path=db_path)
     assert result == ["20260618", "20260617", "20260616"]
 
 
@@ -277,7 +278,8 @@ def test_build_hotspot_rotation_snapshot_with_history(tmp_path: Path) -> None:
         ],
         concepts=[],
     )
-    save_snapshot(hist, output_dir=tmp_path)
+    db_path = tmp_path / "kss.db"
+    save_snapshot(hist, db_path=db_path)
 
     dates = ["20260618", "20260617", "20260616", "20260613", "20260612"]
     client = FakeTushareClient(
@@ -288,7 +290,7 @@ def test_build_hotspot_rotation_snapshot_with_history(tmp_path: Path) -> None:
     snap = build_hotspot_rotation_snapshot(
         "20260618",
         client=client,
-        output_dir=tmp_path,
+        db_path=db_path,
         lookback_days=5,
         top_n_industry=4,
     )
@@ -326,9 +328,12 @@ def test_snapshot_to_dict_and_save(tmp_path: Path) -> None:
     assert d["tradeDate"] == "20260618"
     assert d["industries"][0]["name"] == "芯片"
 
-    out = save_snapshot(snap, output_dir=tmp_path)
-    assert out.exists()
-    loaded = json.loads(out.read_text(encoding="utf-8"))
+    db_path = tmp_path / "kss.db"
+    save_snapshot(snap, db_path=db_path)
+    from kss.storage.sector_rotation import read_by_date
+
+    loaded = read_by_date("20260618", db_path)
+    assert loaded is not None
     assert loaded["tradeDate"] == "20260618"
     assert loaded["industries"][0]["todayRank"] == 1
 
@@ -411,7 +416,7 @@ def test_build_hotspot_rotation_snapshot_with_leaders(tmp_path: Path) -> None:
         snap = build_hotspot_rotation_snapshot(
             "20260618",
             client=client,
-            output_dir=tmp_path,
+            db_path=tmp_path / "kss.db",
             lookback_days=3,
             enable_kaipan=True,
             enable_leaders=True,
@@ -463,7 +468,7 @@ def test_build_hotspot_rotation_snapshot_leader_name_mapping(tmp_path: Path) -> 
         snap = build_hotspot_rotation_snapshot(
             "20260618",
             client=client,
-            output_dir=tmp_path,
+            db_path=tmp_path / "kss.db",
             lookback_days=3,
             enable_kaipan=True,  # 需要触发 THS 响应获取 name_to_code
             enable_leaders=True,

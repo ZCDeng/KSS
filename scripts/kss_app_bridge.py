@@ -41,7 +41,6 @@ REPORT_DIR = STATE_ROOT / "storage" / "reports"
 BJ_SCAN_DIR = REPORT_DIR / "bj50_scan"
 BJ_CACHE_DIR = STATE_ROOT / "storage" / "bj_cache"
 SUPPLY_CHAIN_PATH = PROJECT_ROOT / "kss" / "config" / "supply_chain.yaml"  # config = 代码，随 bundle
-SECTOR_ROTATION_DIR = STATE_ROOT / "storage" / "sector_rotation"
 NEWS_DIGEST_DIR = STATE_ROOT / "storage" / "news_digest"  # 舆情热点 digest 归档(cron 生成)
 INTEL_RADAR_DIR = STATE_ROOT / "storage" / "intel_radar"   # 资讯雷达 12 赛道 RSS 缓存
 DATA_CATALOG_PATH = STATE_ROOT / "storage" / "data_catalog.json"  # 由 build_data_catalog.py 生成
@@ -1518,7 +1517,7 @@ def _run_refresh_sector_rotation() -> dict[str, Any]:
         "刷新板块热点轮动",
         [str(python), "scripts/refresh_hotspot_rotation.py", "--date", "latest", "--lookback-days", "5", "--enable-kaipan", "--enable-leaders"],
         started,
-        artifacts=["storage/sector_rotation"],
+        artifacts=["storage/kss.db"],
         timeout=300,
     )
 
@@ -2139,13 +2138,6 @@ def _sector_reviews(limit: int = 40) -> list[dict[str, Any]]:
         out.append(pulse)
     return out
 
-def _sector_rotation_snapshot(path: Path) -> dict[str, Any] | None:
-    """读取一份板块热点轮动归档；失败返回 None."""
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
 
 def _news_digest(date: str = "", scene: str = "") -> dict[str, Any]:
     """舆情热点 digest:读 cron 归档的结构化 JSON,供 UI 两段式渲染(plan U11)。
@@ -2425,19 +2417,14 @@ def _sector_rotation_history(limit: int = 30) -> list[dict[str, Any]]:
     仅返回用于日期列表的轻量字段（tradeDate、leaderCoverage、
     crossSourceSignals 计数），避免把全部 leader 矩阵塞进快照。
     """
-    if not SECTOR_ROTATION_DIR.exists():
-        return []
-    files = sorted(SECTOR_ROTATION_DIR.glob("*.json"), reverse=True)
+    from kss.storage.sector_rotation import read_history
+
+    snaps = read_history(limit, STATE_ROOT / "storage" / "kss.db")
     out: list[dict[str, Any]] = []
-    for fp in files:
-        if len(out) >= limit:
-            break
-        snap = _sector_rotation_snapshot(fp)
-        if snap is None:
-            continue
+    for snap in snaps:
         signals = snap.get("crossSourceSignals") or {}
         out.append({
-            "tradeDate": snap.get("tradeDate", fp.stem),
+            "tradeDate": snap.get("tradeDate"),
             "lookbackDays": snap.get("lookbackDays"),
             "historyCoverage": snap.get("historyCoverage"),
             "leaderCoverage": snap.get("leaderCoverage"),
@@ -2456,12 +2443,9 @@ def _latest_sector_rotation(limit_boards: int = 6, limit_leaders: int = 5) -> di
         limit_boards: 每个分类保留的板块数量。
         limit_leaders: 返回的龙头总数。
     """
-    if not SECTOR_ROTATION_DIR.exists():
-        return None
-    files = sorted(SECTOR_ROTATION_DIR.glob("*.json"), reverse=True)
-    if not files:
-        return None
-    snap = _sector_rotation_snapshot(files[0])
+    from kss.storage.sector_rotation import read_latest
+
+    snap = read_latest(STATE_ROOT / "storage" / "kss.db")
     if snap is None:
         return None
     signals = snap.get("crossSourceSignals") or {}
@@ -2744,15 +2728,12 @@ def _expand_sector_leaders(snap: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _adapt_sector_hotspot() -> dict[str, Any] | None:
     """板块热点管道 → PipelineResult（成分股展开后归一化 heatScore）。"""
-    if not SECTOR_ROTATION_DIR.exists():
-        return None
-    files = sorted(SECTOR_ROTATION_DIR.glob("*.json"), reverse=True)
-    if not files:
-        return None
-    snap = _sector_rotation_snapshot(files[0])
+    from kss.storage.sector_rotation import read_latest
+
+    snap = read_latest(STATE_ROOT / "storage" / "kss.db")
     if snap is None:
         return None
-    date = str(snap.get("tradeDate") or files[0].stem)
+    date = str(snap.get("tradeDate"))
     expanded = _expand_sector_leaders(snap)
     if not expanded:
         # 降级：归档无 leaderStocks → 板块管道当日空候选（不编造 ts_code）
@@ -4009,11 +3990,9 @@ def _theme_leaders() -> list[dict[str, Any]]:
     if not themes:
         return []
 
-    snap: dict[str, Any] = {}
-    if SECTOR_ROTATION_DIR.exists():
-        files = sorted(SECTOR_ROTATION_DIR.glob("*.json"), reverse=True)
-        if files:
-            snap = _sector_rotation_snapshot(files[0]) or {}
+    from kss.storage.sector_rotation import read_latest
+
+    snap = read_latest(STATE_ROOT / "storage" / "kss.db") or {}
 
     leaders_by_board: dict[str, list[dict]] = {}
     for b in snap.get("leaderBoards") or []:
@@ -5370,7 +5349,8 @@ def dispatch(command: str, args: list[str]) -> Any:
     if command == "sector-rotation":
         if not args:
             return _latest_sector_rotation() or {}
-        return _sector_rotation_snapshot(SECTOR_ROTATION_DIR / f"{args[0]}.json") or {}
+        from kss.storage.sector_rotation import read_by_date
+        return read_by_date(args[0], STATE_ROOT / "storage" / "kss.db") or {}
     if command == "sector-rotation-history":
         limit = int(args[0]) if args and args[0].isdigit() else 30
         return _sector_rotation_history(limit=limit)

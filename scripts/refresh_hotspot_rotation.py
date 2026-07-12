@@ -7,7 +7,7 @@
     python3 scripts/refresh_hotspot_rotation.py --date latest --dry-run
     python3 scripts/refresh_hotspot_rotation.py --date 20260618 --lookback-days 10 --enable-kaipan --enable-leaders
 
-默认保存到 ``storage/sector_rotation/YYYYMMDD.json``.
+默认保存到 kss.db sector_rotation_snapshots 表.
 """
 
 from __future__ import annotations
@@ -56,9 +56,9 @@ def main() -> int:
         help="交易日 YYYYMMDD，或 'latest'（默认）",
     )
     ap.add_argument(
-        "--output-dir",
-        default=str(_KSS_STATE / "storage" / "sector_rotation"),
-        help="归档目录",
+        "--db-path",
+        default=str(_KSS_STATE / "storage" / "kss.db"),
+        help="kss.db 路径",
     )
     ap.add_argument(
         "--lookback-days",
@@ -115,7 +115,7 @@ def main() -> int:
     ap.add_argument(
         "--dry-run",
         action="store_true",
-        help="只打印 JSON，不写文件",
+        help="只打印 JSON，不写 kss.db",
     )
     args = ap.parse_args()
 
@@ -130,7 +130,7 @@ def main() -> int:
     snap = build_hotspot_rotation_snapshot(
         trade_date,
         client=client,
-        output_dir=args.output_dir,
+        db_path=args.db_path,
         lookback_days=args.lookback_days,
         top_n_industry=args.top_n_industry,
         top_n_concept=args.top_n_concept,
@@ -149,7 +149,7 @@ def main() -> int:
         print(json.dumps(snapshot_to_dict(snap), ensure_ascii=False, indent=2))
         return 0
 
-    save_snapshot(snap, output_dir=args.output_dir)
+    save_snapshot(snap, db_path=args.db_path)
     return 0
 
 
