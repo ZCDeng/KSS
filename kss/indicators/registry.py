@@ -3,16 +3,20 @@
 只做登记与查询，不含任何回测/计算逻辑——那是 kss.indicators.pack 与
 kss.strategies.mi_pack（MI 专属，原地不动）的事。AI回测/图表/复盘/日终 cron
 统一遍历本表的 active 条目。
+
+存储（plan 2026-07-12-005 / U15 域割接）：真源是 kss.db 的 indicator_registry 表，
+不再是 storage/indicator_registry.yaml——旧 yaml 文件不再被写入。
 """
 
 from __future__ import annotations
 
+import json
 import os
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-import yaml
+from kss.storage.db import connect, ensure_schema
 
 KIND_PRIMITIVE = "primitive"
 KIND_MI_LEGACY = "mi_legacy"
@@ -38,8 +42,8 @@ def state_root() -> Path:
     return project_root()
 
 
-def registry_path(root: Path | None = None) -> Path:
-    return (root or state_root()) / "storage" / "indicator_registry.yaml"
+def registry_db_path(root: Path | None = None) -> Path:
+    return (root or state_root()) / "storage" / "kss.db"
 
 
 @dataclass
@@ -84,40 +88,39 @@ def _default_entries() -> list[RegistryEntry]:
     return [MI_ENTRY]
 
 
-def load_registry(path: Path | None = None) -> list[RegistryEntry]:
-    """加载注册表；缺文件/解析失败 → 内置默认（含 MI），不抛异常。非法条目跳过。"""
-    path = path or registry_path()
-    if not path.exists():
-        return _default_entries()
+def _row_to_entry(row: Any) -> RegistryEntry:
+    return RegistryEntry(
+        id=row["entry_id"],
+        name=row["name"],
+        kind=row["kind"],
+        family=row["family"],
+        params=json.loads(row["params_json"]) if row["params_json"] else {},
+        rules_path=row["rules_path"] or "",
+        signals_dir=row["signals_dir"] or "",
+        status=row["status"],
+        solidified_at=row["solidified_at"],
+        verdict_ref=row["verdict_ref"],
+        symbols=json.loads(row["symbols_json"]) if row["symbols_json"] else [],
+    )
+
+
+def load_registry(db_path: Path | None = None) -> list[RegistryEntry]:
+    """加载注册表；库/表不存在或整体损坏 → 内置默认（含 MI），不抛异常。非法行跳过。"""
+    path = registry_db_path(db_path) if db_path is None else db_path
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        with connect(path) as conn:
+            ensure_schema(conn)
+            rows = conn.execute("SELECT * FROM indicator_registry").fetchall()
     except Exception:  # noqa: BLE001
-        return _default_entries()
-    entries_raw = raw.get("entries") if isinstance(raw, dict) else None
-    if not isinstance(entries_raw, list):
         return _default_entries()
 
     out: list[RegistryEntry] = []
     seen_ids: set[str] = set()
-    for item in entries_raw:
-        if not isinstance(item, dict) or "id" not in item or "kind" not in item:
-            continue
+    for row in rows:
         try:
-            entry = RegistryEntry(
-                id=str(item["id"]),
-                name=str(item.get("name", item["id"])),
-                kind=str(item["kind"]),
-                family=item.get("family"),
-                params=dict(item.get("params") or {}),
-                rules_path=str(item.get("rules_path", "")),
-                signals_dir=str(item.get("signals_dir", "")),
-                status=str(item.get("status", STATUS_ACTIVE)),
-                solidified_at=item.get("solidified_at"),
-                verdict_ref=item.get("verdict_ref"),
-                symbols=list(item.get("symbols") or []),
-            )
-        except ValueError:
-            continue  # 未知 kind，跳过并记录告警交由调用方（此处不静默吞——由 caller 决定是否记日志）
+            entry = _row_to_entry(row)
+        except (ValueError, TypeError, json.JSONDecodeError):
+            continue  # 未知 kind 或损坏的 JSON 列，跳过该行，不拖垮整表
         if entry.id in seen_ids:
             continue
         seen_ids.add(entry.id)
@@ -128,13 +131,25 @@ def load_registry(path: Path | None = None) -> list[RegistryEntry]:
     return out
 
 
-def save_registry(entries: list[RegistryEntry], path: Path | None = None) -> Path:
-    path = path or registry_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"entries": [asdict(e) for e in entries]}
-    path.write_text(
-        yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8"
-    )
+def save_registry(entries: list[RegistryEntry], db_path: Path | None = None) -> Path:
+    """整表替换（注册表是当前态，不是追加台账；跟 watchlist 同语义）。"""
+    path = registry_db_path(db_path) if db_path is None else db_path
+    with connect(path) as conn:
+        ensure_schema(conn)
+        conn.execute("DELETE FROM indicator_registry")
+        for e in entries:
+            conn.execute(
+                """INSERT INTO indicator_registry
+                (entry_id, name, kind, family, params_json, rules_path, signals_dir,
+                 status, solidified_at, verdict_ref, symbols_json)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    e.id, e.name, e.kind, e.family,
+                    json.dumps(e.params, ensure_ascii=False),
+                    e.rules_path, e.signals_dir, e.status, e.solidified_at, e.verdict_ref,
+                    json.dumps(e.symbols, ensure_ascii=False),
+                ),
+            )
     return path
 
 
@@ -151,18 +166,18 @@ def active_entries(entries: list[RegistryEntry] | None = None) -> list[RegistryE
     return [e for e in entries if e.is_active()]
 
 
-def upsert_entry(entry: RegistryEntry, *, path: Path | None = None) -> list[RegistryEntry]:
-    """新增或替换同 id 条目，写回磁盘，返回更新后的完整列表。"""
-    entries = load_registry(path)
+def upsert_entry(entry: RegistryEntry, *, db_path: Path | None = None) -> list[RegistryEntry]:
+    """新增或替换同 id 条目，写回 kss.db，返回更新后的完整列表。"""
+    entries = load_registry(db_path)
     out = [e for e in entries if e.id != entry.id]
     out.append(entry)
-    save_registry(out, path)
+    save_registry(out, db_path)
     return out
 
 
-def retire_entry(entry_id: str, *, path: Path | None = None) -> RegistryEntry | None:
+def retire_entry(entry_id: str, *, db_path: Path | None = None) -> RegistryEntry | None:
     """标记 status=retired（不删数据）；未知 id 返回 None。"""
-    entries = load_registry(path)
+    entries = load_registry(db_path)
     updated: RegistryEntry | None = None
     out: list[RegistryEntry] = []
     for e in entries:
@@ -171,5 +186,5 @@ def retire_entry(entry_id: str, *, path: Path | None = None) -> RegistryEntry | 
             updated = e
         out.append(e)
     if updated is not None:
-        save_registry(out, path)
+        save_registry(out, db_path)
     return updated

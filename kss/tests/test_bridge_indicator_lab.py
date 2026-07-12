@@ -139,7 +139,7 @@ def test_solidify_then_retire_roundtrip(isolated_root: Path) -> None:
 
     from kss.indicators.registry import get_entry, load_registry
 
-    entries = load_registry(isolated_root / "storage" / "indicator_registry.yaml")
+    entries = load_registry(isolated_root / "storage" / "kss.db")
     entry = get_entry(entry_id, entries)
     assert entry is not None
     assert entry.status == "active"
@@ -147,7 +147,7 @@ def test_solidify_then_retire_roundtrip(isolated_root: Path) -> None:
 
     retire_out = b.dispatch("indicator-retire", [entry_id])
     assert retire_out.get("ok") is True
-    entries2 = load_registry(isolated_root / "storage" / "indicator_registry.yaml")
+    entries2 = load_registry(isolated_root / "storage" / "kss.db")
     assert get_entry(entry_id, entries2).status == "retired"
 
 
@@ -252,7 +252,7 @@ def test_solidify_rolls_back_registry_on_pack_failure(isolated_root: Path, monke
 
     from kss.indicators.registry import load_registry
 
-    entries = load_registry(isolated_root / "storage" / "indicator_registry.yaml")
+    entries = load_registry(isolated_root / "storage" / "kss.db")
     ids = {e.id for e in entries}
     assert not any(i.startswith("ma_cross_") for i in ids)
 

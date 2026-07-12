@@ -4231,7 +4231,7 @@ def _indicator_solidify(
             KIND_PRIMITIVE,
             RegistryEntry,
             load_registry,
-            registry_path as _registry_path,
+            registry_db_path as _registry_path,
             save_registry,
             upsert_entry,
         )
@@ -4272,7 +4272,7 @@ def _indicator_solidify(
     reg_path = _registry_path()
     prior_entries = load_registry(reg_path)  # 固化前快照，失败时回退用
     try:
-        upsert_entry(entry, path=reg_path)
+        upsert_entry(entry, db_path=reg_path)
         packs = [ipack.run_entry_pack(entry, sym) for sym in symbols]
         failed = [p for p in packs if p.get("status") == "error"]
         if failed:
