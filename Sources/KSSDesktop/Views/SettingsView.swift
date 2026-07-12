@@ -404,7 +404,7 @@ struct SettingsLogsSection: View {
                     .disabled(selected == nil)
             }
 
-            if let selected {
+            if selected != nil {
                 HStack {
                     Text("共 \(totalMatched) 行匹配 · 显示末尾 \(tailLines.count) 行")
                         .font(KSSFont.themed(11, theme: theme))

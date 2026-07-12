@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
-# U8：构建自包含、Developer-ID 签名的 .app（KTD6 最小签名）。
+# U8：构建自包含、Developer-ID 签名 + 公证的 .app（KTD6 最小签名 / KTD7 公证，
+# plan 2026-07-12-005 / U10）。
 #
 # 与 build_and_run.sh（dev，靠 KSS_PROJECT_ROOT=repo）不同，本脚本把代码 baseline
 # 拷进 Contents/Resources（bundle-mode resolveRoots 找 Resources/scripts/kss_app_bridge.py），
 # Python 运行时不入包 —— 首启由 U2 bootstrap 到 ~/Library/Application Support/KSS/venv。
 #
-# 前置：完整 Xcode（CLT 无 codesign/notarytool）+ Keychain 内 Developer ID Application 证书。
+# 前置：完整 Xcode（CLT 无 codesign/notarytool）+ Keychain 内 Developer ID Application 证书
+# + notarytool Keychain profile（一次性：`xcrun notarytool store-credentials <profile> \
+#   --apple-id <id> --team-id <TEAMID> --password <app-specific-password>`；密码只这一次
+#   人工输入，永不进脚本/仓库，之后凭 profile 名引用）。
 # 用法：KSS_SIGN_IDENTITY="Developer ID Application: 你的名字 (TEAMID)" script/sign_and_build.sh
+#      KSS_NOTARY_PROFILE=<profile> 覆盖默认 profile 名；KSS_SKIP_NOTARIZE=1 跳过公证（逃生舱）。
 set -euo pipefail
+
+NOTARY_PROFILE="${KSS_NOTARY_PROFILE:-Prism}"
+SKIP_NOTARIZE="${KSS_SKIP_NOTARIZE:-0}"
 
 APP_NAME="KSSDesktop"
 BUNDLE_ID="com.zcdeng.KSSDesktop"
@@ -154,14 +162,43 @@ echo "验证签名："
 codesign --verify --strict --verbose=2 "$APP_BUNDLE"
 codesign -dv --verbose=4 "$APP_BUNDLE" 2>&1 | grep -E 'Authority|Identifier|Runtime' || true
 
-# ---- 公证（DEFERRED-but-ready：证书/凭据到位后取消注释）----
-# 自用多机不强制公证；若要消除第二台机首次「无法验证」弹窗，存好 app-specific
-# 密码到 Keychain profile 后启用：
-#
-#   xcrun notarytool submit "$APP_BUNDLE" --keychain-profile "kss-notary" --wait
-#   xcrun stapler staple "$APP_BUNDLE"
+# ---- 公证（KTD7，U10）：默认开启，交付对象首次打开不再见「无法验证」弹窗。
+# ditto 打 zip 只是提交容器（notarytool 不吃裸 .app 目录）；staple 落回 .app 本体，
+# zip 提交完即弃——不是最终交付产物。
+if [ "$SKIP_NOTARIZE" = "1" ]; then
+  echo ""
+  echo "跳过公证（KSS_SKIP_NOTARIZE=1）。"
+else
+  NOTARY_ZIP="$DIST_DIR/${APP_NAME}-notarize.zip"
+  echo ""
+  echo "打包提交容器：$NOTARY_ZIP"
+  rm -f "$NOTARY_ZIP"
+  ditto -c -k --keepParent "$APP_BUNDLE" "$NOTARY_ZIP"
+
+  echo "提交公证（profile=$NOTARY_PROFILE，--wait 会阻塞至 Apple 出结果，通常数分钟）..."
+  if ! NOTARY_OUTPUT="$(xcrun notarytool submit "$NOTARY_ZIP" --keychain-profile "$NOTARY_PROFILE" --wait 2>&1)"; then
+    echo "$NOTARY_OUTPUT" >&2
+    echo "ERROR：公证提交失败。" >&2
+    echo "  确认 Keychain profile 存在：xcrun notarytool store-credentials $NOTARY_PROFILE --apple-id <id> --team-id <TEAMID> --password <app-specific-password>" >&2
+    echo "  或临时跳过：KSS_SKIP_NOTARIZE=1 重跑本脚本。" >&2
+    exit 1
+  fi
+  echo "$NOTARY_OUTPUT"
+  if ! echo "$NOTARY_OUTPUT" | grep -q "status: Accepted"; then
+    SUBMISSION_ID="$(echo "$NOTARY_OUTPUT" | grep -o 'id: [a-f0-9-]*' | head -1 | cut -d' ' -f2)"
+    echo "ERROR：公证未通过（非 Accepted）。" >&2
+    if [ -n "$SUBMISSION_ID" ]; then
+      echo "  详细日志：xcrun notarytool log $SUBMISSION_ID --keychain-profile $NOTARY_PROFILE" >&2
+    fi
+    exit 1
+  fi
+
+  echo "装订公证票据..."
+  xcrun stapler staple "$APP_BUNDLE"
+  rm -f "$NOTARY_ZIP"
+  echo "公证完成，Gatekeeper 首开不再需要手动信任。"
+fi
 
 echo ""
 echo "完成：$APP_BUNDLE"
-echo "自用机器：直接拷贝运行；第二台首次可能需右键『打开』一次（未公证）。"
 echo "首启会 uv bootstrap Python 运行时到 ~/Library/Application Support/KSS/venv（需联网 + uv）。"
