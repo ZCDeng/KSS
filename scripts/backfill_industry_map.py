@@ -10,14 +10,15 @@
 
 1. **首选** Tushare ``stock_basic(fields='ts_code,industry')`` —— 5000+ 全市场
    一次拉完，``industry`` 字段中文，与 :mod:`kss.macro.rotation` yaml 配置直接对齐.
-2. **兜底** 读 ``storage/stock_names.csv`` —— 当 Tushare 配额 / 网络异常时
-   仍能拼出 ~600 KCB 股的 SW L2/L3 颗粒度映射（``score_industry_fit``
-   有前缀匹配，可向上 fallback 到一级）.
+2. **兜底** 读 kss.db 的 ``stock_names`` 表（plan 2026-07-12-005 / U15 割接自
+   storage/stock_names.csv）—— 当 Tushare 配额 / 网络异常时仍能拼出 ~600 KCB
+   股的 SW L2/L3 颗粒度映射（``score_industry_fit`` 有前缀匹配，可向上
+   fallback 到一级）.
 
 用法::
 
     python3 scripts/backfill_industry_map.py                # Tushare 优先
-    python3 scripts/backfill_industry_map.py --csv-only     # 强制走 csv 兜底（离线 / 测试）
+    python3 scripts/backfill_industry_map.py --csv-only     # 强制走 stock_names 兜底（离线 / 测试；flag 名沿用旧称）
     python3 scripts/backfill_industry_map.py --exchange SSE # 仅拉上交所
 
 覆盖率目标 ≥ 95% A 股。
@@ -35,14 +36,11 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from kss.config.paths import INDUSTRY_MAP_PARQUET, STORAGE_ROOT  # noqa: E402
+from kss.config.paths import INDUSTRY_MAP_PARQUET  # noqa: E402
 from kss.macro.pipeline import atomic_to_parquet  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
-
-
-_STOCK_NAMES_CSV = STORAGE_ROOT / "stock_names.csv"
 
 
 def parse_args() -> argparse.Namespace:
@@ -50,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--exchange", type=str, default="",
                    help="仅拉单交易所 SSE / SZSE，默认全市场")
     p.add_argument("--csv-only", action="store_true",
-                   help="跳过 Tushare，仅用 storage/stock_names.csv 兜底")
+                   help="跳过 Tushare，仅用 kss.db 的 stock_names 表兜底")
     p.add_argument(
         "--out", type=Path, default=INDUSTRY_MAP_PARQUET,
         help=f"输出 parquet 路径（默认 {INDUSTRY_MAP_PARQUET}）",
@@ -104,17 +102,20 @@ def fetch_from_tushare(exchange: str) -> pd.DataFrame | None:
     return out.reset_index(drop=True)
 
 
-def fetch_from_csv(csv_path: Path) -> pd.DataFrame | None:
-    """从 ``storage/stock_names.csv`` 兜底（KCB 约 600 只）."""
-    if not csv_path.exists():
-        logger.error("兜底 csv 不存在: %s", csv_path)
-        return None
+def fetch_from_csv(db_path: Path | None = None) -> pd.DataFrame | None:
+    """从 kss.db 的 stock_names 表兜底（KCB 约 600 只；plan 2026-07-12-005 / U15
+    割接自 storage/stock_names.csv，函数名沿用旧名不改，调用方无需感知存储格式变化）."""
+    from kss.storage.stock_names import load_stock_names  # noqa: PLC0415
+
     try:
-        df = pd.read_csv(csv_path, usecols=["ts_code", "industry"], encoding="utf-8")
+        df = load_stock_names(db_path)
     except Exception as exc:    # noqa: BLE001
-        logger.error("读 %s 失败: %s", csv_path, exc)
+        logger.error("读 stock_names 失败: %s", exc)
         return None
-    df["ts_code"] = df["ts_code"].astype(str)
+    if df.empty:
+        logger.error("兜底 stock_names 为空")
+        return None
+    df = df[["ts_code", "industry"]].copy()
     df["industry"] = df["industry"].astype(str).str.strip()
     df = df[df["industry"].notna() & (df["industry"] != "") & (df["industry"] != "nan")]
     df = df.rename(columns={"industry": "sw_l1_name"})
@@ -133,8 +134,8 @@ def main() -> int:
             logger.info("Tushare 拿到 %d 行", len(df))
 
     if df is None or df.empty:
-        logger.info("降级 csv 兜底: %s", _STOCK_NAMES_CSV)
-        df = fetch_from_csv(_STOCK_NAMES_CSV)
+        logger.info("降级 stock_names 兜底")
+        df = fetch_from_csv()
 
     if df is None or df.empty:
         logger.error("两源都失败，无 industry_map 可写")

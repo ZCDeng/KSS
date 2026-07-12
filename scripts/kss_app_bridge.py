@@ -42,7 +42,6 @@ BJ_SCAN_DIR = REPORT_DIR / "bj50_scan"
 BJ_CACHE_DIR = STATE_ROOT / "storage" / "bj_cache"
 APP_RUN_DIR = STATE_ROOT / "storage" / "app_runs"
 TASK_LOG_PATH = APP_RUN_DIR / "kss_desktop_tasks.jsonl"
-NAMES_PATH = STATE_ROOT / "storage" / "stock_names.csv"
 SUPPLY_CHAIN_PATH = PROJECT_ROOT / "kss" / "config" / "supply_chain.yaml"  # config = 代码，随 bundle
 SECTOR_ROTATION_DIR = STATE_ROOT / "storage" / "sector_rotation"
 NEWS_DIGEST_DIR = STATE_ROOT / "storage" / "news_digest"  # 舆情热点 digest 归档(cron 生成)
@@ -161,18 +160,22 @@ def _read_csv_rows(path: Path) -> list[dict[str, str]]:
 
 
 def _load_names() -> dict[str, dict[str, str]]:
+    """自选/龙头等展示名查询表。db_path 显式从本模块 STATE_ROOT 派生（同
+    _indicator_watchlist_symbols 惯例）——测试靠 monkeypatch.setattr(b, "STATE_ROOT", ...)
+    隔离，走隐式默认会绕过这层隔离（plan 2026-07-12-005 / U15 割接自 stock_names.csv）。"""
+    from kss.storage.stock_names import load_stock_names  # noqa: PLC0415
+
     out: dict[str, dict[str, str]] = {}
     supply_names = _load_supply_chain_names()
-    if NAMES_PATH.exists():
-        rows = _read_csv_rows(NAMES_PATH)
-        for row in rows:
-            symbol = row.get("ts_code", "")
-            if symbol:
-                out[symbol] = {
-                    "name": row.get("name", "") or "",
-                    "industry": row.get("industry", "") or "",
-                    "concept": row.get("concept", "") or "",
-                }
+    names_df = load_stock_names(db_path=STATE_ROOT / "storage" / "kss.db")
+    for row in names_df.to_dict("records"):
+        symbol = row.get("ts_code", "")
+        if symbol:
+            out[symbol] = {
+                "name": row.get("name", "") or "",
+                "industry": row.get("industry", "") or "",
+                "concept": row.get("concept", "") or "",
+            }
     for symbol, meta in supply_names.items():
         existing = out.get(symbol, {})
         out[symbol] = {

@@ -1,14 +1,15 @@
 r"""科创板池子持仓叠加 —— 板块名 → 在池中的 ts_code 列表.
 
-给定 ``stock_names.csv`` 和活跃池股票代码集合，按行业 / 概念两个维度
-建立反向索引，让板块复盘报告能标注「⭐N 只在池」.
+给定 kss.db 的 ``stock_names`` 表（plan 2026-07-12-005 / U15 割接自 stock_names.csv）
+和活跃池股票代码集合，按行业 / 概念两个维度建立反向索引，让板块复盘报告能标注
+「⭐N 只在池」.
 
 设计纪律（守护 S620 教训）：
 
 - 活跃池从 ``cs_data_688*.csv`` 文件名提取代码时**必须**使用精确正则
   ``r'cs_data_(688\d+)\.csv'``，禁止用宽松的 ``r'688\d+'`` —— 后者
   会把 ``cs_data_688688008.csv`` 误抽成 ``688688008`` 而非 ``688008``.
-- 概念字段按 ``" / "`` 切分（与 stock_names.csv PR #2 的格式一致），
+- 概念字段按 ``" / "`` 切分（与 stock_names PR #2 的格式一致），
   ``strip()`` 后入索引；空字符串不入.
 """
 
@@ -19,12 +20,10 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import pandas as pd
+from kss.storage.stock_names import load_stock_names
 
 logger = logging.getLogger(__name__)
 
-# 项目根目录约定：cs_data_*.csv 落在工作目录下
-DEFAULT_STOCK_NAMES_PATH = Path("storage") / "stock_names.csv"
 DEFAULT_DATA_GLOB = "cs_data_688*.csv"
 
 # 严格正则：完整匹配文件名，捕获 6 位 688 开头代码.
@@ -92,34 +91,25 @@ def discover_active_pool(
 
 
 def build_kcb_overlay(
-    stock_names_path: Path | str = DEFAULT_STOCK_NAMES_PATH,
+    db_path: Path | str | None = None,
     active_pool: set[str] | None = None,
     data_dir: Path | str | None = None,
 ) -> KcbOverlay:
-    """从 ``stock_names.csv`` 构建 KCB 池持仓双维索引.
+    """从 kss.db 的 ``stock_names`` 表构建 KCB 池持仓双维索引.
 
     Args:
-        stock_names_path: ``stock_names.csv`` 路径.
+        db_path: kss.db 路径覆盖（测试用）；``None`` 走默认 STATE_ROOT 解析.
         active_pool: 显式活跃池 ts_code 集合；``None`` 时自动从 ``cs_data_688*.csv``
             扫出.
         data_dir: 当 ``active_pool`` 为 ``None`` 时扫文件名的目录.
 
     Returns:
-        :class:`KcbOverlay` —— 文件缺失 / 列缺失时返回空索引 + warning，不外抛.
+        :class:`KcbOverlay` —— 库/表缺失或读取失败时返回空索引 + warning，不外抛.
     """
-    p = Path(stock_names_path)
-    if not p.exists():
-        logger.warning("stock_names.csv 不存在 %s，返回空 overlay", p)
-        return KcbOverlay()
-
     try:
-        df = pd.read_csv(p, dtype=str).fillna("")
-    except (OSError, pd.errors.ParserError) as exc:
-        logger.warning("读取 %s 失败: %s，返回空 overlay", p, exc)
-        return KcbOverlay()
-
-    if "ts_code" not in df.columns:
-        logger.warning("stock_names.csv 缺 ts_code 列，返回空 overlay")
+        df = load_stock_names(db_path)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("读取 stock_names 失败: %s，返回空 overlay", exc)
         return KcbOverlay()
 
     if active_pool is None:
@@ -129,7 +119,7 @@ def build_kcb_overlay(
     df = df[df["ts_code"].isin(active_pool)].reset_index(drop=True)
     if df.empty:
         logger.warning(
-            "stock_names.csv 与活跃池 (%d 只) 交集为空，返回空 overlay",
+            "stock_names 与活跃池 (%d 只) 交集为空，返回空 overlay",
             len(active_pool),
         )
         return KcbOverlay(active_pool=set(active_pool))
@@ -141,24 +131,17 @@ def build_kcb_overlay(
         code = row["ts_code"]
 
         # 行业：单值，原样入索引（空字符串跳过）
-        if "industry" in df.columns:
-            ind = (row["industry"] or "").strip()
-            if ind:
-                industry_to_codes.setdefault(ind, []).append(code)
+        ind = (row["industry"] or "").strip()
+        if ind:
+            industry_to_codes.setdefault(ind, []).append(code)
 
         # 概念：" / " 切分后多值入索引（空段跳过）
-        if "concept" in df.columns:
-            raw = (row["concept"] or "").strip()
-            if raw:
-                for token in raw.split("/"):
-                    name = token.strip()
-                    if name:
-                        concept_to_codes.setdefault(name, []).append(code)
-
-    if "concept" not in df.columns:
-        logger.warning(
-            "stock_names.csv 缺 concept 列（PR #2 前的格式），概念维度 KCB 标注全 0",
-        )
+        raw = (row["concept"] or "").strip()
+        if raw:
+            for token in raw.split("/"):
+                name = token.strip()
+                if name:
+                    concept_to_codes.setdefault(name, []).append(code)
 
     return KcbOverlay(
         industry_to_codes=industry_to_codes,

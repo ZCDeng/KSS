@@ -422,32 +422,26 @@ def main() -> None:
         sys.exit(1)
     actual_date = pd.Timestamp(pool.attrs["target_date"])
 
-    # ---- 附上 stock_names.csv 的可选元数据列（名称/申万行业/概念板块） ----
-    nm_path = (_KSS_STATE / "storage") / "stock_names.csv"
-    if nm_path.exists():
-        try:
-            nm_df = pd.read_csv(nm_path, dtype=str)
-            if "ts_code" in nm_df.columns and "name" in nm_df.columns:
-                _attrs = pool.attrs  # merge 会丢失 .attrs，先保存
-                merge_cols = ["ts_code", "name"]
-                for opt in ("industry", "concept"):
-                    if opt in nm_df.columns:
-                        merge_cols.append(opt)
-                pool = pool.merge(
-                    nm_df[merge_cols].rename(
-                        columns={"name": "stock_name", "ts_code": forecast.symbol_col}
-                    ),
-                    on=forecast.symbol_col, how="left",
-                )
-                pool.attrs = _attrs
-                pool["stock_name"] = pool["stock_name"].fillna("")
-                for opt in ("industry", "concept"):
-                    if opt in pool.columns:
-                        pool[opt] = pool[opt].fillna("")
-            else:
-                logger.warning("stock_names.csv 缺少 ts_code/name 列，跳过名称注入")
-        except Exception as exc:
-            logger.warning("加载 stock_names.csv 失败: %s，推送表格不含名称/行业/概念", exc)
+    # ---- 附上 stock_names 的可选元数据列（名称/申万行业/概念板块）；
+    # plan 2026-07-12-005 / U15 割接自 storage/stock_names.csv ----
+    try:
+        from kss.storage.stock_names import load_stock_names  # noqa: PLC0415
+
+        nm_df = load_stock_names()
+        if not nm_df.empty:
+            _attrs = pool.attrs  # merge 会丢失 .attrs，先保存
+            pool = pool.merge(
+                nm_df.rename(columns={"name": "stock_name", "ts_code": forecast.symbol_col}),
+                on=forecast.symbol_col, how="left",
+            )
+            pool.attrs = _attrs
+            for col in ("stock_name", "industry", "concept"):
+                if col in pool.columns:
+                    pool[col] = pool[col].fillna("")
+        else:
+            logger.warning("stock_names 为空，跳过名称注入")
+    except Exception as exc:
+        logger.warning("加载 stock_names 失败: %s，推送表格不含名称/行业/概念", exc)
     # ---------------------------------------------------------
 
     md = forecast.format_pool_markdown(pool)
