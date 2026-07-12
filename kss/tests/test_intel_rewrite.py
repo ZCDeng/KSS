@@ -145,11 +145,11 @@ def test_run_chinese_rewrite_separate_file(tmp_path, monkeypatch):
     assert r["status"] == "ready"
     assert r["kind"] == "chinese"
     assert "流畅" in r["text"]
-    # separate file from investment
-    from kss.storage.rewrite_pool import draft_path, item_id_for, read_draft
+    # 独立于 investment 变体存在（同 item_id 不同 kind，主键 (item_id, kind) 不冲突）
+    from kss.storage.rewrite_pool import item_id_for, read_draft
 
     iid = item_id_for(_item(7))
-    assert draft_path(iid, "chinese").is_file()
+    assert read_draft(iid, "chinese") is not None
     assert read_draft(iid, "chinese")["kind"] == "chinese"
     assert read_draft(iid, "investment") is None
 

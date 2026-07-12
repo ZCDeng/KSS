@@ -1,9 +1,9 @@
-"""沉淀库（storage.notes）测试（plan 2026-07-09-001）。"""
+"""沉淀库（storage.notes）测试（plan 2026-07-09-001；结构化部分 U15 割接自 .json 文件）。"""
 
 from __future__ import annotations
 
 import json
-import os
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -23,21 +23,33 @@ def fake_state_root(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_save_intel_digest_creates_md_and_json(fake_state_root):
+def _read_note_payload(state_root: Path, date: str, track_key: str) -> dict:
+    conn = sqlite3.connect(state_root / "storage" / "kss.db")
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT payload_json FROM intel_digest_notes WHERE digest_date=? AND track_key=?",
+        (date, track_key),
+    ).fetchone()
+    conn.close()
+    return json.loads(row["payload_json"]) if row else None
+
+
+def test_save_intel_digest_creates_md_and_db_row(fake_state_root):
     items = [{"title": "x1", "url": "u1", "time": "07-09 10:00", "source": "src"}]
     md_path = save_intel_digest(
         "ai", "AI / 大模型", "prompt text", "- bullet 1\n- bullet 2",
         "test-model", items,
     )
     assert md_path.exists()
-    json_path = md_path.with_suffix(".json")
-    assert json_path.exists()
 
     md_content = md_path.read_text(encoding="utf-8")
     assert "# AI / 大模型 要点 ·" in md_content
     assert "- bullet 1" in md_content
 
-    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    from kss.storage.notes import _date_str
+
+    payload = _read_note_payload(fake_state_root, _date_str(), "ai")
+    assert payload is not None
     assert payload["track_key"] == "ai"
     assert payload["track_name"] == "AI / 大模型"
     assert payload["prompt"] == "prompt text"

@@ -97,8 +97,15 @@ def test_backtest_end_to_end_persists_verdict(isolated_root: Path) -> None:
     assert out["results"][0]["symbol"] == "688017.SH"
     assert out["results"][0]["status"] == "judged"
     assert out["verdictRef"] is not None
-    verdict_path = isolated_root / out["verdictRef"]
-    assert verdict_path.exists()
+
+    import sqlite3
+
+    conn = sqlite3.connect(isolated_root / "storage" / "kss.db")
+    row = conn.execute(
+        "SELECT payload_json FROM indicator_lab_verdicts WHERE verdict_id=?", (out["verdictRef"],)
+    ).fetchone()
+    conn.close()
+    assert row is not None
 
 
 def test_backtest_uses_watchlist_when_symbols_omitted(isolated_root: Path) -> None:
@@ -116,16 +123,26 @@ def test_suggest_skips_no_go_and_covered_families(isolated_root: Path) -> None:
     assert out["family"] in ("ma_cross", "rsi_threshold", "boll_atr")
 
     # 手动记一条该 family 的 NO-GO 裁决，再次建议应跳过它
+    import sqlite3
+
     from kss.indicators.primitives import default_params
+    from kss.storage.db import ensure_schema
 
     first_family = out["family"]
     key = b._verdict_key(first_family, default_params(first_family))
-    verdicts_dir = isolated_root / "storage" / "indicator_lab" / "verdicts"
-    verdicts_dir.mkdir(parents=True, exist_ok=True)
-    (verdicts_dir / f"{key}.json").write_text(
-        json.dumps({"family": first_family, "params": default_params(first_family), "go": False}),
-        encoding="utf-8",
+    conn = sqlite3.connect(isolated_root / "storage" / "kss.db")
+    conn.row_factory = sqlite3.Row
+    ensure_schema(conn)
+    conn.execute(
+        "INSERT INTO indicator_lab_verdicts (verdict_id, entry_id, payload_json, created_at) VALUES (?,?,?,?)",
+        (
+            key, f"{first_family}_{key}",
+            json.dumps({"family": first_family, "params": default_params(first_family), "go": False}),
+            None,
+        ),
     )
+    conn.commit()
+    conn.close()
     out2 = b.dispatch("indicator-suggest", [])
     assert out2["family"] != first_family
 

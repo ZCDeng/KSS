@@ -188,23 +188,14 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         CREATE INDEX IF NOT EXISTS idx_app_run_started ON app_task_runs(started_at);
 
         CREATE TABLE IF NOT EXISTS intel_rewrite_items (
-            item_id           TEXT PRIMARY KEY,
-            kind              TEXT,
+            item_id           TEXT NOT NULL,
+            kind              TEXT NOT NULL DEFAULT 'investment',
             track_key         TEXT,
             day               TEXT,
             status            TEXT NOT NULL,
-            title             TEXT,
-            url               TEXT,
-            source            TEXT,
-            time              TEXT,
-            started_at_ts     REAL,
-            started_at        TEXT,
-            error             TEXT,
-            error_type        TEXT,
-            body_text         TEXT,
-            body_mode         TEXT,
-            body_char_count   INTEGER,
-            body_error        TEXT
+            payload_json      TEXT NOT NULL,
+            created_at        TEXT,
+            PRIMARY KEY (item_id, kind)
         ) STRICT;
         CREATE INDEX IF NOT EXISTS idx_rewrite_track ON intel_rewrite_items(track_key);
         CREATE INDEX IF NOT EXISTS idx_rewrite_day ON intel_rewrite_items(day);

@@ -184,6 +184,13 @@ def import_intel_radar(conn: sqlite3.Connection, storage_root: Path) -> ImportRe
 
 
 def import_intel_rewrites(conn: sqlite3.Connection, storage_root: Path) -> ImportResult:
+    """主键 (item_id, kind)——同一 item_id 可以同时有 investment 与 chinese 两个变体
+    （kss/storage/rewrite_pool.py:draft_path 的 {id}.json vs {id}.chinese.json 惯例）。
+    早期 investment 变体的 payload 里未必有 kind 字段，跟 rewrite_pool.py:list_drafts 同一套
+    「按文件名后缀兜底」规则：不是 foo.chinese.json 就当 investment。
+    payload_json 原样存整份 draft（status/track_key/day 之外还有 text/sections/model/
+    generated_at/prompt_system 等随写入方迭代变化的字段——拆列存会漏字段，见 db.py 顶部
+    「复杂嵌套域」设计说明）。"""
     source_dir = storage_root / "intel_rewrites"
     if not source_dir.is_dir():
         return ImportResult("intel_rewrite_items", 0, 0, False, "目录不存在")
@@ -194,19 +201,15 @@ def import_intel_rewrites(conn: sqlite3.Connection, storage_root: Path) -> Impor
             d = json.loads(f.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
-        item_id = d.get("item_id") or f.stem
+        item_id = d.get("item_id") or f.stem.split(".")[0]
+        kind = d.get("kind") or ("chinese" if f.name.endswith(".chinese.json") else "investment")
         conn.execute(
             """INSERT OR REPLACE INTO intel_rewrite_items
-            (item_id, kind, track_key, day, status, title, url, source, time,
-             started_at_ts, started_at, error, error_type, body_text, body_mode,
-             body_char_count, body_error)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (item_id, kind, track_key, day, status, payload_json, created_at)
+            VALUES (?,?,?,?,?,?,?)""",
             (
-                item_id, d.get("kind"), d.get("track_key"), d.get("day"),
-                d.get("status", "unknown"), d.get("title"), d.get("url"), d.get("source"),
-                d.get("time"), d.get("started_at_ts"), d.get("started_at"), d.get("error"),
-                d.get("error_type"), d.get("body_text"), d.get("body_mode"),
-                d.get("body_char_count"), d.get("body_error"),
+                item_id, kind, d.get("track_key"), d.get("day"), d.get("status", "unknown"),
+                json.dumps(d, ensure_ascii=False), d.get("generated_at") or d.get("started_at"),
             ),
         )
         written += 1

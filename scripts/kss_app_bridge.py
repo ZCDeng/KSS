@@ -4086,16 +4086,24 @@ def _indicator_lab_list() -> dict[str, Any]:
     }
 
 
+def _indicator_lab_db_path() -> Path:
+    return STATE_ROOT / "storage" / "kss.db"
+
+
 def _indicator_lab_recent_verdicts(limit: int = 20) -> list[dict[str, Any]]:
-    if not INDICATOR_LAB_VERDICTS_DIR.exists():
-        return []
-    files = sorted(
-        INDICATOR_LAB_VERDICTS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
-    )
+    """指标裁决表（kss.db，plan 2026-07-12-005 / U15 割接自 verdicts/*.json）。"""
+    from kss.storage.db import connect, ensure_schema  # noqa: PLC0415
+
+    with connect(_indicator_lab_db_path()) as conn:
+        ensure_schema(conn)
+        rows = conn.execute(
+            "SELECT payload_json FROM indicator_lab_verdicts ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
     out: list[dict[str, Any]] = []
-    for p in files[:limit]:
+    for row in rows:
         try:
-            out.append(json.loads(p.read_text(encoding="utf-8")))
+            out.append(json.loads(row["payload_json"]))
         except Exception:  # noqa: BLE001
             continue
     return out
@@ -4104,28 +4112,40 @@ def _indicator_lab_recent_verdicts(limit: int = 20) -> list[dict[str, Any]]:
 def _persist_verdict(
     family: str, params: dict[str, Any], symbols: list[str], results: list[dict[str, Any]], overall_go: bool
 ) -> str | None:
-    """裁决落盘（含 NO-GO 记忆，供 indicator-suggest 避免重复提议）；fail-silent，不影响返回。"""
+    """裁决落库（含 NO-GO 记忆，供 indicator-suggest 避免重复提议）；fail-silent，不影响返回。
+    返回值不再是文件相对路径（该概念随 U15 割接消失），改为 verdict_id 本身，仅供调用方
+    展示引用用（`_write_indicator_report` 的 verdict_ref 仍走独立参数，不依赖这个返回值
+    去读文件——见 `_indicator_solidify` 调用点，传参本就是 `verdict_ref` 字符串本身）。"""
+    from kss.storage.db import connect, ensure_schema  # noqa: PLC0415
+
     try:
-        INDICATOR_LAB_VERDICTS_DIR.mkdir(parents=True, exist_ok=True)
         key = _verdict_key(family, params)
-        path = INDICATOR_LAB_VERDICTS_DIR / f"{key}.json"
+        entry_id = f"{family}_{key}"
         payload = {
             "family": family, "params": params, "symbols": symbols,
             "go": overall_go, "results": results, "judgedAt": _now_iso(),
         }
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        return str(path.relative_to(STATE_ROOT))
+        with connect(_indicator_lab_db_path()) as conn:
+            ensure_schema(conn)
+            conn.execute(
+                "INSERT OR REPLACE INTO indicator_lab_verdicts (verdict_id, entry_id, payload_json, created_at) VALUES (?,?,?,?)",
+                (key, entry_id, json.dumps(payload, ensure_ascii=False), payload["judgedAt"]),
+            )
+        return key
     except Exception:  # noqa: BLE001
         return None
 
 
 def _indicator_no_go_keys() -> set[str]:
-    if not INDICATOR_LAB_VERDICTS_DIR.exists():
-        return set()
+    from kss.storage.db import connect, ensure_schema  # noqa: PLC0415
+
+    with connect(_indicator_lab_db_path()) as conn:
+        ensure_schema(conn)
+        rows = conn.execute("SELECT payload_json FROM indicator_lab_verdicts").fetchall()
     out: set[str] = set()
-    for p in INDICATOR_LAB_VERDICTS_DIR.glob("*.json"):
+    for row in rows:
         try:
-            data = json.loads(p.read_text(encoding="utf-8"))
+            data = json.loads(row["payload_json"])
         except Exception:  # noqa: BLE001
             continue
         if data.get("go") is False:
@@ -4294,15 +4314,23 @@ def _indicator_solidify(
 
 
 def _write_indicator_report(entry: Any, packs: list[dict[str, Any]], verdict_ref: str) -> str | None:
-    """固化收尾：生成 AI回测报告 md（U5）。失败 fail-silent——报告缺失不回滚已固化的指标。"""
+    """固化收尾：生成 AI回测报告 md（U5）。失败 fail-silent——报告缺失不回滚已固化的指标。
+    verdict_ref 是 kss.db indicator_lab_verdicts 表的 verdict_id（plan 2026-07-12-005 /
+    U15 割接自 verdicts/*.json——旧格式是相对文件路径，现在是纯 id，按 id 查表读回）。"""
     try:
         from kss.indicators.report import format_report
+        from kss.storage.db import connect, ensure_schema  # noqa: PLC0415
 
         verdict_payload = None
         if verdict_ref:
-            vp = STATE_ROOT / verdict_ref
-            if vp.exists():
-                verdict_payload = json.loads(vp.read_text(encoding="utf-8"))
+            with connect(_indicator_lab_db_path()) as conn:
+                ensure_schema(conn)
+                row = conn.execute(
+                    "SELECT payload_json FROM indicator_lab_verdicts WHERE verdict_id=?",
+                    (verdict_ref,),
+                ).fetchone()
+            if row is not None:
+                verdict_payload = json.loads(row["payload_json"])
         text = format_report(entry, packs, verdict_payload)
         INDICATOR_LAB_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
         path = INDICATOR_LAB_REPORTS_DIR / f"{entry.id}.md"
