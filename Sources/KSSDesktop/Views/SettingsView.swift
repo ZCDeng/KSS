@@ -23,7 +23,7 @@ struct SettingsView: View {
                     SettingsTasksSection()
 
                     SectionHeader("日志")
-                    SettingsPlaceholderCard(text: "应用内日志查看器（U7）即将上线")
+                    SettingsLogsSection()
                 }
                 .frame(width: w, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .center)
@@ -350,5 +350,113 @@ struct SettingsTasksSection: View {
             }
         )
         .task { await store.loadScheduledJobs() }
+    }
+}
+
+// MARK: - 日志分区（U7）
+
+/// 应用内日志查看器：文件清单（含轮转代）+ 尾部滚动 + 关键词过滤（R9/AE5）。
+struct SettingsLogsSection: View {
+    @Environment(\.kssTheme) private var theme
+    @EnvironmentObject private var store: KSSStore
+    @State private var files: [LogFileEntry] = []
+    @State private var selected: LogFileEntry?
+    @State private var tailLines: [String] = []
+    @State private var totalMatched = 0
+    @State private var searchText = ""
+    @State private var loadingList = false
+    @State private var loadingTail = false
+
+    private var sortedFiles: [LogFileEntry] {
+        files.sorted { $0.mtime > $1.mtime }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Picker("文件", selection: $selected) {
+                    Text("选择日志文件").tag(LogFileEntry?.none)
+                    ForEach(sortedFiles) { f in
+                        Text("\(f.name) · \(f.sizeLabel)").tag(Optional(f))
+                    }
+                }
+                .frame(maxWidth: 360)
+                .onChange(of: selected) { _, _ in Task { await loadTail() } }
+
+                Button {
+                    Task { await loadList() }
+                } label: {
+                    if loadingList { ProgressView().controlSize(.small) }
+                    else { Image(systemName: "arrow.clockwise") }
+                }
+                .buttonStyle(.bordered)
+
+                Spacer()
+
+                TextField("搜索关键词", text: $searchText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 220)
+                    .onSubmit { Task { await loadTail() } }
+                Button("搜索") { Task { await loadTail() } }
+                    .buttonStyle(.bordered)
+                    .disabled(selected == nil)
+            }
+
+            if let selected {
+                HStack {
+                    Text("共 \(totalMatched) 行匹配 · 显示末尾 \(tailLines.count) 行")
+                        .font(KSSFont.themed(11, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                    Spacer()
+                    if loadingTail { ProgressView().controlSize(.small) }
+                }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(tailLines.enumerated()), id: \.offset) { _, line in
+                            Text(line)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(theme.textPrimary)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        if tailLines.isEmpty && !loadingTail {
+                            Text("无匹配内容")
+                                .font(KSSFont.themed(12, theme: theme))
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                    }
+                    .padding(10)
+                }
+                .frame(height: 320)
+                .background(theme.canvas, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
+                .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeS).stroke(theme.hairline))
+            } else {
+                Text("选择左上角的日志文件查看内容")
+                    .font(KSSFont.themed(12, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .kssCard(padding: 14)
+            }
+        }
+        .task { await loadList() }
+    }
+
+    private func loadList() async {
+        guard let bridge = store.bridge else { return }
+        loadingList = true
+        defer { loadingList = false }
+        let resp = try? await Task.detached { try bridge.logList() }.value
+        files = resp?.logs ?? []
+    }
+
+    private func loadTail() async {
+        guard let bridge = store.bridge, let selected else { return }
+        loadingTail = true
+        defer { loadingTail = false }
+        let name = selected.name
+        let grep = searchText
+        let resp = try? await Task.detached { try bridge.logTail(name: name, lines: 500, grep: grep) }.value
+        tailLines = resp?.lines ?? []
+        totalMatched = resp?.totalMatched ?? 0
     }
 }

@@ -1829,6 +1829,33 @@ struct IntradayBars: Codable, Hashable {
     }
 }
 
+// MARK: - 日志分区（plan 2026-07-12-005 / U7，bridge `log-list` / `log-tail`）
+
+/// 单个日志文件（含轮转代）。
+struct LogFileEntry: Codable, Hashable, Identifiable {
+    var id: String { name }
+    var name: String     // 相对 storage/logs/ 的路径，如 "sidecar.log" 或 "cron/scanner.log"
+    var size: Int
+    var mtime: String
+
+    var sizeLabel: String {
+        if size < 1024 { return "\(size)B" }
+        if size < 1024 * 1024 { return String(format: "%.0fKB", Double(size) / 1024) }
+        return String(format: "%.1fMB", Double(size) / (1024 * 1024))
+    }
+}
+
+struct LogListResponse: Codable, Hashable {
+    var logs: [LogFileEntry]
+}
+
+struct LogTailResponse: Codable, Hashable {
+    var name: String
+    var lines: [String]
+    var totalMatched: Int
+    var error: String?
+}
+
 // MARK: - 数据源连通性测试（plan 2026-07-12-005 / U4，bridge `datasource-test`）
 
 /// 单候选（主/备）探测结果。

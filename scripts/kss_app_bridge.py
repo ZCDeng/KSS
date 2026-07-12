@@ -3653,6 +3653,63 @@ def _cron_edit_schedule(suffix: str, schedule_json: str) -> dict[str, Any]:
     return {"ok": True, "job": job_payload}
 
 
+# ---------------------------------------------------------------------------
+# 日志查看（plan 2026-07-12-005 / U7 KTD10）——设置页日志分区。只读命令，
+# 路径白名单锁定 STATE_ROOT/storage/logs/ 内（同 _resolve_markdown_path 护栏思路）。
+# ---------------------------------------------------------------------------
+
+LOGS_DIR = STATE_ROOT / "storage" / "logs"
+
+
+def _log_list() -> dict[str, Any]:
+    """枚举 storage/logs/ 下全部日志文件，含 sidecar 轮转代（.log.1/.2/.3）与
+    cron 各任务日志（cron/ 子目录）。轮转代与当前文件一并可见，AE5 不因轮转丢线索。"""
+    entries: list[dict[str, Any]] = []
+    if LOGS_DIR.is_dir():
+        for p in sorted(LOGS_DIR.rglob("*.log*")):
+            if not p.is_file():
+                continue
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            entries.append({
+                "name": str(p.relative_to(LOGS_DIR)),
+                "size": st.st_size,
+                "mtime": datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+            })
+    return {"logs": entries}
+
+
+def _resolve_log_path(name: str) -> Path:
+    """name → 校验后绝对路径；越界/非法一律 SystemExit（护栏，同 report 路径思路）。"""
+    if not name or "\x00" in name:
+        raise SystemExit("invalid log name")
+    candidate = (LOGS_DIR / name).resolve()
+    try:
+        candidate.relative_to(LOGS_DIR.resolve())
+    except ValueError as exc:
+        raise SystemExit(f"log path escapes storage/logs/: {name!r}") from exc
+    return candidate
+
+
+def _log_tail(name: str, lines: int = 500, grep: str = "") -> dict[str, Any]:
+    """尾部读取 + 可选关键词过滤（只读，R9/AE5）。lines 上限 2000 防超大响应。
+    grep 在 bridge 侧做，避免整份大文件过桥到 Swift 再本地过滤。"""
+    path = _resolve_log_path(name)
+    if not path.is_file():
+        return {"name": name, "error": "not_found", "lines": [], "totalMatched": 0}
+    capped_lines = max(1, min(lines, 2000))
+    try:
+        all_lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError as exc:
+        return {"name": name, "error": str(exc), "lines": [], "totalMatched": 0}
+    if grep:
+        all_lines = [ln for ln in all_lines if grep in ln]
+    tail = all_lines[-capped_lines:]
+    return {"name": name, "lines": tail, "totalMatched": len(all_lines)}
+
+
 def _kickstart_labels(labels: list[str], require_stale: bool) -> dict[str, Any]:
     """批量 kickstart：require_stale=True 只补跑漏跑项（开机自检/补跑），否则重跑全部启用项。
     label 必须命中白名单；停用项跳过；selfcheck 自身永不参与（避免递归补跑）。"""
@@ -4376,6 +4433,11 @@ COMMANDS = {
     "datasource-test": {
         "desc": "数据源连通性测试(tushare/longbridge/telegram/llm)，只读",
         "args": ["SOURCE"],
+    },
+    "log-list": {"desc": "枚举 storage/logs 下全部日志文件(含轮转代)", "args": []},
+    "log-tail": {
+        "desc": "日志尾部读取+关键词过滤(路径白名单锁 storage/logs/)",
+        "args": ["NAME", "[LINES]", "[GREP]"],
     },
 }
 
@@ -5305,6 +5367,14 @@ def dispatch(command: str, args: list[str]) -> Any:
         if not args:
             raise ValueError("datasource-test requires SOURCE")
         return _datasource_test(args[0])
+    if command == "log-list":
+        return _log_list()
+    if command == "log-tail":
+        if not args:
+            raise ValueError("log-tail requires NAME")
+        lines = int(args[1]) if len(args) > 1 and args[1] else 500
+        grep = args[2] if len(args) > 2 else ""
+        return _log_tail(args[0], lines, grep)
     if command == "version":
         # 返回 sidecar 代码版本指纹，供 Swift 端校验陈旧进程。
         return {"version": _sidecar_version_fingerprint()}
