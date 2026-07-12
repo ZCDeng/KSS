@@ -213,28 +213,25 @@ def test_attribution_note_payload_excludes_prices() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _write_paper_log(paper_dir: Path, date: str, picks: list[dict]) -> None:
-    paper_dir.mkdir(parents=True, exist_ok=True)
-    (paper_dir / f"{date}.json").write_text(
-        json.dumps(
-            {
-                "prediction_date": date,
-                "strategy": "log_mv_reverse",
-                "use_execution": True,
-                "top_pct": 0.2,
-                "top_n": 5,
-                "picks": picks,
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+def _write_paper_log(db_path: Path, date: str, picks: list[dict]) -> None:
+    from kss.storage.paper_trade import write_day
+
+    write_day(
+        {
+            "prediction_date": date,
+            "strategy": "log_mv_reverse",
+            "top_pct": 0.2,
+            "top_n": 5,
+            "picks": picks,
+        },
+        db_path,
     )
 
 
 def test_replay_rebuilds_ledger_idempotent(ledger: PredictionLedger, tmp_path: Path) -> None:
-    paper_dir = tmp_path / "paper_trade"
+    db_path = tmp_path / "paper_trade" / "kss.db"
     _write_paper_log(
-        paper_dir,
+        db_path,
         "2026-06-18",
         [
             {"symbol": "688114.SH", "factor_value": 14.5, "rank_pct": 0.02,
@@ -243,20 +240,20 @@ def test_replay_rebuilds_ledger_idempotent(ledger: PredictionLedger, tmp_path: P
              "rank_position": 2, "planned_weight": 0.2},
         ],
     )
-    stats = replay_paper_trade(ledger, paper_dir=paper_dir)
+    stats = replay_paper_trade(ledger, db_path=db_path)
     assert stats["records"] == 2
     assert ledger.get("2026-06-18_688114.SH")["status"] == STATUS_OPEN
     # 幂等: 二次回放不新增
-    stats2 = replay_paper_trade(ledger, paper_dir=paper_dir)
+    stats2 = replay_paper_trade(ledger, db_path=db_path)
     assert stats2["records"] == 0
     assert stats2["skipped"] == 2
 
 
 def test_replay_settle_aligns_horizon_return(ledger: PredictionLedger, tmp_path: Path) -> None:
     """回放结算的 realized_ret 必须与 _horizon_return(hold=1) 口径一致."""
-    paper_dir = tmp_path / "paper_trade"
+    db_path = tmp_path / "paper_trade" / "kss.db"
     _write_paper_log(
-        paper_dir,
+        db_path,
         "2026-06-18",
         [{"symbol": "688114.SH", "factor_value": 14.5, "rank_pct": 0.02,
           "rank_position": 1, "planned_weight": 0.2}],
@@ -269,7 +266,7 @@ def test_replay_settle_aligns_horizon_return(ledger: PredictionLedger, tmp_path:
         return (t1_open, t2_open)
 
     stats = replay_paper_trade(
-        ledger, paper_dir=paper_dir, settle=True, horizon_return=fake_horizon,
+        ledger, db_path=db_path, settle=True, horizon_return=fake_horizon,
     )
     assert stats["settled"] == 1
     row = ledger.get("2026-06-18_688114.SH")

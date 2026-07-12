@@ -49,7 +49,6 @@ from kss.backtest.factor_health import (  # noqa: E402
     load_thresholds,
 )
 
-PAPER_DIR = PROJECT_ROOT / "storage" / "paper_trade"
 BJ_SCAN_DIR = PROJECT_ROOT / "storage" / "reports" / "bj50_scan"
 ALPHA_DIR = PROJECT_ROOT / "storage" / "pipeline_alpha"
 
@@ -126,16 +125,14 @@ def _hits_log_mv_from_ledger() -> dict[str, list[tuple[str, float]]] | None:
 
 
 def _hits_log_mv() -> dict[str, list[tuple[str, float]]]:
-    # 账本为已结算真值源：优先读账本，缺失/空时回退只读 JSON（退役过渡期回放来源）。
+    # 账本为已结算真值源：优先读账本，缺失/空时回退 paper_trade_picks（kss.db）。
     from_ledger = _hits_log_mv_from_ledger()
     if from_ledger is not None:
         return from_ledger
+    from kss.storage.paper_trade import read_all_days
+
     out: dict[str, list[tuple[str, float]]] = {}
-    for fp in sorted(PAPER_DIR.glob("*.json")):
-        try:
-            log = json.loads(fp.read_text(encoding="utf-8"))
-        except Exception:
-            continue
+    for log in read_all_days(PROJECT_ROOT / "storage" / "kss.db"):
         date = log.get("prediction_date")
         if not date:
             continue

@@ -35,7 +35,6 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 # 可变状态根（storage/.cache）；默认回落 PROJECT_ROOT → 未设 env 时与历史行为逐字一致。
 STATE_ROOT = _env_path("KSS_STATE_ROOT") or PROJECT_ROOT
-PAPER_DIR = STATE_ROOT / "storage" / "paper_trade"
 REVIEW_DIR = STATE_ROOT / "storage" / "daily_review"
 REPORT_DIR = STATE_ROOT / "storage" / "reports"
 BJ_SCAN_DIR = REPORT_DIR / "bj50_scan"
@@ -277,13 +276,9 @@ def _load_stock_summaries(names: dict[str, dict[str, str]]) -> list[dict[str, An
 
 
 def _latest_paper_log() -> dict[str, Any] | None:
-    files = sorted(PAPER_DIR.glob("*.json"))
-    for path in reversed(files):
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-    return None
+    from kss.storage.paper_trade import read_latest_day
+
+    return read_latest_day(STATE_ROOT / "storage" / "kss.db")
 
 
 def _tracking_return(symbol: str, prediction_date: str) -> float | None:
@@ -576,13 +571,9 @@ def _full_python() -> Path | None:
 
 
 def _paper_summary() -> dict[str, Any]:
-    files = sorted(PAPER_DIR.glob("*.json"))
-    entries: list[dict[str, Any]] = []
-    for path in files:
-        try:
-            entries.append(json.loads(path.read_text(encoding="utf-8")))
-        except Exception:
-            continue
+    from kss.storage.paper_trade import read_all_days
+
+    entries = read_all_days(STATE_ROOT / "storage" / "kss.db")
 
     daily_returns: list[dict[str, Any]] = []
     for entry in entries:
@@ -949,17 +940,16 @@ def _build_logmv_picks(date: str | None = None) -> tuple[str, list[dict[str, Any
     return target_date, picks
 
 
-def _save_picks(date: str, picks: list[dict[str, Any]], force: bool) -> tuple[Path, bool]:
-    PAPER_DIR.mkdir(parents=True, exist_ok=True)
-    out = PAPER_DIR / f"{date}.json"
-    if out.exists() and not force:
-        return out, False
+def _save_picks(date: str, picks: list[dict[str, Any]], force: bool) -> tuple[str, bool]:
+    from kss.storage.paper_trade import day_exists, write_day
+
+    db_path = STATE_ROOT / "storage" / "kss.db"
+    if day_exists(date, db_path) and not force:
+        return date, False
     payload = {
         "prediction_date": date,
         "generated_at": datetime.now().isoformat(),
         "strategy": "log_mv_reverse",
-        "source": "KSSDesktop stdlib bridge",
-        "use_execution": False,
         "top_pct": TOP_PCT,
         "top_n": TOP_N,
         "picks": [
@@ -973,8 +963,8 @@ def _save_picks(date: str, picks: list[dict[str, Any]], force: bool) -> tuple[Pa
             for item in picks
         ],
     }
-    out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return out, True
+    write_day(payload, db_path)
+    return date, True
 
 
 def _run_daily_picks(args: dict[str, str | bool]) -> dict[str, Any]:
@@ -992,8 +982,8 @@ def _run_daily_picks(args: dict[str, str | bool]) -> dict[str, Any]:
         ]
         artifacts: list[str] = []
         if save:
-            path, wrote = _save_picks(target_date, picks, force=force)
-            artifacts.append(str(path.relative_to(STATE_ROOT)))
+            _, wrote = _save_picks(target_date, picks, force=force)
+            artifacts.append("storage/kss.db")
             status = "success" if wrote else "skipped"
             action = "saved" if wrote else "already exists"
         else:
@@ -1299,20 +1289,20 @@ def _run_formal_daily_picks(args: dict[str, str | bool]) -> dict[str, Any]:
         started,
         timeout=300,
     )
-    # 落盘断言：当日 paper_trade JSON 必须存在
+    # 落盘断言：当日 paper_trade_picks 必须存在
     if target_date is None:
         target_date = datetime.now().strftime("%Y-%m-%d")
-    log_path = PAPER_DIR / f"{target_date}.json"
-    if result.get("status") == "success" and not log_path.exists():
+    from kss.storage.paper_trade import day_exists
+
+    exists = day_exists(target_date, STATE_ROOT / "storage" / "kss.db")
+    if result.get("status") == "success" and not exists:
         result = dict(result)
         result["status"] = "failed"
-        result["summary"] = f"选股进程 exit 0 但日志缺失: {log_path}"
+        result["summary"] = f"选股进程 exit 0 但落库缺失: {target_date}"
         result["exitCode"] = 2
-    elif result.get("status") == "success" and log_path.exists():
+    elif result.get("status") == "success" and exists:
         result = dict(result)
-        result["artifacts"] = list(result.get("artifacts") or []) + [
-            str(log_path.relative_to(STATE_ROOT))
-        ]
+        result["artifacts"] = list(result.get("artifacts") or []) + ["storage/kss.db"]
     return result
 
 
@@ -1752,13 +1742,11 @@ def _recommendation_tracking(names: dict[str, dict[str, str]]) -> list[dict[str,
     ledger_rows = _ledger_tracking(names)
     if ledger_rows is not None:
         return ledger_rows
-    # 回退: 账本不可用时读旧 JSON (退役过渡期的回放来源)
+    # 回退: 账本不可用时读 paper_trade_picks
+    from kss.storage.paper_trade import read_all_days
+
     out: list[dict[str, Any]] = []
-    for path in sorted(PAPER_DIR.glob("*.json"), reverse=True):
-        try:
-            log = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
+    for log in reversed(read_all_days(STATE_ROOT / "storage" / "kss.db")):
         date = log.get("prediction_date")
         if not date:
             continue

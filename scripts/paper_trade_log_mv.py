@@ -55,7 +55,6 @@ from kss.prediction.cross_sectional_forecast import CrossSectionalForecast  # no
 # ---------------------------------------------------------------------- #
 
 DATA_GLOB = str(_KSS_STATE / "cs_data_688*.csv")
-LOG_DIR = _KSS_STATE / "storage" / "paper_trade"
 TOP_PCT = 0.2   # 仅作 fallback 元数据; 实际选股走 TOP_N
 TOP_N = 5       # 2026-06-07 起固定 Top 5 (此前 top 20% ≈ 10 只)
 MIN_STOCKS = 10
@@ -177,27 +176,28 @@ def save_log_entry(
     use_execution: bool,
     force: bool = False,
     regime_label: str | None = None,
-) -> tuple[Path, bool]:
-    """保存当日预测到 JSON 日志（供事后对比）.
+) -> tuple[str, bool]:
+    """保存当日预测到 kss.db paper_trade_picks 表（供事后对比）.
 
-    日志是周报对账的审计底稿: 已存在的文件默认不覆盖 (回放旧日期会
+    日志是周报对账的审计底稿: 已存在的记录默认不覆盖 (回放旧日期会
     无声改写历史预测, 同 daily_review dry-run 教训), ``force=True`` 强制.
 
     Returns:
-        (path, wrote_new) — wrote_new=False 表示跳过覆盖，文件应已存在。
+        (prediction_date, wrote_new) — wrote_new=False 表示跳过覆盖，记录应已存在。
     """
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    from kss.storage.paper_trade import day_exists, write_day
+
     in_top = picks[picks["in_top"]] if "in_top" in picks.columns else picks
-    existing = LOG_DIR / f"{target_date.date()}.json"
-    if existing.exists() and not force:
-        logger.warning("日志已存在, 跳过覆盖 (--force-save 强制): %s", existing)
+    prediction_date = str(target_date.date())
+    db_path = _KSS_STATE / "storage" / "kss.db"
+    if day_exists(prediction_date, db_path) and not force:
+        logger.warning("日志已存在, 跳过覆盖 (--force-save 强制): %s", prediction_date)
         _record_ledger_entry(in_top, target_date, use_execution, regime_label, force=False)
-        return existing, False
+        return prediction_date, False
     entry = {
-        "prediction_date": str(target_date.date()),
+        "prediction_date": prediction_date,
         "generated_at": datetime.now().isoformat(),
         "strategy": "log_mv_reverse",
-        "use_execution": use_execution,
         "top_pct": TOP_PCT,
         "top_n": TOP_N,
         "picks": [
@@ -211,10 +211,9 @@ def save_log_entry(
             for _, row in in_top.iterrows()
         ],
     }
-    out = LOG_DIR / f"{target_date.date()}.json"
-    out.write_text(json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_day(entry, db_path)
     _record_ledger_entry(in_top, target_date, use_execution, regime_label, force=force)
-    return out, True
+    return prediction_date, True
 
 
 # ---------------------------------------------------------------------- #
@@ -223,23 +222,17 @@ def save_log_entry(
 
 
 def summarize_log_dir(lookback_days: int | None = None) -> dict:
-    """读取 LOG_DIR 下所有日志 → 算每日预测组合的 T+1→T+2 实际开盘价收益.
+    """读取 kss.db paper_trade_picks 表 → 算每日预测组合的 T+1→T+2 实际开盘价收益.
 
     Args:
         lookback_days: 仅统计最近 N 天日志；``None`` 用全部历史.
     """
-    files = sorted(LOG_DIR.glob("*.json"))
-    if lookback_days is not None and lookback_days > 0:
-        files = files[-lookback_days:]
-    if not files:
-        return {"n_days": 0, "message": "尚未积累任何预测日志"}
+    from kss.storage.paper_trade import read_all_days
 
-    entries = []
-    for f in files:
-        try:
-            entries.append(json.loads(f.read_text(encoding="utf-8")))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("解析 %s 失败: %s", f, exc)
+    db_path = _KSS_STATE / "storage" / "kss.db"
+    entries = read_all_days(db_path, limit=lookback_days)
+    if not entries:
+        return {"n_days": 0, "message": "尚未积累任何预测日志"}
 
     # 加载所需股票的全样本（用于查 T+1 / T+2 开盘价）
     all_symbols = {p["symbol"] for e in entries for p in e["picks"]}
@@ -445,32 +438,27 @@ def main() -> None:
     # ---------------------------------------------------------
 
     md = forecast.format_pool_markdown(pool)
-    log_path, wrote_new = save_log_entry(
+    log_date, wrote_new = save_log_entry(
         pool, actual_date,
         use_execution=not args.no_execution,
         force=args.force_save,
     )
     print(md)
     if wrote_new:
-        print(f"\n📝 日志已写入: {log_path}")
+        print(f"\n📝 日志已写入: {log_date}")
     else:
-        print(f"\n📝 日志已存在未覆盖: {log_path}（加 --force-save 可覆盖）")
+        print(f"\n📝 日志已存在未覆盖: {log_date}（加 --force-save 可覆盖）")
 
-    # 落盘真值校验：路径必须存在且非空（防假成功）
-    if not log_path.exists() or log_path.stat().st_size < 32:
-        logger.error("paper_trade 日志落盘失败或不完整: %s", log_path)
-        sys.exit(2)
-    try:
-        payload = json.loads(log_path.read_text(encoding="utf-8"))
-        if not payload.get("picks"):
-            logger.error("paper_trade 日志无 picks: %s", log_path)
-            sys.exit(2)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("paper_trade 日志不可解析: %s (%s)", log_path, exc)
+    # 落盘真值校验：kss.db 里必须能读回非空 picks（防假成功）
+    from kss.storage.paper_trade import read_day
+
+    payload = read_day(log_date, _KSS_STATE / "storage" / "kss.db")
+    if payload is None or not payload.get("picks"):
+        logger.error("paper_trade 落库失败或无 picks: %s", log_date)
         sys.exit(2)
 
     if notify_channel:
-        push_md = f"{md}📝 完整日志 `{log_path}`"
+        push_md = f"{md}📝 完整日志 `{log_date}`"
         _send_notification(
             message=push_md,
             channel=notify_channel,

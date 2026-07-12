@@ -30,9 +30,10 @@ from typing import Any, Iterator
 
 logger = logging.getLogger(__name__)
 
+from kss.config.paths import KSS_DB
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_LEDGER_PATH = PROJECT_ROOT / "storage" / "prediction_ledger" / "ledger.db"
-PAPER_TRADE_DIR = PROJECT_ROOT / "storage" / "paper_trade"
+DEFAULT_LEDGER_PATH = KSS_DB
 
 # 状态机
 STATUS_OPEN = "open"
@@ -197,10 +198,15 @@ class PredictionLedger:
     def _connect(self) -> Iterator[sqlite3.Connection]:
         # 单机双写（cron 结算 + app 读写）会 database is locked：connect timeout +
         # busy_timeout 让写锁竞争等待而非立刻抛错；WAL 让读写不互斥（fail loud 保留）。
+        # journal_mode=WAL 只在库尚未是 WAL 模式时才发——U15 割接后本库与 kss.db
+        # 其它域共用同一文件，冷启动并发首连都发该 pragma 会互相 database is locked
+        # （该 pragma 不吃 busy_timeout），见 kss/storage/db.py:connect() 同款修法。
         conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=30000")
-        conn.execute("PRAGMA journal_mode=WAL")
+        current_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        if str(current_mode).lower() != "wal":
+            conn.execute("PRAGMA journal_mode=WAL")
         try:
             yield conn
             conn.commit()
@@ -482,39 +488,37 @@ class PredictionLedger:
 
 
 # ---------------------------------------------------------------------------
-# 账本退役收口：历史 paper_trade/*.json 回放回填（幂等）
+# 账本安全网：paper_trade_picks（kss.db）回放回填（幂等）
 # ---------------------------------------------------------------------------
 
 
 def replay_paper_trade(
     ledger: PredictionLedger,
-    paper_dir: str | Path | None = None,
+    db_path: str | Path | None = None,
     *,
     settle: bool = False,
     horizon_return=None,
 ) -> dict[str, int]:
-    """把历史 ``storage/paper_trade/*.json`` 回填进账本（幂等）.
+    """把 ``paper_trade_picks``（kss.db，U15 割接自 storage/paper_trade/*.json）
+    回填进账本（幂等）。
 
-    回填完成后 paper_trade JSON 视为只读归档（退役收口）。默认 ``force=False``
-    使重复回放不改写已结算记录（幂等）。
+    主写入路径（``_record_ledger_entry``）已在预测当天同步写账本；本函数是
+    每日结算 cron 的安全网，兜底任何漏写记录（force=False 使重复回放不改写
+    已结算记录）。
 
     Args:
         ledger: 目标账本.
-        paper_dir: paper_trade 目录；默认 ``storage/paper_trade``.
+        db_path: kss.db 路径覆盖（测试用）；``None`` 走默认解析.
         settle: ``True`` 时用 ``horizon_return`` 回放结算（对齐 ``_horizon_return``）.
         horizon_return: 可注入的结算价函数 ``(symbol, prediction_date) -> (t1_open, t2_open) | None``.
 
     Returns:
         ``{"records": n_in, "settled": n_settled, "skipped": n_skip}``.
     """
-    pdir = Path(paper_dir) if paper_dir is not None else PAPER_TRADE_DIR
+    from kss.storage.paper_trade import read_all_days
+
     n_in = n_settled = n_skip = 0
-    for path in sorted(pdir.glob("*.json")):
-        try:
-            log = json.loads(path.read_text(encoding="utf-8"))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("回放解析失败 %s: %s", path, exc)
-            continue
+    for log in read_all_days(db_path):
         date = log.get("prediction_date")
         if not date:
             continue
@@ -522,7 +526,6 @@ def replay_paper_trade(
             "factor_col": "log_mv",
             "top_n": log.get("top_n"),
             "top_pct": log.get("top_pct"),
-            "use_execution": log.get("use_execution"),
         }
         for pick in log.get("picks", []):
             symbol = pick.get("symbol", "")

@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pandas as pd
@@ -37,16 +36,17 @@ def _clear_cs_cache():
     sl._CS_CACHE.clear()
 
 
-def _write_paper(paper_dir: Path, date: str, picks: list[dict]) -> None:
-    paper_dir.mkdir(parents=True, exist_ok=True)
-    (paper_dir / f"{date}.json").write_text(
-        json.dumps({
+def _write_paper(db_path: Path, date: str, picks: list[dict]) -> None:
+    from kss.storage.paper_trade import write_day
+
+    write_day(
+        {
             "prediction_date": date,
             "strategy": "log_mv_reverse",
             "top_n": 5,
             "picks": picks,
-        }, ensure_ascii=False),
-        encoding="utf-8",
+        },
+        db_path,
     )
 
 
@@ -62,19 +62,19 @@ def _patch_prices(monkeypatch, table: dict[tuple[str, str], tuple[float, float] 
 # --------------------------------------------------------------------------- #
 
 def test_backfill_records_idempotent(ledger, tmp_path, monkeypatch):
-    paper = tmp_path / "paper"
-    _write_paper(paper, "2026-06-10", [
+    db_path = tmp_path / "paper" / "kss.db"
+    _write_paper(db_path, "2026-06-10", [
         {"symbol": "688322.SH", "factor_value": 14.5, "rank_pct": 0.02,
          "rank_position": 1, "planned_weight": 0.2},
         {"symbol": "688017.SH", "factor_value": 14.8, "rank_pct": 0.04,
          "rank_position": 2, "planned_weight": 0.2},
     ])
-    # replay_paper_trade 默认读 PAPER_TRADE_DIR; 这里直连账本 + paper_dir 走 replay 注入
+    # replay_paper_trade 默认读 kss.db paper_trade_picks; 这里直连账本 + db_path 走 replay 注入
     from kss.prediction.ledger import replay_paper_trade
-    s1 = replay_paper_trade(ledger, paper_dir=paper, settle=False)
+    s1 = replay_paper_trade(ledger, db_path=db_path, settle=False)
     assert s1["records"] == 2
     # 二次回填幂等: 全部跳过, 不新增
-    s2 = replay_paper_trade(ledger, paper_dir=paper, settle=False)
+    s2 = replay_paper_trade(ledger, db_path=db_path, settle=False)
     assert s2["records"] == 0
     assert s2["skipped"] == 2
     assert len(ledger.query()) == 2
