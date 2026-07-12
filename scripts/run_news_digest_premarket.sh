@@ -10,42 +10,34 @@
 # 手动测试:
 #   bash scripts/run_news_digest_premarket.sh
 #
-# cron 部署(交易日 8:40,盘前,先于 9:30 开盘):
-#   40 8 * * 1-5 /Users/zcdeng/projects/KSS/scripts/run_news_digest_premarket.sh >> /Users/zcdeng/projects/KSS/storage/logs/cron/news_digest_premarket.log 2>&1
+# 部署：kss/config/cron_jobs.yaml 清单条目 + scripts/sync_launchd.py（不再手动 crontab -e）。
 
 set -e
 set -o pipefail
 
-PROJECT_ROOT="/Users/zcdeng/projects/KSS"
-PYTHON="/opt/homebrew/opt/python@3.11/bin/python3.11"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+if [ -n "${KSS_PYTHON:-}" ]; then
+    PYTHON="$KSS_PYTHON"
+elif [ -x "$HOME/Library/Application Support/KSS/venv/bin/python3" ]; then
+    PYTHON="$HOME/Library/Application Support/KSS/venv/bin/python3"
+elif [ -x "$PROJECT_ROOT/.venv-desktop/bin/python" ]; then
+    PYTHON="$PROJECT_ROOT/.venv-desktop/bin/python"
+else
+    echo "no usable python interpreter found (checked KSS_PYTHON, state-root venv, .venv-desktop)" >&2
+    exit 1
+fi
 KSS_ENV="$PROJECT_ROOT/.env"
 
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') news_digest_premarket 开始 ====="
 
-# KSS .env:Tushare(取龙头/快照)。安全 grep,不 source 整个 .env。
-if [ -f "$KSS_ENV" ]; then
-  TUSHARE_TOKEN=$(grep -E '^TUSHARE_TOKEN=' "$KSS_ENV" | head -1 | cut -d= -f2-)
-  TUSHARE_TOKEN="${TUSHARE_TOKEN%\"}"; TUSHARE_TOKEN="${TUSHARE_TOKEN#\"}"
-  export TUSHARE_TOKEN
-fi
-
-# Hermes .env:LLM 凭据(情绪判定)。key 优先级 OPENAI_API_KEY > DEEPSEEK_API_KEY。
-HERMES_ENV="/Users/zcdeng/projects/agentos-stack/hermes_agent/.env"
-if [ -f "$HERMES_ENV" ]; then
-  _load_env_val() {
-    local val
-    val=$(grep -E "^$1=" "$HERMES_ENV" 2>/dev/null | head -1 | cut -d= -f2- | sed 's/^"//;s/"$//') || true
-    printf '%s' "$val"
-  }
-  OPENAI_API_KEY=$(_load_env_val "OPENAI_API_KEY")
-  OPENAI_BASE_URL=$(_load_env_val "OPENAI_BASE_URL")
-  DEEPSEEK_API_KEY=$(_load_env_val "DEEPSEEK_API_KEY")
-  KSS_LLM_MODEL=$(_load_env_val "KSS_LLM_MODEL")
-  [ -n "$OPENAI_API_KEY" ] && export OPENAI_API_KEY
-  [ -n "$OPENAI_BASE_URL" ] && export OPENAI_BASE_URL
-  [ -n "$DEEPSEEK_API_KEY" ] && export DEEPSEEK_API_KEY
-  [ -n "$KSS_LLM_MODEL" ] && export KSS_LLM_MODEL
-fi
+# Tushare(取龙头/快照) + LLM(情绪判定) 凭据。Keychain 优先，dev 回落项目 .env。
+source "$PROJECT_ROOT/scripts/lib_cron_credentials.sh"
+kss_load_credential TUSHARE_TOKEN "$KSS_ENV" || true
+kss_load_credential OPENAI_API_KEY "$KSS_ENV" || true
+kss_load_credential OPENAI_BASE_URL "$KSS_ENV" || true
+kss_load_credential DEEPSEEK_API_KEY "$KSS_ENV" || true
+kss_load_credential KSS_LLM_MODEL "$KSS_ENV" || true
 
 cd "$PROJECT_ROOT"
 exec "$PYTHON" scripts/run_news_digest.py --scene 盘前 "$@"

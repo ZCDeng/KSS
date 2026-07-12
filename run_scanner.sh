@@ -1,14 +1,23 @@
 #!/bin/bash
 # 科创板多指标共振扫描定时任务
-# 安装：``crontab -e`` 后加入：
-#   30 15 * * 1-5  /Users/zcdeng/projects/KSS/run_scanner.sh
+# 部署：kss/config/cron_jobs.yaml 清单条目 + scripts/sync_launchd.py（不再手动 crontab -e）。
 # 每周一至周五 15:30 运行（收盘后）
 
 set -euo pipefail
 
-PROJECT_DIR="/Users/zcdeng/projects/KSS"
-PYTHON_BIN="/opt/homebrew/bin/python3.11"
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_FILE="$PROJECT_DIR/storage/logs/cron/scanner.log"
+
+if [ -n "${KSS_PYTHON:-}" ]; then
+    PYTHON_BIN="$KSS_PYTHON"
+elif [ -x "$HOME/Library/Application Support/KSS/venv/bin/python3" ]; then
+    PYTHON_BIN="$HOME/Library/Application Support/KSS/venv/bin/python3"
+elif [ -x "$PROJECT_DIR/.venv-desktop/bin/python" ]; then
+    PYTHON_BIN="$PROJECT_DIR/.venv-desktop/bin/python"
+else
+    echo "no usable python interpreter found (checked KSS_PYTHON, state-root venv, .venv-desktop)" >&2
+    exit 1
+fi
 
 # 环境变量：Tushare token
 # ~/.tushare_token 缺失也不报错，TushareClient 内部会再尝试其它路径与环境变量

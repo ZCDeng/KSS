@@ -10,16 +10,24 @@
 #   bash scripts/run_update_data_daily.sh
 #   bash scripts/run_update_data_daily.sh --post-close
 #
-# cron 部署：
-#   30 8 * * 1-5 /Users/zcdeng/projects/KSS/scripts/run_update_data_daily.sh >> /Users/zcdeng/projects/KSS/storage/logs/cron/update_data_daily.log 2>&1
-#   5 18 * * 1-5 /Users/zcdeng/projects/KSS/scripts/run_update_data_daily.sh --post-close >> /Users/zcdeng/projects/KSS/storage/logs/cron/update_data_daily_eod.log 2>&1
+# 部署：kss/config/cron_jobs.yaml 清单条目 + scripts/sync_launchd.py（不再手动 crontab -e）。
 
 set -e
 set -o pipefail
 
-PROJECT_ROOT="/Users/zcdeng/projects/KSS"
-PYTHON="/opt/homebrew/opt/python@3.11/bin/python3.11"
-HERMES_ENV="/Users/zcdeng/projects/agentos-stack/hermes_agent/.env"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+if [ -n "${KSS_PYTHON:-}" ]; then
+    PYTHON="$KSS_PYTHON"
+elif [ -x "$HOME/Library/Application Support/KSS/venv/bin/python3" ]; then
+    PYTHON="$HOME/Library/Application Support/KSS/venv/bin/python3"
+elif [ -x "$PROJECT_ROOT/.venv-desktop/bin/python" ]; then
+    PYTHON="$PROJECT_ROOT/.venv-desktop/bin/python"
+else
+    echo "no usable python interpreter found (checked KSS_PYTHON, state-root venv, .venv-desktop)" >&2
+    exit 1
+fi
+KSS_ENV="$PROJECT_ROOT/.env"
 LOG_DIR="$PROJECT_ROOT/storage/logs/cron"
 
 POST_CLOSE=0
@@ -40,21 +48,14 @@ fi
 mkdir -p "$LOG_DIR"
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') update_data_daily-wrapper 开始 | mode=${RUN_MODE} ====="
 
-# Tushare token 从 Hermes .env 加载（用于 cron 场景）
-# 注意：grep -E 限定单行，避开 .env 里 cookie 等不规则行
-if [ -f "$HERMES_ENV" ]; then
-  TUSHARE_TOKEN=$( (grep -E '^TUSHARE_TOKEN=' "$HERMES_ENV" || true) | head -1 | cut -d= -f2-)
-  TUSHARE_TOKEN="${TUSHARE_TOKEN%\"}"; TUSHARE_TOKEN="${TUSHARE_TOKEN#\"}"
-  if [ -n "$TUSHARE_TOKEN" ]; then
-    export TUSHARE_TOKEN
-    echo "[wrapper] token loaded: yes"
-  fi
-fi
-# fallback：若 .env 没 TUSHARE_TOKEN，尝试 KSS 项目里的 token 文件
-if [ -z "$TUSHARE_TOKEN" ] && [ -f "$HOME/.tushare/token" ]; then
+# Tushare token：Keychain 优先，dev 回落项目 .env，再回落 $HOME/.tushare/token。
+source "$PROJECT_ROOT/scripts/lib_cron_credentials.sh"
+if kss_load_credential TUSHARE_TOKEN "$KSS_ENV"; then
+  echo "[wrapper] token loaded: yes"
+elif [ -f "$HOME/.tushare/token" ]; then
   export TUSHARE_TOKEN=$(cat "$HOME/.tushare/token")
   echo "[wrapper] token fallback: ok"
-elif [ -z "${TUSHARE_TOKEN:-}" ]; then
+else
   echo "[wrapper] token loaded: no"
 fi
 

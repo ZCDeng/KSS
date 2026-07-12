@@ -105,23 +105,27 @@ def _calendar_interval(job: CronJob):
 def build_plist(project_root: str, job: CronJob, state_root: str | None = None) -> dict:
     """构造单任务 plist dict（确定性、纯函数）；校验在 :func:`render` 里统一做。
 
-    日志路径沿用现装 14 个 plist 的约定：``<project_root>/storage/logs/cron/<suffix>.log``。
-    ``state_root`` 仅在 bundle-mode（≠ project_root）时注入 ``KSS_STATE_ROOT`` env。
+    日志路径：dev 模式（state_root == project_root）沿用现装约定
+    ``<project_root>/storage/logs/cron/<suffix>.log``；bundle 模式（≠）从
+    ``state_root`` 派生——``project_root`` 在 bundle 模式指向签名 .app 内只读
+    Resources，日志绝不能往那写（plan 2026-07-12-005 / U11 R17）。
+    ``HOME`` 取运行时 ``Path.home()``，不再硬编码作者本机用户名。
     """
     proj = _require_abs(project_root, "--project-root")
 
     wrapper = (proj / job.wrapper).resolve()
-    log_path = proj / "storage" / "logs" / "cron" / f"{job.suffix}.log"
-
+    log_root = proj
     env: dict[str, str] = {
         "PATH": _DEFAULT_PATH,
-        "HOME": "/Users/zcdeng",
+        "HOME": str(Path.home()),
     }
     if state_root is not None:
         state = _require_abs(state_root, "--state-root")
         if str(state) != str(proj):
-            # bundle-mode：运行期路径根注入 KSS_STATE_ROOT（合双根设计）。
+            # bundle-mode：运行期路径根注入 KSS_STATE_ROOT（合双根设计），日志也跟着挪。
             env["KSS_STATE_ROOT"] = str(state)
+            log_root = state
+    log_path = log_root / "storage" / "logs" / "cron" / f"{job.suffix}.log"
 
     program_args = [str(wrapper)] + list(job.args)
 

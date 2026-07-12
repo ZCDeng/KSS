@@ -977,7 +977,8 @@ struct BridgeClient {
         try? fm.createDirectory(at: stateRoot, withIntermediateDirectories: true)
         let p = Process()
         p.executableURL = uv
-        p.arguments = ["sync", "--frozen", "--project", projectRoot.path]
+        // --no-dev（plan 2026-07-12-005 / U11 R16）：生产 venv 不带 pytest 等 dev 依赖组。
+        p.arguments = ["sync", "--frozen", "--no-dev", "--project", projectRoot.path]
         var env = ProcessInfo.processInfo.environment
         env["UV_PROJECT_ENVIRONMENT"] = stateRoot.appending(path: "venv").path
         p.environment = env
@@ -1027,7 +1028,8 @@ struct BridgeClient {
         DispatchQueue.global(qos: .utility).async {
             let p = Process()
             p.executableURL = uv
-            p.arguments = ["sync", "--frozen", "--project", projectRoot.path]
+            // --no-dev（plan 2026-07-12-005 / U11 R16）：生产 venv 不带 pytest 等 dev 依赖组。
+            p.arguments = ["sync", "--frozen", "--no-dev", "--project", projectRoot.path]
             var env = ProcessInfo.processInfo.environment
             env["UV_PROJECT_ENVIRONMENT"] = venvDir.path
             p.environment = env

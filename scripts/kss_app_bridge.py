@@ -3141,11 +3141,15 @@ def _indicator_detail_projections(
 # ---------------------------------------------------------------------------
 
 def _launchd_deploy_dir() -> Path:
-    """deploy/launchd 双根解析（plan 2026-07-12-005 / U6 KTD2）。
+    """deploy/launchd 双根解析（plan 2026-07-12-005 / U6 KTD2, U11 R17）。
 
     dev 模式（STATE_ROOT == PROJECT_ROOT）：原样用 PROJECT_ROOT 副本，行为不变。
     bundle 模式（STATE_ROOT != PROJECT_ROOT）：改用 STATE_ROOT 副本——签名 .app 内的
-    PROJECT_ROOT/deploy/launchd 只读，写入即破坏签名。首次访问从 bundle 内模板 seed；
+    PROJECT_ROOT/deploy/launchd 只读，写入即破坏签名。首次访问**重渲染**（不是原样
+    拷贝 bundle 模板）——bundle 内模板的 HOME/日志路径烙的是作者本机值（U11 修复前
+    的已知缺口），重渲染让 HOME 取交付对象自己的 Path.home()、日志路径落交付对象的
+    STATE_ROOT，而非承袭作者机器的值。渲染失败（清单/wrapper 异常，理论不该发生）
+    兜底退回原样拷贝，保证首启不因这一步彻底瘫痪。
     此后 STATE_ROOT 副本是唯一可写工作态，排期编辑（cron-edit-schedule）只回写这里。
     """
     bundle_deploy = PROJECT_ROOT / "deploy" / "launchd"
@@ -3154,8 +3158,14 @@ def _launchd_deploy_dir() -> Path:
     state_deploy = STATE_ROOT / "deploy" / "launchd"
     if not state_deploy.is_dir() and bundle_deploy.is_dir():
         state_deploy.mkdir(parents=True, exist_ok=True)
-        for src in bundle_deploy.glob("com.zcdeng.kss.*.plist"):
-            shutil.copy2(src, state_deploy / src.name)
+        try:
+            import render_launchd_plists as _render_mod  # noqa: PLC0415
+
+            _render_mod.render_all(str(PROJECT_ROOT), state_deploy, state_root=str(STATE_ROOT))
+        except Exception as exc:  # noqa: BLE001 - 首启不能因这步崩，退回旧行为
+            print(f"[launchd] 重渲染 deploy/launchd 失败，退回原样拷贝: {exc}", file=sys.stderr)
+            for src in bundle_deploy.glob("com.zcdeng.kss.*.plist"):
+                shutil.copy2(src, state_deploy / src.name)
     return state_deploy
 
 

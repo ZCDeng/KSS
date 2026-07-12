@@ -5,8 +5,7 @@
 # bridge 自身调用 kss.news.radar.fetch_radar()（纯 stdlib RSS fetcher）。
 # 刷新成功后串行跑 rewrite worker（KSS_SKIP_REWRITE=1 可跳过）。
 #
-# cron 部署（交易日 9:00 + 13:00）:
-#   0 9,13 * * 1-5 /Users/zcdeng/projects/KSS/scripts/run_intel_radar.sh
+# 部署：kss/config/cron_jobs.yaml 清单条目 + scripts/sync_launchd.py（不再手动 crontab -e）。
 #
 # 手动测试:
 #   bash scripts/run_intel_radar.sh
@@ -14,8 +13,18 @@
 set -e
 set -o pipefail
 
-PROJECT_ROOT="/Users/zcdeng/projects/KSS"
-PYTHON="/opt/homebrew/opt/python@3.11/bin/python3.11"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+if [ -n "${KSS_PYTHON:-}" ]; then
+    PYTHON="$KSS_PYTHON"
+elif [ -x "$HOME/Library/Application Support/KSS/venv/bin/python3" ]; then
+    PYTHON="$HOME/Library/Application Support/KSS/venv/bin/python3"
+elif [ -x "$PROJECT_ROOT/.venv-desktop/bin/python" ]; then
+    PYTHON="$PROJECT_ROOT/.venv-desktop/bin/python"
+else
+    echo "no usable python interpreter found (checked KSS_PYTHON, state-root venv, .venv-desktop)" >&2
+    exit 1
+fi
 
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') intel_radar 刷新开始 ====="
 

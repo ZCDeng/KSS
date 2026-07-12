@@ -10,30 +10,35 @@
 # 手动测试：
 #   bash scripts/run_paper_trade_weekly.sh
 #
-# cron 部署（每周五 17:00 收盘后）：
-#   0 17 * * 5 /Users/zcdeng/projects/KSS/scripts/run_paper_trade_weekly.sh >> /Users/zcdeng/projects/KSS/storage/logs/cron/paper_trade_weekly.log 2>&1
+# 部署：kss/config/cron_jobs.yaml 清单条目 + scripts/sync_launchd.py（不再手动 crontab -e）。
 
 set -e
 set -o pipefail
 
-PROJECT_ROOT="/Users/zcdeng/projects/KSS"
-PYTHON="/opt/homebrew/opt/python@3.11/bin/python3.11"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+if [ -n "${KSS_PYTHON:-}" ]; then
+    PYTHON="$KSS_PYTHON"
+elif [ -x "$HOME/Library/Application Support/KSS/venv/bin/python3" ]; then
+    PYTHON="$HOME/Library/Application Support/KSS/venv/bin/python3"
+elif [ -x "$PROJECT_ROOT/.venv-desktop/bin/python" ]; then
+    PYTHON="$PROJECT_ROOT/.venv-desktop/bin/python"
+else
+    echo "no usable python interpreter found (checked KSS_PYTHON, state-root venv, .venv-desktop)" >&2
+    exit 1
+fi
 KSS_ENV="$PROJECT_ROOT/.env"
 
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') paper_trade_weekly 开始 ====="
 
 # 加载 KSS .env Telegram 凭据（安全 grep 法，避开不规则 .env 行 source 错误）
-if [ -f "$KSS_ENV" ]; then
-  TELEGRAM_BOT_TOKEN=$(grep -E '^TELEGRAM_BOT_TOKEN=' "$KSS_ENV" | head -1 | cut -d= -f2-)
-  TELEGRAM_CHAT_ID=$(grep -E '^TELEGRAM_CHAT_ID=' "$KSS_ENV" | head -1 | cut -d= -f2-)
-  TELEGRAM_API_URL=$(grep -E '^TELEGRAM_API_URL=' "$KSS_ENV" | head -1 | cut -d= -f2-)
-  TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN%\"}"; TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN#\"}"
-  TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID%\"}"; TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID#\"}"
-  TELEGRAM_API_URL="${TELEGRAM_API_URL%\"}"; TELEGRAM_API_URL="${TELEGRAM_API_URL#\"}"
-  export TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID TELEGRAM_API_URL
+source "$PROJECT_ROOT/scripts/lib_cron_credentials.sh"
+if kss_load_credential TELEGRAM_BOT_TOKEN "$KSS_ENV"; then
+  kss_load_credential TELEGRAM_CHAT_ID "$KSS_ENV" || true
+  kss_load_credential TELEGRAM_API_URL "$KSS_ENV" || true
   echo "[wrapper] loaded TELEGRAM_BOT_TOKEN length=${#TELEGRAM_BOT_TOKEN} / TELEGRAM_CHAT_ID length=${#TELEGRAM_CHAT_ID} / TELEGRAM_API_URL=${TELEGRAM_API_URL:-<unset>}"
 else
-  echo "[wrapper] WARNING: $KSS_ENV 不存在，telegram 推送将降级到 console"
+  echo "[wrapper] WARNING: 未在 Keychain / $KSS_ENV 找到 telegram 凭据，推送将降级到 console"
 fi
 
 cd "$PROJECT_ROOT"
