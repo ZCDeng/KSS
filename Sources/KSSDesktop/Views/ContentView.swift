@@ -112,15 +112,9 @@ struct ContentView: View {
                             }
                             .foregroundStyle(store.selectedSection == .runbook ? theme.accent : theme.textSecondary)
                             .help(WorkspaceSection.runbook.displayName)
-                            Button {
-                                store.selectedSection = .architecture
-                            } label: {
-                                Label(WorkspaceSection.architecture.displayName, systemImage: WorkspaceSection.architecture.symbol)
-                            }
-                            .foregroundStyle(store.selectedSection == .architecture ? theme.accent : theme.textSecondary)
-                            .help(WorkspaceSection.architecture.displayName)
                             // Divider() 在这个 ToolbarItemGroup 里渲染成水平短横线而非竖线分隔符（KTD5 预见到的风险），
-                            // 改用固定宽度的竖线 Text 代替。分隔管理组（任务/架构）与用户组（主题/网络与凭据/刷新）。
+                            // 改用固定宽度的竖线 Text 代替。分隔管理组（任务）与用户组（主题/设置/刷新）。
+                            // 架构入口（plan 2026-07-12-005 U2）已移到侧边栏页脚与 GitHub 并排，不再占工具栏位。
                             // Seesaw 不在工具栏——它是全应用唯一的 AI 入口，改成侧边栏里常驻的 Post 式大按钮
                             // （SidebarView.seesawCTA），比工具栏小图标更醒目。
                             Text("|")
