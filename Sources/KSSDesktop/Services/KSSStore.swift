@@ -149,6 +149,18 @@ final class KSSStore: ObservableObject {
                 },
                 onConfirmRequired: { frame in
                     // 后台线程:建闸 → 主线程弹 modal → 阻塞等本人 tap（默认拒由 dismiss 触发）。
+                    //
+                    // 同一会话内多轮写确认时，SwiftUI 的 .sheet(item:) 有时不会为一次状态切换
+                    // 触发呈现——底层状态（pendingWriteConfirm）已经设对（日志证实过），弹窗却
+                    // 悄悄不出现。复现过两种触发方式（连续 approve、reject 后隔了近一分钟的新一
+                    // 轮），根因没能钉死在 SwiftUI 内部的哪一层，于是曾经尝试过"超时未 tap 就重新
+                    // 呈现一次"的自愈重试——**这个方向本身是错的，已回退**：重试时若上一次其实
+                    // 已经真呈现在屏幕上，再次把 pendingWriteConfirm 置 nil 会被 SwiftUI 当成一次
+                    // 真实的用户 dismiss，触发 .sheet 的 onDismiss（= 隐式拒绝），把用户还没来得及
+                    // 看到/点的写操作静默拒掉——比原来的卡死更糟（错误结果不可见，而不是可见地卡住）。
+                    // 现只保留"首次呈现前置空一次、下 tick 再赋值"这一步（对 nil→nil 无害，不会误
+                    // 触发 onDismiss），不做后续定时重试；SwiftUI 呈现失败仍可能复现，但至少不会
+                    // 把静默拒绝当成用户的真实决定。
                     let gate = ChatConfirmGate()
                     DispatchQueue.main.async { [weak self] in
                         guard let self else { gate.resolve(false); return }
@@ -158,12 +170,6 @@ final class KSSStore: ObservableObject {
                             callId: frame.callId ?? "", tool: frame.tool ?? "",
                             command: frame.command ?? "", effect: frame.effect ?? "执行写操作",
                             argsText: frame.argsText ?? "", contextLine: ctx)
-                        // 同一会话内连续多轮写确认时，SwiftUI 的 .sheet(item:) 有时不会为
-                        // 「非 nil → 非 nil」的直接覆盖识别出真正的状态切换——底层状态
-                        // （pendingWriteConfirm）已经设对，弹窗却悄悄不出现（实测第 2/3 轮
-                        // 均可复现，日志证实 store 状态始终正确，纯 UI 呈现层不触发）。
-                        // 显式先归零、下一 runloop tick 再赋值，强制拆成两次独立渲染，
-                        // 保证 SwiftUI 看到一次干净的 nil → 非 nil。
                         self.pendingWriteConfirm = nil
                         DispatchQueue.main.async { [weak self] in
                             self?.pendingWriteConfirm = confirm
