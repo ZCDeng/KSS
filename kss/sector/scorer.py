@@ -1,7 +1,7 @@
 """板块启发式评分 —— 热度 / 资金持续性 / 轮动信号.
 
-三个独立函数，纯输入 → 输出，不做 IO. 配置从 ``storage/sector_review_config.json``
-加载（文件缺失走默认）.
+三个独立函数，纯输入 → 输出，不做 IO. 配置从 kss.db 的 ``sector_review_config`` 表
+加载（表/库缺失走默认；plan 2026-07-12-005 / U15 域割接自 storage/sector_review_config.json）.
 """
 
 from __future__ import annotations
@@ -13,9 +13,9 @@ from typing import Any
 
 import pandas as pd
 
-logger = logging.getLogger(__name__)
+from kss.storage.db import connect, ensure_schema
 
-DEFAULT_CONFIG_PATH = Path("storage") / "sector_review_config.json"
+logger = logging.getLogger(__name__)
 
 # 拒绝硬编码权重在代码里 —— 配置走文件，权重调优不改代码.
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -38,23 +38,31 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 
-def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
-    """从 JSON 文件加载评分配置，缺失走默认 + warning.
+def load_config(db_path: str | Path | None = None) -> dict[str, Any]:
+    """从 kss.db 加载评分配置，缺失/损坏走默认 + warning.
 
     Returns:
-        合并了默认值的完整配置 dict（用户文件中缺失的键以 DEFAULT_CONFIG 补全）.
+        合并了默认值的完整配置 dict（用户配置中缺失的键以 DEFAULT_CONFIG 补全）.
     """
-    p = Path(path)
     config = dict(DEFAULT_CONFIG)
-    if not p.exists():
-        logger.info("评分配置 %s 不存在，使用默认权重", p)
+    try:
+        with connect(db_path) as conn:
+            ensure_schema(conn)
+            row = conn.execute(
+                "SELECT config_json FROM sector_review_config WHERE config_key='default'"
+            ).fetchone()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("加载 sector_review_config 失败: %s，回退到默认权重", exc)
+        return config
+    if row is None:
+        logger.info("sector_review_config 未配置，使用默认权重")
         return config
     try:
-        user = json.loads(p.read_text(encoding="utf-8"))
+        user = json.loads(row["config_json"])
         # 浅合并：用户键覆盖默认键
         config.update(user)
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("加载 %s 失败: %s，回退到默认权重", p, exc)
+    except json.JSONDecodeError as exc:
+        logger.warning("解析 sector_review_config 失败: %s，回退到默认权重", exc)
     return config
 
 

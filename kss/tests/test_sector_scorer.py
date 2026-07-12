@@ -4,7 +4,7 @@
 - 热度评分：权重 / 归一化 / 缺列容错
 - 资金持续性：累计 + 连续天数（含中间断档场景）
 - 轮动信号：排名跃升 + 净流入双重条件
-- 配置加载：默认值 / 缺文件 / 损坏 JSON
+- 配置加载：默认值 / 缺库 / 损坏数据（plan 2026-07-12-005 / U15 割接自 json 文件）
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from kss.sector.scorer import (
     compute_rotation_signal,
     load_config,
 )
+from kss.storage.db import connect, ensure_schema
 
 
 # ====================================================================== #
@@ -32,25 +33,42 @@ from kss.sector.scorer import (
 class TestLoadConfig:
     """load_config 行为."""
 
-    def test_returns_default_when_file_missing(self, tmp_path: Path) -> None:
-        """配置文件不存在 → 返回默认权重，不抛."""
-        config = load_config(tmp_path / "does_not_exist.json")
+    def test_returns_default_when_db_missing(self, tmp_path: Path) -> None:
+        """库不存在 → 返回默认权重，不抛（connect() 会新建空库+空表）."""
+        config = load_config(tmp_path / "does_not_exist.db")
         assert config == DEFAULT_CONFIG
 
     def test_loads_user_overrides(self, tmp_path: Path) -> None:
-        """用户文件存在 → 用户键覆盖默认."""
-        cfg_path = tmp_path / "cfg.json"
-        cfg_path.write_text(json.dumps({"top_n_industry": 10}))
-        config = load_config(cfg_path)
+        """用户配置存在 → 用户键覆盖默认."""
+        db_path = tmp_path / "kss.db"
+        with connect(db_path) as conn:
+            ensure_schema(conn)
+            conn.execute(
+                "INSERT INTO sector_review_config (config_key, config_json) VALUES ('default', ?)",
+                (json.dumps({"top_n_industry": 10}),),
+            )
+        config = load_config(db_path)
         assert config["top_n_industry"] == 10
         # 未覆盖的键保留默认
         assert config["industry_heat_weights"] == DEFAULT_CONFIG["industry_heat_weights"]
 
     def test_corrupted_json_falls_back_to_default(self, tmp_path: Path) -> None:
-        """损坏 JSON → 默认 + warning，不抛."""
-        cfg_path = tmp_path / "cfg.json"
-        cfg_path.write_text("{not valid json")
-        config = load_config(cfg_path)
+        """config_json 列存了非法 JSON → 默认 + warning，不抛."""
+        db_path = tmp_path / "kss.db"
+        with connect(db_path) as conn:
+            ensure_schema(conn)
+            conn.execute(
+                "INSERT INTO sector_review_config (config_key, config_json) VALUES ('default', ?)",
+                ("{not valid json",),
+            )
+        config = load_config(db_path)
+        assert config == DEFAULT_CONFIG
+
+    def test_corrupt_db_file_falls_back_to_default(self, tmp_path: Path) -> None:
+        """库文件本身损坏（非 sqlite）→ 默认 + warning，不抛."""
+        db_path = tmp_path / "kss.db"
+        db_path.write_bytes(b"not a real sqlite file")
+        config = load_config(db_path)
         assert config == DEFAULT_CONFIG
 
 

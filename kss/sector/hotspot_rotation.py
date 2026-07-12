@@ -395,7 +395,7 @@ def _apply_classification(
 def build_hotspot_rotation_snapshot(
     trade_date: str,
     client: TushareClient | None = None,
-    config_path: str | Path = "storage/sector_review_config.json",
+    config_path: str | Path | None = None,
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
     output_dir: str | Path = DEFAULT_OUTPUT_DIR,
     top_n_industry: int | None = None,
@@ -412,7 +412,8 @@ def build_hotspot_rotation_snapshot(
     Args:
         trade_date: 交易日，``YYYYMMDD``.
         client: ``TushareClient`` 实例；``None`` 时用默认单例.
-        config_path: 评分配置文件路径.
+        config_path: 评分配置 kss.db 路径覆盖（测试用）；``None`` 走默认 STATE_ROOT 解析
+            （plan 2026-07-12-005 / U15 割接自 storage/sector_review_config.json）.
         lookback_days: 历史回看交易日数（含当日）.
         output_dir: 历史归档目录.
         top_n_industry: 行业榜保留前 N；``None`` 保留全部.
