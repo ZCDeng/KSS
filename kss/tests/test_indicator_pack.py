@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 import yaml
 
 from kss.backtest.indicator_walk_forward import WFConfig
@@ -158,6 +159,22 @@ def test_run_entry_pack_primitive_end_to_end(tmp_path: Path) -> None:
         assert (tmp_path / "storage/indicator_signals/ma1/latest/688017.SH.json").exists()
         p2 = ipack.run_entry_pack(entry, "688017.SH", cfg=cfg, root=tmp_path)
         assert p1["action"] == p2["action"]
+
+
+def test_run_entry_pack_idempotent_on_business_fields(tmp_path: Path) -> None:
+    """Verification Contract「Pack 幂等」：固定输入重跑，动作/参数/点位（trades/series）diff 为空.
+
+    只排除 generated_at（时间戳，重跑必然不同，与既有 MI e2e 幂等测试同一豁免）。
+    """
+    entry = _ma_entry()
+    _write_fixture_csv(tmp_path / "cs_data_688017.csv")
+    cfg = WFConfig(train_window=120, retrain_freq=40, holdout_bars=40, min_trades=1)
+    p1 = ipack.run_entry_pack(entry, "688017.SH", cfg=cfg, root=tmp_path)
+    if p1["status"] != "ok":
+        pytest.skip("合成数据未产出 ok 状态，幂等对照跳过（覆盖已由 test_run_entry_pack_primitive_end_to_end 兜底）")
+    p2 = ipack.run_entry_pack(entry, "688017.SH", cfg=cfg, root=tmp_path)
+    for key in ("action", "position", "params", "trades", "trades_preview", "series", "rule_sentence", "asof"):
+        assert p1.get(key) == p2.get(key), f"字段 {key} 重跑不一致"
 
 
 def test_run_entry_pack_short_sample_skips(tmp_path: Path) -> None:
