@@ -40,8 +40,6 @@ REVIEW_DIR = STATE_ROOT / "storage" / "daily_review"
 REPORT_DIR = STATE_ROOT / "storage" / "reports"
 BJ_SCAN_DIR = REPORT_DIR / "bj50_scan"
 BJ_CACHE_DIR = STATE_ROOT / "storage" / "bj_cache"
-APP_RUN_DIR = STATE_ROOT / "storage" / "app_runs"
-TASK_LOG_PATH = APP_RUN_DIR / "kss_desktop_tasks.jsonl"
 SUPPLY_CHAIN_PATH = PROJECT_ROOT / "kss" / "config" / "supply_chain.yaml"  # config = 代码，随 bundle
 SECTOR_ROTATION_DIR = STATE_ROOT / "storage" / "sector_rotation"
 NEWS_DIGEST_DIR = STATE_ROOT / "storage" / "news_digest"  # 舆情热点 digest 归档(cron 生成)
@@ -679,25 +677,50 @@ def _task_result(
 
 
 def _append_task_history(result: dict[str, Any]) -> None:
-    APP_RUN_DIR.mkdir(parents=True, exist_ok=True)
-    with TASK_LOG_PATH.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(result, ensure_ascii=False, allow_nan=False, separators=(",", ":")) + "\n")
+    from kss.storage.db import connect, ensure_schema
+
+    db_path = STATE_ROOT / "storage" / "kss.db"
+    with connect(db_path) as conn:
+        ensure_schema(conn)
+        conn.execute(
+            """INSERT OR REPLACE INTO app_task_runs
+            (task_id, started_at, title, finished_at, status, exit_code, summary, stdout, stderr, artifacts_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                result.get("taskId"), result.get("startedAt"), result.get("title"),
+                result.get("finishedAt"), result.get("status", "unknown"), result.get("exitCode"),
+                result.get("summary"), result.get("stdout"), result.get("stderr"),
+                json.dumps(result.get("artifacts") or [], ensure_ascii=False),
+            ),
+        )
 
 
 def _task_history(limit: int = 25) -> list[dict[str, Any]]:
-    if not TASK_LOG_PATH.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    for line in TASK_LOG_PATH.read_text(encoding="utf-8", errors="ignore").splitlines():
-        if not line.strip():
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            rows.append(payload)
-    return list(reversed(rows[-limit:]))
+    from kss.storage.db import connect, ensure_schema
+
+    db_path = STATE_ROOT / "storage" / "kss.db"
+    with connect(db_path) as conn:
+        ensure_schema(conn)
+        rows = conn.execute(
+            """SELECT task_id, started_at, title, finished_at, status, exit_code, summary,
+            stdout, stderr, artifacts_json FROM app_task_runs ORDER BY started_at DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        out.append({
+            "taskId": row["task_id"],
+            "startedAt": row["started_at"],
+            "title": row["title"],
+            "finishedAt": row["finished_at"],
+            "status": row["status"],
+            "exitCode": row["exit_code"],
+            "summary": row["summary"],
+            "stdout": row["stdout"],
+            "stderr": row["stderr"],
+            "artifacts": json.loads(row["artifacts_json"]) if row["artifacts_json"] else [],
+        })
+    return out
 
 
 def _run_process_task(
