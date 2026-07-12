@@ -812,6 +812,47 @@ def _title_for(today_str: str, t1_str: str, sym: str = '', name: str = '') -> st
     return f"KSS {rf}"
 
 
+def _indicator_registry_sections(pack_key: str, bare_sym: str | None) -> list[str]:
+    """指标信号段：遍历 kss.indicators 注册表 active 条目，逐条读 pack + 格式化.
+
+    泛化自原先专属注入 MI 一个指标的代码块（见 plan 2026-07-12-004 U7）；MI 仍是
+    注册表里的一条（kind=mi_legacy），行为不变，只是不再 inline 硬编码在此函数里。
+    ``read_any_pack`` 内部已含裸代码 + .SH/.SZ/.BJ 后缀回退，不需要在此重复展开。
+    """
+    lines: list[str] = []
+    try:
+        from kss.indicators import pack as ipack
+        from kss.indicators.registry import active_entries
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("指标注册表不可用: %s", exc)
+        return lines
+
+    for entry in active_entries():
+        try:
+            symbol_pack = ipack.read_any_pack(entry, pack_key) if pack_key else None
+            if symbol_pack is None and bare_sym:
+                symbol_pack = ipack.read_any_pack(entry, bare_sym)
+            if symbol_pack is None:
+                symbol_pack = {
+                    "status": "missing",
+                    "reason": f"暂无 {entry.name} 信号包",
+                    "unpinned": False,
+                }
+            section_md = ipack.format_any_section(entry, symbol_pack)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("%s 段注入失败 %s: %s", entry.id, pack_key or bare_sym, exc)
+            continue
+        for ln in section_md.splitlines():
+            if ln.startswith("###"):
+                lines.append(f"  *{ln.lstrip('#').strip()}*")
+            elif ln.strip():
+                lines.append(f"  {ln}" if not ln.startswith("|") else ln)
+            else:
+                lines.append("")
+        lines.append("")
+    return lines
+
+
 def render(stocks: list[dict], idx_dfs: dict, today_str: str, t1_str: str,
            stale_through: str | None = None) -> list[str]:
     """生成 Markdown 推送正文, 返回多段消息列表 (Telegram 单条上限 4096).
@@ -910,36 +951,10 @@ def render(stocks: list[dict], idx_dfs: dict, today_str: str, t1_str: str,
             lines.extend(sanitize_validator_anchors(line) for line in history_recap)
             lines.append("")
 
-        # MI 滚动信号（Signal Pack；键为 ts_code 如 688017.SH）
-        try:
-            from kss.strategies.mi_pack import format_mi_section, read_pack
-
-            pack_key = s.get("ts_code") or s.get("sym")
-            pack = read_pack(str(pack_key)) if pack_key else None
-            if pack is None and s.get("sym"):
-                # 兜底：裸代码 + 常见交易所后缀
-                bare = str(s["sym"]).split(".")[0]
-                for suf in (".SH", ".SZ", ".BJ"):
-                    pack = read_pack(bare + suf)
-                    if pack is not None:
-                        break
-            if pack is None:
-                pack = {
-                    "status": "missing",
-                    "reason": "暂无 MI 信号包（请先 run_mi_signal_pack）",
-                    "unpinned": False,
-                }
-            mi_md = format_mi_section(pack)
-            for ln in mi_md.splitlines():
-                if ln.startswith("###"):
-                    lines.append(f"  *{ln.lstrip('#').strip()}*")
-                elif ln.strip():
-                    lines.append(f"  {ln}" if not ln.startswith("|") else ln)
-                else:
-                    lines.append("")
-            lines.append("")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("MI 段注入失败 %s: %s", s.get("ts_code") or s.get("sym"), exc)
+        # 指标信号段（注册表遍历；泛化自原 MI-only 注入块，键为 ts_code 如 688017.SH）
+        pack_key = s.get("ts_code") or s.get("sym")
+        bare_sym = str(s["sym"]).split(".")[0] if s.get("sym") else None
+        lines.extend(_indicator_registry_sections(str(pack_key) if pack_key else "", bare_sym))
 
         # 操作建议
         lines.extend(_advice_block(s))

@@ -155,6 +155,7 @@ def build_pack_from_wf(
     return {
         "schema_version": SCHEMA_VERSION,
         "indicator_id": entry.id,
+        "indicator_name": entry.name,
         "symbol": symbol,
         "asof": asof,
         "status": status,
@@ -258,7 +259,7 @@ def to_overlay(pack: dict[str, Any], history_dates: set[str] | None = None) -> d
 
 def format_section(pack: dict[str, Any]) -> str:
     """研究级 Markdown 段（generic 版，对齐 mi_pack.format_mi_section 排版）."""
-    name = pack.get("indicator_id") or "指标"
+    name = pack.get("indicator_name") or pack.get("indicator_id") or "指标"
     lines = [f"### {name} 信号", ""]
     if pack.get("status") != "ok":
         lines.append(f"- 状态: **{pack.get('status')}** — {pack.get('reason') or '无有效信号'}")
@@ -329,6 +330,7 @@ def run_entry_pack(
         pack = {
             "schema_version": SCHEMA_VERSION,
             "indicator_id": entry.id,
+            "indicator_name": entry.name,
             "symbol": code,
             "asof": asof or date.today().isoformat(),
             "status": "skipped",
