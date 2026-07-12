@@ -3710,6 +3710,83 @@ def _log_tail(name: str, lines: int = 500, grep: str = "") -> dict[str, Any]:
     return {"name": name, "lines": tail, "totalMatched": len(all_lines)}
 
 
+# ---------------------------------------------------------------------------
+# 启动自检（plan 2026-07-12-005 / U8 KTD4）——纯 stdlib、目标 <2s。
+# 失败分级：fail＝功能不可用（venv 损坏/目录不可写），warn＝功能受限（凭证未配）。
+# sidecar 本身不可达是第三种 fail（本函数跑得起来即说明 sidecar 已可达），那一项
+# 由 Swift 侧在 bridge 调用失败时兜底合成，不在这里出现。
+# ---------------------------------------------------------------------------
+
+def _check_venv() -> dict[str, Any]:
+    """运行时探针：子进程里真跑一次 `import pandas`，超时/失败即 fail（KTD4）。"""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", "import pandas"],
+            capture_output=True, timeout=5, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {"item": "venv", "status": "fail", "detail": "运行时探针超时(5s)",
+                 "fixHint": "重新初始化运行时", "fixAction": "reinit_runtime"}
+    except OSError as exc:
+        return {"item": "venv", "status": "fail", "detail": f"运行时不可用: {exc}",
+                 "fixHint": "重新初始化运行时", "fixAction": "reinit_runtime"}
+    if proc.returncode != 0:
+        stderr = proc.stderr.decode("utf-8", "ignore")[:200]
+        return {"item": "venv", "status": "fail", "detail": f"依赖不可用: {stderr}",
+                 "fixHint": "重新初始化运行时", "fixAction": "reinit_runtime"}
+    return {"item": "venv", "status": "ok", "detail": f"运行时正常（{sys.executable}）",
+             "fixHint": None, "fixAction": None}
+
+
+def _check_storage_writable() -> dict[str, Any]:
+    probe = STATE_ROOT / "storage" / ".selfcheck_probe"
+    try:
+        probe.parent.mkdir(parents=True, exist_ok=True)
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except OSError as exc:
+        return {"item": "storage", "status": "fail", "detail": f"数据目录不可写: {exc}",
+                 "fixHint": "检查磁盘权限与磁盘空间", "fixAction": None}
+    return {"item": "storage", "status": "ok", "detail": "数据目录可写", "fixHint": None, "fixAction": None}
+
+
+_CREDENTIAL_CHECKS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("tushare", "Tushare", ("TUSHARE_TOKEN",)),
+    ("longbridge", "Longbridge", ("LONGBRIDGE_APP_KEY", "LONGBRIDGE_APP_SECRET", "LONGBRIDGE_ACCESS_TOKEN")),
+    ("telegram", "Telegram", ("TELEGRAM_BOT_TOKEN",)),
+)
+
+
+def _check_credential(item: str, label: str, keys: tuple[str, ...]) -> dict[str, Any]:
+    """凭证在/不在（env 层面，够快够纯 stdlib）；缺失是 warn 不是 fail——
+    R12 认可的合法终态，不阻断应用可用性。"""
+    if all(os.environ.get(k, "").strip() for k in keys):
+        return {"item": item, "status": "ok", "detail": f"{label} 已配置",
+                 "fixHint": None, "fixAction": None}
+    return {"item": item, "status": "warn", "detail": f"未配置 {label}",
+             "fixHint": "去设置页数据源分区填写", "fixAction": "open_settings"}
+
+
+def _check_llm_credential() -> dict[str, Any]:
+    from kss.llm.openai_client import LLMUnavailable, _resolve_credential_candidates  # noqa: PLC0415
+
+    try:
+        _resolve_credential_candidates()
+    except LLMUnavailable:
+        return {"item": "llm", "status": "warn", "detail": "未配置任何 LLM 凭据",
+                 "fixHint": "去设置页数据源分区填写", "fixAction": "open_settings"}
+    return {"item": "llm", "status": "ok", "detail": "LLM 凭据已配置", "fixHint": None, "fixAction": None}
+
+
+def _self_check() -> dict[str, Any]:
+    """应用启动/手动自检（R3/R4）：venv + 数据目录 + 各凭证。"""
+    items = [_check_venv(), _check_storage_writable()]
+    for item, label, keys in _CREDENTIAL_CHECKS:
+        items.append(_check_credential(item, label, keys))
+    items.append(_check_llm_credential())
+    return {"items": items, "generatedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+
 def _kickstart_labels(labels: list[str], require_stale: bool) -> dict[str, Any]:
     """批量 kickstart：require_stale=True 只补跑漏跑项（开机自检/补跑），否则重跑全部启用项。
     label 必须命中白名单；停用项跳过；selfcheck 自身永不参与（避免递归补跑）。"""
@@ -4439,6 +4516,7 @@ COMMANDS = {
         "desc": "日志尾部读取+关键词过滤(路径白名单锁 storage/logs/)",
         "args": ["NAME", "[LINES]", "[GREP]"],
     },
+    "self-check": {"desc": "应用启动/手动自检(运行时/数据目录/各凭证)", "args": []},
 }
 
 # run_task 白名单 —— orientation 报此清单。须与 run_task() if-chain 实际接受集合一致
@@ -5375,6 +5453,8 @@ def dispatch(command: str, args: list[str]) -> Any:
         lines = int(args[1]) if len(args) > 1 and args[1] else 500
         grep = args[2] if len(args) > 2 else ""
         return _log_tail(args[0], lines, grep)
+    if command == "self-check":
+        return _self_check()
     if command == "version":
         # 返回 sidecar 代码版本指纹，供 Swift 端校验陈旧进程。
         return {"version": _sidecar_version_fingerprint()}

@@ -1829,6 +1829,41 @@ struct IntradayBars: Codable, Hashable {
     }
 }
 
+// MARK: - 启动自检（plan 2026-07-12-005 / U8，bridge `self-check`）
+
+/// 单项自检结果。status: ok / warn / fail。
+struct SelfCheckItem: Codable, Hashable, Identifiable {
+    var id: String { item }
+    var item: String        // venv / storage / tushare / longbridge / telegram / llm
+    var status: String      // "ok" | "warn" | "fail"
+    var detail: String
+    var fixHint: String?
+    var fixAction: String?  // "reinit_runtime" | "open_settings" | nil
+
+    var isOK: Bool { status == "ok" }
+    var isWarn: Bool { status == "warn" }
+    var isFail: Bool { status == "fail" }
+
+    /// 人读条目名（横幅/设置页共用）。
+    var displayName: String {
+        switch item {
+        case "venv": return "运行时"
+        case "storage": return "数据目录"
+        case "tushare": return "Tushare"
+        case "longbridge": return "Longbridge"
+        case "telegram": return "Telegram"
+        case "llm": return "LLM 端点"
+        case "sidecar": return "后台服务"
+        default: return item
+        }
+    }
+}
+
+struct SelfCheckResponse: Codable, Hashable {
+    var items: [SelfCheckItem]
+    var generatedAt: String
+}
+
 // MARK: - 日志分区（plan 2026-07-12-005 / U7，bridge `log-list` / `log-tail`）
 
 /// 单个日志文件（含轮转代）。

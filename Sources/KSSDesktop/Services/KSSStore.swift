@@ -57,6 +57,16 @@ final class KSSStore: ObservableObject {
     /// 启动时检测 Keychain 中是否有 OpenAI/DeepSeek 凭据
     @Published var hasLLMCredentials: Bool = false
 
+    // MARK: 启动自检（plan 2026-07-12-005 / U8）
+    @Published var selfCheckItems: [SelfCheckItem] = []
+    @Published var selfCheckGeneratedAt: String?
+    @Published var isRunningSelfCheck = false
+    /// 当前会话内是否已手动关闭 fail 横幅（会话内不再自动弹，重跑自检后重置）。
+    @Published var selfCheckBannerDismissed = false
+    var selfCheckHasFail: Bool { selfCheckItems.contains { $0.isFail } }
+    var selfCheckHasWarn: Bool { selfCheckItems.contains { $0.isWarn } }
+    var showSelfCheckBanner: Bool { selfCheckHasFail && !selfCheckBannerDismissed }
+
     // MARK: 资讯雷达 reader workbench（plan 2026-07-10-001）
     @Published var selectedIntelItemID: String?
     @Published var intelArticleByID: [String: IntelArticleResponse] = [:]
@@ -815,6 +825,60 @@ final class KSSStore: ObservableObject {
         let env = KeychainStore.injectedEnvironment()
         hasLLMCredentials = (env["OPENAI_API_KEY"]?.isEmpty == false)
             || (env["DEEPSEEK_API_KEY"]?.isEmpty == false)
+    }
+
+    /// 启动/手动自检（plan 2026-07-12-005 / U8）。bridge 不可达（sidecar 起不来）本身
+    /// 就是一项 fail——KTD4 明示由 Swift 侧兜底合成，self-check 命令自己跑不起来时
+    /// 无法自证，只能靠调用方判断"够不到"这件事本身。
+    func runSelfCheck() async {
+        isRunningSelfCheck = true
+        defer { isRunningSelfCheck = false }
+        guard let bridge else {
+            selfCheckItems = [SelfCheckItem(
+                item: "sidecar", status: "fail",
+                detail: "找不到项目根目录，后台服务未能启动",
+                fixHint: "检查安装完整性", fixAction: nil
+            )]
+            selfCheckBannerDismissed = false
+            return
+        }
+        let resp = try? await Task.detached { try bridge.selfCheck() }.value
+        guard let resp else {
+            selfCheckItems = [SelfCheckItem(
+                item: "sidecar", status: "fail",
+                detail: "后台服务无响应",
+                fixHint: "重新初始化运行时", fixAction: "reinit_runtime"
+            )]
+            selfCheckBannerDismissed = false
+            return
+        }
+        selfCheckItems = resp.items
+        selfCheckGeneratedAt = resp.generatedAt
+        selfCheckBannerDismissed = false   // 新一轮结果，重新允许横幅（若仍有 fail）
+    }
+
+    /// 横幅/设置页"关闭"——仅当前会话生效，重跑自检会重置。
+    func dismissSelfCheckBanner() {
+        selfCheckBannerDismissed = true
+    }
+
+    /// 自检 fixAction=reinit_runtime 的落地动作（U8）：强删旧 venv 重跑 uv sync，
+    /// 修复"解释器文件在但已损坏"的场景；完成后重启 sidecar 并重跑自检验证是否恢复。
+    @Published var isReinitializingRuntime = false
+
+    func reinitializeRuntime() async {
+        guard let bridge else { return }
+        isReinitializingRuntime = true
+        defer { isReinitializingRuntime = false }
+        do {
+            try await Task.detached {
+                try BridgeClient.reinitializeRuntime(projectRoot: bridge.projectRoot, stateRoot: bridge.stateRoot)
+            }.value
+            BridgeClient.restartSidecarForEnvChange()
+        } catch {
+            errorMessage = "重新初始化运行时失败：\(error.localizedDescription)"
+        }
+        await runSelfCheck()
     }
 
     /// U3: 加载 Dashboard 资讯摘要（轻量，仅取赛道计数 + 最近标题）。

@@ -5,6 +5,7 @@ import SwiftUI
 /// 均并入本页，不保留重复 UI（U5/U10 见 Key Decisions）。
 struct SettingsView: View {
     @Environment(\.kssTheme) private var theme
+    @EnvironmentObject private var store: KSSStore
 
     var body: some View {
         GeometryReader { geo in
@@ -12,6 +13,7 @@ struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     PageTitle("设置", subtitle: "密钥 / 数据源 / 任务 / 日志的唯一入口")
+                    SelfCheckStatusStrip()
 
                     SectionHeader("密钥")
                     SettingsKeysSection()
@@ -458,5 +460,174 @@ struct SettingsLogsSection: View {
         let resp = try? await Task.detached { try bridge.logTail(name: name, lines: 500, grep: grep) }.value
         tailLines = resp?.lines ?? []
         totalMatched = resp?.totalMatched ?? 0
+    }
+}
+
+// MARK: - 自检状态 header strip（U8）
+
+/// 设置页顶部：自检结果摘要 + 手动重跑入口。位于四分区之上（不属于任一分区）。
+struct SelfCheckStatusStrip: View {
+    @Environment(\.kssTheme) private var theme
+    @EnvironmentObject private var store: KSSStore
+    @State private var expanded = false
+
+    private var failCount: Int { store.selfCheckItems.filter(\.isFail).count }
+    private var warnCount: Int { store.selfCheckItems.filter(\.isWarn).count }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: statusIcon)
+                    .foregroundStyle(statusTint)
+                Text(summaryText)
+                    .font(KSSFont.themed(13, .semibold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                if let at = store.selfCheckGeneratedAt {
+                    Text("· \(at)")
+                        .font(KSSFont.themed(11, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                Spacer()
+                if !store.selfCheckItems.isEmpty {
+                    Button(expanded ? "收起" : "详情") { expanded.toggle() }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                }
+                Button {
+                    Task { await store.runSelfCheck() }
+                } label: {
+                    if store.isRunningSelfCheck {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("重新自检", systemImage: "arrow.clockwise")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(store.isRunningSelfCheck)
+            }
+            if expanded {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(store.selfCheckItems) { item in
+                        selfCheckItemRow(item)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+    }
+
+    private var statusIcon: String {
+        if failCount > 0 { return "xmark.octagon.fill" }
+        if warnCount > 0 { return "exclamationmark.triangle.fill" }
+        return "checkmark.circle.fill"
+    }
+
+    private var statusTint: Color {
+        if failCount > 0 { return theme.up }
+        if warnCount > 0 { return theme.ma5 }
+        return theme.accent
+    }
+
+    private var summaryText: String {
+        if store.selfCheckItems.isEmpty { return "尚未自检" }
+        if failCount == 0 && warnCount == 0 { return "自检全绿" }
+        var parts: [String] = []
+        if failCount > 0 { parts.append("\(failCount) 项异常") }
+        if warnCount > 0 { parts.append("\(warnCount) 项未配置") }
+        return parts.joined(separator: " · ")
+    }
+
+    private func selfCheckItemRow(_ item: SelfCheckItem) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: item.isOK ? "checkmark.circle.fill" : (item.isFail ? "xmark.octagon.fill" : "exclamationmark.triangle.fill"))
+                .font(.system(size: 11))
+                .foregroundStyle(item.isOK ? theme.accent : (item.isFail ? theme.up : theme.ma5))
+            Text(item.displayName)
+                .font(KSSFont.themed(12, .semibold, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+            Text(item.detail)
+                .font(KSSFont.themed(11.5, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+            Spacer()
+            if let hint = item.fixHint, !item.isOK {
+                Text(hint)
+                    .font(KSSFont.themed(11, theme: theme))
+                    .foregroundStyle(theme.accent)
+            }
+        }
+    }
+}
+
+/// 启动自检 fail 横幅（KTD4）：仅存在 fail 项时自动弹，当前会话可关；warn 只在设置页可见。
+struct SelfCheckBanner: View {
+    @Environment(\.kssTheme) private var theme
+    var items: [SelfCheckItem]   // 仅 fail 项
+    var isBusy: Bool
+    var onDismiss: () -> Void
+    var onOpenSettings: () -> Void
+    var onReinitRuntime: () -> Void
+    @State private var expanded = false
+
+    private var wantsReinit: Bool { items.contains { $0.fixAction == "reinit_runtime" } }
+    private var wantsSettings: Bool { items.contains { $0.fixAction == "open_settings" } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: "xmark.octagon.fill")
+                    .foregroundStyle(theme.up)
+                Text("\(items.count) 项自检未通过")
+                    .font(KSSFont.themed(13, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                Button(expanded ? "收起" : "详情") { expanded.toggle() }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                Spacer()
+                if wantsReinit {
+                    Button {
+                        onReinitRuntime()
+                    } label: {
+                        if isBusy { ProgressView().controlSize(.small) }
+                        else { Text("重新初始化运行时") }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(isBusy)
+                }
+                if wantsSettings {
+                    Button("去设置") { onOpenSettings() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+                Button {
+                    onDismiss()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(theme.textSecondary)
+                }
+                .buttonStyle(.plain)
+            }
+            if expanded {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(items) { item in
+                        HStack(spacing: 6) {
+                            Text(item.displayName)
+                                .font(KSSFont.themed(11.5, .semibold, theme: theme))
+                            Text(item.detail)
+                                .font(KSSFont.themed(11.5, theme: theme))
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 11)
+        .frame(maxWidth: 640)
+        .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeL))
+        .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeL).strokeBorder(theme.up.opacity(0.35), lineWidth: 1))
+        .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
     }
 }

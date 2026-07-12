@@ -1,0 +1,124 @@
+"""U8 测试：`self-check` bridge 命令（R3/R4，plan 2026-07-12-005）.
+
+- 只读命令：不进 WRITE_COMMANDS。
+- 全绿环境 → 全 ok。
+- 移走某凭据 → 该项 warn，fixHint 指向设置页（不是 fail——R12 合法终态）。
+- venv 探针失败 → fail + fixAction=reinit_runtime。
+跑：uv run pytest kss/tests/test_bridge_selfcheck.py -q
+"""
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+import kss_app_bridge as b  # noqa: E402
+
+_ALL_CREDENTIAL_ENV = (
+    "TUSHARE_TOKEN", "LONGBRIDGE_APP_KEY", "LONGBRIDGE_APP_SECRET", "LONGBRIDGE_ACCESS_TOKEN",
+    "TELEGRAM_BOT_TOKEN", "KSS_LLM_PRIMARY_KEY", "KSS_LLM_FALLBACK_KEY",
+    "DEEPSEEK_API_KEY", "OPENAI_API_KEY",
+)
+
+
+@pytest.fixture
+def all_credentials_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in _ALL_CREDENTIAL_ENV:
+        monkeypatch.setenv(key, "fake-value")
+
+
+@pytest.fixture
+def no_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in _ALL_CREDENTIAL_ENV:
+        monkeypatch.delenv(key, raising=False)
+
+
+def test_is_read_only():
+    assert "self-check" not in b.WRITE_COMMANDS
+    assert "self-check" in b.COMMANDS
+
+
+class TestFullyConfigured:
+    def test_all_items_ok(self, all_credentials_set, monkeypatch, tmp_path):
+        monkeypatch.setattr(b, "STATE_ROOT", tmp_path)
+        result = b._self_check()
+        statuses = {item["item"]: item["status"] for item in result["items"]}
+        assert statuses["storage"] == "ok"
+        assert statuses["tushare"] == "ok"
+        assert statuses["longbridge"] == "ok"
+        assert statuses["telegram"] == "ok"
+        assert statuses["llm"] == "ok"
+        assert "generatedAt" in result
+
+
+class TestMissingCredentials:
+    def test_missing_tushare_is_warn_not_fail(self, no_credentials, monkeypatch, tmp_path):
+        monkeypatch.setattr(b, "STATE_ROOT", tmp_path)
+        monkeypatch.setenv("TUSHARE_TOKEN", "present")
+        result = b._self_check()
+        by_item = {item["item"]: item for item in result["items"]}
+        assert by_item["tushare"]["status"] == "ok"
+        assert by_item["longbridge"]["status"] == "warn"
+        assert by_item["longbridge"]["fixHint"] == "去设置页数据源分区填写"
+        assert by_item["longbridge"]["fixAction"] == "open_settings"
+
+    def test_no_credentials_all_warn(self, no_credentials, monkeypatch, tmp_path):
+        monkeypatch.setattr(b, "STATE_ROOT", tmp_path)
+        result = b._self_check()
+        by_item = {item["item"]: item for item in result["items"]}
+        for item in ("tushare", "longbridge", "telegram", "llm"):
+            assert by_item[item]["status"] == "warn"
+        # venv/storage 与凭据无关，不受影响。
+        assert by_item["storage"]["status"] == "ok"
+
+
+class TestVenvProbe:
+    def test_import_success_is_ok(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(b, "STATE_ROOT", tmp_path)
+        fake_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"", stderr=b"")
+        with patch.object(b.subprocess, "run", return_value=fake_proc):
+            result = b._check_venv()
+        assert result["status"] == "ok"
+
+    def test_import_failure_is_fail_with_reinit_action(self, tmp_path):
+        fake_proc = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout=b"", stderr=b"ModuleNotFoundError: No module named 'pandas'"
+        )
+        with patch.object(b.subprocess, "run", return_value=fake_proc):
+            result = b._check_venv()
+        assert result["status"] == "fail"
+        assert result["fixAction"] == "reinit_runtime"
+        assert "pandas" in result["detail"]
+
+    def test_timeout_is_fail(self):
+        with patch.object(b.subprocess, "run", side_effect=subprocess.TimeoutExpired(cmd="x", timeout=5)):
+            result = b._check_venv()
+        assert result["status"] == "fail"
+        assert "超时" in result["detail"]
+
+
+class TestStorageProbe:
+    def test_writable_dir_is_ok(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(b, "STATE_ROOT", tmp_path)
+        result = b._check_storage_writable()
+        assert result["status"] == "ok"
+
+    def test_unwritable_dir_is_fail(self, tmp_path, monkeypatch):
+        readonly_root = tmp_path / "readonly"
+        readonly_root.mkdir()
+        readonly_root.chmod(0o400)
+        monkeypatch.setattr(b, "STATE_ROOT", readonly_root)
+        try:
+            result = b._check_storage_writable()
+            assert result["status"] == "fail"
+        finally:
+            readonly_root.chmod(0o700)  # 恢复权限，避免 tmp_path 清理失败
+
+
+def test_dispatch_wires_self_check(monkeypatch):
+    monkeypatch.setattr(b, "_self_check", lambda: {"items": []})
+    assert b.dispatch("self-check", []) == {"items": []}

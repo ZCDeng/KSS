@@ -140,6 +140,20 @@ struct ContentView: View {
         .frame(minWidth: 1080, minHeight: 720)
         .onAppear { syncWatchlistFile(watchlist) }
         .onChange(of: scenePhase) { _, phase in store.updateSceneActive(phase == .active) }   // U5: Timer lifecycle gate
+        .overlay(alignment: .top) {
+            if store.showSelfCheckBanner {
+                SelfCheckBanner(
+                    items: store.selfCheckItems.filter { $0.isFail },
+                    isBusy: store.isRunningSelfCheck || store.isReinitializingRuntime,
+                    onDismiss: { store.dismissSelfCheckBanner() },
+                    onOpenSettings: { store.selectedSection = .settings },
+                    onReinitRuntime: { Task { await store.reinitializeRuntime() } }
+                )
+                .padding(.top, 12)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: store.showSelfCheckBanner)
         .overlay(alignment: .bottom) {
             if let sym = store.importingSymbol {
                 HStack(spacing: 10) {

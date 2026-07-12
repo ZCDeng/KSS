@@ -125,6 +125,11 @@ struct BridgeClient {
         try run(["log-tail", name, String(lines), grep], as: LogTailResponse.self)
     }
 
+    /// 启动/手动自检（plan 2026-07-12-005 / U8）：运行时、数据目录、各凭证。
+    func selfCheck() throws -> SelfCheckResponse {
+        try run(["self-check"], as: SelfCheckResponse.self)
+    }
+
     /// 数据源连通性测试（设置页数据源分区，plan 2026-07-12-005 / U4）。只读，不需写确认。
     func datasourceTest(source: String) throws -> DataSourceTestResult {
         try run(["datasource-test", source], as: DataSourceTestResult.self)
@@ -948,10 +953,23 @@ struct BridgeClient {
     /// bundle-mode 首启：state-root venv 缺失则 `uv sync --frozen` provision（dev-mode 跳过）。
     static func provisionRuntimeIfNeeded(projectRoot: URL, stateRoot: URL) throws {
         guard !isDevMode else { return }                 // dev 用 .venv-desktop，不 bootstrap
+        let venvPy = stateRoot.appending(path: "venv/bin/python3")
+        if FileManager.default.isExecutableFile(atPath: venvPy.path) { return }   // 已 provision
+        try runUVSync(projectRoot: projectRoot, stateRoot: stateRoot)
+    }
+
+    /// 自检"重新初始化运行时"（plan 2026-07-12-005 / U8 KTD4）：解释器文件存在但已损坏
+    /// （import 失败）时，`provisionRuntimeIfNeeded` 的存在性检查会误判"已 provision"而跳过——
+    /// 这里强制先删旧 venv 再重跑同一套 uv sync，修复损坏但文件仍在的场景。
+    static func reinitializeRuntime(projectRoot: URL, stateRoot: URL) throws {
+        guard !isDevMode else { return }
+        try? FileManager.default.removeItem(at: stateRoot.appending(path: "venv"))
+        try runUVSync(projectRoot: projectRoot, stateRoot: stateRoot)
+    }
+
+    private static func runUVSync(projectRoot: URL, stateRoot: URL) throws {
         let fm = FileManager.default
         let venvPy = stateRoot.appending(path: "venv/bin/python3")
-        if fm.isExecutableFile(atPath: venvPy.path) { return }   // 已 provision
-
         guard let uv = findUV() else {
             throw BridgeError.runtimeBootstrapFailed(
                 "未找到 uv，请先安装：curl -LsSf https://astral.sh/uv/install.sh | sh")
