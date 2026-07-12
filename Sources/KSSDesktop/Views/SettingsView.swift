@@ -20,7 +20,7 @@ struct SettingsView: View {
                     SettingsDataSourcesSection()
 
                     SectionHeader("任务")
-                    SettingsPlaceholderCard(text: "定时任务管理（U5）即将上线")
+                    SettingsTasksSection()
 
                     SectionHeader("日志")
                     SettingsPlaceholderCard(text: "应用内日志查看器（U7）即将上线")
@@ -322,5 +322,29 @@ struct SettingsDataSourcesSection: View {
         if let result {
             results[source.rawValue] = result
         }
+    }
+}
+
+// MARK: - 任务分区（U5：承接原 Runbook 页面「定时任务」面板全部能力）
+
+/// 薄包装：把 store 状态/方法接到既有 `ScheduledTasksSection`（组件本身不动，纯搬迁）。
+struct SettingsTasksSection: View {
+    @EnvironmentObject private var store: KSSStore
+
+    var body: some View {
+        ScheduledTasksSection(
+            jobs: store.scheduledJobs,
+            categoryOrder: store.cronCategoryOrder,
+            busy: store.scheduledBusy,
+            batchBusy: store.scheduledBatchBusy,
+            batchNote: store.scheduledBatchNote,
+            onRerun: { label in Task { await store.rerunScheduledJob(label) } },
+            onToggle: { label, enabled in Task { await store.toggleScheduledJob(label, enabled: enabled) } },
+            onSync: { label in Task { await store.syncScheduledJobs(label) } },
+            onCatchUp: { Task { await store.catchUpStaleJobs() } },
+            onRerunMany: { labels in Task { await store.rerunScheduledJobs(labels) } },
+            onDismissBatchNote: { store.scheduledBatchNote = nil }
+        )
+        .task { await store.loadScheduledJobs() }
     }
 }

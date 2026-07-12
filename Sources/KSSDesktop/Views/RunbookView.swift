@@ -5,19 +5,7 @@ struct RunbookView: View {
     var pythonEnvironment: PythonEnvironment?
     var isRunning: Bool
     var results: [TaskRunResult]
-    var scheduledJobs: [ScheduledJob]
-    var categoryOrder: [String]
-    var scheduledBusy: Set<String>
-    var scheduledBatchBusy: Bool
-    var scheduledBatchNote: String?
     var onRun: (KSSTask) -> Void
-    var onLoadSchedules: () -> Void
-    var onRerunSchedule: (String) -> Void
-    var onToggleSchedule: (String, Bool) -> Void
-    var onSyncSchedule: (String) -> Void
-    var onCatchUp: () -> Void
-    var onRerunMany: ([String]) -> Void
-    var onDismissBatchNote: () -> Void
 
     private var quickTasks: [KSSTask] {
         KSSTask.allCases.filter { $0.lane == "轻量" }
@@ -42,21 +30,6 @@ struct RunbookView: View {
                     SectionHeader("正式任务")
                     TaskGrid(tasks: fullTasks, isRunning: isRunning, onRun: onRun)
 
-                    SectionHeader("定时任务")
-                    ScheduledTasksSection(
-                        jobs: scheduledJobs,
-                        categoryOrder: categoryOrder,
-                        busy: scheduledBusy,
-                        batchBusy: scheduledBatchBusy,
-                        batchNote: scheduledBatchNote,
-                        onRerun: onRerunSchedule,
-                        onToggle: onToggleSchedule,
-                        onSync: onSyncSchedule,
-                        onCatchUp: onCatchUp,
-                        onRerunMany: onRerunMany,
-                        onDismissBatchNote: onDismissBatchNote
-                    )
-
                     SectionHeader("任务记录")
                     if results.isEmpty {
                         Text("暂无任务运行记录")
@@ -78,11 +51,11 @@ struct RunbookView: View {
             .background(theme.canvas)
         }
         .background(theme.canvas)
-        .task { onLoadSchedules() }
     }
 }
 
 /// 定时任务（launchd）面板：健康汇总 + 关机漏跑补跑 + 按分类分组（每类批量重跑）+ 行级重跑/启停。
+/// U5（plan 2026-07-12-005）：迁入设置页「任务」分区，本页只保留手动任务运行台；组件本身不动。
 struct ScheduledTasksSection: View {
     @Environment(\.kssTheme) private var theme
     var jobs: [ScheduledJob]

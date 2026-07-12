@@ -279,19 +279,7 @@ struct ContentView: View {
                     pythonEnvironment: snapshot.pythonEnvironment,
                     isRunning: store.isRunningTask,
                     results: store.taskResults,
-                    scheduledJobs: store.scheduledJobs,
-                    categoryOrder: store.cronCategoryOrder,
-                    scheduledBusy: store.scheduledBusy,
-                    scheduledBatchBusy: store.scheduledBatchBusy,
-                    scheduledBatchNote: store.scheduledBatchNote,
-                    onRun: { task in Task { await store.runTask(task) } },
-                    onLoadSchedules: { Task { await store.loadScheduledJobs() } },
-                    onRerunSchedule: { label in Task { await store.rerunScheduledJob(label) } },
-                    onToggleSchedule: { label, enabled in Task { await store.toggleScheduledJob(label, enabled: enabled) } },
-                    onSyncSchedule: { label in Task { await store.syncScheduledJobs(label) } },
-                    onCatchUp: { Task { await store.catchUpStaleJobs() } },
-                    onRerunMany: { labels in Task { await store.rerunScheduledJobs(labels) } },
-                    onDismissBatchNote: { store.scheduledBatchNote = nil }
+                    onRun: { task in Task { await store.runTask(task) } }
                 )
             case .themes:
                 ThemesView(
