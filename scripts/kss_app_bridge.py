@@ -3673,6 +3673,274 @@ def _theme_leaders() -> list[dict[str, Any]]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# 指标研究实验室（U4 / plan 2026-07-12-004）—— Seesaw 新写工具的 bridge 命令面。
+# 只读：indicator-lab-list / indicator-backtest / indicator-suggest。
+# 写（须人工确认，走 confirm_required + KSS_APP_LIVE）：indicator-solidify / indicator-retire。
+# 惰性 import kss.indicators.*（含 pandas 依赖），异常降级不崩 daemon（同 stock_detail 的
+# mi_pack 先例：try/except 打 stderr，不让指标实验室不可用拖垮其它命令）。
+# ---------------------------------------------------------------------------
+
+INDICATOR_LAB_DIR = STATE_ROOT / "storage" / "indicator_lab"
+INDICATOR_LAB_VERDICTS_DIR = INDICATOR_LAB_DIR / "verdicts"
+_INDICATOR_BACKTEST_MAX_SYMBOLS = 8
+
+
+def _indicator_watchlist_symbols() -> list[str]:
+    """自选列表（App 写 storage/watchlist_symbols.txt，一行一码）；同 collect_intraday 惯例。"""
+    path = STATE_ROOT / "storage" / "watchlist_symbols.txt"
+    if not path.is_file():
+        return []
+    out: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        s = line.strip()
+        if s and not s.startswith("#"):
+            out.append(s)
+    return out
+
+
+def _verdict_key(family: str, params: dict[str, Any]) -> str:
+    """family+params → 稳定短哈希；同时用作 NO-GO 记忆键与固化 entry_id 后缀（路径安全：
+    只由固定枚举 family + 十六进制哈希拼成，从不掺入原始用户/LLM 文本）。"""
+    raw = json.dumps({"family": family, "params": params}, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _indicator_lab_list() -> dict[str, Any]:
+    try:
+        from kss.indicators.registry import load_registry
+    except Exception as exc:  # noqa: BLE001
+        return {"error": "indicator_lab_unavailable", "hint": str(exc)}
+    entries = load_registry()
+    return {
+        "entries": [
+            {
+                "id": e.id, "name": e.name, "kind": e.kind, "family": e.family,
+                "params": e.params, "status": e.status, "solidifiedAt": e.solidified_at,
+                "verdictRef": e.verdict_ref,
+            }
+            for e in entries
+        ],
+        "recentVerdicts": _indicator_lab_recent_verdicts(),
+    }
+
+
+def _indicator_lab_recent_verdicts(limit: int = 20) -> list[dict[str, Any]]:
+    if not INDICATOR_LAB_VERDICTS_DIR.exists():
+        return []
+    files = sorted(
+        INDICATOR_LAB_VERDICTS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
+    )
+    out: list[dict[str, Any]] = []
+    for p in files[:limit]:
+        try:
+            out.append(json.loads(p.read_text(encoding="utf-8")))
+        except Exception:  # noqa: BLE001
+            continue
+    return out
+
+
+def _persist_verdict(
+    family: str, params: dict[str, Any], symbols: list[str], results: list[dict[str, Any]], overall_go: bool
+) -> str | None:
+    """裁决落盘（含 NO-GO 记忆，供 indicator-suggest 避免重复提议）；fail-silent，不影响返回。"""
+    try:
+        INDICATOR_LAB_VERDICTS_DIR.mkdir(parents=True, exist_ok=True)
+        key = _verdict_key(family, params)
+        path = INDICATOR_LAB_VERDICTS_DIR / f"{key}.json"
+        payload = {
+            "family": family, "params": params, "symbols": symbols,
+            "go": overall_go, "results": results, "judgedAt": _now_iso(),
+        }
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return str(path.relative_to(STATE_ROOT))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _indicator_no_go_keys() -> set[str]:
+    if not INDICATOR_LAB_VERDICTS_DIR.exists():
+        return set()
+    out: set[str] = set()
+    for p in INDICATOR_LAB_VERDICTS_DIR.glob("*.json"):
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        if data.get("go") is False:
+            out.add(_verdict_key(data.get("family", ""), data.get("params", {})))
+    return out
+
+
+def _indicator_backtest(family: str, params_json: str = "", symbols_csv: str = "") -> dict[str, Any]:
+    """研究期回测：只读命令（结果惰性缓存裁决，不改注册表/rules——同 intraday page-pull 先例）。"""
+    try:
+        from kss.indicators import pack as ipack
+        from kss.indicators.gate import judge
+        from kss.indicators.primitives import default_params
+        from kss.indicators.rules import IndicatorSpec
+    except Exception as exc:  # noqa: BLE001
+        return {"error": "indicator_lab_unavailable", "hint": str(exc)}
+
+    try:
+        override = json.loads(params_json) if params_json else {}
+    except json.JSONDecodeError as exc:
+        return {"error": "bad_json_params", "hint": str(exc)}
+    if not isinstance(override, dict):
+        return {"error": "bad_json_params", "hint": "params 须为 JSON 对象"}
+    try:
+        # params 是"叠加在族默认值上的覆写"，不要求调用方补全全部字段
+        # （LLM 常只想改一两个参数，如"fast 改成 10 呢"）。
+        params = {**default_params(family), **override}
+        spec = IndicatorSpec(family, params)
+    except ValueError as exc:
+        return {"error": "bad_family", "hint": str(exc)}
+
+    symbols = [s.strip().upper() for s in (symbols_csv or "").split(",") if s.strip()]
+    if not symbols:
+        symbols = _indicator_watchlist_symbols()
+    if not symbols:
+        return {"error": "no_symbols", "hint": "未传 symbols 且自选列表为空"}
+    if len(symbols) > _INDICATOR_BACKTEST_MAX_SYMBOLS:
+        return {"error": "too_many_symbols", "hint": f"单次最多 {_INDICATOR_BACKTEST_MAX_SYMBOLS} 只，请分批"}
+
+    results: list[dict[str, Any]] = []
+    for sym in symbols:
+        code = sym if "." in sym else f"{sym}.SH"
+        try:
+            df = ipack.load_ohlcv(code)
+        except Exception as exc:  # noqa: BLE001
+            results.append({"symbol": code, "status": "error", "reason": str(exc)[:200]})
+            continue
+        if df is None or len(df) < 80:
+            results.append({"symbol": code, "status": "skipped", "reason": "无行情或样本过短"})
+            continue
+        verdict = judge(df, spec)
+        results.append({
+            "symbol": code,
+            "status": "judged",
+            "go": verdict.go,
+            "dimensions": [
+                {"name": d.name, "passed": d.passed, "value": d.value, "detail": d.detail}
+                for d in verdict.dimensions
+            ],
+        })
+
+    judged = [r for r in results if r.get("status") == "judged"]
+    overall_go = bool(judged) and all(r["go"] for r in judged)
+    verdict_ref = _persist_verdict(family, params, symbols, results, overall_go)
+    return {
+        "family": family, "params": params, "symbols": symbols,
+        "results": results, "overallGo": overall_go, "verdictRef": verdict_ref,
+    }
+
+
+def _indicator_suggest() -> dict[str, Any]:
+    """会话开场确定性建议 chip 候选：代码规则选一个，不调 LLM（KTD8，只读）。"""
+    try:
+        from kss.indicators.primitives import FAMILIES, default_params
+        from kss.indicators.registry import load_registry
+    except Exception as exc:  # noqa: BLE001
+        return {"error": "indicator_lab_unavailable", "hint": str(exc)}
+
+    entries = load_registry()
+    covered_families = {e.family for e in entries if e.family}
+    no_go = _indicator_no_go_keys()
+
+    for family in FAMILIES:
+        if family in covered_families:
+            continue
+        params = default_params(family)
+        if _verdict_key(family, params) in no_go:
+            continue
+        return {
+            "family": family,
+            "params": params,
+            "reason": f"自选中还没有 {family} 族的信号覆盖",
+            "suggestedSymbols": _indicator_watchlist_symbols()[:3],
+        }
+    return {"family": None, "reason": "基元库内候选已覆盖或均在 NO-GO 记忆内"}
+
+
+def _indicator_solidify(
+    family: str, params_json: str, symbols_csv: str, verdict_ref: str = ""
+) -> dict[str, Any]:
+    """固化：注册表条目 + rules 文件 + 初始 pack 一次写完，任一步失败全回退（原子事务）。"""
+    try:
+        from kss.indicators import pack as ipack
+        from kss.indicators.primitives import default_params
+        from kss.indicators.registry import (
+            KIND_PRIMITIVE,
+            RegistryEntry,
+            load_registry,
+            registry_path as _registry_path,
+            save_registry,
+            upsert_entry,
+        )
+        from kss.indicators.rules import IndicatorSpec
+    except Exception as exc:  # noqa: BLE001
+        return {"error": "indicator_lab_unavailable", "hint": str(exc)}
+
+    try:
+        override = json.loads(params_json) if params_json else {}
+    except json.JSONDecodeError as exc:
+        return {"error": "bad_json_params", "hint": str(exc)}
+    if not isinstance(override, dict):
+        return {"error": "bad_json_params", "hint": "params 须为 JSON 对象"}
+    try:
+        params = {**default_params(family), **override}
+        IndicatorSpec(family, params)  # 校验 family/params 合法，不落地
+    except ValueError as exc:
+        return {"error": "bad_family", "hint": str(exc)}
+
+    symbols = [s.strip().upper() for s in (symbols_csv or "").split(",") if s.strip()]
+    if not symbols:
+        return {"error": "no_symbols", "hint": "固化须显式指定至少一只标的"}
+
+    entry_id = f"{family}_{_verdict_key(family, params)}"
+    entry = RegistryEntry(
+        id=entry_id,
+        name=f"{family}（{params}）",
+        kind=KIND_PRIMITIVE,
+        family=family,
+        params=params,
+        rules_path=f"storage/indicator_rules/{entry_id}.yaml",
+        signals_dir=f"storage/indicator_signals/{entry_id}",
+        solidified_at=_now_iso(),
+        verdict_ref=verdict_ref or None,
+    )
+
+    reg_path = _registry_path()
+    prior_entries = load_registry(reg_path)  # 固化前快照，失败时回退用
+    try:
+        upsert_entry(entry, path=reg_path)
+        packs = [ipack.run_entry_pack(entry, sym) for sym in symbols]
+        failed = [p for p in packs if p.get("status") == "error"]
+        if failed:
+            raise RuntimeError(f"pack 生成失败: {failed[0].get('reason')}")
+    except Exception as exc:  # noqa: BLE001
+        save_registry(prior_entries, reg_path)  # 回退：还原固化前的注册表，不留半成品条目
+        return {"error": "solidify_failed", "hint": str(exc)[:300]}
+
+    return {
+        "ok": True, "entryId": entry_id, "family": family, "params": params,
+        "symbols": symbols,
+        "packs": [{"symbol": p["symbol"], "status": p["status"]} for p in packs],
+    }
+
+
+def _indicator_retire(entry_id: str) -> dict[str, Any]:
+    """标记 status=retired（不删数据）；未知 id 显式报错，不静默成功。"""
+    try:
+        from kss.indicators.registry import retire_entry
+    except Exception as exc:  # noqa: BLE001
+        return {"error": "indicator_lab_unavailable", "hint": str(exc)}
+    updated = retire_entry(entry_id)
+    if updated is None:
+        return {"error": "unknown_entry", "hint": f"未知指标 id: {entry_id}"}
+    return {"ok": True, "entryId": entry_id, "status": updated.status}
+
+
 # 写命令（产生副作用 / 修改状态）；U6 MCP 的 paper-only 闸据此分类。
 WRITE_COMMANDS = frozenset({
     "run", "import", "resolve",
@@ -3680,6 +3948,8 @@ WRITE_COMMANDS = frozenset({
     "intel-digest-save",  # 写文件到 storage/notes/
     "intel-rewrite",      # 写 rewrite pool
     "intel-rewrite-run",  # worker 写 pool
+    "indicator-solidify",  # 固化：注册表 + rules + 初始 pack
+    "indicator-retire",    # 退役：注册表 status=retired
 })
 
 # ---------------------------------------------------------------------------
@@ -3730,6 +4000,17 @@ COMMANDS = {
     "intraday-snapshot": {"desc": "最新分钟 bar 快照(按覆盖路由 longbridge/东财,前向-only)", "args": ["SYMBOL", "[INTERVAL]"]},
     "intraday-bars": {"desc": "完整日内 bar 序列(K线图渲染,前向-only)", "args": ["SYMBOL", "[INTERVAL]"]},
     "trading-hours": {"desc": "交易时段查询(是否交易日/交易时段,门控实时拉取)", "args": []},
+    "indicator-lab-list": {"desc": "指标注册表 + 近期 GO/NO-GO 裁决", "args": []},
+    "indicator-backtest": {
+        "desc": "对基元候选跑真数回测 + 五维裁决(不落地，只惰性缓存裁决)",
+        "args": ["FAMILY", "PARAMS_JSON", "[SYMBOLS_CSV]"],
+    },
+    "indicator-suggest": {"desc": "会话开场确定性候选建议(代码规则选，不调 LLM)", "args": []},
+    "indicator-solidify": {
+        "desc": "固化候选：注册表+rules+初始pack 原子写入(白名单基元族，须人工确认)",
+        "args": ["FAMILY", "PARAMS_JSON", "SYMBOLS_CSV", "[VERDICT_REF]"],
+    },
+    "indicator-retire": {"desc": "退役已固化指标(status=retired，不删数据)", "args": ["ENTRY_ID"]},
 }
 
 # run_task 白名单 —— orientation 报此清单。须与 run_task() if-chain 实际接受集合一致
@@ -4628,6 +4909,28 @@ def dispatch(command: str, args: list[str]) -> Any:
         )
     if command == "trading-hours":
         return _trading_hours()
+    if command == "indicator-lab-list":
+        return _indicator_lab_list()
+    if command == "indicator-backtest":
+        if not args:
+            raise ValueError("indicator-backtest requires FAMILY")
+        return _indicator_backtest(
+            args[0],
+            args[1] if len(args) > 1 else "",
+            args[2] if len(args) > 2 else "",
+        )
+    if command == "indicator-suggest":
+        return _indicator_suggest()
+    if command == "indicator-solidify":
+        if len(args) < 3:
+            raise ValueError("indicator-solidify requires FAMILY PARAMS_JSON SYMBOLS_CSV")
+        return _indicator_solidify(
+            args[0], args[1], args[2], args[3] if len(args) > 3 else ""
+        )
+    if command == "indicator-retire":
+        if not args:
+            raise ValueError("indicator-retire requires ENTRY_ID")
+        return _indicator_retire(args[0])
     if command == "version":
         # 返回 sidecar 代码版本指纹，供 Swift 端校验陈旧进程。
         return {"version": _sidecar_version_fingerprint()}

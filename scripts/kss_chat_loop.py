@@ -113,6 +113,22 @@ TOOL_SPECS: list[dict[str, Any]] = [
     _spec("get_intraday_snapshot", "intraday-snapshot",
           "最新分钟 bar 快照(按覆盖自动选源 longbridge/东财,前向-only)。symbol 如 688008.SH",
           {"symbol": _STR}, ["symbol"]),
+    # ---- 指标研究实验室(plan 2026-07-12-004)：读三个 + 写两个,写走 request_write ----
+    _spec("get_indicator_lab", "indicator-lab-list", "指标注册表 + 近期 GO/NO-GO 裁决"),
+    _spec("backtest_indicator", "indicator-backtest",
+          "对一个基元候选跑真数回测+五维GO/NO-GO裁决(只读,不落地固化)。"
+          "family∈{ma_cross,rsi_threshold,boll_atr}；params 为 JSON 串；"
+          "symbols 逗号分隔留空则用自选，单次最多 8 只",
+          {"family": _STR, "params": _STR, "symbols": _STR}, ["family", "params", "symbols"]),
+    _spec("suggest_indicator", "indicator-suggest",
+          "会话开场用：取一个确定性候选建议(代码规则选，不是你现算)"),
+    _spec("solidify_indicator", "indicator-solidify",
+          "把已过 GO 门禁、且用户已明确批准的候选固化进注册表+图表+复盘。**写操作,须人工确认**。"
+          "先跟用户确认过 GO/NO-GO 裁决表再调，不要在展示裁决表前调用",
+          {"family": _STR, "params": _STR, "symbols": _STR, "verdict_ref": _STR},
+          ["family", "params", "symbols", "verdict_ref"]),
+    _spec("retire_indicator", "indicator-retire",
+          "退役一个已固化指标(不删历史数据)。**写操作,须人工确认**", {"entry_id": _STR}, ["entry_id"]),
     # ---- 写工具:经 request_write,loop 不执行(KTD-4)----
     _spec("run_task", "run",
           "执行数据任务(白名单,如 update-cs-data / refresh-sector-rotation / paper-summary)。**写操作,须人工确认**",

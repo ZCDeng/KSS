@@ -171,6 +171,28 @@ def get_longbridge_quote(symbol: str) -> dict:
 
 
 @mcp.tool
+def get_indicator_lab() -> dict:
+    """指标注册表 + 近期 GO/NO-GO 裁决。"""
+    return _call("indicator-lab-list")
+
+
+@mcp.tool
+def backtest_indicator(family: str, params: str, symbols: str = "") -> dict:
+    """对一个基元候选跑真数回测 + 五维 GO/NO-GO 裁决（只读，不落地固化）。
+
+    family ∈ {ma_cross, rsi_threshold, boll_atr}；params 为 JSON 串，如
+    '{"fast":5,"slow":20,"kind":"sma"}'；symbols 逗号分隔，留空则用自选，单次最多 8 只。
+    """
+    return _call("indicator-backtest", [family, params, symbols])
+
+
+@mcp.tool
+def suggest_indicator() -> dict:
+    """确定性候选建议（代码规则选，不调 LLM）。"""
+    return _call("indicator-suggest")
+
+
+@mcp.tool
 def get_intraday_snapshot(symbol: str, interval_minutes: int = 1) -> dict:
     """最新分钟 bar 快照（按覆盖自动选源 longbridge/东财，前向-only）。symbol 形如 688008.SH。
 
@@ -206,6 +228,22 @@ if _LIVE:
         if not confirm:
             return {"error": "live_write_requires_confirm", "hint": "传 confirm=True"}
         return _call("cron-sync")
+
+    @mcp.tool
+    def solidify_indicator(
+        family: str, params: str, symbols: str, verdict_ref: str = "", confirm: bool = False
+    ) -> dict:
+        """把已过 GO 门禁的候选固化进注册表+图表+复盘。须 confirm=True；白名单基元族。"""
+        if not confirm:
+            return {"error": "live_write_requires_confirm", "hint": "重调并传 confirm=True 以执行写操作"}
+        return _call("indicator-solidify", [family, params, symbols, verdict_ref])
+
+    @mcp.tool
+    def retire_indicator(entry_id: str, confirm: bool = False) -> dict:
+        """退役一个已固化指标（不删历史数据）。须 confirm=True。"""
+        if not confirm:
+            return {"error": "live_write_requires_confirm", "hint": "传 confirm=True"}
+        return _call("indicator-retire", [entry_id])
 
 
 if __name__ == "__main__":
