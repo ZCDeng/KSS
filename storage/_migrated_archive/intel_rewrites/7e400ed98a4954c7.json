@@ -1,0 +1,29 @@
+{
+  "item_id": "7e400ed98a4954c7",
+  "kind": "investment",
+  "track_key": "auto",
+  "day": "20260710",
+  "status": "ready",
+  "title": "The robotaxi law that could ban Tesla",
+  "url": "https://www.theverge.com/transportation/962309/new-jersey-robotaxi-bill-lidar-tesla",
+  "source": "The Verge Transport",
+  "time": "07-10 03:21",
+  "started_at_ts": 1783696886.944659,
+  "started_at": "2026-07-10 23:21:26",
+  "text": "## 事件\n- 新泽西州提出一项机器人出租车法案，要求自动驾驶车辆必须配备激光雷达等传感器。\n- 该法案可能直接禁止特斯拉当前基于纯摄像头（纯视觉）方案的自动驾驶出租车运营。\n\n## 影响\n- 若法案通过，特斯拉在该州的自动驾驶部署将受阻，其“仅靠摄像头实现全自动驾驶”的路线面临监管挑战。\n- 可能加速其他州效仿，对纯视觉方案的技术路线形成政策压力。\n- 激光雷达传感器及关联产业的需求预期或提升。\n\n## 标的线索\n- 激光雷达相关公司（如Luminar、Velodyne、禾赛科技等）可能受益，待核实具体业务关联性。\n- 特斯拉（Tesla）作为纯视觉路线代表，其自动驾驶进度及合规策略需关注，待核实法案具体条款影响。\n\n## 待验证\n- 法案最终是否通过及实施时间表。\n- 特斯拉是否有应对方案（如加装激光雷达或寻求豁免）。\n- 其他州（如加州、德州）是否会跟进类似立法。",
+  "sections": {
+    "事件": "- 新泽西州提出一项机器人出租车法案，要求自动驾驶车辆必须配备激光雷达等传感器。\n- 该法案可能直接禁止特斯拉当前基于纯摄像头（纯视觉）方案的自动驾驶出租车运营。",
+    "影响": "- 若法案通过，特斯拉在该州的自动驾驶部署将受阻，其“仅靠摄像头实现全自动驾驶”的路线面临监管挑战。\n- 可能加速其他州效仿，对纯视觉方案的技术路线形成政策压力。\n- 激光雷达传感器及关联产业的需求预期或提升。",
+    "标的线索": "- 激光雷达相关公司（如Luminar、Velodyne、禾赛科技等）可能受益，待核实具体业务关联性。\n- 特斯拉（Tesla）作为纯视觉路线代表，其自动驾驶进度及合规策略需关注，待核实法案具体条款影响。",
+    "待验证": "- 法案最终是否通过及实施时间表。\n- 特斯拉是否有应对方案（如加装激光雷达或寻求豁免）。\n- 其他州（如加州、德州）是否会跟进类似立法。"
+  },
+  "model": "deepseek-v4-flash",
+  "generated_at": "2026-07-10 23:21:40",
+  "prompt_system": "你是「资讯雷达」投研向改写助手。任务：把用户提供的一篇资讯压成可读的投研草稿。\n\n硬性要求：\n1. 严格用下面四个中文小节标题（Markdown ##），顺序固定，每节 1-4 条短句：\n## 事件\n## 影响\n## 标的线索\n## 待验证\n2. 只客观陈述；不推荐买卖；不预测涨跌；不构成投资建议。\n3. 「标的线索」只能写可能相关的公司/板块/主题，并标注「待核实」；没有则写「暂无明确标的线索」。\n4. 「待验证」写需要交叉核对的事实或缺口；没有则写「暂无」。\n5. 不要输出前后缀寒暄、不要编造文中不存在的数字。\n",
+  "body_text": "For more than a decade, one question has loomed over the race to build autonomous vehicles: Are cameras alone enough to safely replace human drivers, or do trul",
+  "body_mode": "summary",
+  "body_char_count": 160,
+  "body_error": "URLError: <urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1016)>",
+  "error": null,
+  "error_type": null
+}

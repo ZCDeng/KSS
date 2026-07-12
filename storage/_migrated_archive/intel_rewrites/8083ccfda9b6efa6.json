@@ -1,0 +1,19 @@
+{
+  "item_id": "8083ccfda9b6efa6",
+  "kind": "investment",
+  "track_key": "ai",
+  "day": "20260710",
+  "status": "failed",
+  "title": "Transformer能通向AGI吗？布林：能，但它已经变了",
+  "url": "https://mp.weixin.qq.com/s?__biz=MzA3MzI4MjgzMw==&mid=2651043310&idx=2&sn=73a45152feabc4b9830747112268d132",
+  "source": "机器之心",
+  "time": "07-09 12:40",
+  "started_at_ts": 1783645754.3113558,
+  "started_at": "2026-07-10 09:09:14",
+  "error": "未配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY；wrapper 应从 Hermes .env grep 注入",
+  "error_type": "unavailable",
+  "body_text": "谢尔盖·布林亲口承认：谷歌落后了。",
+  "body_mode": "summary",
+  "body_char_count": 17,
+  "body_error": "body too short"
+}

@@ -1,0 +1,19 @@
+{
+  "item_id": "3879e62771b0426f",
+  "kind": "investment",
+  "track_key": "ai",
+  "day": "20260710",
+  "status": "failed",
+  "title": "今天，「空间原生」时代正式到来！",
+  "url": "https://mp.weixin.qq.com/s?__biz=MzA3MzI4MjgzMw==&mid=2651043009&idx=1&sn=1c35ad6d8c0833fc3ca02c680c5fef8c",
+  "source": "机器之心",
+  "time": "07-07 12:30",
+  "started_at_ts": 1783645856.2278788,
+  "started_at": "2026-07-10 09:10:56",
+  "error": "content too thin",
+  "error_type": "thin",
+  "body_text": "蚂蚁灵波给具身智能补上关键一环",
+  "body_mode": "summary",
+  "body_char_count": 15,
+  "body_error": "body too short"
+}

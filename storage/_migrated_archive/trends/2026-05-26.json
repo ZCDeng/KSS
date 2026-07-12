@@ -1,0 +1,114 @@
+{
+  "date": "2026-05-26",
+  "isTrading": true,
+  "north": {
+    "money": 39.47,
+    "unit": "亿",
+    "dir": "in"
+  },
+  "etfs": [
+    {
+      "code": "563360.SH",
+      "name": "A500ETF",
+      "pct": 0.58
+    },
+    {
+      "code": "159361.SZ",
+      "name": "A500ETF",
+      "pct": 0.37
+    }
+  ],
+  "inflowScore": 0.506,
+  "inflowDir": "in",
+  "sectorTop": [
+    {
+      "name": "芯片",
+      "grade": "强势确认",
+      "past5Ret": 10.37
+    },
+    {
+      "name": "科创50",
+      "grade": "强势确认",
+      "past5Ret": 5.21
+    },
+    {
+      "name": "半导体",
+      "grade": "偏弱",
+      "past5Ret": 8.72
+    },
+    {
+      "name": "科创芯片",
+      "grade": "中性偏多",
+      "past5Ret": 6.15
+    },
+    {
+      "name": "人工智能",
+      "grade": "中性偏多",
+      "past5Ret": 2.49
+    }
+  ],
+  "sectorCount": 6,
+  "topSector": "芯片",
+  "recs": [
+    {
+      "symbol": "688114.SH",
+      "name": "华大智造",
+      "fwd": {
+        "t1": -2.82,
+        "t5": -8.36,
+        "t20": null,
+        "asof": "2026-06-03"
+      }
+    },
+    {
+      "symbol": "688278.SH",
+      "name": "特宝生物",
+      "fwd": {
+        "t1": -1.97,
+        "t5": -2.08,
+        "t20": null,
+        "asof": "2026-06-03"
+      }
+    },
+    {
+      "symbol": "688349.SH",
+      "name": "三一重能",
+      "fwd": {
+        "t1": -2.8,
+        "t5": -10.46,
+        "t20": null,
+        "asof": "2026-06-03"
+      }
+    },
+    {
+      "symbol": "688297.SH",
+      "name": "中无人机",
+      "fwd": {
+        "t1": -0.79,
+        "t5": 2.07,
+        "t20": null,
+        "asof": "2026-06-03"
+      }
+    },
+    {
+      "symbol": "688608.SH",
+      "name": "恒玄科技",
+      "fwd": {
+        "t1": 0.47,
+        "t5": -10.63,
+        "t20": null,
+        "asof": "2026-06-03"
+      }
+    }
+  ],
+  "recCount": 5,
+  "recAvgFwd": -5.89,
+  "heat": 0.658,
+  "sectorHeat": 0.333,
+  "flags": {
+    "north": true,
+    "etf": true,
+    "sector": true,
+    "recs": true
+  }
+}

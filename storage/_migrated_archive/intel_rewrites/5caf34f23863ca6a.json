@@ -1,0 +1,19 @@
+{
+  "item_id": "5caf34f23863ca6a",
+  "kind": "investment",
+  "track_key": "semi",
+  "day": "20260710",
+  "status": "failed",
+  "title": "Rise of the AI Data Center – Why Infrastructure Strategy Is Now a Board-Level Issue",
+  "url": "https://www.eetimes.com/rise-of-the-ai-data-center-why-infrastructure-strategy-is-now-a-board-level-issue/",
+  "source": "EE Times",
+  "time": "07-08 22:00",
+  "started_at_ts": 1783646048.554275,
+  "started_at": "2026-07-10 09:14:08",
+  "error": "未配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY；wrapper 应从 Hermes .env grep 注入",
+  "error_type": "unavailable",
+  "body_text": "This white paper describes the critical engineering and strategic pain points behind today&#8217;s AI data center infrastructure gap and offers practical framew",
+  "body_mode": "summary",
+  "body_char_count": 160,
+  "body_error": "TimeoutError: The read operation timed out"
+}

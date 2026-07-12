@@ -1,0 +1,122 @@
+{
+  "family": "ma_cross",
+  "params": {
+    "fast": 5,
+    "slow": 20,
+    "kind": "sma"
+  },
+  "symbols": [
+    "688017.SH",
+    "688322.SH"
+  ],
+  "go": false,
+  "results": [
+    {
+      "symbol": "688017.SH",
+      "status": "judged",
+      "go": true,
+      "dimensions": [
+        {
+          "name": "经济意义",
+          "passed": true,
+          "value": {
+            "strategy_total": 0.9813,
+            "strategy_sharpe": 0.465,
+            "buy_and_hold_total": 2.2709
+          },
+          "detail": "策略总收益 98.13%（夏普 0.47）vs buy&hold 227.09%"
+        },
+        {
+          "name": "稳健",
+          "passed": true,
+          "value": {
+            "best_total": 0.9813,
+            "other_positive_combos": 7,
+            "grid_size": 8
+          },
+          "detail": "网格 8 组合中，除最优组外还有 7 组同样正收益"
+        },
+        {
+          "name": "可交易",
+          "passed": true,
+          "value": {
+            "trade_count": 22,
+            "per_year": 6.5,
+            "net_avg_after_slippage": 0.0389
+          },
+          "detail": "共 22 笔交易（约 6.5 笔/年），滑点后均笔收益 3.89%"
+        },
+        {
+          "name": "可解释",
+          "passed": true,
+          "value": {
+            "rule_sentence": "均线交叉（{'fast': 5, 'slow': 20, 'kind': 'sma'}）：金叉入场、死叉离场"
+          },
+          "detail": "均线交叉（{'fast': 5, 'slow': 20, 'kind': 'sma'}）：金叉入场、死叉离场"
+        },
+        {
+          "name": "运维",
+          "passed": true,
+          "value": {
+            "batchable": true
+          },
+          "detail": "复用通用回测引擎与固定基元族，可日终批跑，单票失败不拖垮整池"
+        }
+      ]
+    },
+    {
+      "symbol": "688322.SH",
+      "status": "judged",
+      "go": false,
+      "dimensions": [
+        {
+          "name": "经济意义",
+          "passed": false,
+          "value": {
+            "strategy_total": -0.062,
+            "strategy_sharpe": -0.04,
+            "buy_and_hold_total": 3.3147
+          },
+          "detail": "策略总收益 -6.20%（夏普 -0.04）vs buy&hold 331.47%"
+        },
+        {
+          "name": "稳健",
+          "passed": false,
+          "value": {
+            "best_total": -0.062,
+            "other_positive_combos": 7,
+            "grid_size": 8
+          },
+          "detail": "网格 8 组合中，除最优组外还有 7 组同样正收益"
+        },
+        {
+          "name": "可交易",
+          "passed": true,
+          "value": {
+            "trade_count": 25,
+            "per_year": 7.4,
+            "net_avg_after_slippage": 0.0052
+          },
+          "detail": "共 25 笔交易（约 7.4 笔/年），滑点后均笔收益 0.52%"
+        },
+        {
+          "name": "可解释",
+          "passed": true,
+          "value": {
+            "rule_sentence": "均线交叉（{'fast': 5, 'slow': 20, 'kind': 'sma'}）：金叉入场、死叉离场"
+          },
+          "detail": "均线交叉（{'fast': 5, 'slow': 20, 'kind': 'sma'}）：金叉入场、死叉离场"
+        },
+        {
+          "name": "运维",
+          "passed": true,
+          "value": {
+            "batchable": true
+          },
+          "detail": "复用通用回测引擎与固定基元族，可日终批跑，单票失败不拖垮整池"
+        }
+      ]
+    }
+  ],
+  "judgedAt": "2026-07-12T02:27:26.986899+00:00"
+}

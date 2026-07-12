@@ -1,0 +1,19 @@
+{
+  "item_id": "b73e21a09381d157",
+  "kind": "investment",
+  "track_key": "ai",
+  "day": "20260710",
+  "status": "failed",
+  "title": "AI 时代的编程语言，这次是来自中国的底层创新",
+  "url": "https://mp.weixin.qq.com/s?__biz=MzA3MzI4MjgzMw==&mid=2651043310&idx=1&sn=05a1ee9e200a7b25273e56fb1372b5f2",
+  "source": "机器之心",
+  "time": "07-09 12:40",
+  "started_at_ts": 1783645749.07269,
+  "started_at": "2026-07-10 09:09:09",
+  "error": "content too thin",
+  "error_type": "thin",
+  "body_text": "这次的底层技术创新来自中国",
+  "body_mode": "summary",
+  "body_char_count": 13,
+  "body_error": "body too short"
+}

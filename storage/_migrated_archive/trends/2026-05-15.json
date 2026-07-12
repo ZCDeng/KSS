@@ -1,0 +1,88 @@
+{
+  "date": "2026-05-15",
+  "isTrading": true,
+  "north": {
+    "money": 43.53,
+    "unit": "亿",
+    "dir": "in"
+  },
+  "etfs": [
+    {
+      "code": "563360.SH",
+      "name": "A500ETF",
+      "pct": -1.52
+    },
+    {
+      "code": "159361.SZ",
+      "name": "A500ETF",
+      "pct": -1.34
+    }
+  ],
+  "inflowScore": -0.224,
+  "inflowDir": "out",
+  "sectorTop": [],
+  "sectorCount": 0,
+  "topSector": null,
+  "recs": [
+    {
+      "symbol": "688114.SH",
+      "name": "华大智造",
+      "fwd": {
+        "t1": 1.43,
+        "t5": 1.63,
+        "t20": -1.94,
+        "asof": "2026-06-15"
+      }
+    },
+    {
+      "symbol": "688278.SH",
+      "name": "特宝生物",
+      "fwd": {
+        "t1": 0.12,
+        "t5": -0.78,
+        "t20": 3.06,
+        "asof": "2026-06-15"
+      }
+    },
+    {
+      "symbol": "688349.SH",
+      "name": "三一重能",
+      "fwd": {
+        "t1": -0.18,
+        "t5": -1.3,
+        "t20": -13.46,
+        "asof": "2026-06-15"
+      }
+    },
+    {
+      "symbol": "688297.SH",
+      "name": "中无人机",
+      "fwd": {
+        "t1": -2.03,
+        "t5": -2.39,
+        "t20": 6.87,
+        "asof": "2026-06-15"
+      }
+    },
+    {
+      "symbol": "688538.SH",
+      "name": "和辉光电-U",
+      "fwd": {
+        "t1": 0.89,
+        "t5": 5.78,
+        "t20": 2.22,
+        "asof": "2026-06-15"
+      }
+    }
+  ],
+  "recCount": 5,
+  "recAvgFwd": 0.59,
+  "heat": 0.726,
+  "sectorHeat": null,
+  "flags": {
+    "north": true,
+    "etf": true,
+    "sector": false,
+    "recs": true
+  }
+}

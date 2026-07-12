@@ -1,0 +1,29 @@
+{
+  "item_id": "d72d6ab074873f05",
+  "kind": "investment",
+  "track_key": "auto",
+  "day": "20260710",
+  "status": "ready",
+  "title": "Hyundai launches affordable EV deals with 0% APR and up to $10,000 off",
+  "url": "https://electrek.co/2026/07/09/hyundai-launches-ev-deals-0-apr-up-to-10000-off/",
+  "source": "Electrek",
+  "time": "07-10 05:48",
+  "started_at_ts": 1783696869.620207,
+  "started_at": "2026-07-10 23:21:09",
+  "text": "## 事件\n- 现代汽车于7月启动年度最大促销活动“Getaway Summer Sales Event”，为其热门车型（含电动车）提供0%年利率贷款及最高10,000美元折扣。\n\n## 影响\n- 该促销可能短期刺激现代电动车在美国市场的销量，加剧行业价格竞争。\n- 分析师或关注此举对其他车企（如特斯拉、福特）定价策略的连锁反应。\n\n## 标的线索\n- 现代汽车（Hyundai Motor，代码待核实）直接受益促销活动，需核实相关美股/韩股标的具体代码。\n- 新能源汽车板块整体可能受竞争格局变化影响，需进一步分析（待核实）。\n\n## 待验证\n- 促销活动的具体适用车型、地域范围（是否仅限美国）及持续时间需核实。\n- 促销对现代电动车利润率的实际影响尚不明确。",
+  "sections": {
+    "事件": "- 现代汽车于7月启动年度最大促销活动“Getaway Summer Sales Event”，为其热门车型（含电动车）提供0%年利率贷款及最高10,000美元折扣。",
+    "影响": "- 该促销可能短期刺激现代电动车在美国市场的销量，加剧行业价格竞争。\n- 分析师或关注此举对其他车企（如特斯拉、福特）定价策略的连锁反应。",
+    "标的线索": "- 现代汽车（Hyundai Motor，代码待核实）直接受益促销活动，需核实相关美股/韩股标的具体代码。\n- 新能源汽车板块整体可能受竞争格局变化影响，需进一步分析（待核实）。",
+    "待验证": "- 促销活动的具体适用车型、地域范围（是否仅限美国）及持续时间需核实。\n- 促销对现代电动车利润率的实际影响尚不明确。"
+  },
+  "model": "deepseek-v4-flash",
+  "generated_at": "2026-07-10 23:21:26",
+  "prompt_system": "你是「资讯雷达」投研向改写助手。任务：把用户提供的一篇资讯压成可读的投研草稿。\n\n硬性要求：\n1. 严格用下面四个中文小节标题（Markdown ##），顺序固定，每节 1-4 条短句：\n## 事件\n## 影响\n## 标的线索\n## 待验证\n2. 只客观陈述；不推荐买卖；不预测涨跌；不构成投资建议。\n3. 「标的线索」只能写可能相关的公司/板块/主题，并标注「待核实」；没有则写「暂无明确标的线索」。\n4. 「待验证」写需要交叉核对的事实或缺口；没有则写「暂无」。\n5. 不要输出前后缀寒暄、不要编造文中不存在的数字。\n",
+  "body_text": "Hyundai’s biggest sales promo of the year, the Getaway Summer Sales Event, kicked off this month with competitive offers on its most popular vehicles, including",
+  "body_mode": "summary",
+  "body_char_count": 160,
+  "body_error": "URLError: <urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1016)>",
+  "error": null,
+  "error_type": null
+}

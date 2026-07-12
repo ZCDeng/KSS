@@ -1,0 +1,88 @@
+{
+  "date": "2026-05-14",
+  "isTrading": true,
+  "north": {
+    "money": 41.34,
+    "unit": "亿",
+    "dir": "in"
+  },
+  "etfs": [
+    {
+      "code": "563360.SH",
+      "name": "A500ETF",
+      "pct": -1.91
+    },
+    {
+      "code": "159361.SZ",
+      "name": "A500ETF",
+      "pct": -1.76
+    }
+  ],
+  "inflowScore": -0.269,
+  "inflowDir": "out",
+  "sectorTop": [],
+  "sectorCount": 0,
+  "topSector": null,
+  "recs": [
+    {
+      "symbol": "688114.SH",
+      "name": "华大智造",
+      "fwd": {
+        "t1": 2.3,
+        "t5": 3.96,
+        "t20": -6.04,
+        "asof": "2026-06-12"
+      }
+    },
+    {
+      "symbol": "688278.SH",
+      "name": "特宝生物",
+      "fwd": {
+        "t1": -1.2,
+        "t5": -0.72,
+        "t20": -0.85,
+        "asof": "2026-06-12"
+      }
+    },
+    {
+      "symbol": "688349.SH",
+      "name": "三一重能",
+      "fwd": {
+        "t1": -2.07,
+        "t5": -2.46,
+        "t20": -19.95,
+        "asof": "2026-06-12"
+      }
+    },
+    {
+      "symbol": "688169.SH",
+      "name": "石头科技",
+      "fwd": {
+        "t1": 4.46,
+        "t5": 12.6,
+        "t20": -13.52,
+        "asof": "2026-06-12"
+      }
+    },
+    {
+      "symbol": "688297.SH",
+      "name": "中无人机",
+      "fwd": {
+        "t1": -1.85,
+        "t5": -2.26,
+        "t20": 2.3,
+        "asof": "2026-06-12"
+      }
+    }
+  ],
+  "recCount": 5,
+  "recAvgFwd": 2.22,
+  "heat": 0.689,
+  "sectorHeat": null,
+  "flags": {
+    "north": true,
+    "etf": true,
+    "sector": false,
+    "recs": true
+  }
+}

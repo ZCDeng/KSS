@@ -1,0 +1,19 @@
+{
+  "item_id": "e9ab56884c7d02d4",
+  "kind": "investment",
+  "track_key": "ai",
+  "day": "20260710",
+  "status": "failed",
+  "title": "竞赛编程Agent进入全球前十！南大、清华新模型CF rating超3500",
+  "url": "https://mp.weixin.qq.com/s?__biz=MzI3MTA0MTk1MA==&mid=2652711354&idx=3&sn=657c9b119103ddb627ddc2e2aab0438a",
+  "source": "新智元",
+  "time": "07-08 11:45",
+  "started_at_ts": 1783645798.7496011,
+  "started_at": "2026-07-10 09:09:58",
+  "error": "content too thin",
+  "error_type": "thin",
+  "body_text": "",
+  "body_mode": "empty",
+  "body_char_count": 0,
+  "body_error": "body too short"
+}

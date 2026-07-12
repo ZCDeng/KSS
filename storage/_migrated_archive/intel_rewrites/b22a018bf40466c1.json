@@ -1,0 +1,29 @@
+{
+  "item_id": "b22a018bf40466c1",
+  "kind": "investment",
+  "track_key": "semi",
+  "day": "20260710",
+  "status": "ready",
+  "title": "Toshiba Adds 60 V, 100 V N-Channel MOSFETs in 3 Compact Packages",
+  "url": "https://www.allaboutcircuits.com/news/toshiba-adds-60-v-100-v-n-channel-mosfets-in-3-compact-packages/",
+  "source": "All About Circuits",
+  "time": "07-10 15:00",
+  "started_at_ts": 1783696595.0385,
+  "started_at": "2026-07-10 23:16:35",
+  "text": "## 事件\n- 东芝推出60V和100V N沟道MOSFET，提供三种紧凑封装，强调低导通电阻与小尺寸。\n- 产品设计面向工业系统从12V/24V向48V配电迁移的趋势。\n\n## 影响\n- 为48V工业配电系统提供更低损耗、更小占位的功率器件选择。\n- 可能推动48V架构在工业、服务器、通信等领域的进一步应用。\n\n## 标的线索\n- 东芝半导体部门（待核实）\n- 国内MOSFET厂商如华润微、士兰微、新洁能等（待核实）\n- 48V电源管理相关公司（待核实）\n\n## 待验证\n- 具体产品型号、量产时间及价格信息。\n- 48V架构在工业系统中的实际渗透率及东芝该产品的市场竞争力。",
+  "sections": {
+    "事件": "- 东芝推出60V和100V N沟道MOSFET，提供三种紧凑封装，强调低导通电阻与小尺寸。\n- 产品设计面向工业系统从12V/24V向48V配电迁移的趋势。",
+    "影响": "- 为48V工业配电系统提供更低损耗、更小占位的功率器件选择。\n- 可能推动48V架构在工业、服务器、通信等领域的进一步应用。",
+    "标的线索": "- 东芝半导体部门（待核实）\n- 国内MOSFET厂商如华润微、士兰微、新洁能等（待核实）\n- 48V电源管理相关公司（待核实）",
+    "待验证": "- 具体产品型号、量产时间及价格信息。\n- 48V架构在工业系统中的实际渗透率及东芝该产品的市场竞争力。"
+  },
+  "model": "deepseek-v4-flash",
+  "generated_at": "2026-07-10 23:16:45",
+  "prompt_system": "你是「资讯雷达」投研向改写助手。任务：把用户提供的一篇资讯压成可读的投研草稿。\n\n硬性要求：\n1. 严格用下面四个中文小节标题（Markdown ##），顺序固定，每节 1-4 条短句：\n## 事件\n## 影响\n## 标的线索\n## 待验证\n2. 只客观陈述；不推荐买卖；不预测涨跌；不构成投资建议。\n3. 「标的线索」只能写可能相关的公司/板块/主题，并标注「待核实」；没有则写「暂无明确标的线索」。\n4. 「待验证」写需要交叉核对的事实或缺口；没有则写「暂无」。\n5. 不要输出前后缀寒暄、不要编造文中不存在的数字。\n",
+  "body_text": "The 60 V and 100 V parts pair low on-resistance with small footprints as industrial systems migrate from 12 V and 24V rails toward 48 V distribution.",
+  "body_mode": "summary",
+  "body_char_count": 149,
+  "body_error": "http 403",
+  "error": null,
+  "error_type": null
+}

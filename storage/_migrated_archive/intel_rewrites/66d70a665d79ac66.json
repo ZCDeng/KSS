@@ -1,0 +1,19 @@
+{
+  "item_id": "66d70a665d79ac66",
+  "kind": "investment",
+  "track_key": "semi",
+  "day": "20260710",
+  "status": "failed",
+  "title": "Nvidia First to Roll Out Full-Stack Safety System for Physical AI in Robotics",
+  "url": "https://www.allaboutcircuits.com/news/nvidia-first-to-roll-out-full-stack-safety-system-for-physical-ai-in-robotics/",
+  "source": "All About Circuits",
+  "time": "07-07 00:00",
+  "started_at_ts": 1783646122.6636522,
+  "started_at": "2026-07-10 09:15:22",
+  "error": "未配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY；wrapper 应从 Hermes .env grep 注入",
+  "error_type": "unavailable",
+  "body_text": "The full-stack platform pairs the IGX Thor compute module with a safety-certified software stack and an accredited inspection lab, with humanoid maker Agility a",
+  "body_mode": "summary",
+  "body_char_count": 160,
+  "body_error": "http 403"
+}

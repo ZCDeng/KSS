@@ -1,0 +1,19 @@
+{
+  "item_id": "14a88d5020fe86d6",
+  "kind": "investment",
+  "track_key": "semi",
+  "day": "20260710",
+  "status": "failed",
+  "title": "Pico Technology Claims &#8216;Industry&#8217;s First&#8217; 4 Channel 16-Bit Oscilloscope",
+  "url": "https://www.allaboutcircuits.com/news/pico-technology-claims-industrys-first-4-channel-16-bit-oscilloscope/",
+  "source": "All About Circuits",
+  "time": "07-08 15:00",
+  "started_at_ts": 1783646110.132046,
+  "started_at": "2026-07-10 09:15:10",
+  "error": "未配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY；wrapper 应从 Hermes .env grep 注入",
+  "error_type": "unavailable",
+  "body_text": "The PicoScope 5000E Series delivers a 22-µV RMS noise floor and up to 5-GS/s sampling in a USB-C-powered package.",
+  "body_mode": "summary",
+  "body_char_count": 113,
+  "body_error": "http 403"
+}

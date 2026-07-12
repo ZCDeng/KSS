@@ -1,0 +1,44 @@
+entries:
+- id: mi
+  name: MI 动量
+  kind: mi_legacy
+  family: null
+  params: {}
+  rules_path: storage/mi_rules.yaml
+  signals_dir: storage/mi_signals
+  status: active
+  solidified_at: null
+  verdict_ref: null
+  symbols: []
+- id: ma_cross_ef038ecbd44e9993
+  name: 'ma_cross（{''fast'': 5, ''slow'': 20, ''kind'': ''sma'', ''type'': ''sma''}）'
+  kind: primitive
+  family: ma_cross
+  params:
+    fast: 5
+    slow: 20
+    kind: sma
+    type: sma
+  rules_path: storage/indicator_rules/ma_cross_ef038ecbd44e9993.yaml
+  signals_dir: storage/indicator_signals/ma_cross_ef038ecbd44e9993
+  status: retired
+  solidified_at: '2026-07-12T02:28:51.658672+00:00'
+  verdict_ref: 2026-07-12 回测：688017.SH 五维全过 GO（总收益+98.13%，7/8参数组正收益，22笔均笔+3.89%）
+  symbols:
+  - 688017.SH
+- id: ma_cross_b82dea643e4bdb0f
+  name: 'ma_cross（{''fast'': 5, ''slow'': 20, ''kind'': ''sma'', ''type'': ''SMA''}）'
+  kind: primitive
+  family: ma_cross
+  params:
+    fast: 5
+    slow: 20
+    kind: sma
+    type: SMA
+  rules_path: storage/indicator_rules/ma_cross_b82dea643e4bdb0f.yaml
+  signals_dir: storage/indicator_signals/ma_cross_b82dea643e4bdb0f
+  status: retired
+  solidified_at: '2026-07-12T11:30:28.023205+00:00'
+  verdict_ref: backtest_indicator 回测五维全通过 GO，策略总收益 +98.13%，夏普 0.47，22 笔交易均笔 +3.89%
+  symbols:
+  - 688017.SH

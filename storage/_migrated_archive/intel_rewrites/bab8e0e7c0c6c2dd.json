@@ -1,0 +1,19 @@
+{
+  "item_id": "bab8e0e7c0c6c2dd",
+  "kind": "investment",
+  "track_key": "semi",
+  "day": "20260710",
+  "status": "failed",
+  "title": "U-blox Unwraps Pair of Wi-Fi 6 Modules for Cost-Sensitive Designs",
+  "url": "https://www.allaboutcircuits.com/news/u-blox-unwraps-pair-wi-fi6-modules-cost-sensitive-designs/",
+  "source": "All About Circuits",
+  "time": "07-07 15:00",
+  "started_at_ts": 1783646121.528655,
+  "started_at": "2026-07-10 09:15:21",
+  "error": "未配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY；wrapper 应从 Hermes .env grep 注入",
+  "error_type": "unavailable",
+  "body_text": "U-blox has introduced the MAYA-W5 and NORA-W5 Wi-Fi 6 module families for industrial and IoT applications, designed and manufactured in Europe.",
+  "body_mode": "summary",
+  "body_char_count": 143,
+  "body_error": "http 403"
+}

@@ -1,0 +1,112 @@
+{
+  "app_task_runs": {
+    "completedAt": "2026-07-13 06:01:11",
+    "goldenResult": "pass",
+    "notes": "50/50 行与 storage/app_runs/kss_desktop_tasks.jsonl 逐字段核对通过（taskId/startedAt/title/finishedAt/status/exitCode/summary/artifacts）；U14 已修好 PRIMARY KEY (task_id, started_at)，本次未发现新 bug；_append_task_history/_task_history 切到 kss.db INSERT OR REPLACE / SELECT ... ORDER BY started_at DESC；APP_RUN_DIR/TASK_LOG_PATH 常量已删；jsonl 旧文件留归档待 U15 收尾统一处理。"
+  },
+  "daily_review_index": {
+    "completedAt": "2026-07-13 07:09:09",
+    "goldenResult": "pass",
+    "notes": "31/31 源(新格式 {date}_{ts_code}.md)行核对通过，17 旧格式({date}.md)按既有导入器约定跳过。写入方割接：scripts/daily_review.py 的按股归档写循环（main()）在 archive_path.write_text 之后顺带 INSERT OR REPLACE 进 daily_review_index（新增 kss/storage/daily_review.py: record_review/list_symbol_reviews/list_all_reviews）。.md 内容本身仍是文件（Tier C，不动）——本域只是给「哪天哪只票有哪份复盘」建一份索引，此前完全零索引。范围收窄的判断：kss_app_bridge.py 的 3 个既有读点（_reviews/_stock_review，glob+文件名正则/全文内容扫描）与 kss/memory/review_recall.py::glob_symbol_reviews（daily_review.py 生成 history_recap 时用）本次未改走索引——三者都已用直接文件访问正确工作（未损坏、未静默漂移），且 glob_symbol_reviews 有专门测试用 tmp_path 直写文件验证目录扫描逻辑，改走索引查询会让测试语义从「验证文件发现」变成「验证 DB 查询」、损失覆盖，收益（用索引替代已经工作的 glob）不足以承担这个回归风险。索引会随本次改动持续保鲜，留给 U16/U17（DuckDB 查询层 + catalog 反射）在真正需要时再把这几处读点迁过去查索引。"
+  },
+  "etf_radar_snapshots": {
+    "completedAt": "2026-07-13 07:30:29",
+    "goldenResult": "pass",
+    "notes": "31/31 json 快照 + 33/33 commentary.md 路径索引逐字段核对通过；.morning_alert_state 单文件与 DB 单例表值一致(20260710)。三张表写入方：scripts/sector_review.py::_archive_radar (json→etf_radar_snapshots，first-write-wins 用 read_by_date 替代 path.exists())+ _archive_commentary(md 仍是文件，新增 record_commentary 记路径)；scripts/morning_divergence_alert.py::already_alerted/mark_alerted(纯文本单文件→etf_radar_morning_alert_state 单例表，顺带修 PROJECT_ROOT 硬编码→_KSS_STATE 既有 bug)。5 处读点全改：kss_app_bridge.py 的 _load_radar_archives/_sector_reviews/_news_digest(此三个也覆盖 news_digest_entries)+ scripts/validate_predictions.py::load_radar_archives + scripts/archive_trends_daily.py::_sector_for_date。新增 kss/storage/etf_radar.py。真机 smoke：bridge 三个读点 + validate_predictions 读点 + archive_trends_daily 读点全对真实数据验证通过。"
+  },
+  "factor_health_ic_snapshots_crashes_lifecycle": {
+    "completedAt": "2026-07-13 07:00:18",
+    "goldenResult": "pass",
+    "notes": "ic_snapshots(11行)/crashes(0行)/factor_lifecycle(0行)，均 U14 已 ATTACH 导入。DEFAULT_HEALTH_DB 同样从 PROJECT_ROOT 硬编码改指向 KSS_DB；FactorHealthTracker 与 FactorCrashRegistry 两个类的 _connect() 都修了同一处 WAL 竞态（unconditional PRAGMA→check-before-set）。scripts/refresh_factor_health.py 的 db_path CLI 参数默认 None，无需改动，自动走新默认路径。"
+  },
+  "indicator_lab_verdicts": {
+    "completedAt": "2026-07-12T21:54:56.148492+00:00",
+    "goldenResult": "pass",
+    "notes": "真源切到 kss.db indicator_lab_verdicts 表；_persist_verdict/_indicator_lab_recent_verdicts/_indicator_no_go_keys 改经 kss.storage.db 直接 SQL。_persist_verdict 返回值语义变了（原是相对文件路径，现在是 verdict_id）——修了下游真依赖：_write_indicator_report 原来把 verdict_ref 当文件路径拼 STATE_ROOT/verdict_ref 去读，现在改成按 verdict_id 查表。RegistryEntry.verdict_ref 历史条目（U15域割接#2 之前固化的两条）仍是旧文件路径格式字符串，纯展示用不影响功能，不回填。真实 storage/ golden 核对：4 条裁决family/go 逐一对上。19 项测试通过。"
+  },
+  "indicator_registry": {
+    "completedAt": "2026-07-12T20:58:25.199999+00:00",
+    "goldenResult": "pass",
+    "notes": "真源切到 kss.db indicator_registry 表；kss/indicators/registry.py 内部整体改写（registry_path→registry_db_path，load/save/upsert/retire 全部读写 kss.db）；外部调用方（bridge indicator-solidify/retire、run_indicator_signal_pack.py、daily_review.py）签名不变，无需改动，因为写读全经这一个模块。无 Swift 直读。无 cron 写方（UI/bridge 命令触发），无需暂停任何 cron。真实 storage/ 数据 golden 核对：3 条条目（mi + 2 个 ma_cross primitive）字段逐一对上。71 项测试通过（新增/改写 test_indicator_registry.py 10 例 + test_bridge_indicator_lab.py 2 处修复）。"
+  },
+  "indicator_signal_packs": {
+    "completedAt": "2026-07-13 06:24:09",
+    "goldenResult": "pass",
+    "notes": "4/4 源 json（含 latest/ 副本）核对通过，去重成 2 条 DB 行。kss.indicators.pack.write_pack/read_pack 切到 kss.db indicator_signal_packs 表（entry_id=entry.id，与 migrate_storage.py 既有导入器的 entry_id 派生方式一致）；entry_signals_root 删除（无外部调用者）。run_entry_pack/read_any_pack 新增 db_path 参数并透传给 kind=mi_legacy 分派（原先错误地把 entry_signals_root(entry, root) 当 root 传给 mi_pack.read_pack，现改传 db_path）。生产调用点（run_indicator_signal_pack.py, kss_app_bridge.py）均未显式传 root，全部走默认动态解析，无需改动。"
+  },
+  "intel_digest_notes": {
+    "completedAt": "2026-07-12T21:54:56.149185+00:00",
+    "goldenResult": "pass",
+    "notes": "结构化部分切到 kss.db intel_digest_notes 表；.md 文件保持不动（Tier C，人读沉淀，intel_digest_exists/read_intel_digest_response 两个读函数不变）。save_intel_digest 只有 .json 结构化 payload 那部分从原子写文件改成 INSERT OR REPLACE。该域此前研究阶段已确认零读取方（write-only by design），本次割接主要是补齐 Tier A 归属，不影响任何现有功能。6 项测试通过（test_notes_storage.py 断言点从「json 文件存在」改「db 行存在」）。"
+  },
+  "intel_radar_cache": {
+    "completedAt": "2026-07-13 06:27:36",
+    "goldenResult": "pass",
+    "notes": "storage/intel_radar/radar.json 单文件核对通过（payload_json + generated_at 逐字段一致）。kss.news.radar.fetch_radar/load_cache 切到 kss.db intel_radar_cache 单例表（singleton='default'）；CACHE_DIR/CACHE_FILE 常量删除，改 DB_PATH（同样在模块导入时读 KSS_STATE_ROOT 冻结一次，与原设计一致，未改变该模块既有的冻结时机限制——不在本次迁移范围内）。生产调用点（kss_app_bridge.py _intel_radar、kss/news/rewrite_worker.py）均不带参数调用 get_radar()，无需改动。无预置测试文件；用真实数据做了 fetch/load round-trip smoke 验证。"
+  },
+  "intel_rewrite_items": {
+    "completedAt": "2026-07-12T21:54:56.149032+00:00",
+    "goldenResult": "pass",
+    "notes": "真源切到 kss.db intel_rewrite_items 表；顺带修了 U14 迁移脚本的另一处真实 bug——旧 schema 主键只有 item_id，同一条资讯的 investment/chinese 两个改写变体共享同一 item_id 会互相覆盖（真实数据里 12 条 chinese 变体因此被清空）。改主键为 (item_id, kind)。payload_json 改回「索引列+blob」模式（item_id/kind/track_key/day/status 拆列，其余 text/sections/model/generated_at/prompt_system 等随写入方迭代变化的字段整体存 blob，不强行拆列，这个域一开始就该这么设计）。kss/storage/rewrite_pool.py 整体改写：claim_generating 的原子声明逻辑现在整个包在一个 SQLite 事务里，比旧版「查-写前再查一次」的文件系统模拟更严格。真实 storage/ golden 核对：150 条（含 12 条此前会丢失的 chinese 变体）逐一核对。13 项测试通过。"
+  },
+  "intraday_session_cache": {
+    "completedAt": "2026-07-12T21:44:14.805696+00:00",
+    "goldenResult": "pass",
+    "notes": "真源切到 kss.db intraday_session_cache 表；顺带修了 U14 迁移脚本的一处真实bug——旧 importer 用文件名 rsplit(\"_\",1) 把 {symbol}_{interval}m.json 的 \"1m\" 段误当 session_date 存进主键，实际主键该是 (symbol, interval_minutes)、session_date 只是 payload 里的普通字段。已改 schema（db.py）+ importer （用 payload 里的 interval_minutes 字段而非解析文件名）+ 删旧 kss.db 重新跑一次迁移验证。写方 _save_intraday_session_cache / 读方 _load_local_session_bars 改经新 kss/storage/intraday_session_cache.py；db_path 显式从 STATE_ROOT 派生（同 watchlist/registry 惯例，保测试隔离有效）。该域无独立 cron，由 collect_intraday（15:05 工作日）间接写 + Swift UI 交互触发写，本次割接工作全程只读验证未触发实时拉取，未与 cron 竞争，不需要临时停用任务。真实 storage/ golden 核对：11 个缓存文件字段逐一对上（含此前 bug 修正后的正确 session_date）；端到端读通过。6 项测试通过（test_intraday_local_fallback.py 改写）。"
+  },
+  "mi_signal_packs": {
+    "completedAt": "2026-07-13 06:24:09",
+    "goldenResult": "pass",
+    "notes": "4/4 源 json（含 latest/ 副本）核对通过，去重成 2 条 DB 行（(asof,symbol) 主键天然去重 latest/ 与 asof 目录重复文件）。kss.strategies.mi_pack.write_pack/read_pack 切到 kss.db mi_signal_packs 表；pack_dir/latest_dir/signals_root 三个纯路径 helper 删除（无外部调用者）；cache_dir 概念不适用于此域，改用 db_path 参数（None → state_root()派生默认路径，保留 KSS_STATE_ROOT env 动态解析行为，test_read_pack_uses_state_root_env 验证）。latest 语义从「写入时顺带覆盖 latest/ 文件」改为 ORDER BY asof DESC LIMIT 1 派生，天然容错乱序补跑。"
+  },
+  "news_digest_entries": {
+    "completedAt": "2026-07-13 07:30:29",
+    "goldenResult": "pass",
+    "notes": "5/5 源 json 逐字段核对通过。写入方 kss/news/digest.py::archive_digest 从 md+json 双写改 md(仍文件)+ kss.db news_digest_entries(新增 db_path 参数，run_news_digest 顺带透传)。kss_app_bridge.py::_news_digest 读点改走 kss.storage.news_digest.list_index/read_entry。新增 kss/storage/news_digest.py。"
+  },
+  "paper_trade_picks": {
+    "completedAt": "2026-07-13 07:00:18",
+    "goldenResult": "pass",
+    "notes": "19/19 天(105条pick)逐字段核对通过。scripts/paper_trade_log_mv.py::save_log_entry + scripts/kss_app_bridge.py::_save_picks(两处写入方) 都切到 kss.db paper_trade_picks 表。新增 kss/storage/paper_trade.py(write_day/read_day/read_all_days/read_latest_day/day_exists，读侧按 prediction_date 聚合重建「一天一份」payload 形状)。use_execution/source 两字段(两写入方都产出)不进 schema——U14 既有导入器已丢弃、研究确认下游无消费者，沿用该决定。6 处读点全改(paper_trade_log_mv.summarize_log_dir、kss_app_bridge._latest_paper_log/_paper_summary/_run_daily_picks/_run_formal_daily_picks落盘断言/_recommendation_tracking回退、compute_pipeline_alpha._hits_log_mv回退)。ledger.py::replay_paper_trade 从读 JSON 目录改读 paper_trade_picks(每日结算cron的安全网,主写入路径_record_ledger_entry已在预测当天同步写账本)。真机smoke:PredictionLedger/paper_trade读写在同一kss.db联调通过。"
+  },
+  "perilla_enrich_cache": {
+    "completedAt": "2026-07-13 06:11:36",
+    "goldenResult": "pass",
+    "notes": "36/36 CSV(holders/pe) 行内容逐字节核对通过。列 payload_csv 改名 payload（同时容纳 CSV/JSON 两种格式，kind 区分）；us_peer/usdcny 的 JSON 缓存（storage/us_peer_cache/*.json）生产中从未真正落过地——唯一调用方 aggregate.enrich() 一直显式传 cache_dir 覆盖 us_peer.py 自带默认值，实际写入位置一直是 perilla_cache/——已并轨进同一张表(kind=us_peer)但目前 0 行历史数据。发现并修一个迁移 bug：cached_at 若写 None，_cached_df 的 age check 会把新鲜缓存误判为过期（原文件版靠 mtime 天然非空，DB 版必须显式回填 cached_at=文件mtime日期）；已修 migrate_storage.py 用 f.stat().st_mtime 回填。cache_dir 参数全链路(aggregate.enrich/_us_peer_block/_cached_df, us_peer.fetch_us_peer/fetch_usdcny)改名 db_path，语义从「目录」变「kss.db 路径」，None 统一表示跳过缓存(不再退回硬编码默认目录)。kss_app_bridge.py 两处调用点(cache_only 热路径 + 实时 _perilla_enrich)显式传 STATE_ROOT 派生 db_path。scripts/refresh_perilla_enrich.py 改用 aggregate.DB_PATH。"
+  },
+  "predictions": {
+    "completedAt": "2026-07-13 07:00:18",
+    "goldenResult": "pass",
+    "notes": "predictions 表(110行,U14已ATTACH导入)——DEFAULT_LEDGER_PATH 从 PROJECT_ROOT 硬编码路径(kss.prediction.ledger 历史上不读 KSS_STATE_ROOT，独立于其它域的既有 bug)改指向 kss.config.paths.KSS_DB(bundle 模式下这是本次连带修的正确性问题，不只是存储迁移)。PredictionLedger._connect() 的 PRAGMA journal_mode=WAL 无条件重发问题一并修复(check-before-set，同 kss.storage.db.connect() 的既有修法)——因为 predictions 现与其它 ~30 张表共用同一 kss.db 文件，冷启动并发首连的 WAL 竞态风险比独立文件时更高。真机验证：bare PredictionLedger() 无 db_path 覆盖时正确读到 110 条 ATTACH 迁移记录；8 线程并发构造 tracker 无锁冲突。"
+  },
+  "reports_index": {
+    "completedAt": "2026-07-13 07:09:09",
+    "goldenResult": "pass",
+    "notes": "53/53 源文件（含子目录）已通过 U14 既有导入器核对通过，本次未发现问题。范围决定：storage/reports/ 下的文件来自几十个互不相关、手工/一次性运行的分析脚本（bj50_scan、各种 indicator_lab 报告、AI backtest 报告等），没有单一「写入方」可挂钩做增量索引维护——与 daily_review_index 或其它 Tier A JSON 域不同，这里没有一个清晰的、值得改造的写入点。kss_app_bridge.py::_backtest_reports() 有 8 个硬编码文件名 + 一处 indicator_lab 目录 glob，规划文档（appendix-storage-inventory.md）把「退休硬编码列表」列为割接动机之一，但代码本身有明确注释「不因指标实验室泛化而改变现状行为」——两者有张力。本次判断：这属于「用可查询索引替代临时拼凑」的 catalog 反射工作，性质更接近 U16/U17（DuckDB 查询层 + catalog 反射扩展）而非 U15的存储写入方割接，故本次不碰 _backtest_reports()，索引继续靠 migrate_storage.py 批量重建保鲜。这是显式记录的范围收窄，不是遗漏。"
+  },
+  "sector_review_config": {
+    "completedAt": "2026-07-12T21:27:58.268532+00:00",
+    "goldenResult": "pass",
+    "notes": "真源切到 kss.db sector_review_config 表（单例 config_key=default）；kss/sector/scorer.py:load_config 内部改写，kss/sector/hotspot_rotation.py 的config_path 默认值从 yaml 路径改 None（走 kss.db 默认）。无 Swift 直读、无独立写方（人工改配置，且不涉及活跃编辑工作流——跟 themes/mi_rules 不同，纯内部调优参数，未见证据表明是常态手改）。写读只经 load_config 一个函数，改动面小。真实数据 golden 核对：kss.db 里的配置与原 json 逐字段一致。68 项测试通过（test_sector_scorer.py 补 4 例）。"
+  },
+  "sector_rotation_snapshots": {
+    "completedAt": "2026-07-13 06:40:36",
+    "goldenResult": "pass",
+    "notes": "22/22 源 json 逐字段核对通过。kss.sector.hotspot_rotation.save_snapshot/_load_trade_calendar/_load_historical_boards 切到 kss.db sector_rotation_snapshots 表（PK trade_date）；output_dir 参数改名 db_path（build_hotspot_rotation_snapshot/save_snapshot/refresh_hotspot_rotation.py --output-dir→--db-path）。save_snapshot 返回值从 Path 改 None（无外部调用者读返回值）。新增 kss/storage/sector_rotation.py（write_snapshot/read_by_date/read_latest/read_history/read_all_ascending）。DEFAULT_OUTPUT_DIR 常量删除。bridge 侧 5 处读点（_sector_rotation_history/_latest_sector_rotation/_adapt_sector_hotspot/_theme_leaders/dispatch sector-rotation）+ _sector_rotation_snapshot 文件读 helper 全改走新模块；SECTOR_ROTATION_DIR 常量删除。scripts/compute_pipeline_alpha.py（离线分析脚本，非 cron）的 _hits_sector_hotspot 顺带改用 read_all_ascending（该脚本还读 paper_trade/reports 两个未迁移域，留待各自域割接时再碰）。已知遗留：scripts/build_data_catalog.py 的目录反射条目 + scripts/sector_rotation_probe.py（无关一次性探针脚本）未动，前者的 catalog 反射对新写入的 kss.db 数据会滞后，留给 U16/U17（DuckDB 查询层 + catalog 反射扩展）统一处理，不属于本域范围。真机 smoke：bridge _latest_sector_rotation/_sector_rotation_history/_adapt_sector_hotspot/_theme_leaders/dispatch 均对真实数据验证通过。"
+  },
+  "stock_names": {
+    "completedAt": "2026-07-12T21:37:44.833603+00:00",
+    "goldenResult": "pass",
+    "notes": "真源切到 kss.db stock_names 表；新增 kss/storage/stock_names.py 共享读写模块（load_stock_names 返回统一 DataFrame，set_stock_names 供迁移脚本/测试用，生产无写方）。5 处独立读者收敛：kss/sector/kcb_overlay.py:build_kcb_overlay（stock_names_path 参数改名 db_path，移除「缺列兼容」两条老 CSV 分支——DB schema 固定 4 列，语义上等价于该行 concept 为空）、kss/macro/rotation.py:load_industry_map 的 csv 兜底分支、scripts/paper_trade_log_mv.py 的名称注入、scripts/kss_app_bridge.py:_load_names()、scripts/backfill_industry_map.py:fetch_from_csv（函数名沿用旧称，CLI flag --csv-only 不改，纯内部实现换存储）。真实 storage/ golden 核对：608 行样本核对一致，kcb_overlay/industry_map 端到端跑通匹配真实数据。34 项测试通过（kcb_overlay 11 例改写，rotation 2 例改写）。"
+  },
+  "trends_days": {
+    "completedAt": "2026-07-13 07:30:29",
+    "goldenResult": "pass",
+    "notes": "45/45 源 json 逐字段核对通过。写入方 scripts/archive_trends_daily.py::write_trend_day 从「.tmp→os.replace 原子写文件」改直接写 kss.db trends_days 表（SQLite 事务本身原子，不需要 tmp+rename 模拟）；返回值从 Path 改直接返回 payload dict（两个调用方 main()/backfill_trends.py 都只是想要 payload 内容,不需要文件路径）。scripts/backfill_trends.py 的「跳过已存在」检查从 TRENDS_DIR 文件 exists() 改 day_exists()。新增 kss/storage/trends.py。真机跑过 write_trend_day 全流程（真实北向/ETF/板块/推荐四源）。\n\n顺带修复：本次开发过程中撞到 kss.storage.db.connect() 冷启动并发建库的 flaky bug——此前(U15 早前域割接期间)的「读探测再决定是否发 PRAGMA journal_mode=WAL」修法把竞态窗口收窄但没消除(读-判-写之间仍有 TOCTOU)，8 次重跑约 40% 概率撞 database is locked（该 pragma 不吃 busy_timeout）。已加短重试兜底（输的一方重试时会看到赢家已切完，直接走「已 WAL」分支）；15 次重跑验证稳定。同款修复同步打到 kss/prediction/ledger.py 和 kss/backtest/factor_health.py (FactorHealthTracker + FactorCrashRegistry 两个类)各自重复的 _connect()，因为这些库现在与kss.db 共用同一物理文件，暴露到相同竞态。"
+  },
+  "watchlist": {
+    "completedAt": "2026-07-12T20:45:21.388905+00:00",
+    "goldenResult": "pass",
+    "notes": "真源切到 kss.db watchlist 表（position 列保序）；Swift syncWatchlistToStore 经 bridge watchlist-set 写入；4 处 Python 读者（collect_intraday/kss_app_bridge/backtest_mi_watchlist/run_mi_signal_pack）改读 kss.storage.watchlist.load_watchlist；旧 watchlist_symbols.txt 不再被写入。修了两处并发建库竞态（db.py WAL pragma 收窄 + schema_migrations INSERT OR IGNORE）。11 项测试通过。"
+  }
+}

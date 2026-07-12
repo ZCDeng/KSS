@@ -1,0 +1,19 @@
+{
+  "item_id": "d21070200fbf07e5",
+  "kind": "investment",
+  "track_key": "ai",
+  "day": "20260710",
+  "status": "failed",
+  "title": "刚刚，全球首个超高帧世界模型诞生！英伟达含量0，狂飙50帧",
+  "url": "https://mp.weixin.qq.com/s?__biz=MzI3MTA0MTk1MA==&mid=2652711354&idx=2&sn=480b98997a82ed635e5de6e3aef31392",
+  "source": "新智元",
+  "time": "07-08 11:45",
+  "started_at_ts": 1783645794.732928,
+  "started_at": "2026-07-10 09:09:54",
+  "error": "未配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY；wrapper 应从 Hermes .env grep 注入",
+  "error_type": "unavailable",
+  "body_text": "国产NPU跑穿实时世界模型，成本还砍七成。",
+  "body_mode": "summary",
+  "body_char_count": 21,
+  "body_error": "body too short"
+}
