@@ -4037,6 +4037,133 @@ def _write_indicator_report(entry: Any, packs: list[dict[str, Any]], verdict_ref
         return None
 
 
+# ---------------------------------------------------------------------------
+# 数据源连通性测试（plan 2026-07-12-005 / U4）——设置页「数据源」分区逐源探测。
+# 只读命令：不进 WRITE_COMMANDS，不需人工确认。凭据缺失明确报 not_configured，
+# 不当作探测失败混淆。
+# ---------------------------------------------------------------------------
+
+def _datasource_test_tushare() -> dict[str, Any]:
+    """Tushare 连通性：token 缺 → not_configured；否则跑一次极轻量 trade_cal 查询。"""
+    import os as _os
+    import time as _time
+
+    token = _os.environ.get("TUSHARE_TOKEN", "").strip()
+    if not token:
+        return {"source": "tushare", "ok": False, "error": "not_configured",
+                 "hint": "未配置 Tushare Token，去设置里填", "latency_ms": None}
+    t0 = _time.monotonic()
+    try:
+        from kss.data.tushare_client import TushareClient  # noqa: PLC0415
+
+        pro = TushareClient().get_pro()
+        df = pro.trade_cal(exchange="SSE", start_date="20260101", end_date="20260105")
+        ok = df is not None
+    except Exception as exc:  # noqa: BLE001
+        latency_ms = (_time.monotonic() - t0) * 1000
+        return {"source": "tushare", "ok": False, "error": type(exc).__name__,
+                 "hint": str(exc)[:200], "latency_ms": round(latency_ms, 1)}
+    latency_ms = (_time.monotonic() - t0) * 1000
+    if not ok:
+        return {"source": "tushare", "ok": False, "error": "empty_response",
+                 "hint": "trade_cal 返回空，token 可能无效或已过期", "latency_ms": round(latency_ms, 1)}
+    return {"source": "tushare", "ok": True, "error": None, "hint": None,
+             "latency_ms": round(latency_ms, 1)}
+
+
+def _datasource_test_longbridge() -> dict[str, Any]:
+    """Longbridge 连通性：三凭据缺任一 → not_configured；否则只建连不拉行情（免耗标的配额）。"""
+    import os as _os
+    import time as _time
+
+    creds = ("LONGBRIDGE_APP_KEY", "LONGBRIDGE_APP_SECRET", "LONGBRIDGE_ACCESS_TOKEN")
+    if not all(_os.environ.get(k, "").strip() for k in creds):
+        return {"source": "longbridge", "ok": False, "error": "not_configured",
+                 "hint": "未配置 Longbridge 三件套凭据，去设置里填", "latency_ms": None}
+    t0 = _time.monotonic()
+    from kss.data.intraday_client import LongbridgeProvider  # noqa: PLC0415
+
+    _ctx, err = LongbridgeProvider()._ensure_context()
+    latency_ms = (_time.monotonic() - t0) * 1000
+    if err:
+        return {"source": "longbridge", "ok": False, "error": err,
+                 "hint": "建立行情连接失败，请核对凭据", "latency_ms": round(latency_ms, 1)}
+    return {"source": "longbridge", "ok": True, "error": None, "hint": None,
+             "latency_ms": round(latency_ms, 1)}
+
+
+def _datasource_test_telegram() -> dict[str, Any]:
+    """Telegram 连通性：只调 getMe，不发消息（避免测试骚扰真实 chat）。"""
+    import os as _os
+    import time as _time
+
+    token = _os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        return {"source": "telegram", "ok": False, "error": "not_configured",
+                 "hint": "未配置 Telegram Bot Token，去设置里填", "latency_ms": None}
+    api_url = (_os.environ.get("TELEGRAM_API_URL") or "https://api.telegram.org").rstrip("/")
+    t0 = _time.monotonic()
+    try:
+        import requests  # noqa: PLC0415
+
+        resp = requests.get(f"{api_url}/bot{token}/getMe", timeout=10)
+        payload = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        latency_ms = (_time.monotonic() - t0) * 1000
+        return {"source": "telegram", "ok": False, "error": type(exc).__name__,
+                 "hint": str(exc)[:200], "latency_ms": round(latency_ms, 1)}
+    latency_ms = (_time.monotonic() - t0) * 1000
+    if not payload.get("ok"):
+        return {"source": "telegram", "ok": False, "error": "auth_failed",
+                 "hint": payload.get("description", "token 无效"), "latency_ms": round(latency_ms, 1)}
+    return {"source": "telegram", "ok": True, "error": None, "hint": None,
+             "latency_ms": round(latency_ms, 1)}
+
+
+def _datasource_test_llm() -> dict[str, Any]:
+    """LLM 端点连通性：主/备两套三元组分别测（备已配置时），双结果呈现（KTD6）。"""
+    from kss.llm.openai_client import (  # noqa: PLC0415
+        LLMUnavailable,
+        _resolve_credential_candidates,
+        probe_credential_candidate,
+    )
+
+    try:
+        candidates = _resolve_credential_candidates()
+    except LLMUnavailable as exc:
+        return {"source": "llm", "ok": False, "error": "not_configured",
+                 "hint": str(exc), "latency_ms": None, "candidates": []}
+
+    roles = ["primary", "fallback"]
+    results = []
+    for role, candidate in zip(roles, candidates):
+        probe = probe_credential_candidate(candidate)
+        results.append({"role": role, "model": candidate[2], **probe})
+    return {
+        "source": "llm",
+        "ok": all(r["ok"] for r in results),
+        "error": None if all(r["ok"] for r in results) else "candidate_failed",
+        "hint": None,
+        "latency_ms": results[0]["latency_ms"] if results else None,
+        "candidates": results,
+    }
+
+
+def _datasource_test(source: str) -> dict[str, Any]:
+    """按数据源探测连通性（R7/KTD6）：只读、给出成功/失败与明确原因。"""
+    source = (source or "").strip().lower()
+    if source == "tushare":
+        return _datasource_test_tushare()
+    if source == "longbridge":
+        return _datasource_test_longbridge()
+    if source == "telegram":
+        return _datasource_test_telegram()
+    if source == "llm":
+        return _datasource_test_llm()
+    return {"source": source, "ok": False, "error": "unknown_source",
+             "hint": f"未知数据源: {source!r}", "latency_ms": None}
+
+
 def _indicator_retire(entry_id: str) -> dict[str, Any]:
     """标记 status=retired（不删数据）；未知 id 显式报错，不静默成功。"""
     try:
@@ -4119,6 +4246,10 @@ COMMANDS = {
         "args": ["FAMILY", "PARAMS_JSON", "SYMBOLS_CSV", "[VERDICT_REF]"],
     },
     "indicator-retire": {"desc": "退役已固化指标(status=retired，不删数据)", "args": ["ENTRY_ID"]},
+    "datasource-test": {
+        "desc": "数据源连通性测试(tushare/longbridge/telegram/llm)，只读",
+        "args": ["SOURCE"],
+    },
 }
 
 # run_task 白名单 —— orientation 报此清单。须与 run_task() if-chain 实际接受集合一致
@@ -5039,6 +5170,10 @@ def dispatch(command: str, args: list[str]) -> Any:
         if not args:
             raise ValueError("indicator-retire requires ENTRY_ID")
         return _indicator_retire(args[0])
+    if command == "datasource-test":
+        if not args:
+            raise ValueError("datasource-test requires SOURCE")
+        return _datasource_test(args[0])
     if command == "version":
         # 返回 sidecar 代码版本指纹，供 Swift 端校验陈旧进程。
         return {"version": _sidecar_version_fingerprint()}

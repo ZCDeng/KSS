@@ -115,6 +115,11 @@ struct BridgeClient {
         try run(["paper-summary"], as: TrackingSummary.self)
     }
 
+    /// 数据源连通性测试（设置页数据源分区，plan 2026-07-12-005 / U4）。只读，不需写确认。
+    func datasourceTest(source: String) throws -> DataSourceTestResult {
+        try run(["datasource-test", source], as: DataSourceTestResult.self)
+    }
+
     /// 会话开场确定性候选建议（plan 2026-07-12-004 U9）：代码规则选一个，不调 LLM。
     func suggestIndicator() throws -> IndicatorSuggestion {
         try run(["indicator-suggest"], as: IndicatorSuggestion.self)

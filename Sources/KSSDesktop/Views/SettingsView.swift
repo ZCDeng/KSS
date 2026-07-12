@@ -17,7 +17,7 @@ struct SettingsView: View {
                     SettingsKeysSection()
 
                     SectionHeader("数据源")
-                    SettingsPlaceholderCard(text: "数据源连通性测试（U4）即将上线")
+                    SettingsDataSourcesSection()
 
                     SectionHeader("任务")
                     SettingsPlaceholderCard(text: "定时任务管理（U5）即将上线")
@@ -181,5 +181,146 @@ struct SettingsKeysSection: View {
         // 凭据/开关变更后重启常驻 sidecar，使新 env 生效（SIGHUP re-exec 留旧 env，须全杀重启）。
         BridgeClient.restartSidecarForEnvChange()
         saved = true
+    }
+}
+
+// MARK: - 数据源分区（U4）
+
+private enum SettingsDataSource: String, CaseIterable, Identifiable {
+    case tushare, longbridge, telegram, llm
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .tushare: return "Tushare"
+        case .longbridge: return "Longbridge"
+        case .telegram: return "Telegram"
+        case .llm: return "LLM 端点"
+        }
+    }
+
+    /// 本地 Keychain 配置状态（不经 bridge 往返）——独立于「测试」按钮的实时连通性结果。
+    var isConfigured: Bool {
+        switch self {
+        case .tushare:
+            return !(KeychainStore.read("TUSHARE_TOKEN") ?? "").isEmpty
+        case .longbridge:
+            return ["LONGBRIDGE_APP_KEY", "LONGBRIDGE_APP_SECRET", "LONGBRIDGE_ACCESS_TOKEN"]
+                .allSatisfy { !(KeychainStore.read($0) ?? "").isEmpty }
+        case .telegram:
+            return !(KeychainStore.read("TELEGRAM_BOT_TOKEN") ?? "").isEmpty
+        case .llm:
+            let newKeyed = !(KeychainStore.read("KSS_LLM_PRIMARY_KEY") ?? "").isEmpty
+            let legacy = !(KeychainStore.read("DEEPSEEK_API_KEY") ?? "").isEmpty
+                || !(KeychainStore.read("OPENAI_API_KEY") ?? "").isEmpty
+            return newKeyed || legacy
+        }
+    }
+}
+
+/// 数据源分区：逐源展示配置状态（Keychain 本地读取）+ 连通性测试按钮（R7）。
+struct SettingsDataSourcesSection: View {
+    @Environment(\.kssTheme) private var theme
+    @EnvironmentObject private var store: KSSStore
+    @State private var results: [String: DataSourceTestResult] = [:]
+    @State private var testing: Set<String> = []
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ForEach(SettingsDataSource.allCases) { source in
+                row(for: source)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func row(for source: SettingsDataSource) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(source.isConfigured ? theme.accent : theme.textSecondary.opacity(0.4))
+                    .frame(width: 8, height: 8)
+                Text(source.displayName)
+                    .font(KSSFont.themed(14, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                Text(source.isConfigured ? "已配置" : "未配置")
+                    .font(KSSFont.themed(11.5, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                Spacer()
+                Button {
+                    Task { await runTest(source) }
+                } label: {
+                    if testing.contains(source.rawValue) {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("测试").font(KSSFont.themed(12, .semibold, theme: theme))
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(testing.contains(source.rawValue))
+            }
+            if let result = results[source.rawValue] {
+                resultDetail(result)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .kssCard(padding: 12)
+    }
+
+    @ViewBuilder
+    private func resultDetail(_ result: DataSourceTestResult) -> some View {
+        if let candidates = result.candidates, !candidates.isEmpty {
+            // LLM 源：主/备各一行。
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(candidates) { c in
+                    candidateLine(role: c.role, model: c.model, ok: c.ok,
+                                   latencyMs: c.latencyMs, hint: c.hint)
+                }
+            }
+        } else {
+            candidateLine(role: nil, model: nil, ok: result.ok,
+                          latencyMs: result.latencyMs, hint: result.hint)
+        }
+    }
+
+    @ViewBuilder
+    private func candidateLine(role: String?, model: String?, ok: Bool, latencyMs: Double?, hint: String?) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: ok ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                .foregroundStyle(ok ? theme.accent : theme.up)
+                .font(.system(size: 11))
+            if let role {
+                Text(role == "primary" ? "主" : "备")
+                    .font(KSSFont.themed(11, .semibold, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+            }
+            if let model, !model.isEmpty {
+                Text(model)
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary)
+            }
+            if let latencyMs {
+                Text(String(format: "%.0fms", latencyMs))
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary)
+            }
+            if !ok, let hint, !hint.isEmpty {
+                Text(hint)
+                    .font(KSSFont.themed(11, theme: theme))
+                    .foregroundStyle(theme.up)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
+    }
+
+    private func runTest(_ source: SettingsDataSource) async {
+        guard let bridge = store.bridge else { return }
+        testing.insert(source.rawValue)
+        defer { testing.remove(source.rawValue) }
+        let result = try? await Task.detached { try bridge.datasourceTest(source: source.rawValue) }.value
+        if let result {
+            results[source.rawValue] = result
+        }
     }
 }

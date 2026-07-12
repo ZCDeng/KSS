@@ -252,6 +252,47 @@ def _resolve_credentials() -> tuple[str, str | None, str]:
     return _resolve_credential_candidates()[0]
 
 
+def probe_credential_candidate(
+    candidate: tuple[str, str | None, str], *, timeout: float = 10.0
+) -> dict[str, object]:
+    """对单个候选做 1-token 连通性探测（plan 2026-07-12-005 / U4 datasource-test 复用）.
+
+    不做候选间降级——每个候选独立测，调用方（bridge ``datasource-test``）逐个报告。
+
+    Returns:
+        ``{"ok": bool, "latency_ms": float | None, "error": str | None, "hint": str | None}``.
+    """
+    import time as _time
+
+    api_key, base_url, model = candidate
+    t0 = _time.monotonic()
+    try:
+        from openai import OpenAI  # type: ignore[import-not-found]
+    except ImportError:
+        return {"ok": False, "latency_ms": None, "error": "sdk_missing", "hint": "openai 包未安装"}
+
+    try:
+        kwargs: dict[str, object] = {"api_key": api_key, "timeout": timeout, "max_retries": 0}
+        if base_url:
+            kwargs["base_url"] = base_url
+        client = OpenAI(**kwargs)
+        client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=1,
+        )
+    except Exception as exc:  # noqa: BLE001 - 探测面向用户报错，需捕获全部
+        latency_ms = (_time.monotonic() - t0) * 1000
+        return {
+            "ok": False,
+            "latency_ms": round(latency_ms, 1),
+            "error": type(exc).__name__,
+            "hint": str(exc)[:200],
+        }
+    latency_ms = (_time.monotonic() - t0) * 1000
+    return {"ok": True, "latency_ms": round(latency_ms, 1), "error": None, "hint": None}
+
+
 def _coerce_float(raw: str | None, default: float) -> float:
     """env 字符串安全转 float；空 / 非数 → default."""
     if raw is None or not raw.strip():

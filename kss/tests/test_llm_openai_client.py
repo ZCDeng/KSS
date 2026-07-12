@@ -12,6 +12,7 @@ from kss.llm.openai_client import (
     LLMUnavailable,
     _resolve_credential_candidates,
     _resolve_credentials,
+    probe_credential_candidate,
 )
 
 
@@ -352,3 +353,27 @@ class TestLLMClientFailover:
             with pytest.raises(LLMUnavailable, match="LLM API 调用失败"):
                 client.complete(system="x", user="y")
         assert MockOpenAI.call_count == 1
+
+
+class TestCredentialCandidateProbe:
+    """probe_credential_candidate —— U4 datasource-test 复用的单候选连通性探测."""
+
+    def test_success_reports_ok_with_latency(self) -> None:
+        with patch("openai.OpenAI") as MockOpenAI:
+            instance = MagicMock()
+            instance.chat.completions.create.return_value = _make_resp("pong")
+            MockOpenAI.return_value = instance
+            result = probe_credential_candidate(("key", "https://gateway.example/v1", "model-x"))
+            assert result["ok"] is True
+            assert result["error"] is None
+            assert result["latency_ms"] is not None
+
+    def test_failure_reports_error_and_hint(self) -> None:
+        with patch("openai.OpenAI") as MockOpenAI:
+            instance = MagicMock()
+            instance.chat.completions.create.side_effect = RuntimeError("401 unauthorized")
+            MockOpenAI.return_value = instance
+            result = probe_credential_candidate(("bad-key", None, "model-x"))
+            assert result["ok"] is False
+            assert result["error"] == "RuntimeError"
+            assert "401" in result["hint"]

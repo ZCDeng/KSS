@@ -1799,6 +1799,43 @@ struct IntradayBars: Codable, Hashable {
     }
 }
 
+// MARK: - 数据源连通性测试（plan 2026-07-12-005 / U4，bridge `datasource-test`）
+
+/// 单候选（主/备）探测结果。
+struct DataSourceCandidateProbe: Codable, Hashable, Identifiable {
+    var role: String        // "primary" | "fallback"
+    var model: String?
+    var ok: Bool
+    var latencyMs: Double?
+    var error: String?
+    var hint: String?
+
+    var id: String { role }
+
+    enum CodingKeys: String, CodingKey {
+        case role, model, ok
+        case latencyMs = "latency_ms"
+        case error, hint
+    }
+}
+
+/// 数据源连通性测试结果（bridge `datasource-test <source>`）。R7。
+struct DataSourceTestResult: Codable, Hashable {
+    var source: String
+    var ok: Bool
+    var latencyMs: Double?
+    var error: String?
+    var hint: String?
+    /// 仅 LLM 源非空：主/备各一条。
+    var candidates: [DataSourceCandidateProbe]?
+
+    enum CodingKeys: String, CodingKey {
+        case source, ok
+        case latencyMs = "latency_ms"
+        case error, hint, candidates
+    }
+}
+
 /// 交易时段查询（bridge `trading-hours`，门控实时拉取 / 定时器）。R13/F007。
 struct TradingHours: Codable, Hashable {
     var isTradeDay: Bool

@@ -202,6 +202,15 @@ def get_intraday_snapshot(symbol: str, interval_minutes: int = 1) -> dict:
     return _call("intraday-snapshot", [symbol, str(interval_minutes)])
 
 
+@mcp.tool
+def test_datasource(source: str) -> dict:
+    """数据源连通性测试（只读，不需 confirm）。source ∈ tushare|longbridge|telegram|llm。
+
+    凭证缺失返回 not_configured（非探测失败）；llm 源对主/备候选分别测试，双结果呈现。
+    """
+    return _call("datasource-test", [source])
+
+
 # ---- 写命令（paper-only：仅 KSS_MCP_LIVE=1 注册，且每调用须 confirm）----
 
 if _LIVE:
