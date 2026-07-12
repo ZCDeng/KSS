@@ -403,7 +403,25 @@ def _report_metrics(text: str) -> list[dict[str, str]]:
     return metrics
 
 
+INDICATOR_LAB_REPORTS_DIR = REPORT_DIR / "indicator_lab"
+
+
+def _report_entry(path: Path) -> dict[str, Any]:
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    lines = [line.rstrip() for line in text.splitlines()]
+    title = next((line.lstrip("# ").strip() for line in lines if line.startswith("#")), path.stem)
+    excerpt_lines = [line for line in lines if line.strip() and not line.startswith("#") and not line.startswith("|")]
+    return {
+        "title": title,
+        "path": str(path.relative_to(STATE_ROOT)),
+        "updatedAt": datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
+        "metrics": _report_metrics(text),
+        "excerpt": "\n".join(excerpt_lines[:10]),
+    }
+
+
 def _backtest_reports() -> list[dict[str, Any]]:
+    # 历史固定 8 条：不是目录扫描产物，原样保留（不因指标实验室泛化而改变现状行为）。
     candidates = [
         REPORT_DIR / "kss_desktop_logmv_backtest.md",
         REPORT_DIR / "kss_desktop_radar_archive_analysis.md",
@@ -414,21 +432,21 @@ def _backtest_reports() -> list[dict[str, Any]]:
         REPORT_DIR / "kcb50_wf_factor_selection_report.md",
         REPORT_DIR / "kcb50_lgb_cross_section_report.md",
     ]
-    out: list[dict[str, Any]] = []
-    for path in candidates:
-        if not path.exists():
-            continue
-        text = path.read_text(encoding="utf-8", errors="ignore")
-        lines = [line.rstrip() for line in text.splitlines()]
-        title = next((line.lstrip("# ").strip() for line in lines if line.startswith("#")), path.stem)
-        excerpt_lines = [line for line in lines if line.strip() and not line.startswith("#") and not line.startswith("|")]
-        out.append({
-            "title": title,
-            "path": str(path.relative_to(STATE_ROOT)),
-            "updatedAt": datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
-            "metrics": _report_metrics(text),
-            "excerpt": "\n".join(excerpt_lines[:10]),
-        })
+    out: list[dict[str, Any]] = [
+        _report_entry(path) for path in candidates if path.exists()
+    ]
+    # 指标实验室固化产物：目录扫描（同 _reviews() 惯例），按 mtime 倒序追加、去重。
+    seen_paths = {item["path"] for item in out}
+    if INDICATOR_LAB_REPORTS_DIR.exists():
+        indicator_reports = sorted(
+            INDICATOR_LAB_REPORTS_DIR.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True
+        )
+        for path in indicator_reports:
+            entry = _report_entry(path)
+            if entry["path"] in seen_paths:
+                continue
+            seen_paths.add(entry["path"])
+            out.append(entry)
     return out
 
 
@@ -3922,11 +3940,33 @@ def _indicator_solidify(
         save_registry(prior_entries, reg_path)  # 回退：还原固化前的注册表，不留半成品条目
         return {"error": "solidify_failed", "hint": str(exc)[:300]}
 
+    report_path = _write_indicator_report(entry, packs, verdict_ref)
     return {
         "ok": True, "entryId": entry_id, "family": family, "params": params,
         "symbols": symbols,
         "packs": [{"symbol": p["symbol"], "status": p["status"]} for p in packs],
+        "reportPath": report_path,
     }
+
+
+def _write_indicator_report(entry: Any, packs: list[dict[str, Any]], verdict_ref: str) -> str | None:
+    """固化收尾：生成 AI回测报告 md（U5）。失败 fail-silent——报告缺失不回滚已固化的指标。"""
+    try:
+        from kss.indicators.report import format_report
+
+        verdict_payload = None
+        if verdict_ref:
+            vp = STATE_ROOT / verdict_ref
+            if vp.exists():
+                verdict_payload = json.loads(vp.read_text(encoding="utf-8"))
+        text = format_report(entry, packs, verdict_payload)
+        INDICATOR_LAB_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        path = INDICATOR_LAB_REPORTS_DIR / f"{entry.id}.md"
+        path.write_text(text, encoding="utf-8")
+        return str(path.relative_to(STATE_ROOT))
+    except Exception as exc:  # noqa: BLE001
+        print(f"indicator report for {entry.id}: {exc}", file=sys.stderr)
+        return None
 
 
 def _indicator_retire(entry_id: str) -> dict[str, Any]:

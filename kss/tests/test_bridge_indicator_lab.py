@@ -38,9 +38,14 @@ def _write_fixture_csv(path: Path, n: int = 400, seed: int = 1, drift: float = 0
 
 @pytest.fixture
 def isolated_root(tmp_path: Path, monkeypatch):
+    # REPORT_DIR / INDICATOR_LAB_DIR / INDICATOR_LAB_VERDICTS_DIR / INDICATOR_LAB_REPORTS_DIR
+    # 都是模块级常量，在真实仓库 STATE_ROOT 下于 import 时算好——只 monkeypatch STATE_ROOT
+    # 不会重定向它们，必须逐一覆盖，否则测试会悄悄读写真仓库的 storage/reports/。
     monkeypatch.setattr(b, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(b, "REPORT_DIR", tmp_path / "storage" / "reports")
     monkeypatch.setattr(b, "INDICATOR_LAB_DIR", tmp_path / "storage" / "indicator_lab")
     monkeypatch.setattr(b, "INDICATOR_LAB_VERDICTS_DIR", tmp_path / "storage" / "indicator_lab" / "verdicts")
+    monkeypatch.setattr(b, "INDICATOR_LAB_REPORTS_DIR", tmp_path / "storage" / "reports" / "indicator_lab")
     monkeypatch.setenv("KSS_STATE_ROOT", str(tmp_path))
     monkeypatch.setenv("KSS_PROJECT_ROOT", str(Path(__file__).resolve().parents[2]))
     return tmp_path
@@ -143,6 +148,33 @@ def test_solidify_then_retire_roundtrip(isolated_root: Path) -> None:
     assert retire_out.get("ok") is True
     entries2 = load_registry(isolated_root / "storage" / "indicator_registry.yaml")
     assert get_entry(entry_id, entries2).status == "retired"
+
+
+def test_solidify_generates_report_visible_in_backtest_reports(isolated_root: Path) -> None:
+    """U5: 固化产出的报告落地 storage/reports/indicator_lab/，_backtest_reports 目录扫描能看到它。"""
+    _write_fixture_csv(isolated_root / "cs_data_688017.csv")
+    params = json.dumps({"fast": 5, "slow": 20, "kind": "sma"})
+    backtest_out = b.dispatch("indicator-backtest", ["ma_cross", params, "688017.SH"])
+    assert "error" not in backtest_out
+    verdict_ref = backtest_out["verdictRef"]
+
+    out = b.dispatch("indicator-solidify", ["ma_cross", params, "688017.SH", verdict_ref])
+    assert out.get("ok") is True
+    assert out["reportPath"] is not None
+    report_file = isolated_root / out["reportPath"]
+    assert report_file.exists()
+    assert "GO/NO-GO" in report_file.read_text(encoding="utf-8")
+
+    reports = b.dispatch("indicator-lab-list", [])  # 只是确认注册表侧未受影响
+    assert any(e["id"] == out["entryId"] for e in reports["entries"])
+
+    listed = b._backtest_reports()
+    assert any(r["path"] == out["reportPath"] for r in listed)
+
+
+def test_backtest_reports_empty_dir_matches_hardcoded_only(isolated_root: Path) -> None:
+    """U5 回归：indicator_lab 报告目录不存在时，_backtest_reports 行为与硬编码 8 条路径一致（均缺失 → 空列表）。"""
+    assert b._backtest_reports() == []
 
 
 def test_solidify_no_symbols_rejected(isolated_root: Path) -> None:
