@@ -130,6 +130,14 @@ jobs:
     catchup: true
     enabled: true
 
+  - suffix: indicator_signal_pack
+    wrapper: scripts/run_indicator_signal_pack_daily.sh
+    schedule: {hour: 17, minute: 16, weekdays: [1, 2, 3, 4, 5]}
+    title: 指标信号包（注册表基元库条目）
+    category: 扫描选股
+    catchup: true
+    enabled: true
+
   - suffix: formal_daily_review
     wrapper: scripts/run_formal_daily_review.sh
     schedule: {hour: 17, minute: 20, weekdays: [1, 2, 3, 4, 5]}

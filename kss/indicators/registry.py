@@ -56,6 +56,7 @@ class RegistryEntry:
     status: str = STATUS_ACTIVE
     solidified_at: str | None = None
     verdict_ref: str | None = None  # 相对 state_root，指向 GO 裁决快照
+    symbols: list[str] = field(default_factory=list)  # 固化时通过 GO 门禁的标的；日终 cron 只刷这些
 
     def __post_init__(self) -> None:
         if self.kind not in KINDS:
@@ -113,6 +114,7 @@ def load_registry(path: Path | None = None) -> list[RegistryEntry]:
                 status=str(item.get("status", STATUS_ACTIVE)),
                 solidified_at=item.get("solidified_at"),
                 verdict_ref=item.get("verdict_ref"),
+                symbols=list(item.get("symbols") or []),
             )
         except ValueError:
             continue  # 未知 kind，跳过并记录告警交由调用方（此处不静默吞——由 caller 决定是否记日志）

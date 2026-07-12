@@ -1570,12 +1570,34 @@ def _run_mi_signal_pack(args: dict[str, str | bool]) -> dict[str, Any]:
     )
 
 
+def _run_indicator_signal_pack(args: dict[str, str | bool]) -> dict[str, Any]:
+    """日终指标 Signal Pack：注册表 active 基元库条目各自标的 walk-forward 后写 pack + 账本."""
+    started = _now_iso()
+    python = _full_python()
+    if python is None:
+        return _missing_full_env_result("indicator-signal-pack", "指标 Signal Pack", started)
+    command = [str(python), "scripts/run_indicator_signal_pack.py"]
+    asof_raw = args.get("asof")
+    if isinstance(asof_raw, str) and asof_raw.strip():
+        command += ["--asof", asof_raw.strip()]
+    return _run_process_task(
+        "indicator-signal-pack",
+        "指标 Signal Pack",
+        command,
+        started,
+        artifacts=["storage/indicator_signals"],
+        timeout=900,
+    )
+
+
 def run_task(task_id: str, argv: list[str]) -> dict[str, Any]:
     args = _parse_args(argv)
     if task_id == "daily-review-symbol":
         return _run_daily_review_symbol(args)
     if task_id == "mi-signal-pack":
         return _run_mi_signal_pack(args)
+    if task_id == "indicator-signal-pack":
+        return _run_indicator_signal_pack(args)
     if task_id == "daily-picks":
         return _run_daily_picks(args)
     if task_id == "daily-picks-preview":
@@ -3971,6 +3993,7 @@ def _indicator_solidify(
         signals_dir=f"storage/indicator_signals/{entry_id}",
         solidified_at=_now_iso(),
         verdict_ref=verdict_ref or None,
+        symbols=symbols,
     )
 
     reg_path = _registry_path()
@@ -4101,7 +4124,7 @@ COMMANDS = {
 # run_task 白名单 —— orientation 报此清单。须与 run_task() if-chain 实际接受集合一致
 # （test_bridge_orientation 断言相等）。
 RUN_TASKS = (
-    "daily-review-symbol", "mi-signal-pack", "daily-picks", "daily-picks-preview", "logmv-backtest",
+    "daily-review-symbol", "mi-signal-pack", "indicator-signal-pack", "daily-picks", "daily-picks-preview", "logmv-backtest",
     "radar-archive-analysis", "paper-summary", "formal-daily-picks", "formal-paper-summary",
     "formal-daily-review", "formal-sector-review", "formal-etf-radar-backtest",
     "refresh-bj-daily", "refresh-daily-basic", "refresh-market-strip",
