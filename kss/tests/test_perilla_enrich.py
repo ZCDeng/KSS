@@ -130,7 +130,7 @@ def test_cache_only_never_touches_network(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(aggregate._us, "fetch_us_peer",
                         lambda *a, **k: pytest.fail("cache_only must not hit yfinance")
                         if not k.get("cache_only") else {"status": "unavailable", "reason": "cache_miss"})
-    out = aggregate.enrich(sym, registry=reg, today=TODAY, cache_dir=tmp_path,
+    out = aggregate.enrich(sym, registry=reg, today=TODAY, db_path=tmp_path / "kss.db",
                            client=_FakeClient(raise_on={"holders", "pe"}), cache_only=True)
     assert out["status"] == "ok"  # 整体不抛
     assert out["institutional"]["top10"]["status"] == "unavailable"

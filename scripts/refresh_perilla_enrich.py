@@ -1,7 +1,7 @@
 """预热紫苏叶列表(core+main)个股富化缓存.
 
 遍历注册表 core/main 票，逐只跑 ``enrich`` 把 Tushare(机构/PE) + yFinance(美股对标)
-结果写入 ``storage/perilla_cache`` / ``storage/us_peer_cache``，供 App/MCP 热路径直接命中。
+结果写入 kss.db perilla_enrich_cache 表，供 App/MCP 热路径直接命中。
 
 设计：
 - 美股侧全墙时整段降级(enrich 内部已处理)，不阻塞 A 股侧缓存。
@@ -42,7 +42,7 @@ def main() -> None:
     print(f"[*] 预热 {len(symbols)} 只 core+main 富化缓存 ...")
     ok = degraded = 0
     for i, sym in enumerate(symbols, 1):
-        out = aggregate.enrich(sym, registry=reg, cache_dir=aggregate.CACHE_DIR)
+        out = aggregate.enrich(sym, registry=reg, db_path=aggregate.DB_PATH)
         inst = out.get("institutional", {})
         inst_ok = isinstance(inst, dict) and inst.get("top10", {}).get("status") == "ok"
         pe_ok = out.get("valuation_pe", {}).get("status") == "ok"

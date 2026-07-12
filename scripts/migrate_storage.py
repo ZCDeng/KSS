@@ -19,6 +19,7 @@ import re
 import sqlite3
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -217,23 +218,48 @@ def import_intel_rewrites(conn: sqlite3.Connection, storage_root: Path) -> Impor
 
 
 def import_perilla_cache(conn: sqlite3.Connection, storage_root: Path) -> ImportResult:
-    source_dir = storage_root / "perilla_cache"
-    if not source_dir.is_dir():
-        return ImportResult("perilla_enrich_cache", 0, 0, False, "目录不存在")
-    files = sorted(source_dir.glob("*.csv"))
+    """perilla_cache/*.csv（holders/pe，A股侧）+ us_peer_cache/*.json（us_peer，美股/汇率侧，
+    生产中实际从未写入过——aggregate.enrich() 一直显式传 cache_dir 覆盖 us_peer.py 自带默认值，
+    真实写入位置一直是 perilla_cache/——这里仍兜底导入以防历史数据存在）。"""
     written = 0
-    pat = re.compile(r"^(.+)_(holders|pe)$")
-    for f in files:
-        m = pat.match(f.stem)
-        if not m:
-            continue
-        ts_code, kind = m.group(1), m.group(2)
-        conn.execute(
-            "INSERT OR REPLACE INTO perilla_enrich_cache (ts_code, kind, payload_csv, cached_at) VALUES (?,?,?,?)",
-            (ts_code, kind, f.read_text(encoding="utf-8"), None),
-        )
-        written += 1
-    return ImportResult("perilla_enrich_cache", written, written, written > 0, f"{len(files)} 源文件")
+    source_files = 0
+
+    csv_dir = storage_root / "perilla_cache"
+    if csv_dir.is_dir():
+        files = sorted(csv_dir.glob("*.csv"))
+        source_files += len(files)
+        pat = re.compile(r"^(.+)_(holders|pe)$")
+        for f in files:
+            m = pat.match(f.stem)
+            if not m:
+                continue
+            ts_code, kind = m.group(1), m.group(2)
+            cached_at = datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d")
+            conn.execute(
+                "INSERT OR REPLACE INTO perilla_enrich_cache (ts_code, kind, payload, cached_at) VALUES (?,?,?,?)",
+                (ts_code, kind, f.read_text(encoding="utf-8"), cached_at),
+            )
+            written += 1
+
+    json_dir = storage_root / "us_peer_cache"
+    if json_dir.is_dir():
+        files = sorted(json_dir.glob("*.json"))
+        source_files += len(files)
+        for f in files:
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
+            ticker = d.get("ticker") or f.stem
+            conn.execute(
+                "INSERT OR REPLACE INTO perilla_enrich_cache (ts_code, kind, payload, cached_at) VALUES (?,?,?,?)",
+                (ticker, "us_peer", json.dumps(d, ensure_ascii=False), d.get("as_of")),
+            )
+            written += 1
+
+    if source_files == 0:
+        return ImportResult("perilla_enrich_cache", 0, 0, False, "目录不存在")
+    return ImportResult("perilla_enrich_cache", written, written, written > 0, f"{source_files} 源文件")
 
 
 def import_intraday_session_cache(conn: sqlite3.Connection, storage_root: Path) -> ImportResult:

@@ -203,7 +203,7 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         CREATE TABLE IF NOT EXISTS perilla_enrich_cache (
             ts_code      TEXT NOT NULL,
             kind         TEXT NOT NULL,
-            payload_csv  TEXT NOT NULL,
+            payload      TEXT NOT NULL,
             cached_at    TEXT,
             PRIMARY KEY (ts_code, kind)
         ) STRICT;

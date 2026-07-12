@@ -2574,7 +2574,7 @@ def _perilla_pick_enrich(code: str, reg: Any) -> tuple[str, float | None, float 
     """
     try:
         from kss.perilla_enrich import aggregate
-        e = aggregate.enrich(code, registry=reg, cache_dir=aggregate.CACHE_DIR, cache_only=True)
+        e = aggregate.enrich(code, registry=reg, db_path=STATE_ROOT / "storage" / "kss.db", cache_only=True)
     except Exception:
         return "", None, None
 
@@ -2617,7 +2617,7 @@ def _perilla_enrich(symbol: str) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         return {"symbol": symbol, "status": "unavailable", "reason": str(exc)[:120]}
     try:
-        return aggregate.enrich(symbol, cache_dir=aggregate.CACHE_DIR)
+        return aggregate.enrich(symbol, db_path=STATE_ROOT / "storage" / "kss.db")
     except Exception as exc:  # noqa: BLE001
         return {"symbol": symbol, "status": "unavailable", "reason": str(exc)[:120]}
 
