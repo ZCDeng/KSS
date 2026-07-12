@@ -26,10 +26,7 @@
 | `factor_health/factor_health.db` | 已是 SQLite（`crashes`/`factor_lifecycle`/`ic_snapshots`，44K） | `kss/backtest/factor_health.py:record_ic_snapshot`(415)/`log_crash`(607)/`set_state`(683)，触发自 cron `factor_health` 15:50 工作日 + `indicator_signal_pack` 17:16 附带更新 | `scripts/compute_pipeline_alpha.py:44-49`（唯一外部读取方，纯内部 Python 调用） | daily | `crashes` / `factor_lifecycle` / `ic_snapshots`（**原样并表**） | 各表既有 PK（`factor_id, window_end, source` 等） |
 | `indicator_registry.yaml` | 单文件，4K | `kss/indicators/registry.py:save_registry/upsert_entry/retire_entry`，触发自 bridge `indicator-solidify`/`indicator-retire`（人工确认写命令） | `scripts/run_indicator_signal_pack.py:26`、`scripts/daily_review.py:825`、bridge `indicator-lab-list` | event-driven 写 + 每交易日 cron 读 | `indicator_registry` | `entry_id` |
 | `indicator_lab/` | 4×json，16K | `_persist_verdict`（`kss_app_bridge.py:4093-4106`），触发自 bridge `indicator-backtest` | `_indicator_lab_recent_verdicts`（`:4082-4092`），`indicator-suggest` 用于避免重复 NO-GO 参数 | on-demand（用户在指标实验室跑回测时） | `indicator_lab_verdicts` | `verdict_id`（新增自增列，原文件名无天然唯一键） |
-| `pipeline_weights.json` | 单文件，4K | 无程序化写入——人工改（`compute_pipeline_alpha.py:372` 提示"权重更新需人工确认后手改"） | `_load_discovery_weights`（`kss_app_bridge.py:2771`），backs `get_discovery_candidates` | 静态配置，每次 discovery 调用读 | `pipeline_weights` | `weight_key` |
 | `sector_review_config.json` | 单文件，4K | 无程序化写入——人工改 | `kss/sector/hotspot_rotation.py:398`，触发自 cron `hotspot_rotation_daily` 17:50 | 静态配置，每次板块复盘 cron 读 | `sector_review_config` | `config_key` |
-| `themes_15th_5y.yaml` | 单文件，8K | 无程序化写入——**用户热改**（`kss/sector/themes.py:3` 注释原话） | `kss/sector/themes.py`、`kss/news/theme_match.py:171`、`kss/sector/commentary.py:738`；bridge `theme-leaders`（`:3931-3956`）、MCP `get_theme_leaders` | 静态配置，每次复盘/资讯/主题龙头调用读 | `theme_registry` | `theme_id` |
-| `mi_rules.yaml` | 单文件，4K | 无程序化写入——人工改 | `kss/strategies/mi_pack.py:load_rules`(57-64)，`kss/indicators/registry.py:77`（`MI_ENTRY.rules_path`） | 静态配置，每次 `mi_signal_pack`/`formal_daily_review` cron 读 | `mi_rules` | `rule_key` |
 | `stock_names.csv` | 单文件，24K | 无写入方——纯人工维护参考表 | `kss/sector/kcb_overlay.py:27`、`kss/macro/rotation.py:158-164`（industry_map 兜底）、`scripts/paper_trade_log_mv.py:426`、bridge `NAMES_PATH`（`:45,166-167`） | 静态，几乎每次涉及展示名的调用都读 | `stock_names` | `ts_code` |
 | `app_runs/*.jsonl` | 1×jsonl，132K，追加写 | `_append_task_history`（`kss_app_bridge.py:678-681`），每次 bridge 任务运行后追加 | `_task_history`（`:684-697`），暴露为 orientation payload 的 `recentTaskRuns` | on-demand（每次用户在 app 内跑任务） | `app_task_runs` | `run_id`（新增自增列） |
 | `watchlist_symbols.txt` | 单文件，4K，纯文本 | **Swift**：`ContentView.swift:syncWatchlistFile` (21-28)，真源是 `@AppStorage("watchlistSymbols")`（UserDefaults），`.txt` 只是给 Python 读的同步产物 | `scripts/collect_intraday.py:_load_watchlist_symbols`(233-238)（cron `collect_intraday` 15:05 daily）、`kss_app_bridge.py:_indicator_watchlist_symbols`(4040-4042)、`scripts/backtest_mi_watchlist.py`、`scripts/run_mi_signal_pack.py` | 写：UI 编辑触发；读：多个每日 cron | `watchlist` | `ts_code` |
@@ -74,6 +71,14 @@
 | `logs/` | 36 文件，4.5M：`logs/cron/*.log`（每 cron suffix 一份，`rotate_cron_logs` 03:10 daily 轮转）+ `logs/sidecar.log`（Swift `BridgeClient.swift` 直读） | 无计算用途，只供人查看/调试；已是 Tier C 共识，不重新论证 |
 | `intraday_quotes.db` | SQLite，88K | 自带独立表契约（`canonical_bars`/`instrument_registry`/`provider_bar_contracts`/`coverage_assessments`/`ingest_runs`/`payload_blobs`/`payload_observations`/`session_profiles`）与脱敏纪律，plan Key Decisions 已明确**不并入**统一库，本文档不重复设计 |
 
+### 手工编辑配置——保留文件（第五类，U15 域割接执行时改判，非本文档初稿分类）
+
+| 路径 | 格式/量级 | 说明 |
+|---|---|---|
+| `pipeline_weights.json` | 单文件，4K | 文件内嵌 `_note` 字段原话"权重更新需人工确认后手改"——`compute_pipeline_alpha.py` 算出建议值后，人工审阅、手改这个文件应用，不是纯被动配置。迁 kss.db 会把"编辑器改一个数字保存"换成"敲 sqlite3 命令"，没有替代 UI。U15 域割接时确认保留：读取方（`kss_app_bridge.py:_load_pipeline_weights`）不变。 |
+| `themes_15th_5y.yaml` | 单文件，8K | `kss/sector/themes.py:3` 原话"用户可热改"——主题↔行业/概念映射需要人直接改 YAML。同上，保留文件。 |
+| `mi_rules.yaml` | 单文件，4K | `kss/strategies/mi_pack.py:53` 注释"规则文件：先 state（用户钉死），再 project（bundle 内置默认）"——MI 策略每标的的 entry/exit/filter 是用户手动钉死的调参产物。同上，保留文件。 |
+
 ### 死重/孤儿——排除出割接范围（既不迁移也不主动清理，留给作者决策）
 
 | 路径 | 量级 | 证据 |
@@ -98,12 +103,13 @@
 
 `find storage -maxdepth 1 -mindepth 1 | wc -l` = 39，其中 `intraday_quotes.db-shm`/`intraday_quotes.db-wal` 是 SQLite 运行期自动生成的 WAL 侧车文件（本次盘点执行 `sqlite3 ... .tables` 探查时临时产生的），不是独立数据资产，随主库 `intraday_quotes.db` 一并归 Tier C，不单独占行。刨掉这 2 个，实际顶层资产 **37 项**，逐一核对如下，无遗漏：
 
-- Tier A 直接表：19 项（`paper_trade` `sector_rotation` `mi_signals` `indicator_signals` `intel_radar` `intel_rewrites` `perilla_cache` `prediction_ledger` `factor_health` `indicator_registry.yaml` `indicator_lab` `pipeline_weights.json` `sector_review_config.json` `themes_15th_5y.yaml` `mi_rules.yaml` `stock_names.csv` `app_runs` `watchlist_symbols.txt` `intraday_session_cache`）
+- Tier A 直接表：16 项（`paper_trade` `sector_rotation` `mi_signals` `indicator_signals` `intel_radar` `intel_rewrites` `perilla_cache` `prediction_ledger` `factor_health` `indicator_registry.yaml` `indicator_lab` `sector_review_config.json` `stock_names.csv` `app_runs` `watchlist_symbols.txt` `intraday_session_cache`）
 - 待新建索引域：6 项（`daily_review` `reports` `etf_radar` `news_digest` `trends` `notes`）
 - Tier B：3 项（`macro` `bj_cache` `etf_radar_backtest_raw.parquet`）
 - Tier C 独占（不与上面重复）：2 项（`logs` `intraday_quotes.db`）
+- 手工编辑配置（第五类，保留文件）：3 项（`pipeline_weights.json` `themes_15th_5y.yaml` `mi_rules.yaml`）——原初稿归 Tier A，U15 域割接执行时发现三者均有"用户直接改文件"的活跃编辑工作流、无替代 UI，经确认改判保留文件，见上方专门小节
 - 死重/孤儿：5 项（`kronos` `kss_quotes.db` `industry_map.csv` `pipeline_alpha` `legacy`）
 - 派生产物：1 项（`data_catalog.json`）
 - 非应用数据：1 项（`.DS_Store`）
 
-19+6+3+2+5+1+1 = **37**，与实际顶层资产数一致。每行写入方/读取方均给了 file:line 或明确的"无写入方/无读取方"结论（后者本身也是一种经核实的证据，不是遗漏）。
+16+6+3+2+3+5+1+1 = **37**，与实际顶层资产数一致。每行写入方/读取方均给了 file:line 或明确的"无写入方/无读取方"结论（后者本身也是一种经核实的证据，不是遗漏）。
