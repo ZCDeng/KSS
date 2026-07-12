@@ -4863,35 +4863,24 @@ def _intraday_expected_bars(interval_minutes: int) -> int:
     return max(1, 240 // int(interval_minutes))
 
 
-def _intraday_session_cache_path(symbol: str, interval_minutes: int) -> Path:
-    from kss.config.paths import STORAGE_ROOT  # noqa: PLC0415
-
-    safe = symbol.replace("/", "_").replace("\\", "_")
-    d = STORAGE_ROOT / "intraday_session_cache"
-    d.mkdir(parents=True, exist_ok=True)
-    return d / f"{safe}_{int(interval_minutes)}m.json"
-
-
 def _save_intraday_session_cache(
     symbol: str, interval_minutes: int, bars: list[dict[str, Any]], session_date: str | None
 ) -> None:
-    """页内成功拉取附带沉淀（KTD6 R7）：轻量 JSON，供非交易时段 local 降级。"""
+    """页内成功拉取附带沉淀（KTD6 R7）：kss.db 缓存，供非交易时段 local 降级
+    （plan 2026-07-12-005 / U15 割接自 storage/intraday_session_cache/*.json）。"""
     if not bars:
         return
     try:
-        import json as _json  # noqa: PLC0415
         from datetime import datetime  # noqa: PLC0415
         from zoneinfo import ZoneInfo  # noqa: PLC0415
 
-        path = _intraday_session_cache_path(symbol, interval_minutes)
-        payload = {
-            "symbol": symbol,
-            "interval_minutes": interval_minutes,
-            "session_date": session_date,
-            "saved_at": datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(timespec="seconds"),
-            "bars": bars,
-        }
-        path.write_text(_json.dumps(payload, ensure_ascii=False, default=str), encoding="utf-8")
+        from kss.storage.intraday_session_cache import save_session_bars  # noqa: PLC0415
+
+        saved_at = datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(timespec="seconds")
+        save_session_bars(
+            symbol, interval_minutes, bars, session_date, saved_at,
+            db_path=STATE_ROOT / "storage" / "kss.db",
+        )
     except Exception:  # noqa: BLE001
         pass
 
@@ -4933,16 +4922,15 @@ def _symbol_cache_aliases(symbol: str) -> list[str]:
 def _load_local_session_bars(
     symbol: str, interval_minutes: int
 ) -> tuple[list[dict[str, Any]], str | None]:
-    """本地降级：session cache JSON（纯 stdlib，不依赖 pandas/longbridge）。"""
-    import json as _json  # noqa: PLC0415
+    """本地降级：session cache（kss.db，plan 2026-07-12-005 / U15 割接自 JSON 文件）。"""
+    from kss.storage.intraday_session_cache import load_session_bars  # noqa: PLC0415
 
     # 1) 页内 cache（最常命中）；别名互查
     for sym in _symbol_cache_aliases(symbol):
         try:
-            path = _intraday_session_cache_path(sym, interval_minutes)
-            if not path.is_file():
+            data = load_session_bars(sym, interval_minutes, db_path=STATE_ROOT / "storage" / "kss.db")
+            if data is None:
                 continue
-            data = _json.loads(path.read_text(encoding="utf-8"))
             bars = data.get("bars") or []
             if isinstance(bars, list) and bars:
                 sd = data.get("session_date") or _infer_session_date_from_bars(bars)

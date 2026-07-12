@@ -234,18 +234,26 @@ def import_perilla_cache(conn: sqlite3.Connection, storage_root: Path) -> Import
 
 
 def import_intraday_session_cache(conn: sqlite3.Connection, storage_root: Path) -> ImportResult:
+    """文件名约定 {symbol}_{interval}m.json（旧版 kss_app_bridge.py 的
+    ``_intraday_session_cache_path``，U15 割接后已删除该函数）；
+    真正的主键是 (symbol, interval_minutes)，不是文件名里的第二段本身（那是
+    「Nm」不是日期）——interval 从 payload 的 interval_minutes 字段取，比再解析
+    文件名后缀里的 "m" 更可靠。session_date 是 payload 里的普通字段，不进主键。
+    """
     def row(f: Path, payload: dict) -> tuple | None:
-        # 文件名约定 {symbol}_{session_date}.json（同 _save_intraday_session_cache 写入约定）。
-        parts = f.stem.rsplit("_", 1)
-        if len(parts) != 2:
+        symbol = payload.get("symbol")
+        interval = payload.get("interval_minutes")
+        if not symbol or interval is None:
             return None
-        symbol, session_date = parts
-        return (symbol, session_date, json.dumps(payload, ensure_ascii=False), None)
+        return (
+            symbol, int(interval), payload.get("session_date"),
+            json.dumps(payload, ensure_ascii=False), payload.get("saved_at"),
+        )
 
     return _import_json_glob(
         conn, domain="intraday_session_cache", table="intraday_session_cache",
         source_dir=storage_root / "intraday_session_cache", glob_pattern="*.json",
-        insert_sql="INSERT OR REPLACE INTO intraday_session_cache (symbol, session_date, payload_json, cached_at) VALUES (?,?,?,?)",
+        insert_sql="INSERT OR REPLACE INTO intraday_session_cache (symbol, interval_minutes, session_date, payload_json, cached_at) VALUES (?,?,?,?,?)",
         row_from_path=row,
     )
 

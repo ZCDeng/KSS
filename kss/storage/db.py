@@ -218,11 +218,12 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         ) STRICT;
 
         CREATE TABLE IF NOT EXISTS intraday_session_cache (
-            symbol        TEXT NOT NULL,
-            session_date  TEXT NOT NULL,
-            payload_json  TEXT NOT NULL,
-            cached_at     TEXT,
-            PRIMARY KEY (symbol, session_date)
+            symbol           TEXT NOT NULL,
+            interval_minutes INTEGER NOT NULL,
+            session_date     TEXT,
+            payload_json     TEXT NOT NULL,
+            cached_at        TEXT,
+            PRIMARY KEY (symbol, interval_minutes)
         ) STRICT;
 
         -- ---------------------------------------------------------------
