@@ -45,9 +45,8 @@ def state_root() -> Path:
     return project_root()
 
 
-def signals_root(root: Path | None = None) -> Path:
-    """storage/mi_signals 根目录。"""
-    return (root or state_root()) / "storage" / "mi_signals"
+def _db_path(root: Path | None = None) -> Path:
+    return (root or state_root()) / "storage" / "kss.db"
 
 
 def load_rules(path: Path | None = None) -> dict[str, Any]:
@@ -99,55 +98,34 @@ def resolve_rule(
     return str(d["entry"]), str(d["exit"]), str(d["filter"]), True
 
 
-def pack_dir(asof: str, root: Path | None = None) -> Path:
-    """``root`` 为 mi_signals 根（含 latest/asof 子目录），不是仓库根。"""
-    root = root or signals_root()
-    return root / asof
-
-
-def latest_dir(root: Path | None = None) -> Path:
-    root = root or signals_root()
-    return root / "latest"
-
-
 def write_pack(
     pack: dict[str, Any],
     *,
-    root: Path | None = None,
-) -> Path:
-    """写入 asof 目录与 latest 拷贝. root = storage/mi_signals."""
-    root = root or signals_root()
-    asof = pack["asof"]
-    d = pack_dir(asof, root)
-    d.mkdir(parents=True, exist_ok=True)
-    path = d / f"{pack['symbol']}.json"
-    text = json.dumps(pack, ensure_ascii=False, indent=2, default=str)
-    path.write_text(text, encoding="utf-8")
-    ld = latest_dir(root)
-    ld.mkdir(parents=True, exist_ok=True)
-    (ld / f"{pack['symbol']}.json").write_text(text, encoding="utf-8")
-    return path
+    db_path: Path | None = None,
+) -> None:
+    """写入 kss.db mi_signal_packs 表。db_path=None → 用 state_root() 派生默认路径."""
+    from kss.storage.signal_packs import write_mi_pack
+
+    write_mi_pack(pack, db_path or _db_path())
 
 
 def read_pack(
     symbol: str,
     *,
     asof: str | None = None,
-    root: Path | None = None,
+    db_path: Path | None = None,
 ) -> dict[str, Any] | None:
     """读取信号包。``symbol`` 支持 ``688017.SH`` 或裸代码（自动试 .SH/.SZ/.BJ）."""
-    root = root or signals_root()
+    from kss.storage.signal_packs import read_mi_pack
+
+    resolved = db_path or _db_path()
     candidates = [symbol]
     if "." not in symbol:
         candidates.extend([f"{symbol}.SH", f"{symbol}.SZ", f"{symbol}.BJ"])
     for cand in candidates:
-        p = (
-            pack_dir(asof, root) / f"{cand}.json"
-            if asof
-            else latest_dir(root) / f"{cand}.json"
-        )
-        if p.exists():
-            return json.loads(p.read_text(encoding="utf-8"))
+        pack = read_mi_pack(cand, asof, resolved)
+        if pack is not None:
+            return pack
     return None
 
 def build_pack_from_wf(
@@ -397,10 +375,12 @@ def run_symbol_pack(
     rules: dict[str, Any] | None = None,
     root: Path | None = None,
     cfg: WFConfig | None = None,
+    db_path: Path | None = None,
 ) -> dict[str, Any]:
     """单票端到端：加载 → WF → pack."""
     rules = rules or load_rules()
     root = root or state_root()
+    resolved_db = db_path or _db_path(root)
     code = symbol if "." in symbol else f"{symbol}.SH"
     df = load_ohlcv(code, root)
     if df is None or len(df) < 80:
@@ -417,8 +397,7 @@ def run_symbol_pack(
     entry, exit_, filt, unpinned = resolve_rule(code, rules)
     ref = str(pd.Timestamp(df["trade_date"].iloc[-1]).date())
     asof = asof or ref
-    sig_root = signals_root(root)
-    prev = read_pack(code, root=sig_root)
+    prev = read_pack(code, db_path=resolved_db)
     prev_action = (prev or {}).get("action") if prev else None
 
     wf = reestimate(df, entry, exit_, filt, cfg=cfg)
@@ -437,5 +416,5 @@ def run_symbol_pack(
     if pack["status"] == "stale" and asof == ref and wf.status == "ok":
         pack["status"] = "ok"
         pack["reason"] = (wf.replay or {}).get("action", {}).get("reason", "")
-    write_pack(pack, root=sig_root)
+    write_pack(pack, db_path=resolved_db)
     return pack

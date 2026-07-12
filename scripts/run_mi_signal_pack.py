@@ -85,7 +85,7 @@ def main() -> int:
             err += 1
             print(f"  ❌ {pack['symbol']}  {st}: {pack.get('reason')}")
     print(f"完成 ok={ok} skip={skip} err={err}")
-    print(f"latest → {ROOT / 'storage' / 'mi_signals' / 'latest'}")
+    print(f"写入 → {ROOT / 'storage' / 'kss.db'} (mi_signal_packs)")
     return 0 if err == 0 else 1
 
 

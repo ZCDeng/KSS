@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from pathlib import Path
 
 import numpy as np
@@ -68,13 +69,21 @@ def test_e2e_double_run_pack_hash_identical(tmp_path: Path) -> None:
     rules = yaml.safe_load((root / "storage" / "mi_rules.yaml").read_text())
     cfg = WFConfig(train_window=120, retrain_freq=40, holdout_bars=40, min_trades=1)
 
+    def _payload_text() -> str:
+        conn = sqlite3.connect(root / "storage" / "kss.db")
+        row = conn.execute(
+            "SELECT payload_json FROM mi_signal_packs WHERE symbol=? ORDER BY asof DESC LIMIT 1",
+            ("688017.SH",),
+        ).fetchone()
+        conn.close()
+        assert row is not None
+        return row[0]
+
     p1 = run_symbol_pack("688017.SH", rules=rules, root=root, cfg=cfg)
-    path = root / "storage" / "mi_signals" / "latest" / "688017.SH.json"
-    assert path.exists()
-    h1 = hashlib.sha256(path.read_bytes()).hexdigest()
+    h1 = hashlib.sha256(_payload_text().encode("utf-8")).hexdigest()
 
     p2 = run_symbol_pack("688017.SH", rules=rules, root=root, cfg=cfg)
-    h2 = hashlib.sha256(path.read_bytes()).hexdigest()
+    h2 = hashlib.sha256(_payload_text().encode("utf-8")).hexdigest()
 
     assert p1["status"] == "ok"
     assert p2["status"] == "ok"
@@ -151,6 +160,6 @@ def test_e2e_batch_one_skip_one_ok(tmp_path: Path) -> None:
     assert ok_pack["status"] == "ok"
     assert skip_pack["status"] == "skipped"
     # ok 票 latest 仍在
-    loaded = read_pack("688017.SH", root=root / "storage" / "mi_signals")
+    loaded = read_pack("688017.SH", db_path=root / "storage" / "kss.db")
     assert loaded is not None
     assert loaded["action"] == ok_pack["action"]

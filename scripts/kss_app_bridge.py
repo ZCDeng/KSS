@@ -1578,7 +1578,7 @@ def _run_daily_review_symbol(args: dict[str, str | bool]) -> dict[str, Any]:
 
 
 def _run_mi_signal_pack(args: dict[str, str | bool]) -> dict[str, Any]:
-    """日终 MI Signal Pack：自选 walk-forward 后写 storage/mi_signals."""
+    """日终 MI Signal Pack：自选 walk-forward 后写 kss.db mi_signal_packs 表."""
     started = _now_iso()
     python = _full_python()
     if python is None:
@@ -1592,7 +1592,7 @@ def _run_mi_signal_pack(args: dict[str, str | bool]) -> dict[str, Any]:
         "MI Signal Pack",
         command,
         started,
-        artifacts=["storage/mi_signals/latest"],
+        artifacts=["storage/kss.db"],
         timeout=900,
     )
 
@@ -1612,7 +1612,7 @@ def _run_indicator_signal_pack(args: dict[str, str | bool]) -> dict[str, Any]:
         "指标 Signal Pack",
         command,
         started,
-        artifacts=["storage/indicator_signals"],
+        artifacts=["storage/kss.db"],
         timeout=900,
     )
 
