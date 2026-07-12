@@ -1,13 +1,21 @@
 """OpenAI 兼容 LLM 客户端薄封装.
 
-环境变量约定（按优先级）：
+BYOK 端点泛化（plan 2026-07-12-005 / U3）：``_resolve_credential_candidates()``
+返回有序候选 ``[(api_key, base_url, model), ...]``——primary 优先、fallback 其次。
 
-1. ``DEEPSEEK_API_KEY`` + ``https://api.deepseek.com/v1`` —— DeepSeek **主路径**
-2. fallback ``OPENAI_API_KEY`` + 可选 ``OPENAI_BASE_URL`` —— OpenAI / oneAPI / 自建兼容网关
-3. 若仅有 OPENAI_* 但 ``OPENAI_BASE_URL`` 指向 DeepSeek：仍走 DeepSeek base（并优先
-   同槽位的 DEEPSEEK key，若有）
+新六键（``KSS_LLM_PRIMARY_KEY/BASE_URL/MODEL``、``KSS_LLM_FALLBACK_*``）优先；
+全缺时执行兼容映射，保证旧配置零操作可用：
+
+1. ``DEEPSEEK_API_KEY`` + ``https://api.deepseek.com/v1`` —— 主路径候选
+2. ``OPENAI_API_KEY`` + 可选 ``OPENAI_BASE_URL`` —— 备用候选（OpenAI / oneAPI / 自建兼容网关）
+3. 若仅有 OPENAI_* 但 ``OPENAI_BASE_URL`` 指向 DeepSeek：该候选走 DeepSeek base
 4. ``KSS_LLM_MODEL`` 覆盖具体 model id；缺省
    ``deepseek-v4-flash`` (DeepSeek) / ``gpt-4o-mini`` (OpenAI)
+
+``LLMClient.complete()`` 对主候选的 auth/连接类失败重试一次备用候选（新增行为，
+不含在旧版本为）；``ChatClient`` 仅构造时选主候选，流式过程中不切换。
+
+base_url 强制 https（localhost/127.0.0.1 本地推理端点例外），保存/使用前双卡点校验。
 """
 
 from __future__ import annotations
@@ -15,6 +23,7 @@ from __future__ import annotations
 import logging
 import os
 from typing import Final
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -52,15 +61,25 @@ class LLMClient:
         max_retries: int = _DEFAULT_MAX_RETRIES,
         temperature: float = _DEFAULT_TEMPERATURE,
     ) -> None:
-        api_key, base_url, default_model = _resolve_credentials()
-        self._model = model or os.getenv("KSS_LLM_MODEL") or default_model
+        self._candidates = _resolve_credential_candidates()
+        self._model_override = model
         self._temperature = temperature
-        effective_timeout = (
+        self._max_retries = max_retries
+        self._effective_timeout = (
             timeout
             if timeout is not None
             else _coerce_float(os.getenv("KSS_LLM_TIMEOUT"), _DEFAULT_TIMEOUT_SEC)
         )
 
+        primary_key, primary_base, primary_default_model = self._candidates[0]
+        self._model = model or os.getenv("KSS_LLM_MODEL") or primary_default_model
+        self._client = self._build_sdk_client(primary_key, primary_base)
+        logger.debug(
+            "[llm] LLMClient ready (model=%s base_url=%s candidates=%d)",
+            self._model, primary_base or "openai default", len(self._candidates),
+        )
+
+    def _build_sdk_client(self, api_key: str, base_url: str | None) -> object:
         # Lazy import：openai SDK ~50ms import 成本，commentary fallback 路径不需要
         try:
             from openai import OpenAI  # type: ignore[import-not-found]
@@ -71,19 +90,17 @@ class LLMClient:
 
         kwargs: dict[str, object] = {
             "api_key": api_key,
-            "timeout": effective_timeout,
-            "max_retries": max_retries,
+            "timeout": self._effective_timeout,
+            "max_retries": self._max_retries,
         }
         if base_url:
             kwargs["base_url"] = base_url
-        self._client = OpenAI(**kwargs)
-        logger.debug(
-            "[llm] LLMClient ready (model=%s base_url=%s)",
-            self._model, base_url or "openai default",
-        )
+        return OpenAI(**kwargs)
 
     def complete(self, system: str, user: str) -> str:
         """单次 chat completion，返回 ``message.content`` 字符串.
+
+        主候选失败时重试一次备用候选（若有）——运行期 auth/连接类失败降级（U3 新增行为）。
 
         Args:
             system: system role prompt（角色 / 输出格式约束）.
@@ -93,11 +110,30 @@ class LLMClient:
             模型返回的文本（已 strip）；空字符串视为失败.
 
         Raises:
-            LLMUnavailable: 调用失败（网络、auth、空响应）.
+            LLMUnavailable: 全部候选均调用失败（网络、auth、空响应）.
         """
         try:
-            resp = self._client.chat.completions.create(
-                model=self._model,
+            return self._complete_with(self._client, self._model, system, user)
+        except Exception as primary_exc:  # noqa: BLE001 - 统一降级判定
+            if len(self._candidates) < 2:
+                raise LLMUnavailable(f"LLM API 调用失败: {primary_exc}") from primary_exc
+            logger.warning("[llm] 主候选失败，降级备用候选: %s", primary_exc)
+            fallback_key, fallback_base, fallback_default_model = self._candidates[1]
+            fallback_model = (
+                self._model_override or os.getenv("KSS_LLM_MODEL") or fallback_default_model
+            )
+            fallback_client = self._build_sdk_client(fallback_key, fallback_base)
+            try:
+                return self._complete_with(fallback_client, fallback_model, system, user)
+            except Exception as fallback_exc:  # noqa: BLE001
+                raise LLMUnavailable(
+                    f"LLM API 调用失败（主备均不可用）: 主={primary_exc}; 备={fallback_exc}"
+                ) from fallback_exc
+
+    def _complete_with(self, client: object, model: str, system: str, user: str) -> str:
+        try:
+            resp = client.chat.completions.create(  # type: ignore[attr-defined]
+                model=model,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
@@ -132,17 +168,57 @@ def _normalize_deepseek_base(base_url: str | None) -> str:
     return raw + "/v1"
 
 
-def _resolve_credentials() -> tuple[str, str | None, str]:
-    """返回 ``(api_key, base_url, default_model)``，按优先级解析环境变量.
+def _validate_https(base_url: str | None, *, label: str) -> None:
+    """base_url 保存/使用前强制 https（localhost/127.0.0.1 本地推理端点例外）.
 
     Raises:
-        LLMUnavailable: 两条路径都没 key.
+        LLMUnavailable: scheme 既非 https 也非本地 http.
     """
+    if not base_url:
+        return
+    parsed = urlparse(base_url)
+    if parsed.scheme == "https":
+        return
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme == "http" and hostname in {"localhost", "127.0.0.1"}:
+        return
+    raise LLMUnavailable(
+        f"{label} base_url 必须是 https（本地 http://localhost 除外）: {base_url!r}"
+    )
+
+
+def _resolve_credential_candidates() -> list[tuple[str, str | None, str]]:
+    """返回有序候选 ``[(api_key, base_url, default_model), ...]``——primary 优先、fallback 其次.
+
+    新六键（``KSS_LLM_PRIMARY_*``/``KSS_LLM_FALLBACK_*``）优先；全缺时执行兼容映射
+    （``DEEPSEEK_API_KEY``→primary、``OPENAI_*``→fallback），旧配置零操作可用。
+
+    Raises:
+        LLMUnavailable: 无任何候选，或某候选 base_url 校验未过.
+    """
+    primary_key = os.getenv("KSS_LLM_PRIMARY_KEY", "").strip()
+    primary_base = os.getenv("KSS_LLM_PRIMARY_BASE_URL", "").strip() or None
+    primary_model = os.getenv("KSS_LLM_PRIMARY_MODEL", "").strip() or None
+    fallback_key = os.getenv("KSS_LLM_FALLBACK_KEY", "").strip()
+    fallback_base = os.getenv("KSS_LLM_FALLBACK_BASE_URL", "").strip() or None
+    fallback_model = os.getenv("KSS_LLM_FALLBACK_MODEL", "").strip() or None
+
+    candidates: list[tuple[str, str | None, str]] = []
+    if primary_key:
+        _validate_https(primary_base, label="主用")
+        candidates.append((primary_key, primary_base, primary_model or _DEFAULT_MODEL_OPENAI))
+    if fallback_key:
+        _validate_https(fallback_base, label="备用")
+        candidates.append((fallback_key, fallback_base, fallback_model or _DEFAULT_MODEL_OPENAI))
+    if candidates:
+        return candidates
+
+    # 兼容映射：新六键全缺 → 落到旧键的解析优先级语义。
     openai_key = os.getenv("OPENAI_API_KEY", "").strip()
     openai_base = os.getenv("OPENAI_BASE_URL", "").strip() or None
     deepseek_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
 
-    # 1) DeepSeek 主路径：有 DEEPSEEK_API_KEY 一律优先（即便 OPENAI_* 也在）。
+    legacy: list[tuple[str, str | None, str]] = []
     if deepseek_key:
         # 若 OPENAI_BASE_URL 也指 deepseek，复用规范化后的 base；否则官方 /v1。
         if _is_deepseek_base(openai_base):
@@ -150,19 +226,30 @@ def _resolve_credentials() -> tuple[str, str | None, str]:
         else:
             base = _DEEPSEEK_BASE_URL
         logger.info("[llm] 使用 DEEPSEEK_API_KEY 主路径")
-        return deepseek_key, base, _DEFAULT_MODEL_DEEPSEEK
-
-    # 2) OpenAI / 兼容网关 fallback
+        legacy.append((deepseek_key, base, _DEFAULT_MODEL_DEEPSEEK))
     if openai_key:
         if _is_deepseek_base(openai_base):
             # 仅 OPENAI key 但 base 指 deepseek：仍走 deepseek 网关 + 该 key
-            return openai_key, _normalize_deepseek_base(openai_base), _DEFAULT_MODEL_DEEPSEEK
-        return openai_key, openai_base, _DEFAULT_MODEL_OPENAI
+            legacy.append(
+                (openai_key, _normalize_deepseek_base(openai_base), _DEFAULT_MODEL_DEEPSEEK)
+            )
+        else:
+            legacy.append((openai_key, openai_base, _DEFAULT_MODEL_OPENAI))
 
-    raise LLMUnavailable(
-        "未配置 DEEPSEEK_API_KEY 或 OPENAI_API_KEY；"
-        "wrapper 应从 Hermes .env grep 注入"
-    )
+    if not legacy:
+        raise LLMUnavailable(
+            "未配置任何 LLM 凭据（KSS_LLM_PRIMARY_KEY 或 DEEPSEEK_API_KEY/OPENAI_API_KEY）；"
+            "wrapper 应从 Keychain 注入"
+        )
+    for key, base, _model in legacy:
+        _validate_https(base, label="LLM")
+    return legacy
+
+
+def _resolve_credentials() -> tuple[str, str | None, str]:
+    """返回 ``(api_key, base_url, default_model)``——`_resolve_credential_candidates()`
+    的首选候选，供仅需单一凭证的调用方（如 `ChatClient` 构造）使用."""
+    return _resolve_credential_candidates()[0]
 
 
 def _coerce_float(raw: str | None, default: float) -> float:

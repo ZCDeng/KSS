@@ -19,6 +19,14 @@ enum KeychainStore {
         "DEEPSEEK_API_KEY",
         "KSS_LLM_MODEL",
         "KSS_APP_LIVE",
+        // BYOK 端点泛化（plan 2026-07-12-005 / U3）：主/备供应商各自 base_url/key/model。
+        // 全缺时 openai_client._resolve_credential_candidates 兼容映射到上面的旧四键。
+        "KSS_LLM_PRIMARY_KEY",
+        "KSS_LLM_PRIMARY_BASE_URL",
+        "KSS_LLM_PRIMARY_MODEL",
+        "KSS_LLM_FALLBACK_KEY",
+        "KSS_LLM_FALLBACK_BASE_URL",
+        "KSS_LLM_FALLBACK_MODEL",
         // Longbridge（U6）：实时行情凭据，注入 sidecar env 供 LongbridgeProvider 读。
         "LONGBRIDGE_APP_KEY",
         "LONGBRIDGE_APP_SECRET",

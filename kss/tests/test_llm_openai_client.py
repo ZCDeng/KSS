@@ -7,7 +7,20 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from kss.llm.openai_client import LLMClient, LLMUnavailable, _resolve_credentials
+from kss.llm.openai_client import (
+    LLMClient,
+    LLMUnavailable,
+    _resolve_credential_candidates,
+    _resolve_credentials,
+)
+
+
+def _clear_new_byok_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in (
+        "KSS_LLM_PRIMARY_KEY", "KSS_LLM_PRIMARY_BASE_URL", "KSS_LLM_PRIMARY_MODEL",
+        "KSS_LLM_FALLBACK_KEY", "KSS_LLM_FALLBACK_BASE_URL", "KSS_LLM_FALLBACK_MODEL",
+    ):
+        monkeypatch.delenv(key, raising=False)
 
 
 # ====================================================================== #
@@ -224,3 +237,118 @@ class TestLLMClientComplete:
             LLMClient()
             kwargs = MockOpenAI.call_args.kwargs
             assert kwargs["timeout"] == 90.0  # _DEFAULT_TIMEOUT_SEC
+
+
+# ====================================================================== #
+# U3: BYOK 端点泛化 —— 有序候选解析 + https 校验 + 主备运行期降级
+# ====================================================================== #
+
+
+class TestResolveCredentialCandidates:
+    """_resolve_credential_candidates —— 新六键优先，全缺时兼容映射旧键."""
+
+    def test_new_keys_take_priority_over_legacy(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """新键在场 → 优先新键，即便旧键也配置了."""
+        _clear_new_byok_keys(monkeypatch)
+        monkeypatch.setenv("KSS_LLM_PRIMARY_KEY", "primary-key")
+        monkeypatch.setenv("KSS_LLM_PRIMARY_BASE_URL", "https://gateway-a.example/v1")
+        monkeypatch.setenv("KSS_LLM_PRIMARY_MODEL", "model-a")
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-should-be-ignored")
+        candidates = _resolve_credential_candidates()
+        assert candidates[0] == ("primary-key", "https://gateway-a.example/v1", "model-a")
+
+    def test_new_keys_primary_and_fallback_both_present(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_new_byok_keys(monkeypatch)
+        monkeypatch.setenv("KSS_LLM_PRIMARY_KEY", "primary-key")
+        monkeypatch.setenv("KSS_LLM_FALLBACK_KEY", "fallback-key")
+        monkeypatch.setenv("KSS_LLM_FALLBACK_BASE_URL", "https://gateway-b.example/v1")
+        candidates = _resolve_credential_candidates()
+        assert len(candidates) == 2
+        assert candidates[1][0] == "fallback-key"
+        assert candidates[1][1] == "https://gateway-b.example/v1"
+
+    def test_legacy_compat_when_new_keys_all_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """旧配置零操作可用：仅旧键在场时行为与 U3 之前逐字段一致."""
+        _clear_new_byok_keys(monkeypatch)
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test")
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        candidates = _resolve_credential_candidates()
+        assert candidates[0] == ("ds-test", "https://api.deepseek.com/v1", "deepseek-v4-flash")
+
+    def test_rejects_insecure_http_base_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """http 非 localhost 的 base_url 被拒并给出原因."""
+        _clear_new_byok_keys(monkeypatch)
+        monkeypatch.setenv("KSS_LLM_PRIMARY_KEY", "primary-key")
+        monkeypatch.setenv("KSS_LLM_PRIMARY_BASE_URL", "http://insecure.example/v1")
+        with pytest.raises(LLMUnavailable, match="https"):
+            _resolve_credential_candidates()
+
+    def test_allows_http_localhost(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """本地推理端点 http://localhost 例外放行."""
+        _clear_new_byok_keys(monkeypatch)
+        monkeypatch.setenv("KSS_LLM_PRIMARY_KEY", "primary-key")
+        monkeypatch.setenv("KSS_LLM_PRIMARY_BASE_URL", "http://localhost:11434/v1")
+        candidates = _resolve_credential_candidates()
+        assert candidates[0][1] == "http://localhost:11434/v1"
+
+    def test_no_credentials_at_all_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _clear_new_byok_keys(monkeypatch)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        with pytest.raises(LLMUnavailable, match="未配置"):
+            _resolve_credential_candidates()
+
+
+class TestLLMClientFailover:
+    """LLMClient.complete —— 主候选失败时降级备用候选（U3 新增行为）."""
+
+    def test_primary_failure_falls_back_to_secondary(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_new_byok_keys(monkeypatch)
+        monkeypatch.setenv("KSS_LLM_PRIMARY_KEY", "primary-key")
+        monkeypatch.setenv("KSS_LLM_FALLBACK_KEY", "fallback-key")
+        monkeypatch.delenv("KSS_LLM_MODEL", raising=False)
+
+        primary_instance = MagicMock()
+        primary_instance.chat.completions.create.side_effect = RuntimeError("401 unauthorized")
+        fallback_instance = MagicMock()
+        fallback_instance.chat.completions.create.return_value = _make_resp("来自备用候选的回答")
+
+        with patch("openai.OpenAI", side_effect=[primary_instance, fallback_instance]):
+            client = LLMClient()
+            out = client.complete(system="x", user="y")
+            assert out == "来自备用候选的回答"
+        fallback_instance.chat.completions.create.assert_called_once()
+
+    def test_both_candidates_fail_raises_with_both_errors(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _clear_new_byok_keys(monkeypatch)
+        monkeypatch.setenv("KSS_LLM_PRIMARY_KEY", "primary-key")
+        monkeypatch.setenv("KSS_LLM_FALLBACK_KEY", "fallback-key")
+
+        primary_instance = MagicMock()
+        primary_instance.chat.completions.create.side_effect = RuntimeError("primary down")
+        fallback_instance = MagicMock()
+        fallback_instance.chat.completions.create.side_effect = RuntimeError("fallback down")
+
+        with patch("openai.OpenAI", side_effect=[primary_instance, fallback_instance]):
+            client = LLMClient()
+            with pytest.raises(LLMUnavailable, match="主备均不可用"):
+                client.complete(system="x", user="y")
+
+    def test_single_candidate_failure_does_not_attempt_fallback_build(
+        self, with_openai_env: None,
+    ) -> None:
+        """只有一个候选时失败直接抛出，不构造第二个 SDK client（旧行为逐字段保留）."""
+        with patch("openai.OpenAI") as MockOpenAI:
+            instance = MagicMock()
+            instance.chat.completions.create.side_effect = RuntimeError("429 rate limit")
+            MockOpenAI.return_value = instance
+            client = LLMClient()
+            with pytest.raises(LLMUnavailable, match="LLM API 调用失败"):
+                client.complete(system="x", user="y")
+        assert MockOpenAI.call_count == 1
