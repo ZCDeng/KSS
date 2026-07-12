@@ -1179,6 +1179,14 @@ struct IndicatorOverlay: Codable, Hashable, Identifiable {
     var series: [IndicatorSeriesPoint]? = nil
 }
 
+/// 会话开场确定性候选建议（plan 2026-07-12-004 U9）：对齐 bridge `indicator-suggest` 输出.
+/// ``family == nil`` 表示无候选（基元库已覆盖或均在 NO-GO 记忆内）——Seesaw 空态不显示 chip。
+struct IndicatorSuggestion: Codable {
+    var family: String?
+    var reason: String?
+    var suggestedSymbols: [String]?
+}
+
 /// 通用指标主线的一个点：动态字段名 → 归一 {date, value}（族内 series 字段名不固定，
 /// 如 ma_cross 的 ma_fast/ma_slow、rsi_threshold 的 rsi、boll_atr 的 boll_upper/mid/lower）。
 struct IndicatorSeriesPoint: Codable, Hashable {

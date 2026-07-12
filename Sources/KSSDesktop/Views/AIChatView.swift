@@ -8,6 +8,15 @@ struct AIChatView: View {
     @Environment(\.kssTheme) private var theme
     @State private var input = ""
     @State private var hovered: String?
+    /// 会话开场确定性候选建议（plan 2026-07-12-004 U9）；nil = 未加载或无候选，不显示 chip。
+    @State private var indicatorSuggestion: IndicatorSuggestion?
+
+    /// family → 人话标签（bridge 只给基元族枚举名，不给展示文案）。
+    private static let indicatorFamilyLabels: [String: String] = [
+        "ma_cross": "均线交叉",
+        "rsi_threshold": "RSI 阈值",
+        "boll_atr": "布林·ATR 波动",
+    ]
 
     /// 能力卡 = 把可用 Skill/编排剧本列出来让本人一目了然(点击即填问句发送)。
     private struct Capability: Identifiable {
@@ -49,6 +58,7 @@ struct AIChatView: View {
                 }
             }
             .onAppear { Task { await store.preheatRealtimeContext() } }   // U4: Seesaw 加载时预温实时上下文（R3）
+            .onAppear { Task { await loadIndicatorSuggestion() } }        // U9: 空态确定性候选建议 chip
         }
     }
 
@@ -69,6 +79,12 @@ struct AIChatView: View {
 
                 heroInputCard.frame(width: width)
                     .padding(.bottom, 26)
+
+                if indicatorSuggestion?.family != nil {
+                    indicatorSuggestionChip
+                        .frame(width: width)
+                        .padding(.bottom, 18)
+                }
 
                 capabilityCards(width: width)
                 Spacer(minLength: 32)
@@ -119,6 +135,53 @@ struct AIChatView: View {
 
     private var canSend: Bool {
         !store.isChatStreaming && !input.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// U9：命令不可用/超时/无候选 → 优雅缺席，不显示 chip、不报错弹窗（KTD8 诚实空态）。
+    private func loadIndicatorSuggestion() async {
+        guard let bridge = store.bridge else { return }
+        let suggestion = try? await Task.detached { try bridge.suggestIndicator() }.value
+        guard let suggestion, suggestion.family != nil else { return }
+        indicatorSuggestion = suggestion
+    }
+
+    @ViewBuilder
+    private var indicatorSuggestionChip: some View {
+        if let suggestion = indicatorSuggestion, let family = suggestion.family {
+            let label = Self.indicatorFamilyLabels[family] ?? family
+            Button {
+                let reason = suggestion.reason.map { "：\($0)" } ?? ""
+                input = "帮我回测 \(label)\(reason)"
+                send()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .font(KSSFont.themed(11, .semibold, theme: theme))
+                        .foregroundStyle(theme.accent)
+                    Text("Seesaw 提议：研究一下\(label)")
+                        .font(KSSFont.themed(12.5, .semibold, theme: theme))
+                        .foregroundStyle(theme.textPrimary)
+                    if let reason = suggestion.reason, !reason.isEmpty {
+                        Text(reason)
+                            .font(KSSFont.themed(11.5, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "arrow.up.right")
+                        .font(KSSFont.themed(10, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(theme.accentSoft, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+                .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeM).stroke(theme.hairline))
+            }
+            .buttonStyle(.plain)
+            .disabled(store.isChatStreaming)
+        } else {
+            EmptyView()
+        }
     }
 
     private var latestResearchProvider: String? {

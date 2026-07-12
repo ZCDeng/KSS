@@ -115,6 +115,11 @@ struct BridgeClient {
         try run(["paper-summary"], as: TrackingSummary.self)
     }
 
+    /// 会话开场确定性候选建议（plan 2026-07-12-004 U9）：代码规则选一个，不调 LLM。
+    func suggestIndicator() throws -> IndicatorSuggestion {
+        try run(["indicator-suggest"], as: IndicatorSuggestion.self)
+    }
+
     func runTask(_ task: KSSTask) throws -> TaskRunResult {
         try run(["run", task.rawValue] + task.arguments, as: TaskRunResult.self)
     }

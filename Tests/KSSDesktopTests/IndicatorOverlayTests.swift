@@ -1,8 +1,8 @@
 import XCTest
 @testable import KSSDesktop
 
-/// U6（plan 2026-07-12-004）：通用多指标 overlay 的 Codable 往返 + 动态字段 series 解码
-/// + snake_case 重编码（chart.html 消费的 JS 层协议）。
+/// U6/U9（plan 2026-07-12-004）：通用多指标 overlay 的 Codable 往返 + 动态字段 series 解码
+/// + snake_case 重编码（chart.html 消费的 JS 层协议）；会话开场候选建议（IndicatorSuggestion）解码。
 final class IndicatorOverlayTests: XCTestCase {
 
     private func data(_ json: String) -> Data { Data(json.utf8) }
@@ -82,5 +82,26 @@ final class IndicatorOverlayTests: XCTestCase {
         XCTAssertEqual(sig.id, "unknown")
         // 稳定性：多次访问同一实例的 id 不应变化（区别于 UUID() 每次生成新值的坑）。
         XCTAssertEqual(sig.id, sig.id)
+    }
+
+    // MARK: - U9: 会话开场候选建议
+
+    func testIndicatorSuggestionDecodesWithCandidate() throws {
+        let json = """
+        {"family":"ma_cross","params":{"fast":5,"slow":20,"kind":"sma"},
+         "reason":"自选中还没有 ma_cross 族的信号覆盖","suggestedSymbols":["688017.SH","688322.SH"]}
+        """
+        let s = try JSONDecoder().decode(IndicatorSuggestion.self, from: data(json))
+        XCTAssertEqual(s.family, "ma_cross")
+        XCTAssertEqual(s.reason, "自选中还没有 ma_cross 族的信号覆盖")
+        XCTAssertEqual(s.suggestedSymbols, ["688017.SH", "688322.SH"])
+    }
+
+    func testIndicatorSuggestionDecodesWithNoCandidate() throws {
+        // bridge 无候选时只返回 family=null + reason，无 params/suggestedSymbols 键。
+        let json = #"{"family":null,"reason":"基元库内候选已覆盖或均在 NO-GO 记忆内"}"#
+        let s = try JSONDecoder().decode(IndicatorSuggestion.self, from: data(json))
+        XCTAssertNil(s.family)
+        XCTAssertNil(s.suggestedSymbols)
     }
 }
