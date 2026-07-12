@@ -107,6 +107,11 @@
     let pending = null;
     let rawBars = [];
     let lastMiOverlay = null;
+    // 通用多指标 overlay（plan 2026-07-12-004 U6）：与 lastMiOverlay 并存，互不覆盖。
+    // 每项形如 {indicator_id, status, markers, series, badge, ...}。
+    let lastIndicatorOverlays = [];
+    // indicator_id → 专属副带 line series；chart 重建（主题切换）后句柄失效，须随 buildChart 清空重建。
+    let indicatorSeriesMap = new Map();
     // U3 日内模式（F008）：分钟 K 线独立渲染路径，时间键用 UNIX 秒（非日线 date）。
     let intradayMode = false;
     let intradayBars = [];
@@ -229,6 +234,8 @@
 
     function buildChart() {
       if (typeof LightweightCharts === "undefined") return false;
+      // 旧 chart 的通用指标 series 句柄随重建失效；清空，随后按 lastIndicatorOverlays 重建。
+      indicatorSeriesMap = new Map();
       const el = document.getElementById("chart");
       chart = LightweightCharts.createChart(el, {
         layout: {
@@ -407,8 +414,9 @@
       };
       renderLegendLast();
       chart.timeScale().fitContent();
-      // setData 后重绑 MI overlay，避免 markers 被冲掉
+      // setData 后重绑 MI overlay + 通用指标 overlay，避免 markers 被冲掉
       if (lastMiOverlay) applyMiOverlay(lastMiOverlay);
+      if (lastIndicatorOverlays.length) applyIndicatorOverlays(lastIndicatorOverlays);
     }
 
     // U3 日内渲染（F008）：分钟 K 线独立路径——UNIX 秒时间键 + timeVisible，无 resample，
@@ -498,6 +506,7 @@
         if (intradayMode) renderIntraday();
         else renderTF();
         if (lastMiOverlay) applyMiOverlay(lastMiOverlay);
+        if (lastIndicatorOverlays.length) applyIndicatorOverlays(lastIndicatorOverlays);
       }
     }
 
@@ -576,16 +585,43 @@
       return [];
     }
 
+    // markers 汇总点：MI + 任意数量通用指标共用同一个 candleSeries.setMarkers() 调用——
+    // LWC 每次 setMarkers 都是整体替换，谁最后调用谁独占，必须先汇总再调用一次（U6 教训）。
+    function collectMarkers() {
+      if (currentTF !== "D" || intradayMode) return [];
+      const barTimes = new Set((rawBars || []).map(b => b && b.date).filter(Boolean));
+      const inHist = (m) => m && m.time && (barTimes.size === 0 || barTimes.has(m.time));
+      const norm = (m) => ({
+        time: m.time,
+        position: m.position || "belowBar",
+        color: m.color || "#26a69a",
+        shape: m.shape || "circle",
+        text: m.text || "",
+      });
+      let all = [];
+      if (lastMiOverlay && (!lastMiOverlay.status || lastMiOverlay.status === "ok")) {
+        all = all.concat((lastMiOverlay.markers || []).filter(inHist).map(norm));
+      }
+      (lastIndicatorOverlays || []).forEach((ov) => {
+        if (!ov || (ov.status && ov.status !== "ok")) return;
+        all = all.concat((ov.markers || []).filter(inHist).map(norm));
+      });
+      return all;
+    }
+    function applyAllMarkers() {
+      try {
+        if (candleSeries && typeof candleSeries.setMarkers === "function") {
+          candleSeries.setMarkers(collectMarkers());
+        }
+      } catch (e) { /* ignore */ }
+    }
+
     function applyMiOverlay(payload) {
       lastMiOverlay = payload || null;
       const ban = document.getElementById("miBanner");
       const badge = document.getElementById("miBadge");
       const clearMarks = () => {
-        try {
-          if (candleSeries && typeof candleSeries.setMarkers === "function") {
-            candleSeries.setMarkers([]);
-          }
-        } catch (e) { /* ignore */ }
+        applyAllMarkers();
         try { if (miSeries) miSeries.setData([]); } catch (e) { /* ignore */ }
       };
       if (!payload || (payload.status && payload.status !== "ok")) {
@@ -609,25 +645,13 @@
         }
         return;
       }
-      // 只画 K 线里存在的时间键（防止整批 markers 被 LWC 丢弃）
-      const barTimes = new Set((rawBars || []).map(b => b && b.date).filter(Boolean));
-      const markers = (payload.markers || [])
-        .filter(m => m && m.time && (barTimes.size === 0 || barTimes.has(m.time)))
-        .map(m => ({
-          time: m.time,
-          position: m.position || "belowBar",
-          color: m.color || "#26a69a",
-          shape: m.shape || "circle",
-          text: m.text || "",
-        }));
       try {
-        if (candleSeries && typeof candleSeries.setMarkers === "function") {
-          candleSeries.setMarkers(markers);
-        }
+        applyAllMarkers();
       } catch (e) {
         if (ban) { ban.style.display = "block"; ban.textContent = "MI markers error: " + e; }
       }
       if (miSeries) {
+        const barTimes = new Set((rawBars || []).map(b => b && b.date).filter(Boolean));
         const miData = (payload.mi || [])
           .filter(p => p && p.value != null && (barTimes.size === 0 || barTimes.has(p.time)))
           .map(p => ({ time: p.time, value: +p.value }));
@@ -638,6 +662,52 @@
       // 动作/角标均由 Swift MiChartBanner 在图外展示，不压 TF/指标钮
       if (ban) { ban.style.display = "none"; ban.textContent = ""; }
       if (badge) { badge.style.display = "none"; badge.textContent = ""; }
+    }
+
+    // 通用指标副带颜色轮换（MI 固定占用 #D97757，通用指标从另一组色板轮换取色，避免撞色）。
+    const INDICATOR_COLOR_PALETTE = ["#5B8DEF", "#26A69A", "#AB47BC", "#FFA726", "#66BB6A", "#EC407A"];
+    function ensureIndicatorSeries(id) {
+      if (indicatorSeriesMap.has(id)) return indicatorSeriesMap.get(id);
+      const color = INDICATOR_COLOR_PALETTE[indicatorSeriesMap.size % INDICATOR_COLOR_PALETTE.length];
+      const priceScaleId = "ind_" + id;
+      const s = chart.addLineSeries({
+        priceScaleId, color, lineWidth: 2, title: id,
+        priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: true,
+      });
+      // MI 已独占底部 0.86-1.0 条带；通用指标依次再往上叠一层薄带，避免压 OBV/MI。
+      const slot = indicatorSeriesMap.size;
+      const bandHeight = 0.06;
+      const top = Math.min(0.60 + slot * bandHeight, 0.92);
+      chart.priceScale(priceScaleId).applyOptions({ scaleMargins: { top, bottom: Math.max(0.0, 0.14 - slot * bandHeight) } });
+      indicatorSeriesMap.set(id, s);
+      return s;
+    }
+
+    // 通用多指标 overlay（买卖点走 collectMarkers 汇总；每个指标一条专属副带线）。
+    function applyIndicatorOverlays(payloads) {
+      lastIndicatorOverlays = Array.isArray(payloads) ? payloads : [];
+      const barTimes = new Set((rawBars || []).map(b => b && b.date).filter(Boolean));
+      const showLine = currentTF === "D" && !intradayMode;
+      lastIndicatorOverlays.forEach((ov) => {
+        if (!ov || !ov.indicator_id) return;
+        const s = ensureIndicatorSeries(ov.indicator_id);
+        if (!showLine || !ov.status || ov.status !== "ok") {
+          try { s.setData([]); } catch (e) { /* ignore */ }
+          return;
+        }
+        // series 项形如 {date, ma_fast, ma_slow} / {date, rsi} / {date, boll_upper, boll_mid, boll_lower}；
+        // 取第一个数值字段作主线（v1 简化：完整多线展示留给后续迭代）。
+        const data = (ov.series || [])
+          .filter(p => p && p.date && (barTimes.size === 0 || barTimes.has(p.date)))
+          .map(p => {
+            const key = Object.keys(p).find(k => k !== "date" && typeof p[k] === "number");
+            return key ? { time: p.date, value: +p[key] } : null;
+          })
+          .filter(Boolean);
+        try { s.setData(data); } catch (e) { /* ignore */ }
+        try { s.applyOptions({ visible: true }); } catch (e) { /* ignore */ }
+      });
+      applyAllMarkers();
     }
     function applyIndVisibility() {  // 重采样/主题重建后还原可见状态
       Object.keys(indState).forEach(k => {
@@ -690,6 +760,33 @@
     };
     window.kssClearMiOverlay = function () { applyMiOverlay(null); };
 
+    // 通用多指标 overlay（plan 2026-07-12-004 U6）：数组载荷，每项 {indicator_id, ...}。
+    // 与 kssSetMiOverlay 并存，互不覆盖（markers 走 collectMarkers 统一汇总）。
+    window.kssSetIndicatorOverlays = function (json) {
+      try {
+        const payload = (json == null || json === "null")
+          ? []
+          : (typeof json === "string" ? JSON.parse(json) : json);
+        applyIndicatorOverlays(payload);
+      } catch (e) {
+        document.getElementById("legend").textContent = "indicator overlays error: " + e;
+      }
+    };
+    // base64 注入（同 kssSetMiOverlayB64，避免大 JSON 经 Swift 字符串字面量转义失败）
+    window.kssSetIndicatorOverlaysB64 = function (b64) {
+      try {
+        if (b64 == null || b64 === "" || b64 === "null") {
+          applyIndicatorOverlays([]);
+          return;
+        }
+        const json = decodeURIComponent(escape(atob(b64)));
+        applyIndicatorOverlays(JSON.parse(json));
+      } catch (e) {
+        document.getElementById("legend").textContent = "indicator overlays b64 error: " + e;
+      }
+    };
+    window.kssClearIndicatorOverlays = function () { applyIndicatorOverlays([]); };
+
     // U3 日内数据 API（F008）：分钟 K 线走独立渲染路径，不触日线 resample。
     window.kssSetIntradayData = function (json) {
       try {
@@ -714,6 +811,7 @@
       if (pendingIntraday) { setIntradayData(pendingIntraday); pendingIntraday = null; }
       // 若 overlay 先于 chart 就绪到达，此处补画
       if (lastMiOverlay) applyMiOverlay(lastMiOverlay);
+      if (lastIndicatorOverlays.length) applyIndicatorOverlays(lastIndicatorOverlays);
     });
   })();
   </script>

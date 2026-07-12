@@ -344,8 +344,8 @@ struct StockDetailView: View {
                     }
                 }
 
-                if detail.reviewConclusion != nil || detail.miSignal != nil {
-                    StockReviewCard(review: detail.reviewConclusion, miSignal: detail.miSignal)
+                if detail.reviewConclusion != nil || detail.miSignal != nil || !(detail.indicatorSignals ?? []).isEmpty {
+                    StockReviewCard(review: detail.reviewConclusion, miSignal: detail.miSignal, indicatorSignals: detail.indicatorSignals)
                 }
 
                 if let enrichment {
@@ -419,6 +419,7 @@ struct StockDetailView: View {
                         activeMode: chartMode,
                         statusText: chartStatusText,
                         miOverlayJSON: Self.encodeMiOverlay(detail.miOverlay),
+                        indicatorOverlaysJSON: Self.encodeIndicatorOverlays(detail.indicatorOverlays),
                         onSelectMode: { mode in
                             chartMode = mode
                             if mode == .daily {
@@ -464,6 +465,9 @@ struct StockReviewCard: View {
     @Environment(\.kssTheme) private var theme
     var review: StockReview?
     var miSignal: MISignal? = nil
+    /// 通用指标信号（plan 2026-07-12-004 U6/U7）；MI 也会在这里出现一份，与上面的 miSignal
+    /// 并存展示不冲突——迁移期两套并行，MI 卡片沿用既有 miBlock 排版不变。
+    var indicatorSignals: [IndicatorSignal]? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -526,9 +530,58 @@ struct StockReviewCard: View {
                 Divider().opacity(0.5)
                 miBlock(mi)
             }
+
+            // 通用指标信号（排除 "mi"——已由上面的 miBlock 展示，避免重复）
+            ForEach(genericSignals) { sig in
+                Divider().opacity(0.5)
+                indicatorBlock(sig)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .kssCard(padding: 16)
+    }
+
+    private var genericSignals: [IndicatorSignal] {
+        (indicatorSignals ?? []).filter { $0.indicatorId != "mi" }
+    }
+
+    @ViewBuilder
+    private func indicatorBlock(_ signal: IndicatorSignal) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(signal.indicatorId ?? "指标")
+                    .font(KSSFont.themed(13, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                if signal.unpinned == true {
+                    Text("默认参数·未钉死")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.orange)
+                }
+                Spacer()
+            }
+            if let st = signal.status, st != "ok" {
+                Text("状态 \(st)：\(signal.reason ?? "")")
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.textSecondary)
+            } else {
+                let pred = signal.predScore.map { String(format: "%.2f", $0) } ?? "—"
+                Text("\(signal.action ?? "—") · \(signal.position ?? "") · pred \(pred)")
+                    .font(KSSFont.themed(14, .semibold, theme: theme))
+                if let sentence = signal.ruleSentence, !sentence.isEmpty {
+                    Text(sentence)
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                Text("asof \(signal.asof ?? "—")")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary)
+                if let prev = signal.prevAction {
+                    Text("昨动作 \(prev) → \(signal.action ?? "")")
+                        .font(.system(size: 11))
+                        .foregroundStyle(theme.textSecondary)
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -697,6 +750,7 @@ struct ChartFullscreenView: View {
                 activeMode: .daily,
                 statusText: nil,
                 miOverlayJSON: StockDetailView.encodeMiOverlay(detail.miOverlay),
+                indicatorOverlaysJSON: StockDetailView.encodeIndicatorOverlays(detail.indicatorOverlays),
                 onSelectMode: nil
             )
         }
@@ -926,6 +980,19 @@ extension StockDetailView {
         guard let data = try? enc.encode(overlay),
               let s = String(data: data, encoding: .utf8) else {
             return "null"
+        }
+        return s
+    }
+
+    /// 通用多指标 overlay 数组 → JSON（snake_case，同 encodeMiOverlay 惯例，chart.html 统一按
+    /// snake_case 读字段：indicator_id / markers / series）。
+    static func encodeIndicatorOverlays(_ overlays: [IndicatorOverlay]?) -> String {
+        guard let overlays, !overlays.isEmpty else { return "[]" }
+        let enc = JSONEncoder()
+        enc.keyEncodingStrategy = .convertToSnakeCase
+        guard let data = try? enc.encode(overlays),
+              let s = String(data: data, encoding: .utf8) else {
+            return "[]"
         }
         return s
     }

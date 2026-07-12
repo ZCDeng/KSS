@@ -177,6 +177,58 @@ def test_backtest_reports_empty_dir_matches_hardcoded_only(isolated_root: Path) 
     assert b._backtest_reports() == []
 
 
+def test_indicator_detail_projections_includes_mi_and_solidified(isolated_root: Path) -> None:
+    """U6: stock_detail 的通用 indicatorSignals/indicatorOverlays 覆盖 MI + 已固化的基元指标."""
+    _write_fixture_csv(isolated_root / "cs_data_688017.csv")
+    params = json.dumps({"fast": 5, "slow": 20, "kind": "sma"})
+    b.dispatch("indicator-solidify", ["ma_cross", params, "688017.SH", ""])
+
+    signals, overlays = b._indicator_detail_projections("688017.SH", {"2026-07-01"})
+    signal_ids = {s.get("indicatorId") for s in signals}
+    overlay_ids = {o.get("indicatorId") for o in overlays}
+    # MI 注册表条目始终在，但从未跑过 MI pack（这次只固化了 ma_cross）→ pack 缺失，投影跳过
+    # （同 stock_detail 对 miSignal/miOverlay 的既有降级行为一致，不是本次改动引入的差异）。
+    assert "mi" not in signal_ids
+    assert any(i and i.startswith("ma_cross_") for i in signal_ids)
+    assert any(i and i.startswith("ma_cross_") for i in overlay_ids)
+
+
+def test_indicator_detail_projections_degrades_on_registry_unavailable(isolated_root: Path, monkeypatch) -> None:
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _boom(name, *args, **kwargs):
+        if name == "kss.indicators.registry":
+            raise ImportError("simulated unavailable")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _boom)
+    signals, overlays = b._indicator_detail_projections("688017.SH", set())
+    assert signals == []
+    assert overlays == []
+
+
+def test_stock_detail_exposes_generic_indicator_fields(isolated_root: Path) -> None:
+    """stock_detail() 顶层直接携带 indicatorSignals/indicatorOverlays（不只是内部辅助函数）。"""
+    n = 400
+    rng = np.random.default_rng(5)
+    close = 80 + np.cumsum(rng.normal(0.1, 0.9, n))
+    df = pd.DataFrame(
+        {
+            "trade_date": pd.bdate_range("2023-01-02", periods=n),
+            "open": close, "high": close + 1, "low": close - 1, "close": close,
+            "vol": 1e5, "pct_chg": rng.normal(0, 1, n),
+        }
+    )
+    df.to_csv(isolated_root / "cs_data_688017.csv", index=False)
+    detail = b.stock_detail("688017.SH")
+    assert "indicatorSignals" in detail
+    assert "indicatorOverlays" in detail
+    assert isinstance(detail["indicatorSignals"], list)
+    assert isinstance(detail["indicatorOverlays"], list)
+
+
 def test_solidify_no_symbols_rejected(isolated_root: Path) -> None:
     out = b.dispatch("indicator-solidify", ["ma_cross", "{}", "", ""])
     assert out["error"] == "no_symbols"

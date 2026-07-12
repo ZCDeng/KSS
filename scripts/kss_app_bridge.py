@@ -3050,6 +3050,10 @@ def stock_detail(symbol: str) -> dict[str, Any]:
             mi_overlay = to_mi_overlay(pack, history_dates=hist_dates)
     except Exception as exc:  # noqa: BLE001
         print(f"mi pack for {symbol}: {exc}", file=sys.stderr)
+
+    hist_dates = {str(h.get("date") or "") for h in history}
+    indicator_signals, indicator_overlays = _indicator_detail_projections(symbol, hist_dates)
+
     return {
         "symbol": symbol,
         "name": meta.get("name", ""),
@@ -3060,7 +3064,48 @@ def stock_detail(symbol: str) -> dict[str, Any]:
         "reviewConclusion": _stock_review(symbol),
         "miSignal": mi_signal,
         "miOverlay": mi_overlay,
+        # additive（plan 2026-07-12-004 U6）：注册表内任意 active 指标，含 MI 自己的一份，
+        # 与上面两个 mi* 字段并存不冲突，不 bump BRIDGE_SCHEMA_VERSION。
+        "indicatorSignals": indicator_signals,
+        "indicatorOverlays": indicator_overlays,
     }
+
+
+def _indicator_detail_projections(
+    symbol: str, hist_dates: set[str]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """遍历指标注册表 active 条目，产出通用 indicatorSignals/indicatorOverlays 数组.
+
+    单条目失败不拖垮其它条目或整个 stock_detail（同 mi pack try/except 先例）。
+    """
+    try:
+        from kss.indicators import pack as ipack
+        from kss.indicators.registry import active_entries
+    except Exception as exc:  # noqa: BLE001
+        print(f"indicator registry for {symbol}: {exc}", file=sys.stderr)
+        return [], []
+
+    signals: list[dict[str, Any]] = []
+    overlays: list[dict[str, Any]] = []
+    for entry in active_entries():
+        try:
+            symbol_pack = ipack.read_any_pack(entry, symbol)
+            if symbol_pack is None:
+                continue
+            sig = ipack.to_any_signal(entry, symbol_pack)
+            ov = ipack.to_any_overlay(entry, symbol_pack, history_dates=hist_dates)
+            if sig is not None:
+                sig = dict(sig)
+                sig.setdefault("indicatorId", entry.id)
+                signals.append(sig)
+            if ov is not None:
+                ov = dict(ov)
+                ov["indicatorId"] = entry.id
+                overlays.append(ov)
+        except Exception as exc:  # noqa: BLE001
+            print(f"indicator pack {entry.id} for {symbol}: {exc}", file=sys.stderr)
+            continue
+    return signals, overlays
 
 
 # ---------------------------------------------------------------------------

@@ -1056,6 +1056,11 @@ struct StockDetail: Codable {
     var miSignal: MISignal?
     /// 图表 overlay 载荷（与 miSignal 同源 pack）
     var miOverlay: MIOverlay?
+    /// 通用指标信号数组（plan 2026-07-12-004 U6，含任意已注册基元库指标；MI 也会在这里出现一份，
+    /// 与 miSignal 并存不冲突——additive 字段，不 bump BRIDGE_SCHEMA_VERSION）
+    var indicatorSignals: [IndicatorSignal]?
+    /// 通用图表 overlay 数组，与 indicatorSignals 同源 pack
+    var indicatorOverlays: [IndicatorOverlay]?
 }
 
 /// 自选个股详情 · MI 研究级卡片字段
@@ -1139,6 +1144,81 @@ struct MIMarker: Codable, Hashable {
 struct MIPoint: Codable, Hashable {
     var time: String
     var value: Double
+}
+
+/// 通用指标信号（plan 2026-07-12-004 U6）：对齐 bridge `to_signal()` 输出字段名（camelCase）。
+/// 覆盖任意注册表条目（预注册基元族 或 MI legacy），不专属某一个指标。
+struct IndicatorSignal: Codable, Hashable, Identifiable {
+    var id: String { indicatorId ?? "unknown" }
+    var indicatorId: String? = nil
+    var asof: String? = nil
+    var status: String? = nil
+    var reason: String? = nil
+    var action: String? = nil
+    var prevAction: String? = nil
+    var position: String? = nil
+    var predScore: Double? = nil
+    var predBias: String? = nil
+    var family: String? = nil
+    var unpinned: Bool? = nil
+    var ruleSentence: String? = nil
+    var execNote: String? = nil
+    // 属性名与 bridge to_signal() 的 camelCase JSON 键逐字一致，不需要自定义 CodingKeys。
+    // params/paramDelta/tradesPreview/close 等字段暂不解码（v1 展示范围内不需要）。
+}
+
+/// 通用图表 overlay（对齐 bridge `to_overlay()` 输出）；markers 复用 MIMarker 形状（字段一致）。
+struct IndicatorOverlay: Codable, Hashable, Identifiable {
+    var id: String { indicatorId ?? "unknown" }
+    var indicatorId: String? = nil
+    var status: String? = nil
+    var reason: String? = nil
+    var markers: [MIMarker]? = nil
+    /// 族内主线（ma_fast/rsi/boll_mid 等，字段名随族而变）；解码时取首个非 date 数值字段，
+    /// 归一成 {date, value}——chart.html 收到后按同样规则（取首个数值字段）取值，双端一致。
+    var series: [IndicatorSeriesPoint]? = nil
+}
+
+/// 通用指标主线的一个点：动态字段名 → 归一 {date, value}（族内 series 字段名不固定，
+/// 如 ma_cross 的 ma_fast/ma_slow、rsi_threshold 的 rsi、boll_atr 的 boll_upper/mid/lower）。
+struct IndicatorSeriesPoint: Codable, Hashable {
+    var date: String
+    var value: Double?
+
+    private struct DynamicKey: CodingKey {
+        var stringValue: String
+        init?(stringValue: String) { self.stringValue = stringValue }
+        var intValue: Int? { nil }
+        init?(intValue: Int) { return nil }
+    }
+
+    init(date: String, value: Double?) {
+        self.date = date
+        self.value = value
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: DynamicKey.self)
+        var parsedDate = ""
+        var parsedValue: Double?
+        for key in container.allKeys {
+            if key.stringValue == "date" {
+                parsedDate = (try? container.decode(String.self, forKey: key)) ?? ""
+            } else if parsedValue == nil {
+                parsedValue = try? container.decode(Double.self, forKey: key)
+            }
+        }
+        date = parsedDate
+        value = parsedValue
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: DynamicKey.self)
+        try container.encode(date, forKey: DynamicKey(stringValue: "date")!)
+        if let value {
+            try container.encode(value, forKey: DynamicKey(stringValue: "value")!)
+        }
+    }
 }
 
 /// 个股复盘结论（从 daily_review 抽取）：标题 / 快照 / 预期区间 / 建议。

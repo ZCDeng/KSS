@@ -16,6 +16,8 @@ struct ChartWebView: NSViewRepresentable {
     var statusText: String? = nil
     /// MI Signal Pack overlay（JSON 字串，null 清除）。
     var miOverlayJSON: String? = nil
+    /// 通用多指标 overlay 数组（JSON 字串，与 miOverlayJSON 并存不冲突；"null"/"[]" 视为空）。
+    var indicatorOverlaysJSON: String? = nil
     /// 用户点 HTML TF 条时回调（含 1m/5m/日线结构）。
     var onSelectMode: ((ChartDataMode) -> Void)? = nil
 
@@ -88,6 +90,11 @@ struct ChartWebView: NSViewRepresentable {
             coord.latestMiOverlayJSON = ov
             coord.bumpContent()
         }
+        let indOv = indicatorOverlaysJSON ?? "[]"
+        if indOv != coord.latestIndicatorOverlaysJSON {
+            coord.latestIndicatorOverlaysJSON = indOv
+            coord.bumpContent()
+        }
         webView.underPageBackgroundColor = theme.chartSurfaceNS
         coord.requestSync()
     }
@@ -124,6 +131,7 @@ struct ChartWebView: NSViewRepresentable {
         var latestJSON = "[]"
         var latestIntradayJSON = "[]"
         var latestMiOverlayJSON = "null"
+        var latestIndicatorOverlaysJSON = "[]"
         var isIntraday = false
         var latestTFKey = "D"
         var latestStatus = ""
@@ -157,6 +165,17 @@ struct ChartWebView: NSViewRepresentable {
                 )
             } else {
                 parts.append("window.kssSetMiOverlay && window.kssSetMiOverlay(null);")
+            }
+            // 通用多指标 overlay：同款 base64 注入，避免大 JSON 数组破坏 evaluateJavaScript。
+            if latestIndicatorOverlaysJSON == "[]" || latestIndicatorOverlaysJSON == "null" {
+                parts.append("window.kssSetIndicatorOverlays && window.kssSetIndicatorOverlays([]);")
+            } else if let data = latestIndicatorOverlaysJSON.data(using: .utf8) {
+                let b64 = data.base64EncodedString()
+                parts.append(
+                    "window.kssSetIndicatorOverlaysB64 && window.kssSetIndicatorOverlaysB64('\(b64)');"
+                )
+            } else {
+                parts.append("window.kssSetIndicatorOverlays && window.kssSetIndicatorOverlays([]);")
             }
             if let st = pendingStatusScript {
                 parts.append(st)
