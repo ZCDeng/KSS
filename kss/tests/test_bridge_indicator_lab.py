@@ -102,8 +102,9 @@ def test_backtest_end_to_end_persists_verdict(isolated_root: Path) -> None:
 
 
 def test_backtest_uses_watchlist_when_symbols_omitted(isolated_root: Path) -> None:
-    (isolated_root / "storage").mkdir(parents=True, exist_ok=True)
-    (isolated_root / "storage" / "watchlist_symbols.txt").write_text("688017.SH\n", encoding="utf-8")
+    from kss.storage.watchlist import set_watchlist
+
+    set_watchlist(["688017.SH"], db_path=isolated_root / "storage" / "kss.db")
     _write_fixture_csv(isolated_root / "cs_data_688017.csv")
     out = b.dispatch("indicator-backtest", ["ma_cross", "{}", ""])
     assert "error" not in out

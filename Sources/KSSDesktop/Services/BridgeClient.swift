@@ -329,6 +329,12 @@ struct BridgeClient {
         try run(["cron-edit-schedule", suffix, scheduleJSON], as: CronActionResult.self)
     }
 
+    /// 自选列表整表替换（plan 2026-07-12-005 / U15）：写 kss.db，取代原先直接写
+    /// storage/watchlist_symbols.txt 的 syncWatchlistFile。
+    func setWatchlist(_ symbols: [String]) throws -> WatchlistSetResult {
+        try run(["watchlist-set", symbols.joined(separator: ",")], as: WatchlistSetResult.self)
+    }
+
     /// 趋势页：某月月度格子。
     func trendsMonth(_ month: String) throws -> TrendMonth {
         try run(["trends-month", month], as: TrendMonth.self)

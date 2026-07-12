@@ -231,19 +231,11 @@ def _expected_bar_ends(store: IntradayStore, session_profile_version: str) -> tu
 
 
 def _load_watchlist_symbols() -> list[str]:
-    """App 同步的自选列表（state-root/storage/watchlist_symbols.txt，一行一码）。"""
+    """App 同步的自选列表（kss.db watchlist 表，plan 2026-07-12-005 / U15 割接自 txt 文件）。"""
     try:
-        from kss.config.paths import STORAGE_ROOT  # noqa: PLC0415
+        from kss.storage.watchlist import load_watchlist  # noqa: PLC0415
 
-        path = STORAGE_ROOT / "watchlist_symbols.txt"
-        if not path.is_file():
-            return []
-        out: list[str] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            s = line.strip()
-            if s and not s.startswith("#"):
-                out.append(s)
-        return out
+        return load_watchlist()
     except Exception:  # noqa: BLE001
         return []
 

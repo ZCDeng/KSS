@@ -333,8 +333,14 @@ def import_watchlist(conn: sqlite3.Connection, storage_root: Path) -> ImportResu
     if not f.is_file():
         return ImportResult("watchlist", 0, 0, False, "文件不存在")
     lines = [ln.strip() for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip()]
-    for ts_code in lines:
-        conn.execute("INSERT OR REPLACE INTO watchlist (ts_code, added_at) VALUES (?, ?)", (ts_code, None))
+    # 复用 kss/storage/watchlist.py 的整表替换语义（含 position 列，保留文件原行序）——
+    # 但这里已经在外层连接的事务里，直接对同一 conn 操作，不重开连接。
+    conn.execute("DELETE FROM watchlist")
+    for i, ts_code in enumerate(lines):
+        conn.execute(
+            "INSERT INTO watchlist (ts_code, position, added_at) VALUES (?, ?, datetime('now'))",
+            (ts_code, i),
+        )
     return ImportResult("watchlist", len(lines), len(lines), len(lines) > 0, f"{len(lines)} 行")
 
 

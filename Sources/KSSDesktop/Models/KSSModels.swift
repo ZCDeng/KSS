@@ -914,6 +914,12 @@ struct CronActionResult: Codable, Hashable {
     var job: ScheduledJob?
 }
 
+/// watchlist-set 的返回（plan 2026-07-12-005 / U15：自选列表写 kss.db）。
+struct WatchlistSetResult: Codable, Hashable {
+    var ok: Bool
+    var symbols: [String]
+}
+
 /// cron-catchup / cron-rerun-many 批量结果。
 struct CronBatchResult: Codable, Hashable {
     var ok: Bool

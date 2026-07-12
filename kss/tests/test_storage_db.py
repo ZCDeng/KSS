@@ -53,6 +53,36 @@ def test_concurrent_writes_do_not_deadlock(tmp_path: Path) -> None:
     assert n == 80  # 4 线程 × 20 行，全部落地无丢失
 
 
+def test_concurrent_cold_start_does_not_deadlock(tmp_path: Path) -> None:
+    """库文件尚不存在时，多连接首次并发 connect()+ensure_schema() 不炸——
+    journal-mode 切换收窄到「真正第一个连接」+ schema_migrations 记录用 OR IGNORE
+    兜底 check-then-act 竞态（U15 域割接测试撞到过这个真实 bug）。"""
+    db_path = tmp_path / "cold.db"
+    errors: list[Exception] = []
+
+    def writer(n: int) -> None:
+        try:
+            with connect(db_path) as conn:
+                ensure_schema(conn)
+                conn.execute(
+                    "INSERT OR REPLACE INTO watchlist (ts_code, position, added_at) VALUES (?, ?, ?)",
+                    (f"{n}.SH", n, None),
+                )
+        except sqlite3.Error as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=writer, args=(n,)) for n in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert not errors, f"冷启动并发建库触发异常: {errors}"
+    with connect(db_path) as conn:
+        n = conn.execute("SELECT COUNT(*) c FROM watchlist").fetchone()["c"]
+    assert n == 6
+
+
 # --------------------------------------------------------------------------- #
 # ② 每域导入后行数=源文件记录数、抽样字段逐值相等
 # --------------------------------------------------------------------------- #

@@ -1213,6 +1213,14 @@ final class KSSStore: ObservableObject {
         }
     }
 
+    /// 自选列表同步给 Python 读者（plan 2026-07-12-005 / U15）。UI 真源仍是
+    /// @AppStorage("watchlistSymbols")，这里只是把它镜像进 kss.db 供 cron/bridge 读——
+    /// 同原先的 syncWatchlistFile 定位，静默失败不影响 UI（自选已经落地在 AppStorage）。
+    func syncWatchlistToDB(_ symbols: [String]) async {
+        guard let bridge else { return }
+        _ = try? await Task.detached { try bridge.setWatchlist(symbols) }.value
+    }
+
     /// 漏跑任务（关机自检命中的）。
     var staleJobs: [ScheduledJob] { scheduledJobs.filter { $0.stale } }
 

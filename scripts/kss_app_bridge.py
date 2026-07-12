@@ -4038,16 +4038,23 @@ _INDICATOR_BACKTEST_MAX_SYMBOLS = 8
 
 
 def _indicator_watchlist_symbols() -> list[str]:
-    """自选列表（App 写 storage/watchlist_symbols.txt，一行一码）；同 collect_intraday 惯例。"""
-    path = STATE_ROOT / "storage" / "watchlist_symbols.txt"
-    if not path.is_file():
-        return []
-    out: list[str] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        s = line.strip()
-        if s and not s.startswith("#"):
-            out.append(s)
-    return out
+    """自选列表（kss.db watchlist 表，plan 2026-07-12-005 / U15 割接自 txt 文件）。
+    db_path 显式从本模块 STATE_ROOT 派生（不用 kss.storage.db 的默认值）——STATE_ROOT
+    在测试里靠 monkeypatch.setattr(b, "STATE_ROOT", tmp_path) 隔离，走隐式默认会绕过
+    这层隔离，悄悄读写真仓库的 storage/kss.db（同 INDICATOR_LAB_DIR 等既有先例）。"""
+    from kss.storage.watchlist import load_watchlist  # noqa: PLC0415
+
+    return load_watchlist(db_path=STATE_ROOT / "storage" / "kss.db")
+
+
+def _watchlist_set(symbols_csv: str) -> dict[str, Any]:
+    """自选列表整表替换（App UI 每次增删触发）。写 kss.db，不再写 watchlist_symbols.txt
+    （U15 割接：Tier A 域不再产生新散文件）。"""
+    from kss.storage.watchlist import set_watchlist  # noqa: PLC0415
+
+    symbols = [s.strip() for s in symbols_csv.split(",") if s.strip()]
+    set_watchlist(symbols, db_path=STATE_ROOT / "storage" / "kss.db")
+    return {"ok": True, "symbols": symbols}
 
 
 def _verdict_key(family: str, params: dict[str, Any]) -> str:
@@ -4447,6 +4454,7 @@ WRITE_COMMANDS = frozenset({
     "run", "import", "resolve",
     "cron-rerun", "cron-enable", "cron-disable", "cron-catchup", "cron-rerun-many", "cron-sync",
     "cron-edit-schedule",  # 排期编辑（U6）：写 overlay + 渲染 + bootout/bootstrap
+    "watchlist-set",  # 自选列表整表替换（U15）：写 kss.db watchlist 表
     "intel-digest-save",  # 写文件到 storage/notes/
     "intel-rewrite",      # 写 rewrite pool
     "intel-rewrite-run",  # worker 写 pool
@@ -4485,6 +4493,7 @@ COMMANDS = {
         "desc": "应用内编辑任务排期(写 state-root overlay + 重渲染 + 生效)",
         "args": ["SUFFIX", "SCHEDULE_JSON"],
     },
+    "watchlist-set": {"desc": "自选列表整表替换(写 kss.db watchlist 表)", "args": ["SYMBOLS_CSV"]},
     "trends-month": {"desc": "趋势页某月日历", "args": ["YYYY-MM"]},
     "trends-day": {"desc": "趋势页某日明细", "args": ["YYYY-MM-DD"]},
     "data-catalog": {"desc": "全量数据资产字典", "args": []},
@@ -5356,6 +5365,8 @@ def dispatch(command: str, args: list[str]) -> Any:
         if len(args) < 2:
             raise ValueError("cron-edit-schedule requires SUFFIX SCHEDULE_JSON")
         return _cron_edit_schedule(args[0], args[1])
+    if command == "watchlist-set":
+        return _watchlist_set(args[0] if args else "")
     if command == "trends-month":
         if not args:
             raise ValueError("trends-month requires YYYY-MM")

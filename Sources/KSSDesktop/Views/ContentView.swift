@@ -17,14 +17,10 @@ struct ContentView: View {
             .filter { !$0.isEmpty }
     }
 
-    /// 给盘后 collect_intraday 读：state-root/storage/watchlist_symbols.txt（一行一码）
-    private func syncWatchlistFile(_ symbols: [String]) {
-        guard let root = store.bridge?.stateRoot else { return }
-        let dir = root.appending(path: "storage")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let url = dir.appending(path: "watchlist_symbols.txt")
-        let body = symbols.joined(separator: "\n") + (symbols.isEmpty ? "" : "\n")
-        try? body.write(to: url, atomically: true, encoding: .utf8)
+    /// 给 collect_intraday / mi_signal_pack 等 Python 读者同步自选列表：写 kss.db
+    /// watchlist 表（plan 2026-07-12-005 / U15，割接自原先直接写 watchlist_symbols.txt）。
+    private func syncWatchlistToStore(_ symbols: [String]) {
+        Task { await store.syncWatchlistToDB(symbols) }
     }
 
     /// 价格页：完整四态 badge（页内）。其余页仅工具栏 status dot。
@@ -138,7 +134,7 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 1080, minHeight: 720)
-        .onAppear { syncWatchlistFile(watchlist) }
+        .onAppear { syncWatchlistToStore(watchlist) }
         .onChange(of: scenePhase) { _, phase in store.updateSceneActive(phase == .active) }   // U5: Timer lifecycle gate
         .overlay(alignment: .top) {
             if store.showSelfCheckBanner {
@@ -389,7 +385,7 @@ struct ContentView: View {
         let result = WatchlistToggle.apply(watchlist, toggling: symbol)
         // watchlist 先持久化，生成失败不回滚自选。
         watchlistSymbols = result.list.joined(separator: ",")
-        syncWatchlistFile(result.list)
+        syncWatchlistToStore(result.list)
         // U5: 仅「加入」分支触发即时复盘（取消不触发）。
         if result.generate {
             Task { await store.generateReview(for: symbol) }

@@ -43,13 +43,23 @@ def connect(db_path: str | Path | None = None) -> Iterator[sqlite3.Connection]:
     """打开 kss.db 连接（WAL + busy_timeout），退出时提交并关闭。
 
     与 ``PredictionLedger._connect`` / ``FactorHealthTracker._connect`` 完全同款纪律。
+
+    ``PRAGMA journal_mode=WAL`` 只在库尚未是 WAL 模式时才发——journal mode 是持久化在
+    文件里的属性，一旦某连接把它设成功，此后所有连接天然继承，无需重发。这不只是省一次
+    调用：journal-mode 切换本身需要短暂独占访问，若多个进程/线程在**库刚创建、尚无人设过
+    WAL** 的窗口内同时首次连接，都去发 `PRAGMA journal_mode=WAL`，会彼此撞见
+    ``database is locked``——且这个特定 pragma 的失败不吃 ``busy_timeout``（该 pragma 只
+    对常规读写锁生效，不对 journal-mode 切换生效），所以只能靠减少「谁去切」的次数来避免，
+    重试不是这里的正确修法。加一次读探测把切换收窄到「真正的第一个连接」。
     """
     path = Path(db_path) if db_path is not None else KSS_DB
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=30000")
-    conn.execute("PRAGMA journal_mode=WAL")
+    current_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+    if str(current_mode).lower() != "wal":
+        conn.execute("PRAGMA journal_mode=WAL")
     try:
         yield conn
         conn.commit()
@@ -366,6 +376,7 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
 
         CREATE TABLE IF NOT EXISTS watchlist (
             ts_code       TEXT PRIMARY KEY,
+            position      INTEGER NOT NULL DEFAULT 0,
             added_at      TEXT
         ) STRICT;
         """,
@@ -374,7 +385,13 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
 
 
 def ensure_schema(conn: sqlite3.Connection) -> list[int]:
-    """应用尚未记录的迁移；返回本次新应用的版本号列表（幂等，重复调用返回空列表）。"""
+    """应用尚未记录的迁移；返回本次新应用的版本号列表（幂等，重复调用返回空列表）。
+
+    多连接首次并发建库时，「查 applied → 判断未应用 → 记录」这三步不是原子的——两个连接
+    都可能读到「未应用」再各自去 INSERT 同一个 version，撞主键。DDL 本身
+    （``CREATE TABLE IF NOT EXISTS`` 等）天然幂等，唯一需要兜底的是这条记录 insert：
+    ``OR IGNORE`` 让输的那一方安静地什么都不做，而不是抛 IntegrityError 炸调用方。
+    """
     conn.execute(_MIGRATIONS_TABLE)
     applied = {row["version"] for row in conn.execute("SELECT version FROM schema_migrations")}
     newly_applied: list[int] = []
@@ -383,7 +400,7 @@ def ensure_schema(conn: sqlite3.Connection) -> list[int]:
             continue
         conn.executescript(ddl)
         conn.execute(
-            "INSERT INTO schema_migrations (version, applied_at) VALUES (?, datetime('now'))",
+            "INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, datetime('now'))",
             (version,),
         )
         newly_applied.append(version)
