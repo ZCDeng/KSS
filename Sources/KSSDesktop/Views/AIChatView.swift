@@ -77,6 +77,15 @@ struct AIChatView: View {
                     .foregroundStyle(theme.textPrimary)
                     .padding(.bottom, 28)
 
+                // 未配置任何 LLM key 时 Seesaw 完全用不了——明确指引而非让用户输入后才报错（U9/R12）。
+                if store.isCredentialConfigured("llm") == false {
+                    MissingCredentialCard(sourceDisplayName: "LLM key") {
+                        store.selectedSection = .settings
+                    }
+                    .frame(width: width)
+                    .padding(.bottom, 18)
+                }
+
                 heroInputCard.frame(width: width)
                     .padding(.bottom, 26)
 

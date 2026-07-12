@@ -104,6 +104,34 @@ struct PageTitle: View {
     }
 }
 
+/// 缺凭证优雅降级卡片（plan 2026-07-12-005 / U9，R12）：某数据源未配置时统一呈现
+/// "未配置 X，去设置里填" + 跳转按钮，替代报错/空白/崩溃。凭证已配但请求本身失败
+/// 走各面板既有错误路径，不用这张卡——两种情况不能混淆（AE1 的反面）。
+struct MissingCredentialCard: View {
+    @Environment(\.kssTheme) private var theme
+    var sourceDisplayName: String
+    var onOpenSettings: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "key.slash")
+                .font(.system(size: 15))
+                .foregroundStyle(theme.ma5)
+            Text("未配置 \(sourceDisplayName)，去设置里填")
+                .font(KSSFont.themed(13, .semibold, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+            Spacer()
+            Button("去设置", action: onOpenSettings)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.ma5.opacity(0.08), in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+        .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeM).strokeBorder(theme.ma5.opacity(0.25), lineWidth: 1))
+    }
+}
+
 /// 可点击排序列头：点击切到该列（默认降序），已选中再点切换升/降。
 /// 与 SortControl 共享同一对 selection/ascending 绑定，下拉控件与列头状态一致。
 /// width=nil 时占满弹性宽度，否则固定宽度（对齐数据行列宽）。

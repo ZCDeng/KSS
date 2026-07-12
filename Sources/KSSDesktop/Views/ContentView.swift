@@ -244,6 +244,7 @@ struct ContentView: View {
                     snapshot: snapshot,
                     onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } },
                     onOpenSection: { section in store.selectedSection = section },
+                    tushareConfigured: store.isCredentialConfigured("tushare"),
                     realtimeQuote: store.realtimeQuote,
                     realtimeQuotes: store.realtimeQuotesBySymbol,
                     realtimeSparklines: store.realtimeSparklinesBySymbol,

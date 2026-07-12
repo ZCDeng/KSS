@@ -67,6 +67,15 @@ final class KSSStore: ObservableObject {
     var selfCheckHasWarn: Bool { selfCheckItems.contains { $0.isWarn } }
     var showSelfCheckBanner: Bool { selfCheckHasFail && !selfCheckBannerDismissed }
 
+    /// 单一凭证真源（U9/R12）：某数据源是否已配置。以 self-check 结果为准（沿用
+    /// U4 hasLLMCredentials 的先例，按源扩展为字典查询）。自检结果到达前返回 nil
+    /// （"未知"而非"未配置"）——避免首帧还没跑完自检就误判成缺凭证闪一下卡片。
+    /// source ∈ "tushare" | "longbridge" | "telegram" | "llm"。
+    func isCredentialConfigured(_ source: String) -> Bool? {
+        guard let item = selfCheckItems.first(where: { $0.item == source }) else { return nil }
+        return !item.isWarn   // warn＝该源未配置；ok＝已配置（fail 不会用于凭证项，只用于 venv/storage）
+    }
+
     // MARK: 资讯雷达 reader workbench（plan 2026-07-10-001）
     @Published var selectedIntelItemID: String?
     @Published var intelArticleByID: [String: IntelArticleResponse] = [:]
