@@ -120,7 +120,7 @@ def test_sqlite_table_introspection(tmp_path, monkeypatch):
     con.commit(); con.close()
     monkeypatch.setattr(
         bd, "_DB_CANDIDATES",
-        [(tmp_path, "storage/t.db", "测试库", None, frozenset())],
+        [("t", tmp_path, "storage/t.db", "测试库", None, frozenset())],
     )
     catalog, _ = bd.build_catalog({})
     ds = next(d for d in catalog["datasets"] if d["name"] == "t")
@@ -176,7 +176,7 @@ _INTRADAY_EXCLUDED = frozenset({
 def _patch_intraday_candidate(monkeypatch, tmp_path, dbrel="storage/intraday_quotes.db"):
     monkeypatch.setattr(
         bd, "_DB_CANDIDATES",
-        [(tmp_path, dbrel, "分时隔离库", _INTRADAY_ALLOWLIST, _INTRADAY_EXCLUDED)],
+        [("intraday_quotes", tmp_path, dbrel, "分时隔离库", _INTRADAY_ALLOWLIST, _INTRADAY_EXCLUDED)],
     )
 
 
@@ -248,6 +248,47 @@ def test_intraday_excluded_column_in_overlay_no_drift(tmp_path, monkeypatch):
     catalog, _ = bd.build_catalog(overlay)
     ds = next(d for d in catalog["datasets"] if d["name"] == "intraday_quotes")
     assert "overlayDrift" not in ds  # 排除列不算漂移
+
+
+def test_db_candidate_allowlist_can_be_callable(tmp_path, monkeypatch):
+    """U17：_DB_CANDIDATES 的 table_allowlist 支持 callable，惰性求值(kss.db 域割接门控用)。"""
+    _setup_roots(monkeypatch, tmp_path)
+    dbp = tmp_path / "storage" / "u.db"
+    con = sqlite3.connect(dbp)
+    con.execute("CREATE TABLE visible_tbl (a INTEGER)")
+    con.execute("CREATE TABLE hidden_tbl (b INTEGER)")
+    con.commit(); con.close()
+    calls = []
+
+    def _lazy_allowlist():
+        calls.append(1)
+        return frozenset({"visible_tbl"})
+
+    monkeypatch.setattr(
+        bd, "_DB_CANDIDATES",
+        [("u", tmp_path, "storage/u.db", "测试库(callable allowlist)", _lazy_allowlist, frozenset())],
+    )
+    catalog, _ = bd.build_catalog({})
+    assert calls == [1]  # 惰性求值：build_catalog 调用时才求值一次
+    ds = next(d for d in catalog["datasets"] if d["name"] == "u")
+    table_names = {t["table"] for t in ds["tables"]}
+    assert table_names == {"visible_tbl"}
+
+
+def test_db_candidates_names_unique():
+    """回归：datasette/kss.db 与 storage/kss.db 若都靠 Path(sub).stem 推导会撞名 "kss"
+    (U17 加统一库条目时的真实 bug)。显式命名后须两两不同。"""
+    names = [entry[0] for entry in bd._DB_CANDIDATES]
+    assert len(names) == len(set(names)), f"_DB_CANDIDATES 数据集名撞车: {names}"
+
+
+def test_kss_db_table_allowlist_reflects_real_ledger():
+    """U17 test scenario ②：kss_db_table_allowlist 对真实仓库 migration_ledger.json 求值
+    不报错，且已知未割接域(mi_rules 所属)不在其中。"""
+    allowlist = bd._kss_db_table_allowlist()
+    assert isinstance(allowlist, frozenset)
+    assert "mi_rules" not in allowlist
+    assert "watchlist" in allowlist  # 已割接域，真实仓库应可见
 
 
 def test_real_overlay_yaml_aligns_with_intraday_schema(tmp_path, monkeypatch):

@@ -122,3 +122,55 @@ class TestStorageProbe:
 def test_dispatch_wires_self_check(monkeypatch):
     monkeypatch.setattr(b, "_self_check", lambda: {"items": []})
     assert b.dispatch("self-check", []) == {"items": []}
+
+
+class TestKssDbProbe:
+    """U17 test scenario ③：自检含 kss.db 可开一项。"""
+
+    def test_missing_db_is_fail(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(b, "STATE_ROOT", tmp_path)
+        result = b._check_kss_db()
+        assert result["status"] == "fail"
+        assert "不存在" in result["detail"]
+
+    def test_openable_db_is_ok(self, tmp_path, monkeypatch):
+        import sqlite3
+
+        monkeypatch.setattr(b, "STATE_ROOT", tmp_path)
+        (tmp_path / "storage").mkdir(parents=True)
+        con = sqlite3.connect(tmp_path / "storage" / "kss.db")
+        con.execute("CREATE TABLE t (a INTEGER)")
+        con.commit(); con.close()
+        result = b._check_kss_db()
+        assert result["status"] == "ok"
+
+    def test_corrupt_db_is_fail(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(b, "STATE_ROOT", tmp_path)
+        (tmp_path / "storage").mkdir(parents=True)
+        (tmp_path / "storage" / "kss.db").write_bytes(b"not a sqlite file at all, deliberately corrupt")
+        result = b._check_kss_db()
+        assert result["status"] == "fail"
+
+
+class TestDuckdbExtensionProbe:
+    """U17 test scenario ③：自检含 duckdb 扩展可加载一项（迁移后为 ok）。"""
+
+    def test_real_duckdb_loads_sqlite_extension(self):
+        """真机(已装 duckdb==1.5.4)冒烟：会话可开且 sqlite 扩展可加载。"""
+        result = b._check_duckdb_extension()
+        assert result["status"] == "ok"
+
+    def test_import_failure_is_warn_not_fail(self, monkeypatch):
+        """扩展/包不可用是 warn（sql-query 工具暂不可用），不阻断应用其余功能。"""
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _boom(name, *args, **kwargs):
+            if name == "duckdb":
+                raise ImportError("no duckdb")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _boom)
+        result = b._check_duckdb_extension()
+        assert result["status"] == "warn"

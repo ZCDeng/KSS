@@ -202,3 +202,103 @@ datasets:
           quality_flags: 质量标记
           content_sha256: bar 内容 SHA-256
           certified_at: 认证时刻
+
+  # 统一存储库(kss.db，U14 起)——sqlite，per-table 含义(U17)。反射范围按域割接台账
+  # 门控(kss/storage/duck.py DOMAIN_TABLES + migration_ledger.json goldenResult=pass)，
+  # 只覆盖已割接域；未割接域(mi_rules/pipeline_weights/theme_registry)不在此列，
+  # 割接完成后自动出现，无需手改此 overlay。多数 payload_json/payload 列是域自身的结构化
+  # JSON blob(该域的主要数据体)，含义留空——用 Seesaw sql-query 工具的
+  # json_extract(...)/DESCRIBE 自查具体字段，而非在此逐字段维护(避免与业务代码 schema 重复)。
+  kss_unified:
+    tables:
+      watchlist:
+        meanings:
+          ts_code: 股票代码(如 688017.SH)
+          position: 自选顺序
+          added_at: 加入时刻
+      stock_names:
+        meanings:
+          ts_code: 股票代码
+          name: 股票名称
+          industry: 所属行业
+          concept: 概念标签
+      predictions:
+        meanings:
+          prediction_id: 预测唯一 ID
+          prediction_date: 预测生成日 YYYYMMDD
+          symbol: 标的代码
+          strategy: 策略标识
+          factor_value: 因子原始值
+          rank_pct: 截面排名分位
+          rank_position: 截面排名位次
+          planned_weight: 计划权重
+          status: 状态(pending/settled/...)
+          t1_open: T+1 开盘价
+          t2_open: T+2 开盘价
+          realized_ret: 实现收益
+          outcome: 结算结果
+          attribution_category: 归因类别
+          attribution_note: 归因说明
+      paper_trade_picks:
+        meanings:
+          prediction_date: 选股日 YYYYMMDD
+          symbol: 标的代码
+          strategy: 策略标识
+          factor_value: 因子原始值
+          rank_pct: 截面排名分位
+          rank_position: 截面排名位次
+          planned_weight: 计划权重
+      indicator_registry:
+        meanings:
+          entry_id: 指标条目 ID
+          name: 指标名称
+          kind: 指标类型
+          family: 基元族(ma_cross/rsi_threshold/boll_atr)
+          params_json: 参数(JSON)
+          status: 状态(solidified/retired)
+          solidified_at: 固化时刻
+          verdict_ref: 关联裁决 ID
+      ic_snapshots:
+        meanings:
+          factor_id: 因子 ID
+          window_end: 窗口结束日
+          source: IC 来源(backtest/live)
+          ic_mean: IC 均值
+          icir: ICIR
+          n_periods: 窗口期数
+          method: 计算方法
+      crashes:
+        meanings:
+          factor_id: 因子 ID
+          window_start: 崩溃窗口起
+          window_end: 崩溃窗口止
+          crash_type: 崩溃类型
+          ic_mean: 窗口内 IC 均值
+          icir: 窗口内 ICIR
+          notes: 备注
+      factor_lifecycle:
+        meanings:
+          factor_id: 因子 ID
+          state: 生命周期状态
+          updated_at: 最近更新时刻
+          events: 状态变迁事件(JSON)
+      app_task_runs:
+        meanings:
+          task_id: 任务 ID
+          started_at: 开始时刻
+          title: 任务标题
+          finished_at: 结束时刻
+          status: 运行状态
+          exit_code: 退出码
+          summary: 摘要
+          artifacts_json: 产出物清单(JSON)
+      sector_review_config:
+        meanings:
+          config_key: 配置键
+          config_json: 配置内容(JSON)
+          updated_at: 最近更新时刻
+      daily_review_index:
+        meanings:
+          review_date: 复盘日期
+          ts_code: 标的代码
+          file_path: 复盘 markdown 路径

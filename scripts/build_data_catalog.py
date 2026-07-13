@@ -26,6 +26,10 @@ from typing import Any
 
 import yaml
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_]+$")
 
 
@@ -59,18 +63,40 @@ _INTRADAY_EXCLUDED_COLUMNS = frozenset({
     "coverage_assessments.missing_json",
 })
 
+# kss.db(U14 起的统一库)反射按域割接台账门控(U17)：只反射 migration_ledger.json 里
+# goldenResult=pass 的域映射到的表——沿用 kss/storage/duck.py 的同一份 DOMAIN_TABLES/
+# load_ledger 逻辑(单一真源，见 duck.visible_tables)，避免未割接域的陈旧快照表
+# (mi_rules/pipeline_weights/theme_registry)在 catalog 里冒充新鲜数据。
+# app_task_runs.stdout/stderr 是原始进程输出(可能含本地路径/环境细节)，沿 S5 纪律排除。
+_KSS_DB_EXCLUDED_COLUMNS = frozenset({
+    "app_task_runs.stdout",
+    "app_task_runs.stderr",
+})
+
+
+def _kss_db_table_allowlist() -> frozenset[str]:
+    from kss.storage.duck import visible_tables  # noqa: PLC0415 — 惰性导入避免 import-time 副作用
+
+    return frozenset(visible_tables().keys())
+
+
 # *.db 资产白名单(相对 STATE_ROOT / PROJECT_ROOT)，显式枚举以排除 .build/.cache 构建产物(KTD-4)。
-# 每项：(根, 子路径, 描述, table_allowlist | None, excluded_columns)。
+# 每项：(数据集名, 根, 子路径, 描述, table_allowlist | None | callable, excluded_columns)。
+#   数据集名显式给出(不再靠 Path(sub).stem 推导)——datasette/kss.db 与 storage/kss.db 同名
+#   为 "kss.db"，stem 推导会撞名(U17 加统一库条目时发现)，显式命名从根上避免。
 #   table_allowlist=None → 全表反射(既有日频库行为不变)；
-#   非 None → 仅反射列出的表，且按 excluded_columns 滤列(KTD5 分时库专用)。
+#   非 None → 仅反射列出的表，且按 excluded_columns 滤列(KTD5 分时库专用)；
+#   callable → 惰性求值(kss.db 专用：每次生成时重算，反映当下割接进度)。
+# prediction_ledger/ledger.db、factor_health/factor_health.db 已被 U15 割接归档，
+# 不再枚举——其表已并入下方 kss_unified 条目(predictions/ic_snapshots/crashes/factor_lifecycle)。
 _DB_CANDIDATES = [
-    (STATE_ROOT, "storage/kss_quotes.db", "行情库", None, frozenset()),
-    (STATE_ROOT, "storage/prediction_ledger/ledger.db", "决策账本", None, frozenset()),
-    (STATE_ROOT, "storage/factor_health/factor_health.db", "因子健康", None, frozenset()),
-    (STATE_ROOT, "storage/kronos/predictions.sqlite", "Kronos 预测", None, frozenset()),
-    (PROJECT_ROOT, "datasette/kss.db", "datasette 探索库", None, frozenset()),
-    (STATE_ROOT, "storage/intraday_quotes.db", "分时隔离库(PIT-safe)",
+    ("kss_quotes", STATE_ROOT, "storage/kss_quotes.db", "行情库", None, frozenset()),
+    ("kronos_predictions", STATE_ROOT, "storage/kronos/predictions.sqlite", "Kronos 预测", None, frozenset()),
+    ("datasette_kss", PROJECT_ROOT, "datasette/kss.db", "datasette 探索库", None, frozenset()),
+    ("intraday_quotes", STATE_ROOT, "storage/intraday_quotes.db", "分时隔离库(PIT-safe)",
      _INTRADAY_TABLE_ALLOWLIST, _INTRADAY_EXCLUDED_COLUMNS),
+    ("kss_unified", STATE_ROOT, "storage/kss.db", "统一存储库(U14起,写入方按域逐一割接,U15/U17)",
+     _kss_db_table_allowlist, _KSS_DB_EXCLUDED_COLUMNS),
 ]
 
 # 目录数据集(json/md)：name → (相对根, 子路径, 文件 glob, 日期解析提示)
@@ -346,11 +372,12 @@ def build_catalog(overlay: dict[str, Any] | None = None) -> tuple[dict[str, Any]
         except Exception as exc:  # noqa: BLE001
             datasets.append({"name": nm, "kind": "csv-glob", "error": f"read failed: {exc}"})
 
-    for root, sub, desc, allowlist, excluded in _DB_CANDIDATES:
+    for nm, root, sub, desc, allowlist, excluded in _DB_CANDIDATES:
         p = root / sub
         if not p.exists():
             continue
-        nm = Path(sub).stem
+        if callable(allowlist):
+            allowlist = allowlist()
         try:
             datasets.append(_build_sqlite_dataset(
                 nm, p, desc,

@@ -133,6 +133,12 @@ def _visible_tables(ledger_path: Path | None = None) -> dict[str, str]:
     return out
 
 
+def visible_tables(ledger_path: Path | None = None) -> dict[str, str]:
+    """``_visible_tables`` 的公开入口——供 build_data_catalog.py（U17）复用同一份域割接
+    门控逻辑，避免在 catalog 反射侧另维护一份易漂移的表白名单。"""
+    return _visible_tables(ledger_path)
+
+
 def _catalog_datasets(catalog_path: Path) -> list[dict[str, Any]]:
     import json
 

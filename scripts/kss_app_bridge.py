@@ -3760,9 +3760,49 @@ def _check_llm_credential() -> dict[str, Any]:
     return {"item": "llm", "status": "ok", "detail": "LLM 凭据已配置", "fixHint": None, "fixAction": None}
 
 
+def _check_kss_db() -> dict[str, Any]:
+    """统一库可开探针（U17）：只读连接 + 最小查询，验证 kss.db 未损坏可用。"""
+    import sqlite3  # noqa: PLC0415
+
+    db_path = STATE_ROOT / "storage" / "kss.db"
+    if not db_path.is_file():
+        return {"item": "kss_db", "status": "fail", "detail": "kss.db 不存在",
+                 "fixHint": "检查数据目录初始化/迁移是否完成", "fixAction": None}
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            con.execute("SELECT 1").fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error as exc:
+        return {"item": "kss_db", "status": "fail", "detail": f"kss.db 不可开: {exc}",
+                 "fixHint": "检查磁盘/文件完整性", "fixAction": None}
+    return {"item": "kss_db", "status": "ok", "detail": "kss.db 可正常打开",
+             "fixHint": None, "fixAction": None}
+
+
+def _check_duckdb_extension() -> dict[str, Any]:
+    """duckdb sqlite 扩展可加载探针（U17/KTD11）：真开会话 LOAD sqlite。
+    非阻断项——首次联网下载扩展失败时 sql-query 工具暂不可用，其余功能不受影响。"""
+    try:
+        import duckdb  # noqa: PLC0415
+
+        con = duckdb.connect(":memory:")
+        try:
+            con.execute("INSTALL sqlite")
+            con.execute("LOAD sqlite")
+        finally:
+            con.close()
+    except Exception as exc:  # noqa: BLE001 — duckdb 扩展加载失败面广，统一按 warn 兜底
+        return {"item": "duckdb_ext", "status": "warn", "detail": f"duckdb sqlite 扩展不可加载: {exc}",
+                 "fixHint": "检查网络(首次需联网下载扩展)", "fixAction": None}
+    return {"item": "duckdb_ext", "status": "ok", "detail": "duckdb sqlite 扩展可加载",
+             "fixHint": None, "fixAction": None}
+
+
 def _self_check() -> dict[str, Any]:
-    """应用启动/手动自检（R3/R4）：venv + 数据目录 + 各凭证。"""
-    items = [_check_venv(), _check_storage_writable()]
+    """应用启动/手动自检（R3/R4）：venv + 数据目录 + 统一库 + duckdb 扩展 + 各凭证。"""
+    items = [_check_venv(), _check_storage_writable(), _check_kss_db(), _check_duckdb_extension()]
     for item, label, keys in _CREDENTIAL_CHECKS:
         items.append(_check_credential(item, label, keys))
     items.append(_check_llm_credential())
