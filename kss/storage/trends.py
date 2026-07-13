@@ -44,3 +44,14 @@ def read_all(db_path: str | Path | None = None) -> list[dict[str, Any]]:
         ensure_schema(conn)
         rows = conn.execute("SELECT payload_json FROM trends_days ORDER BY trade_date ASC").fetchall()
     return [json.loads(r["payload_json"]) for r in rows]
+
+
+def read_month(month: str, db_path: str | Path | None = None) -> list[dict[str, Any]]:
+    """某月（`YYYY-MM`）全部归档，按 trade_date 升序。"""
+    with connect(db_path) as conn:
+        ensure_schema(conn)
+        rows = conn.execute(
+            "SELECT payload_json FROM trends_days WHERE trade_date LIKE ? ORDER BY trade_date ASC",
+            (f"{month}-%",),
+        ).fetchall()
+    return [json.loads(r["payload_json"]) for r in rows]

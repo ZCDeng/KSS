@@ -89,11 +89,10 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(theme.canvas)
                 .toolbar {
+                        // R2-U5：按点击频率重排——状态点（持续显示）→ 刷新（最高频）→ 任务台（频繁导航）
+                        // → 分隔符 → 主题 → 设置（低频配置类）。旧版 loading spinner 独立占位已删除，
+                        // 加载态合并进刷新按钮本身（图标换 spinner + 禁用），避免间歇出现的元素挤动分组布局。
                         ToolbarItemGroup {
-                            if store.isLoading {
-                                ProgressView()
-                                    .controlSize(.small)
-                            }
                             // 非价格页：工具栏状态点；价格页自带完整 badge（今日看盘/个股等）
                             if !Self.priceSections.contains(store.selectedSection) {
                                 RealtimeStatusDot(
@@ -102,8 +101,19 @@ struct ContentView: View {
                                     authFailed: store.realtimeAuthFailed,
                                     updatedAt: store.realtimeUpdatedAt
                                 )
-                                .padding(.trailing, 4)
+                                .padding(.trailing, 6)
                             }
+                            Button {
+                                Task { await store.loadSnapshot() }
+                            } label: {
+                                if store.isLoading {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Label("刷新", systemImage: "arrow.clockwise")
+                                }
+                            }
+                            .disabled(store.isLoading)
+                            .help("刷新")
                             Button {
                                 store.selectedSection = .runbook
                             } label: {
@@ -114,7 +124,7 @@ struct ContentView: View {
                             .foregroundStyle(store.selectedSection == .runbook ? theme.accent : theme.textSecondary)
                             .help(WorkspaceSection.runbook.displayName)
                             // Divider() 在这个 ToolbarItemGroup 里渲染成水平短横线而非竖线分隔符（KTD5 预见到的风险），
-                            // 改用固定宽度的竖线 Text 代替。分隔管理组（任务）与用户组（主题/设置/刷新）。
+                            // 改用固定宽度的竖线 Text 代替。分隔高频组（刷新/任务台）与低频组（主题/设置）。
                             // 架构入口（plan 2026-07-12-005 U2）已移到侧边栏页脚与 GitHub 并排，不再占工具栏位。
                             // Seesaw 不在工具栏——它是全应用唯一的 AI 入口，改成侧边栏里常驻的 Post 式大按钮
                             // （SidebarView.seesawCTA），比工具栏小图标更醒目。
@@ -131,11 +141,6 @@ struct ContentView: View {
                             }
                             .foregroundStyle(store.selectedSection == .settings ? theme.accent : theme.textSecondary)
                             .help(WorkspaceSection.settings.displayName)
-                            Button {
-                                Task { await store.loadSnapshot() }
-                            } label: {
-                                Label("刷新", systemImage: "arrow.clockwise")
-                            }
                         }
                     }
             }
@@ -149,7 +154,10 @@ struct ContentView: View {
                     items: store.selfCheckItems.filter { $0.isFail },
                     isBusy: store.isRunningSelfCheck || store.isReinitializingRuntime,
                     onDismiss: { store.dismissSelfCheckBanner() },
-                    onOpenSettings: { store.selectedSection = .settings },
+                    onOpenSettings: { item in
+                        store.settingsTargetTab = SettingsTabRouting.targetTab(forSelfCheckItem: item)
+                        store.selectedSection = .settings
+                    },
                     onReinitRuntime: { Task { await store.reinitializeRuntime() } }
                 )
                 .padding(.top, 12)
@@ -246,7 +254,11 @@ struct ContentView: View {
                 DashboardView(
                     snapshot: snapshot,
                     onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } },
-                    onOpenSection: { section in store.selectedSection = section },
+                    onOpenSection: { section in
+                        // 唯一调用点是缺 Tushare 凭证卡（R3：Dashboard 入口落密钥 tab）。
+                        if section == .settings { store.settingsTargetTab = .keys }
+                        store.selectedSection = section
+                    },
                     tushareConfigured: store.isCredentialConfigured("tushare"),
                     realtimeQuote: store.realtimeQuote,
                     realtimeQuotes: store.realtimeQuotesBySymbol,

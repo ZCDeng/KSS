@@ -11,7 +11,7 @@ struct DashboardView: View {
     var realtimeQuote: LongbridgeQuote? = nil
     var realtimeQuotes: [String: LongbridgeQuote] = [:]
     /// 堆叠卡 live 分时（产品码 → 1m 收盘）
-    var realtimeSparklines: [String: [Double]] = [:]
+    var realtimeSparklines: [String: SparklineSeries] = [:]
     /// 按标的记录的本地接收时间，供 sourceAsofTs 缺失时的新鲜度回退（KTD1，逐标的隔离）
     var realtimeReceivedAtBySymbol: [String: Date] = [:]
     var tradingHours: TradingHours? = nil
@@ -1086,7 +1086,7 @@ struct MarketIndexRow: View {
 struct IndexStackRow: View {
     var stacks: [IndexStackColumn]
     var quotes: [String: LongbridgeQuote] = [:]
-    var liveSparklines: [String: [Double]] = [:]
+    var liveSparklines: [String: SparklineSeries] = [:]
 
     var body: some View {
         HStack(spacing: 12) {
@@ -1106,7 +1106,7 @@ struct IndexStackColumnView: View {
     @Environment(\.kssTheme) private var theme
     var column: IndexStackColumn
     var quotes: [String: LongbridgeQuote] = [:]
-    var liveSparklines: [String: [Double]] = [:]
+    var liveSparklines: [String: SparklineSeries] = [:]
 
     @State private var page = 0
     private let interval: TimeInterval = 4
@@ -1163,11 +1163,14 @@ struct IndexStackColumnView: View {
             quote: quote
         )
         // 会话 1m（live/local）优先；无则回退 strip 快照 sparkline
-        let liveSpark = liveSparklines[code]
-            ?? liveSparklines[RealtimeMerge.toLongbridgeSymbol(code) ?? ""]
-            ?? []
-        let spark = !liveSpark.isEmpty ? liveSpark : (item.sparkline ?? []).map(\.c)
+        let liveSeries = liveSparklines[code] ?? liveSparklines[RealtimeMerge.toLongbridgeSymbol(code) ?? ""]
+        let usingLive = (liveSeries?.points.count ?? 0) >= 2
+        let spark = usingLive ? liveSeries!.points : (item.sparkline ?? []).map(\.c)
         let hasSpark = spark.count >= 2
+        // R2-U7 KTD7：仅 live 序列且带有效昨收时启用锚定模式；静态快照兜底沿用旧自适应缩放。
+        let sparkAnchor: (yMin: Double, yMax: Double, prevClose: Double)? = usingLive
+            ? SparklineYAxis.range(for: liveSeries!).map { (yMin: $0.yMin, yMax: $0.yMax, prevClose: liveSeries!.prevClose ?? 0) }
+            : nil
         let absChg = absoluteChange(close: live.close, pct: live.pct, quote: quote)
         let sign = theme.signColor(live.pct)
 
@@ -1232,7 +1235,7 @@ struct IndexStackColumnView: View {
                 .layoutPriority(1)
 
                 if hasSpark {
-                    IntradaySparkline(points: spark, height: 40, showEmptyPlaceholder: false)
+                    IntradaySparkline(points: spark, height: 40, showEmptyPlaceholder: false, anchor: sparkAnchor)
                         .frame(width: 88, height: 40)
                         .layoutPriority(0)
                 }

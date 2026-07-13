@@ -1495,6 +1495,46 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - 设置页 Tab（R2-U4：平铺长滚动 → Tab 形态，KTD3/KTD4）
+
+enum SettingsTab: String, CaseIterable, Identifiable {
+    case keys, dataSources, scheduledTasks, logs
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .keys: return "密钥"
+        case .dataSources: return "数据源"
+        case .scheduledTasks: return "定时任务"
+        case .logs: return "日志"
+        }
+    }
+}
+
+enum SettingsTabRouting {
+    /// 自检 fail 项 → 目标 tab（Outstanding Questions 的分类规则）：凭证类落数据源
+    /// tab——四个 open_settings 项（tushare/longbridge/telegram/llm）的 fixHint 原文即
+    /// 「去设置页数据源分区填写」，与该判定一致；无法归类的兜底密钥 tab。
+    static func targetTab(forSelfCheckItem item: String) -> SettingsTab {
+        switch item {
+        case "tushare", "longbridge", "telegram", "llm":
+            return .dataSources
+        default:
+            return .keys
+        }
+    }
+
+    /// KTD4：数据源 tab 状态点——任一数据源未配置，或最近一次连通性测试失败。
+    static func dataSourcesNeedsBadge(configured: [Bool], testsOK: [Bool]) -> Bool {
+        configured.contains(false) || testsOK.contains(false)
+    }
+
+    /// KTD4：定时任务 tab 状态点——任一任务 needsInstall / stale / failed。
+    static func scheduledTasksNeedsBadge(jobs: [ScheduledJob]) -> Bool {
+        jobs.contains { $0.health == .needsInstall || $0.health == .stale || $0.health == .failed }
+    }
+}
+
 // MARK: - AI 复盘助手聊天模型（#4 U4/U5）
 
 /// 一条聊天消息。会话历史归 KSSStore（不放 view @State，避免 .id(selectedSection) 销毁）。

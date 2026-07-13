@@ -99,11 +99,13 @@ extension Color {
     }
 }
 
-/// M3 card 三型：
+/// M3 card 五型：
 /// - elevated：surface（containerLow）+ 按主题 token 给的柔和高度阴影，无边框。
 /// - filled：surfaceContainerHighest，无阴影无边框（嵌在已抬高容器里）。
 /// - outlined：surface + outline-variant 细边，无阴影（强调边界 / 平铺）。
-enum KSSCardStyle { case elevated, filled, outlined }
+/// - warning：ma5（警示黄）低透明度填充 + 同色强调边框，用于漏跑/待处理类横幅（R2-U3 KTD5）。
+/// - info：accent 低透明度填充，无强调边框，用于提示类横幅（R2-U3 KTD5）。
+enum KSSCardStyle { case elevated, filled, outlined, warning, info }
 
 /// 主题感知卡片：tonal 表面 + 连续圆角（默认半径取当前主题 token）+ 按型给阴影/边框。
 struct KSSCard: ViewModifier {
@@ -120,7 +122,21 @@ struct KSSCard: ViewModifier {
         case .elevated: return theme.surface
         case .filled:   return theme.surfaceContainerHighest
         case .outlined: return theme.surface
+        case .warning:  return theme.ma5.opacity(0.10)
+        case .info:     return theme.accent.opacity(0.08)
         }
+    }
+
+    private var strokeColor: Color {
+        switch style {
+        case .outlined: return theme.outlineVariant
+        case .warning:  return theme.ma5.opacity(0.35)
+        default:        return .clear
+        }
+    }
+
+    private var strokeWidth: CGFloat {
+        style == .outlined || style == .warning ? 1 : 0
     }
 
     func body(content: Content) -> some View {
@@ -129,7 +145,7 @@ struct KSSCard: ViewModifier {
             .background(fill, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(theme.outlineVariant, lineWidth: style == .outlined ? 1 : 0)
+                    .strokeBorder(strokeColor, lineWidth: strokeWidth)
             )
             // 阴影强度/半径/偏移由主题 token 决定（拟物强、终端/Verge 几乎无）。
             .shadow(color: .black.opacity(style == .elevated ? theme.shadowOpacity : 0),

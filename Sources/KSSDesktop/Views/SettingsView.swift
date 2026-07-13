@@ -1,11 +1,39 @@
 import SwiftUI
 
-/// 统一"设置"工作区页面（plan 2026-07-12-005 / U1）：密钥、数据源、任务、日志四分区。
-/// 收敛原分散入口——工具栏"网络与凭据"弹窗（NetworkSettingsView）与任务页"定时任务"区块
-/// 均并入本页，不保留重复 UI（U5/U10 见 Key Decisions）。
+/// 统一"设置"工作区页面（plan 2026-07-12-005 / U1，R2-U4 改 Tab 形态）：密钥、数据源、任务、
+/// 日志四个 tab。收敛原分散入口——工具栏"网络与凭据"弹窗（NetworkSettingsView）与任务页
+/// "定时任务"区块均并入本页，不保留重复 UI（U5/U10 见 Key Decisions）。
 struct SettingsView: View {
     @Environment(\.kssTheme) private var theme
     @EnvironmentObject private var store: KSSStore
+    @State private var tab: SettingsTab = .keys
+    @State private var dataSourceResults: [String: DataSourceTestResult] = [:]
+
+    private static let tabOptions: [(key: SettingsTab, label: String)] =
+        SettingsTab.allCases.map { ($0, $0.label) }
+
+    private var dataSourcesConfigured: [Bool] {
+        [
+            store.isCredentialConfigured("tushare"),
+            store.isCredentialConfigured("longbridge"),
+            store.isCredentialConfigured("telegram"),
+            store.isCredentialConfigured("llm"),
+        ].map { $0 ?? true }   // 尚未自检（nil）时不误判为「未配置」而乱亮点
+    }
+
+    private var badgedTabs: Set<SettingsTab> {
+        var badged: Set<SettingsTab> = []
+        if SettingsTabRouting.dataSourcesNeedsBadge(
+            configured: dataSourcesConfigured,
+            testsOK: dataSourceResults.values.map(\.ok)
+        ) {
+            badged.insert(.dataSources)
+        }
+        if SettingsTabRouting.scheduledTasksNeedsBadge(jobs: store.scheduledJobs) {
+            badged.insert(.scheduledTasks)
+        }
+        return badged
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -15,17 +43,22 @@ struct SettingsView: View {
                     PageTitle("设置", subtitle: "密钥 / 数据源 / 定时任务 / 日志的唯一入口")
                     SelfCheckStatusStrip()
 
-                    SectionHeader("密钥")
-                    SettingsKeysSection()
+                    KSSSegmentedControl(
+                        options: Self.tabOptions,
+                        selection: $tab,
+                        badgedKeys: badgedTabs
+                    )
 
-                    SectionHeader("数据源")
-                    SettingsDataSourcesSection()
-
-                    SectionHeader("定时任务")
-                    SettingsTasksSection()
-
-                    SectionHeader("日志")
-                    SettingsLogsSection()
+                    switch tab {
+                    case .keys:
+                        SettingsKeysSection()
+                    case .dataSources:
+                        SettingsDataSourcesSection(results: $dataSourceResults)
+                    case .scheduledTasks:
+                        SettingsTasksSection()
+                    case .logs:
+                        SettingsLogsSection()
+                    }
                 }
                 .frame(width: w, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .center)
@@ -35,6 +68,12 @@ struct SettingsView: View {
             .background(theme.canvas)
         }
         .background(theme.canvas)
+        .onAppear {
+            if let target = store.settingsTargetTab {
+                tab = target
+                store.settingsTargetTab = nil
+            }
+        }
     }
 }
 
@@ -258,10 +297,11 @@ private enum SettingsDataSource: String, CaseIterable, Identifiable {
 }
 
 /// 数据源分区：逐源展示配置状态（Keychain 本地读取）+ 连通性测试按钮（R7）。
+/// `results` 由父视图（SettingsView）持有，供 tab 状态点（KTD4：任一测试失败）复用同一份结果。
 struct SettingsDataSourcesSection: View {
     @Environment(\.kssTheme) private var theme
     @EnvironmentObject private var store: KSSStore
-    @State private var results: [String: DataSourceTestResult] = [:]
+    @Binding var results: [String: DataSourceTestResult]
     @State private var testing: Set<String> = []
 
     var body: some View {
@@ -604,12 +644,14 @@ struct SelfCheckBanner: View {
     var items: [SelfCheckItem]   // 仅 fail 项
     var isBusy: Bool
     var onDismiss: () -> Void
-    var onOpenSettings: () -> Void
+    /// 目标 tab 由调用方按 fail 项字段名映射（R2-U4，SettingsTabRouting.targetTab）。
+    var onOpenSettings: (String) -> Void
     var onReinitRuntime: () -> Void
     @State private var expanded = false
 
     private var wantsReinit: Bool { items.contains { $0.fixAction == "reinit_runtime" } }
-    private var wantsSettings: Bool { items.contains { $0.fixAction == "open_settings" } }
+    private var settingsItem: SelfCheckItem? { items.first { $0.fixAction == "open_settings" } }
+    private var wantsSettings: Bool { settingsItem != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -634,8 +676,8 @@ struct SelfCheckBanner: View {
                     .controlSize(.small)
                     .disabled(isBusy)
                 }
-                if wantsSettings {
-                    Button("去设置") { onOpenSettings() }
+                if let settingsItem {
+                    Button("去设置") { onOpenSettings(settingsItem.item) }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                 }

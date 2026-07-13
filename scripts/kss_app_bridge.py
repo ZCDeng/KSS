@@ -3870,48 +3870,47 @@ def _cron_rerun_many(labels: list[str]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# 趋势页（U4）：只读 storage/trends/*.json 归档，聚合月度格子 + 单日明细。
-# 归档由 .venv-desktop 脚本产出（archive_trends_daily/backfill_trends）；
-# 本命令纯 stdlib，日期参数走正则白名单防注入/路径穿越。
+# 趋势页（U4）：读 kss.db trends_days 表，聚合月度格子 + 单日明细。
+# 归档由 .venv-desktop 脚本产出（archive_trends_daily/backfill_trends）写入该表；
+# 日期参数走正则白名单防注入/路径穿越。
 # ---------------------------------------------------------------------------
 
-_TRENDS_DIR = STATE_ROOT / "storage" / "trends"
 _MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
-def _read_trend_file(path: Path) -> dict[str, Any] | None:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        return None
+def _trends_db_path() -> Path:
+    return STATE_ROOT / "storage" / "kss.db"
+
+
+def _trend_summary_row(d: dict[str, Any]) -> dict[str, Any]:
+    flags = d.get("flags") or {}
+    return {
+        "date": d.get("date"),
+        "isTrading": d.get("isTrading", True),
+        "heat": d.get("heat"),
+        "inflowScore": d.get("inflowScore"),
+        "inflowDir": d.get("inflowDir"),
+        "sectorHeat": d.get("sectorHeat"),
+        "recAvgFwd": d.get("recAvgFwd"),
+        "north": d.get("north"),
+        "sectorCount": d.get("sectorCount", 0),
+        "topSector": d.get("topSector"),
+        "recCount": d.get("recCount", 0),
+        "flags": flags,
+        "hasData": any(flags.values()) if flags else False,
+    }
 
 
 def _trends_month(month: str) -> dict[str, Any]:
     """某月所有归档 → 月度格子（驱动热力格底色 + 板块点 + 推荐微条）。"""
     if not _MONTH_RE.match(month or ""):
         return {"month": month, "days": [], "error": "bad month (want YYYY-MM)"}
-    days: list[dict[str, Any]] = []
-    for path in sorted(_TRENDS_DIR.glob(f"{month}-*.json")):
-        d = _read_trend_file(path)
-        if not d:
-            continue
-        flags = d.get("flags") or {}
-        days.append({
-            "date": d.get("date"),
-            "isTrading": d.get("isTrading", True),
-            "heat": d.get("heat"),
-            "inflowScore": d.get("inflowScore"),
-            "inflowDir": d.get("inflowDir"),
-            "sectorHeat": d.get("sectorHeat"),
-            "recAvgFwd": d.get("recAvgFwd"),
-            "north": d.get("north"),
-            "sectorCount": d.get("sectorCount", 0),
-            "topSector": d.get("topSector"),
-            "recCount": d.get("recCount", 0),
-            "flags": flags,
-            "hasData": any(flags.values()) if flags else False,
-        })
+    if not _trends_db_path().exists():
+        return {"month": month, "days": [], "error": "kss.db not found"}
+    from kss.storage.trends import read_month  # noqa: PLC0415
+
+    days = [_trend_summary_row(d) for d in read_month(month, db_path=_trends_db_path())]
     return {"month": month, "days": days}
 
 
@@ -3919,12 +3918,13 @@ def _trends_day(date: str) -> dict[str, Any]:
     """单日完整明细；无归档返回明确空态。"""
     if not _DAY_RE.match(date or ""):
         return {"date": date, "found": False, "error": "bad date (want YYYY-MM-DD)"}
-    path = _TRENDS_DIR / f"{date}.json"
-    if not path.exists():
-        return {"date": date, "found": False}
-    d = _read_trend_file(path)
+    if not _trends_db_path().exists():
+        return {"date": date, "found": False, "error": "kss.db not found"}
+    from kss.storage.trends import read_by_date  # noqa: PLC0415
+
+    d = read_by_date(date, db_path=_trends_db_path())
     if not d:
-        return {"date": date, "found": False, "error": "unreadable archive"}
+        return {"date": date, "found": False}
     d["found"] = True
     return d
 

@@ -5,6 +5,8 @@ import Combine
 final class KSSStore: ObservableObject {
     @Published var snapshot: AppSnapshot?
     @Published var selectedSection: WorkspaceSection = .dashboard
+    /// 设置页深链目标 tab（R2-U4 KTD3）：进设置页时消费一次即清空，默认落密钥 tab。
+    @Published var settingsTargetTab: SettingsTab?
     @Published var selectedSymbol: String?
     @Published var selectedReportPath: String?
     @Published var reportDetail: ReportDetail?
@@ -113,8 +115,9 @@ final class KSSStore: ObservableObject {
     // MARK: Longbridge 实时（U1/U2）—— 页面加载时拉取，失败保持 nil（UI 回退存量 + 标注"非实时"）
     @Published var realtimeQuote: LongbridgeQuote?     // 兼容 canary（上证 / 任一 live）
     @Published var realtimeQuotesBySymbol: [String: LongbridgeQuote] = [:]  // 多标的 map，供 今日看盘 overlay
-    /// 堆叠卡等分时线：产品码 → 当日 1m 收盘序列（Longbridge intraday-bars）
-    @Published var realtimeSparklinesBySymbol: [String: [Double]] = [:]
+    /// 堆叠卡会话分时（R2-U7 KTD7）：产品码 → 含昨收锚点/单调最大偏离/会话日的结构体，
+    /// 供 Y 轴范围计算脱离"当前已加载了多少个 bar"。
+    @Published var realtimeSparklinesBySymbol: [String: SparklineSeries] = [:]
     @Published var tradingHours: TradingHours?         // 交易时段门控（R13）
     @Published var realtimeAuthFailed = false          // auth_failed → 停定时刷新 + "实时源未连接"（R4）
     @Published var realtimeUpdatedAt: Date?            // 最近一次实时拉取成功时间（"更新于 HH:MM"）
@@ -131,6 +134,9 @@ final class KSSStore: ObservableObject {
     private static let coalesceSeconds: Double = 30     // R14: 同标的+同命令 30s 内复用
     /// 产品：交易时段 2 分钟真刷新（非 MainActor 默认参数安全的字面量）
     nonisolated private static let refreshIntervalSeconds: Double = 120
+    // R2-U6：盘后分时缩略图独立 timer（KTD6）——与 quote timer 分开管理，不受 authFailed 影响。
+    private var sparklineTimerCancellable: AnyCancellable?
+    nonisolated private static let sparklineIntervalSeconds: Double = 300
 
     // MARK: AI 复盘助手聊天态（#4 U4/U5）—— 会话历史归 store，section 切换不丢
     @Published var chatMessages: [ChatMessage] = []
@@ -434,6 +440,18 @@ final class KSSStore: ObservableObject {
         reevaluateTimer()
     }
 
+    /// 昨收锚点回退（KTD7）：盘中优先 Longbridge quote.prevClose；无 quote（盘后/未订阅）时
+    /// 由堆叠卡快照条目自身的 close/(1+pct/100) 反推（与 DashboardView.absoluteChange 同式）。
+    private func prevCloseFallback(forCode code: String) -> Double? {
+        if let prev = realtimeQuotesBySymbol[code]?.prevClose, prev > 0 { return prev }
+        guard let item = (snapshot?.marketStrip?.indexStacks ?? [])
+            .flatMap(\.items)
+            .first(where: { $0.code.uppercased() == code }) else { return nil }
+        if item.pct <= -100 { return nil }
+        let prev = item.close / (1 + item.pct / 100.0)
+        return prev > 0 ? prev : nil
+    }
+
     /// 堆叠卡会话 sparkline：产品码 → `intraday-bars` 1m（live→local，非交易时段也跑）。
     private func refreshRealtimeSparklines(displaySymbols: [String]) async {
         guard let bridge else { return }
@@ -455,10 +473,21 @@ final class KSSStore: ObservableObject {
             guard let bars, bars.isRenderable else { continue }
             let closes = RealtimeMerge.sparklineCloses(from: bars.bars)
             if !closes.isEmpty {
-                sparks[key] = closes
+                let prevClose = prevCloseFallback(forCode: key)
+                let dayHigh = bars.bars.compactMap(\.high).max()
+                let dayLow = bars.bars.compactMap(\.low).min()
+                let merged = SparklineYAxis.merge(
+                    existing: sparks[key],
+                    newPoints: closes,
+                    newPrevClose: prevClose,
+                    newDayHigh: dayHigh,
+                    newDayLow: dayLow,
+                    newTradeDate: bars.sessionDate
+                )
+                sparks[key] = merged
                 // 产品码与请求码都写一份，避免 HSI / HSI.HK 键不一致
                 if reqSym.uppercased() != key {
-                    sparks[reqSym.uppercased()] = closes
+                    sparks[reqSym.uppercased()] = merged
                 }
                 changed = true
             }
@@ -471,9 +500,14 @@ final class KSSStore: ObservableObject {
     /// 手动重试实时源（R4：avoid "未连接"状态永久滞留）。
     func retryRealtime() async {
         realtimeAuthFailed = false
-        // 清 coalesce，保证重试真正打到 bridge（quote + bars）
+        // 清 coalesce，保证重试真正打到 bridge（quote + bars）。
+        // R2-U6 修复：sparkline 实际 coalesce 键前缀是 "intraday-bars-spark:"（详情页 1 分线
+        // 用 "intraday-bars:"），旧过滤条件只清了后者，堆叠卡 sparkline 手动重试后仍可能被
+        // 30s coalesce 窗口吞掉。
         lastDispatchCache = lastDispatchCache.filter {
-            !$0.key.hasPrefix("longbridge-quote:") && !$0.key.hasPrefix("intraday-bars:")
+            !$0.key.hasPrefix("longbridge-quote:")
+                && !$0.key.hasPrefix("intraday-bars:")
+                && !$0.key.hasPrefix("intraday-bars-spark:")
         }
         await refreshRealtimeQuotes(symbols: nil)
     }
@@ -927,16 +961,27 @@ final class KSSStore: ObservableObject {
         reevaluateTimer()
     }
 
-    /// 交易时段门控更新后重新评估 Timer（trading-hours 查询与 loadTradingHours 异步）。
-    /// auth_failed 时停表，直到 retryRealtime 成功。
+    /// 交易时段门控更新后重新评估两条独立 timer（trading-hours 查询与 loadTradingHours 异步）。
+    /// quote timer：auth_failed 时停表，直到 retryRealtime 成功（既有行为不变）。
+    /// sparkline timer（R2-U6 KTD6）：盘后交易日独立 5 分钟 tick，不受 authFailed 影响，
+    /// 非交易日整天暂停；交易时段内不单独跑（随 quote tick 顺带刷新，见 refreshRealtimeQuotes）。
     func reevaluateTimer() {
-        guard scenePhaseActive,
-              let hours = tradingHours, hours.isTradingSession,
-              !realtimeAuthFailed else {
+        let decision = RealtimeTimerDecision.evaluate(
+            scenePhaseActive: scenePhaseActive,
+            isTradingSession: tradingHours?.isTradingSession ?? false,
+            isTradeDay: tradingHours?.isTradeDay ?? false,
+            authFailed: realtimeAuthFailed
+        )
+        if decision.quoteTimerOn {
+            startRefreshTimer()
+        } else {
             stopRefreshTimer()
-            return
         }
-        startRefreshTimer()
+        if decision.sparklineTimerOn {
+            startSparklineTimer()
+        } else {
+            stopSparklineTimer()
+        }
     }
 
     func startRefreshTimer(intervalSeconds: Double = 120) {
@@ -959,6 +1004,29 @@ final class KSSStore: ObservableObject {
         refreshTimestamp = Date()
         // KTD1: tick 真拉 Longbridge，不是只改 timestamp 的 no-op
         Task { await refreshRealtimeQuotes(symbols: nil) }
+    }
+
+    private func startSparklineTimer() {
+        guard sparklineTimerCancellable == nil else { return }
+        sparklineTimerCancellable = Timer.publish(every: Self.sparklineIntervalSeconds, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in self?.onSparklineTick() }
+    }
+
+    private func stopSparklineTimer() {
+        sparklineTimerCancellable?.cancel()
+        sparklineTimerCancellable = nil
+    }
+
+    /// 盘后独立 tick：只刷堆叠卡分时（不碰 quote），失败一次不再永久空白（R7/AE3）。
+    private func onSparklineTick() {
+        guard scenePhaseActive, tradingHours?.isTradeDay ?? false,
+              !(tradingHours?.isTradingSession ?? false) else { return }
+        Task {
+            await refreshRealtimeSparklines(
+                displaySymbols: RealtimeMerge.symbolsFromIndexStacks(snapshot?.marketStrip?.indexStacks)
+            )
+        }
     }
 
     /// 检查 coalescing cache（R14）：同 command:symbol 30s 内跳过。

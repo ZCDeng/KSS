@@ -171,13 +171,8 @@ struct ScheduledTasksSection: View {
             .tint(theme.accent)
             .disabled(batchBusy)
         }
-        .padding(.horizontal, 14).padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(theme.ma5.opacity(0.10), in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
-        .overlay(
-            RoundedRectangle(cornerRadius: KSSTheme.shapeM)
-                .strokeBorder(theme.ma5.opacity(0.35), lineWidth: 1)
-        )
+        .kssCard(.warning, padding: 12)
     }
 
     private func batchNoteBar(_ note: String) -> some View {
@@ -191,11 +186,10 @@ struct ScheduledTasksSection: View {
             Button(action: onDismissBatchNote) {
                 Image(systemName: "xmark.circle.fill").foregroundStyle(theme.textSecondary)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.borderless)
         }
-        .padding(.horizontal, 14).padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
+        .kssCard(.info, padding: 10)
     }
 
     private func categoryBlock(_ category: String, _ catJobs: [ScheduledJob]) -> some View {
@@ -224,6 +218,8 @@ struct ScheduledTasksSection: View {
                     .help("重跑「\(category)」下全部启用任务")
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .kssCard(.filled, padding: 8)
             ForEach(catJobs) { job in
                 ScheduledJobRow(
                     job: job,

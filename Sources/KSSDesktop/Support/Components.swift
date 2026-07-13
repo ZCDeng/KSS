@@ -210,6 +210,8 @@ struct KSSSegmentedControl<Key: Hashable>: View {
     var options: [(key: Key, label: String)]
     @Binding var selection: Key
     var stretch: Bool = false
+    /// 命中 key 的标签右上角画状态点（R2-U4 KTD4：警示黄，「有待处理项」语义）。
+    var badgedKeys: Set<Key> = []
 
     var body: some View {
         KSSSegmentedGroove {
@@ -226,6 +228,14 @@ struct KSSSegmentedControl<Key: Hashable>: View {
                             .padding(.horizontal, 14)
                             .padding(.vertical, 8)
                             .kssSegmentedItemStyle(isActive: isActive, theme: theme)
+                            .overlay(alignment: .topTrailing) {
+                                if badgedKeys.contains(option.key) {
+                                    Circle()
+                                        .fill(theme.ma5)
+                                        .frame(width: 6, height: 6)
+                                        .offset(x: -2, y: 2)
+                                }
+                            }
                             .accessibilityAddTraits(isActive ? .isSelected : [])
                     }
                     .buttonStyle(.plain)
