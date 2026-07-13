@@ -19,6 +19,30 @@
 
 ---
 
+## 2026-07-13 — code review 全量改动：4 并行 agent 审 U1-U17，修 3 Critical + 7 Important
+
+**背景**：U1-U17（`feat/release-hardening-settings` 分支相对 `main` 的全部 34 提交、481 文件）从未做过 code review。用 4 个并行 `code-reviewer` agent 按逻辑聚类分别审查（存储割接/DuckDB+bridge/设置页UI+BYOK/wrapper清扫+发布），17 个发现全部人工复现验证（不只信 agent 结论），确认 3 Critical + 7 Important + 7 Suggestion。
+
+**已修复（Critical）**
+
+- **`kss/storage/duck.py` 目录围栏绕过**：DuckDB `SET enable_external_access=false` 时会把 `temp_directory` 默认值（进程 cwd 下 `.tmp/`，与两根设定无关）静默追加进 `allowed_directories`，形成未声明的第三条白名单目录。真机复现：`SELECT * FROM read_text('<cwd>/.tmp/leak_test.txt')` 在锁定后仍返回 `status:"ok"` + 文件内容。修法：显式把 `temp_directory` 钉在 `STATE_ROOT/storage/.duckdb_tmp` 下，追加条目就只是已允许根的子集。补两个回归测试（精确断言 `allowed_directories` 内容 + 端到端复现原漏洞路径）。
+- **9 个 wrapper 脚本日志路径撞 bundle 模式**：`run_cron_selfcheck.sh`/`run_formal_daily_picks.sh`/`run_formal_daily_review.sh`/`run_indicator_signal_pack_daily.sh`/`run_mi_signal_pack_daily.sh`/`run_update_data_daily.sh`/`run_scan_bj50_daily.sh`/`run_scanner.sh`（后者不在 review 原始清单，交叉核对 `cron_jobs.yaml` 部署条目后追加发现）的 `LOG_DIR`/`LOG_FILE` 用 `PROJECT_ROOT` 拼——bundle 模式下 `PROJECT_ROOT` 指向签名 `.app` 内只读 Resources，写入会破坏 code-signing seal 或直接失败。全改 `KSS_STATE_ROOT`（缺失回落 `PROJECT_ROOT`，dev 模式数值不变）。`test_wrapper_portability.py` 补静态扫描断言防回归；顺带发现并修正 `test_cron_manifest.py::test_scanner_wrapper_uses_launchd_log_path` 曾把这个 bug 焊成金标基线的过时断言。
+- **`SettingsView.swift` BYOK 主/备用字段缺失**：`KeychainStore.swift` 已注册 `KSS_LLM_PRIMARY/FALLBACK_KEY/BASE_URL/MODEL` 六键，Python 侧 `_resolve_credential_candidates()` 也已支持，但 `SettingsKeysSection` 从未暴露对应 UI 字段——用户实际无法通过应用配置主/备用端点，只能改旧的 DeepSeek/OpenAI 二选一。补齐六个字段（主用/备用分组 + 兼容旧配置说明）。
+
+**已修复（Important）**
+
+- `run_formal_daily_picks.sh` 落盘二次校验读 `PROJECT_ROOT` 而 bridge 子进程写 `KSS_STATE_ROOT`，bundle 模式下每日选股成功也会误报失败——改用 `KSS_STATE_ROOT`。
+- `kss/perilla_enrich/{aggregate,us_peer}.py` 缓存写 `except OSError` 过窄——`sqlite3.OperationalError` 不是 `OSError` 子类，写锁竞争下会丢弃刚抓到的有效数据。改 `except Exception`，各补一个模拟锁竞争的回归测试。
+- `duck.py::run_query()` 的 `open_session()` 调用未加护栏，`kss.db` 缺失/被锁时 `duckdb.IOException` 会逃出 `{status:...}` 契约（MCP/CLI 路径都没兜底）。补 try/except + 回归测试。
+- `duck.py` 三处工具描述都建议 LLM 用 `SHOW TABLES` 自查，但语句白名单不含 `SHOW`，永远 `rejected`。加入白名单（纯 schema 自查，风险等同已放行的 `DESCRIBE`）。
+- `SettingsKeysSection.save()` 未刷新 `store.runSelfCheck()`/`refreshLLMCredentialsStatus()`，补齐凭据后缺凭证卡片/`IntelView` 的 LLM 门禁要等手动重跑或重启才消失。保存后补两次刷新调用；同时修 `KSSStore.hasLLMCredentials` 仍只查 legacy `OPENAI_API_KEY`/`DEEPSEEK_API_KEY`，未纳入新六键。
+
+**验证**：`uv run pytest kss/tests -q` → 2121 passed（新增 33 用例），4 项基线失败与本次改动无关（`git stash` 对照过一次，这次是回归到同一基线）；`swift build` + `swift test` → 136 passed。
+
+**未修（7 Suggestion，已记录未处理）**：`duckdb_settings()`/`current_setting()` 等引擎内省函数未拉黑（会泄露 `sqlite_scan` 的绝对路径，非独立可利用）；duck.py 超时路径 `con.close()` 未等 `thread.is_alive()`；`kss/news/radar.py` 同款异常收窄（低风险，纯缓存读无丢数据）；U9 缺凭证降级覆盖面比计划 Approach 原文窄（少几处面板）；HTTPS 校验在保存时不生效、只在调用时拦；等等——均为 code review 报告里的低优先级项，未纳入本轮修复范围。
+
+---
+
 ## 2026-06-19 — macOS App 第十六阶段：图表恢复醒目红绿 + 放大适配 + 边栏精简（4 项反馈）
 
 **已交付**
