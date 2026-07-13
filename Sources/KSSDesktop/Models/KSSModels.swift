@@ -1416,7 +1416,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .watchlist: return "自选"
         case .themes: return "主题"
         case .trends: return "趋势观察"
-        case .runbook: return "任务"
+        case .runbook: return "任务台"
         case .reviews: return "AI复盘"
         case .newsDigest: return "资讯雷达"
         case .backtests: return "AI回测"

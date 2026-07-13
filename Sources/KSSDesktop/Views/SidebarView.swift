@@ -352,12 +352,12 @@ struct SidebarFooter: View {
         if collapsed {
             VStack(spacing: 6) {
                 ArchitectureFooterButton(isSelected: isArchitectureSelected, action: onSelectArchitecture)
-                GitHubFooterLink(collapsed: true)
+                GitHubFooterLink()
             }
         } else {
             HStack(spacing: 6) {
                 ArchitectureFooterButton(isSelected: isArchitectureSelected, action: onSelectArchitecture)
-                GitHubFooterLink(collapsed: false)
+                GitHubFooterLink()
             }
         }
     }
@@ -389,10 +389,10 @@ private struct ArchitectureFooterButton: View {
     }
 }
 
-/// GitHub 跳转：折叠态仅图标，展开态图标+文字。
+/// GitHub 跳转：仅官方 Octocat 图标，折叠/展开两态尺寸与「架构」图标一致（14pt / 28×28），
+/// 不再附带文字 wordmark——图标语义用 .help() 提示，不占用工具栏/边栏额外宽度（R7）。
 private struct GitHubFooterLink: View {
     @Environment(\.kssTheme) private var theme
-    var collapsed: Bool
     @State private var isHovering = false
 
     var body: some View {
@@ -400,41 +400,38 @@ private struct GitHubFooterLink: View {
             let isXcom = theme.system == .xcom
             let hoverTint = theme.textPrimary.opacity(theme.appearance == .dark ? 0.10 : 0.06)
             Link(destination: url) {
-                if collapsed {
-                    Image(systemName: "chevron.left.forwardslash.chevron.right")
-                        .font(KSSFont.themed(14, .semibold, chirpWeight: .medium, theme: theme))
-                        .foregroundStyle(theme.accent)
-                        .frame(width: 28, height: 28)
-                        .background(
-                            isXcom && isHovering ? hoverTint : Color.clear,
-                            in: Circle()
-                        )
-                } else {
-                    HStack(spacing: 8) {
-                        Image(systemName: "chevron.left.forwardslash.chevron.right")
-                            .font(KSSFont.themed(11, .semibold, chirpWeight: .medium, theme: theme))
-                            .foregroundStyle(theme.accent)
-                            .frame(width: 15)
-                        Text("GitHub · ZCDeng/KSS")
-                            .font(KSSFont.themed(12, .semibold, chirpWeight: .medium, theme: theme))
-                            .foregroundStyle(theme.textBody)
-                        Spacer()
-                        Image(systemName: "arrow.up.forward")
-                            .font(KSSFont.themed(9, .semibold, chirpWeight: .medium, theme: theme))
-                            .foregroundStyle(theme.textSecondary)
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, isXcom ? 6 : 0)
+                octocatIcon
+                    .frame(width: 28, height: 28)
                     .background(
                         isXcom && isHovering ? hoverTint : Color.clear,
-                        in: RoundedRectangle(cornerRadius: theme.chipRadius)
+                        in: Circle()
                     )
-                    .frame(maxWidth: .infinity)
-                }
             }
             .buttonStyle(.plain)
             .help("GitHub · ZCDeng/KSS")
             .onHover { isHovering = $0 }
         }
+    }
+
+    /// 官方 Octocat 单色资产（template rendering，自动跟随主题着色，KTD6）；
+    /// bundle 里缺资产时退回代码符号，不阻塞渲染。
+    @ViewBuilder private var octocatIcon: some View {
+        if let img = bundledImage("octocat") {
+            Image(nsImage: img)
+                .resizable()
+                .renderingMode(.template)
+                .scaledToFit()
+                .frame(width: 14, height: 14)
+                .foregroundStyle(theme.accent)
+        } else {
+            Image(systemName: "chevron.left.forwardslash.chevron.right")
+                .font(KSSFont.themed(14, .semibold, chirpWeight: .medium, theme: theme))
+                .foregroundStyle(theme.accent)
+        }
+    }
+
+    private func bundledImage(_ name: String) -> NSImage? {
+        guard let url = Bundle.module.url(forResource: name, withExtension: "png") else { return nil }
+        return NSImage(contentsOf: url)
     }
 }

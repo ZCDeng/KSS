@@ -12,6 +12,8 @@ struct DashboardView: View {
     var realtimeQuotes: [String: LongbridgeQuote] = [:]
     /// 堆叠卡 live 分时（产品码 → 1m 收盘）
     var realtimeSparklines: [String: [Double]] = [:]
+    /// 按标的记录的本地接收时间，供 sourceAsofTs 缺失时的新鲜度回退（KTD1，逐标的隔离）
+    var realtimeReceivedAtBySymbol: [String: Date] = [:]
     var tradingHours: TradingHours? = nil
     var realtimeAuthFailed: Bool = false
     var realtimeUpdatedAt: Date? = nil
@@ -24,10 +26,14 @@ struct DashboardView: View {
     private let sectionSpacing: CGFloat = 22
     private let maxContent: CGFloat = 1040
 
-    /// badge「实时」⇔ 本页展示的可实时标的中至少一条 map 命中（KTD4，非 canary 单独糊弄）。
-    private var hasLiveDisplayedFields: Bool {
+    /// 页头 badge：展示标的中的最差新鲜度（KTD2，只要有一个过期就诚实降级，不是"至少一条命中"）。
+    private var displayedFreshness: RealtimeFreshness {
         let symbols = RealtimeMerge.harvestSymbols(strip: snapshot.marketStrip)
-        return RealtimeMerge.hasAnyLive(symbols: symbols, quotes: realtimeQuotes)
+        return RealtimeMerge.worstFreshness(
+            symbols: symbols,
+            quotes: realtimeQuotes,
+            receivedAtBySymbol: realtimeReceivedAtBySymbol
+        )
     }
 
     var body: some View {
@@ -41,7 +47,7 @@ struct DashboardView: View {
                         VStack(alignment: .trailing, spacing: 4) {
                             EditorialDateView()
                             RealtimeStatusBadge(
-                                hasLiveFields: hasLiveDisplayedFields,
+                                freshness: displayedFreshness,
                                 hours: tradingHours,
                                 authFailed: realtimeAuthFailed,
                                 updatedAt: realtimeUpdatedAt,

@@ -21,7 +21,7 @@ struct RunbookView: View {
             let w = min(geo.size.width - 48, 1080)
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    PageTitle("任务", subtitle: "本地数据 / 正式脚本运行台")
+                    PageTitle("任务台", subtitle: "本地数据 / 正式脚本运行台")
                     PythonEnvironmentBanner(environment: pythonEnvironment)
 
                     SectionHeader("轻量任务")
@@ -130,9 +130,8 @@ struct ScheduledTasksSection: View {
             .disabled(batchBusy)
             .help("立即重跑所有启用的任务")
         }
-        .padding(.horizontal, 14).padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+        .kssCard(padding: 12)
     }
 
     private func healthStat(_ label: String, _ n: Int, _ tint: Color) -> some View {
@@ -365,9 +364,8 @@ struct ScheduledJobRow: View {
                   ? "需先同步 LaunchAgent"
                   : (job.enabled ? "点按停用（下次调度不再触发）" : "点按启用"))
         }
-        .padding(.horizontal, 14).padding(.vertical, 11)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+        .kssCard(padding: 11)
         .overlay(
             RoundedRectangle(cornerRadius: KSSTheme.shapeM)
                 .strokeBorder(job.stale ? theme.ma5.opacity(0.4) : .clear, lineWidth: 1)
@@ -543,10 +541,10 @@ struct TaskGrid: View {
                                 .controlSize(.small)
                         }
                     }
-                    .padding(14)
                     .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+                    .kssCard(padding: 14)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.plain)
                 .disabled(isRunning)
             }
         }

@@ -24,6 +24,7 @@ let package = Package(
                 .copy("Resources/logo.png"),
                 .copy("Resources/kmark.png"),
                 .copy("Resources/wordmark.png"),
+                .copy("Resources/octocat.png"),
                 .copy("Resources/HarmonyOS_Sans_SC_Regular.ttf"),
                 .copy("Resources/HarmonyOS_Sans_SC_Medium.ttf"),
                 .copy("Resources/HarmonyOS_Sans_SC_Bold.ttf"),

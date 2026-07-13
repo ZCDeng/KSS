@@ -118,6 +118,9 @@ final class KSSStore: ObservableObject {
     @Published var tradingHours: TradingHours?         // 交易时段门控（R13）
     @Published var realtimeAuthFailed = false          // auth_failed → 停定时刷新 + "实时源未连接"（R4）
     @Published var realtimeUpdatedAt: Date?            // 最近一次实时拉取成功时间（"更新于 HH:MM"）
+    /// 按标的记录的本地接收时间，供 RealtimeFreshness 在 sourceAsofTs 缺失时按标的独立回退——
+    /// 不可复用 realtimeUpdatedAt（全局），否则单标的新鲜度会被其他标的的刷新成功掩盖。
+    @Published var realtimeReceivedAtBySymbol: [String: Date] = [:]
 
     // MARK: U5 Timer 基础设施（R9/R10/R13/R14）
     @Published var refreshTimestamp: Date?             // 定时刷新 tick（紫苏叶/国产替代 Section 监听此值触发重算）
@@ -400,6 +403,7 @@ final class KSSStore: ObservableObject {
             }
             if quote.isLive {
                 updated[displaySym] = quote
+                realtimeReceivedAtBySymbol[displaySym] = Date()
                 anySuccess = true
             }
             // 软失败：不删除 map 已有项

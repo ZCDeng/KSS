@@ -21,7 +21,7 @@ struct SettingsView: View {
                     SectionHeader("数据源")
                     SettingsDataSourcesSection()
 
-                    SectionHeader("任务")
+                    SectionHeader("定时任务")
                     SettingsTasksSection()
 
                     SectionHeader("日志")

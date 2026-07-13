@@ -195,6 +195,78 @@ final class RealtimeMergeTests: XCTestCase {
         XCTAssertFalse(RealtimeMerge.hasAnyLive(symbols: ["399006.SZ"], quotes: map))
     }
 
+    // MARK: freshness / worstFreshness
+
+    func testFreshnessUsesFallbackWhenSourceAsofTsMissing() {
+        var q = LongbridgeQuote()
+        q.lastDone = 1
+        let now = Date()
+        let quotes = ["000001.SH": q]
+        let receivedAt = ["000001.SH": now.addingTimeInterval(-120)]
+        XCTAssertEqual(
+            RealtimeMerge.freshness(for: "000001.SH", quotes: quotes, receivedAtBySymbol: receivedAt, now: now),
+            .fresh
+        )
+    }
+
+    func testFreshnessMissingWhenNoQuoteAtAll() {
+        XCTAssertEqual(
+            RealtimeMerge.freshness(for: "000001.SH", quotes: [:], receivedAtBySymbol: [:], now: Date()),
+            .missing
+        )
+    }
+
+    func testWorstFreshnessDowngradesWhenAnyStale() {
+        let now = Date()
+        var q = LongbridgeQuote()
+        q.lastDone = 1
+        let quotes = ["A": q, "B": q]
+        // A 新鲜（2 分钟前接收），B 过期（10 分钟前接收）——两者都没有 sourceAsofTs，走回退路径。
+        let receivedAt = ["A": now.addingTimeInterval(-120), "B": now.addingTimeInterval(-600)]
+        XCTAssertEqual(
+            RealtimeMerge.worstFreshness(symbols: ["A", "B"], quotes: quotes, receivedAtBySymbol: receivedAt, now: now),
+            .stale
+        )
+    }
+
+    func testWorstFreshnessFreshWhenAllFreshAndNoneStale() {
+        let now = Date()
+        var q = LongbridgeQuote()
+        q.lastDone = 1
+        let quotes = ["A": q, "B": q]
+        let receivedAt = ["A": now.addingTimeInterval(-60), "B": now.addingTimeInterval(-90)]
+        XCTAssertEqual(
+            RealtimeMerge.worstFreshness(symbols: ["A", "B"], quotes: quotes, receivedAtBySymbol: receivedAt, now: now),
+            .fresh
+        )
+    }
+
+    func testWorstFreshnessMissingWhenNoSymbolInMap() {
+        XCTAssertEqual(
+            RealtimeMerge.worstFreshness(symbols: ["A", "B"], quotes: [:], receivedAtBySymbol: [:], now: Date()),
+            .missing
+        )
+    }
+
+    func testWorstFreshnessIsolatesPerSymbolFallback() {
+        // 一个标的自己的软失败/过期不会因为另一个标的仍在成功刷新而被掩盖（R2 回归）。
+        let now = Date()
+        var live = LongbridgeQuote()
+        live.lastDone = 1
+        var stale = LongbridgeQuote()
+        stale.lastDone = 2
+        let quotes = ["FRESH": live, "STALE": stale]
+        let receivedAt = ["FRESH": now.addingTimeInterval(-30), "STALE": now.addingTimeInterval(-900)]
+        XCTAssertEqual(
+            RealtimeMerge.freshness(for: "STALE", quotes: quotes, receivedAtBySymbol: receivedAt, now: now),
+            .stale
+        )
+        XCTAssertEqual(
+            RealtimeMerge.freshness(for: "FRESH", quotes: quotes, receivedAtBySymbol: receivedAt, now: now),
+            .fresh
+        )
+    }
+
     // MARK: sparklineCloses
 
     func testSparklineClosesDownsample() {

@@ -2,10 +2,10 @@ import SwiftUI
 
 // MARK: - 四态实时状态徽标（价格页）
 
-/// 交易时段 + 有 live 字段 / 非实时 / 实时源未连接 / 非交易时段。
+/// 交易时段 + 新鲜 / 已过期 / 非实时 / 实时源未连接 / 非交易时段。
 struct RealtimeStatusBadge: View {
     @Environment(\.kssTheme) private var theme
-    var hasLiveFields: Bool
+    var freshness: RealtimeFreshness
     var hours: TradingHours?
     var authFailed: Bool
     var updatedAt: Date?
@@ -30,7 +30,19 @@ struct RealtimeStatusBadge: View {
                 .foregroundStyle(theme.down)
             }
             .buttonStyle(.plain)
-        } else if hasLiveFields {
+        } else if freshness == .stale {
+            HStack(spacing: 4) {
+                Image(systemName: "clock.badge.exclamationmark")
+                    .foregroundStyle(theme.ma5)
+                Text("已过期")
+                    .foregroundStyle(theme.ma5)
+                if let ts = updatedAt {
+                    Text(Self.formatted(ts))
+                        .foregroundStyle(theme.textSecondary)
+                }
+            }
+            .font(.caption2)
+        } else if freshness == .fresh {
             HStack(spacing: 4) {
                 Image(systemName: "clock")
                     .foregroundStyle(theme.up)
@@ -134,10 +146,10 @@ struct DailyFreshnessLabel: View {
 
 // MARK: - 紧凑状态点（非价格页）
 
-/// 绿=有实时 / 灰=非实时或非交易 / 红=未连接。
+/// 绿=新鲜实时 / 黄=已过期 / 灰=非实时或非交易 / 红=未连接。
 struct RealtimeStatusDot: View {
     @Environment(\.kssTheme) private var theme
-    var hasLiveFields: Bool
+    var freshness: RealtimeFreshness
     var hours: TradingHours?
     var authFailed: Bool
     var updatedAt: Date?
@@ -145,20 +157,26 @@ struct RealtimeStatusDot: View {
     private var tint: Color {
         if authFailed { return theme.down }
         if let hours, !hours.isTradingSession { return theme.textSecondary }
-        if hasLiveFields { return theme.up }
-        return theme.textSecondary
+        switch freshness {
+        case .fresh: return theme.up
+        case .stale: return theme.ma5
+        case .missing: return theme.textSecondary
+        }
     }
 
     private var label: String {
         if authFailed { return "实时源未连接" }
         if let hours, !hours.isTradingSession { return "非交易时段" }
-        if hasLiveFields {
-            if let ts = updatedAt {
-                return "实时 · \(RealtimeStatusBadge.formatted(ts))"
-            }
+        switch freshness {
+        case .fresh:
+            if let ts = updatedAt { return "实时 · \(RealtimeStatusBadge.formatted(ts))" }
             return "实时"
+        case .stale:
+            if let ts = updatedAt { return "已过期 · \(RealtimeStatusBadge.formatted(ts))" }
+            return "已过期"
+        case .missing:
+            return "非实时"
         }
-        return "非实时"
     }
 
     var body: some View {

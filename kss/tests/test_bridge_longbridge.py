@@ -113,6 +113,50 @@ def test_longbridge_quote_eastmoney_routed_returns_error(monkeypatch):
     assert out["routed_provider"] == "eastmoney_akshare"
 
 
+# --------------------------------------------------------------------------- #
+# 断连根因诊断日志（U3 / KTD3）：无条件记 symbol+source_asof_ts，冻结判定靠外部
+# 日志分析，不靠进程内计数器（sidecar 走 subprocess 兜底时会被重置）。
+# --------------------------------------------------------------------------- #
+
+
+def _redirect_diag_log(monkeypatch, tmp_path):
+    log_path = tmp_path / "longbridge_quote_diag.log"
+    monkeypatch.setattr(b, "LOGS_DIR", tmp_path)
+    monkeypatch.setattr(b, "LONGBRIDGE_QUOTE_DIAG_LOG", log_path)
+    return log_path
+
+
+def test_successful_call_writes_diag_line(monkeypatch, tmp_path):
+    log_path = _redirect_diag_log(monkeypatch, tmp_path)
+    import kss.data.intraday_client as ic
+    monkeypatch.setattr(ic, "LongbridgeProvider", lambda: _FakeLongbridge(quote=_ok_quote_result()))
+    b.dispatch("longbridge-quote", ["688008.SH"])
+    assert log_path.exists()
+    content = log_path.read_text(encoding="utf-8")
+    assert "symbol=688008.SH" in content
+    assert "source_asof_ts=2026-07-08T15:00:00+08:00" in content
+
+
+def test_repeated_source_asof_ts_each_get_own_log_line(monkeypatch, tmp_path):
+    """连续多次调用返回同一个 source_asof_ts → 各自独立记一行（冻结判定是外部扫描日志，
+    不是运行时计数器——这条测试钉死"每次调用都落盘"这个前提，而不是断言冻结判定本身）。"""
+    log_path = _redirect_diag_log(monkeypatch, tmp_path)
+    import kss.data.intraday_client as ic
+    monkeypatch.setattr(ic, "LongbridgeProvider", lambda: _FakeLongbridge(quote=_ok_quote_result()))
+    for _ in range(3):
+        b.dispatch("longbridge-quote", ["688008.SH"])
+    lines = [ln for ln in log_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert len(lines) == 3
+    assert all("source_asof_ts=2026-07-08T15:00:00+08:00" in ln for ln in lines)
+
+
+def test_error_path_does_not_write_diag_line(monkeypatch, tmp_path):
+    """东财路由（无实时快照的结构化 error）不经过诊断记录分支，不与正常路径混淆。"""
+    log_path = _redirect_diag_log(monkeypatch, tmp_path)
+    b.dispatch("longbridge-quote", ["830799.BJ"])
+    assert not log_path.exists()
+
+
 def test_longbridge_quote_requires_symbol():
     import pytest
     with pytest.raises(ValueError):

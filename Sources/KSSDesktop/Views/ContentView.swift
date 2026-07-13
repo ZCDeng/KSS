@@ -28,9 +28,12 @@ struct ContentView: View {
         .dashboard, .stocks, .watchlist, .recommendations, .themes
     ]
 
-    private var toolbarHasLive: Bool {
-        !store.realtimeQuotesBySymbol.isEmpty
-            && store.realtimeQuotesBySymbol.values.contains(where: { $0.isLive })
+    private var toolbarFreshness: RealtimeFreshness {
+        RealtimeMerge.worstFreshness(
+            symbols: Array(store.realtimeQuotesBySymbol.keys),
+            quotes: store.realtimeQuotesBySymbol,
+            receivedAtBySymbol: store.realtimeReceivedAtBySymbol
+        )
     }
 
     /// 用户自定义导航顺序（总览置顶），由 sidebarOrder 解析。
@@ -94,7 +97,7 @@ struct ContentView: View {
                             // 非价格页：工具栏状态点；价格页自带完整 badge（今日看盘/个股等）
                             if !Self.priceSections.contains(store.selectedSection) {
                                 RealtimeStatusDot(
-                                    hasLiveFields: toolbarHasLive,
+                                    freshness: toolbarFreshness,
                                     hours: store.tradingHours,
                                     authFailed: store.realtimeAuthFailed,
                                     updatedAt: store.realtimeUpdatedAt
@@ -105,6 +108,8 @@ struct ContentView: View {
                                 store.selectedSection = .runbook
                             } label: {
                                 Label(WorkspaceSection.runbook.displayName, systemImage: WorkspaceSection.runbook.symbol)
+                                    .labelStyle(.titleAndIcon)
+                                    .font(KSSFont.themed(12.5, .semibold, theme: theme))
                             }
                             .foregroundStyle(store.selectedSection == .runbook ? theme.accent : theme.textSecondary)
                             .help(WorkspaceSection.runbook.displayName)
@@ -121,6 +126,8 @@ struct ContentView: View {
                                 store.selectedSection = .settings
                             } label: {
                                 Label(WorkspaceSection.settings.displayName, systemImage: WorkspaceSection.settings.symbol)
+                                    .labelStyle(.titleAndIcon)
+                                    .font(KSSFont.themed(12.5, .semibold, theme: theme))
                             }
                             .foregroundStyle(store.selectedSection == .settings ? theme.accent : theme.textSecondary)
                             .help(WorkspaceSection.settings.displayName)
@@ -244,6 +251,7 @@ struct ContentView: View {
                     realtimeQuote: store.realtimeQuote,
                     realtimeQuotes: store.realtimeQuotesBySymbol,
                     realtimeSparklines: store.realtimeSparklinesBySymbol,
+                    realtimeReceivedAtBySymbol: store.realtimeReceivedAtBySymbol,
                     tradingHours: store.tradingHours,
                     realtimeAuthFailed: store.realtimeAuthFailed,
                     realtimeUpdatedAt: store.realtimeUpdatedAt,
@@ -255,6 +263,7 @@ struct ContentView: View {
                     snapshot: snapshot,
                     onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } },
                     realtimeQuotes: store.realtimeQuotesBySymbol,
+                    realtimeReceivedAtBySymbol: store.realtimeReceivedAtBySymbol,
                     tradingHours: store.tradingHours,
                     realtimeAuthFailed: store.realtimeAuthFailed,
                     realtimeUpdatedAt: store.realtimeUpdatedAt,
@@ -277,6 +286,7 @@ struct ContentView: View {
                     onToggleWatchlist: toggleWatchlist,
                     bridge: store.bridge,
                     realtimeQuotes: store.realtimeQuotesBySymbol,
+                    realtimeReceivedAtBySymbol: store.realtimeReceivedAtBySymbol,
                     tradingHours: store.tradingHours,
                     realtimeAuthFailed: store.realtimeAuthFailed,
                     realtimeUpdatedAt: store.realtimeUpdatedAt,
@@ -298,6 +308,7 @@ struct ContentView: View {
                     onLoad: { Task { await store.loadThemeLeaders() } },
                     onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } },
                     realtimeQuotes: store.realtimeQuotesBySymbol,
+                    realtimeReceivedAtBySymbol: store.realtimeReceivedAtBySymbol,
                     tradingHours: store.tradingHours,
                     realtimeAuthFailed: store.realtimeAuthFailed,
                     realtimeUpdatedAt: store.realtimeUpdatedAt,
@@ -354,6 +365,7 @@ struct ContentView: View {
                     onToggleWatchlist: toggleWatchlist,
                     bridge: store.bridge,
                     realtimeQuotes: store.realtimeQuotesBySymbol,
+                    realtimeReceivedAtBySymbol: store.realtimeReceivedAtBySymbol,
                     tradingHours: store.tradingHours,
                     realtimeAuthFailed: store.realtimeAuthFailed,
                     realtimeUpdatedAt: store.realtimeUpdatedAt,

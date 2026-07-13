@@ -9,6 +9,7 @@ struct ThemesView: View {
     var onLoad: () -> Void
     var onSelectSymbol: (String) -> Void
     var realtimeQuotes: [String: LongbridgeQuote] = [:]
+    var realtimeReceivedAtBySymbol: [String: Date] = [:]
     var tradingHours: TradingHours? = nil
     var realtimeAuthFailed: Bool = false
     var realtimeUpdatedAt: Date? = nil
@@ -21,8 +22,8 @@ struct ThemesView: View {
         RealtimeMerge.symbolsFromThemes(themes)
     }
 
-    private var hasLiveFields: Bool {
-        RealtimeMerge.hasAnyLive(symbols: themeSymbols, quotes: realtimeQuotes)
+    private var displayedFreshness: RealtimeFreshness {
+        RealtimeMerge.worstFreshness(symbols: themeSymbols, quotes: realtimeQuotes, receivedAtBySymbol: realtimeReceivedAtBySymbol)
     }
 
     var body: some View {
@@ -34,7 +35,7 @@ struct ThemesView: View {
                         PageTitle("概念主题", subtitle: "十五五科技主题 · 各板块龙头与第二梯队")
                         Spacer(minLength: 12)
                         RealtimeStatusBadge(
-                            hasLiveFields: hasLiveFields,
+                            freshness: displayedFreshness,
                             hours: tradingHours,
                             authFailed: realtimeAuthFailed,
                             updatedAt: realtimeUpdatedAt,

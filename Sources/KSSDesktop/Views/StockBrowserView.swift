@@ -24,6 +24,7 @@ struct StockBrowserView: View {
     var bridge: BridgeClient? = nil
     // 实时：选中股 quote + 四态 badge
     var realtimeQuotes: [String: LongbridgeQuote] = [:]
+    var realtimeReceivedAtBySymbol: [String: Date] = [:]
     var tradingHours: TradingHours? = nil
     var realtimeAuthFailed: Bool = false
     var realtimeUpdatedAt: Date? = nil
@@ -179,6 +180,7 @@ struct StockBrowserView: View {
                         onZoom: { showChartFullscreen = true },
                         bridge: bridge,
                         liveQuote: realtimeQuotes[detail.symbol.uppercased()],
+                        liveReceivedAt: realtimeReceivedAtBySymbol[detail.symbol.uppercased()],
                         tradingHours: tradingHours,
                         realtimeAuthFailed: realtimeAuthFailed,
                         realtimeUpdatedAt: realtimeUpdatedAt,
@@ -238,6 +240,8 @@ struct StockDetailView: View {
     /// P1: BridgeClient 注入（不在 view 内构造——共用 store 的单桥模式）
     var bridge: BridgeClient? = nil
     var liveQuote: LongbridgeQuote? = nil
+    /// 该标的自己的本地接收时间，供 sourceAsofTs 缺失时按标的独立回退（KTD1）
+    var liveReceivedAt: Date? = nil
     var tradingHours: TradingHours? = nil
     var realtimeAuthFailed: Bool = false
     var realtimeUpdatedAt: Date? = nil
@@ -276,6 +280,10 @@ struct StockDetailView: View {
         return nil
     }
 
+    private var freshness: RealtimeFreshness {
+        RealtimeFreshness.status(sourceAsofTs: liveQuote?.sourceAsofTs, fallbackReceivedAt: liveReceivedAt, now: Date())
+    }
+
     private var liveClose: (close: Double, pct: Double, isLive: Bool)? {
         guard let latest = detail.latest, let close = latest.close else { return nil }
         return RealtimeMerge.applyLive(
@@ -300,7 +308,7 @@ struct StockDetailView: View {
                     Spacer()
                     VStack(alignment: .trailing, spacing: 8) {
                         RealtimeStatusBadge(
-                            hasLiveFields: liveClose?.isLive == true,
+                            freshness: freshness,
                             hours: tradingHours,
                             authFailed: realtimeAuthFailed,
                             updatedAt: realtimeUpdatedAt,
@@ -324,20 +332,21 @@ struct StockDetailView: View {
 
                 if let latest = detail.latest, let snapClose = latest.close {
                     let live = liveClose ?? (close: snapClose, pct: latest.pctChange ?? 0, isLive: false)
+                    let isFreshLive = live.isLive && freshness == .fresh
                     HStack(spacing: 10) {
                         LiveStatTile(
-                            title: live.isLive ? "现价" : "收盘",
+                            title: live.isLive ? (freshness == .stale ? "已过期" : "现价") : "收盘",
                             value: live.close,
                             text: KSSFormat.number(live.close),
-                            tint: theme.signColor(live.pct),
-                            isLive: live.isLive
+                            tint: freshness == .stale ? theme.ma5 : theme.signColor(live.pct),
+                            isLive: isFreshLive
                         )
                         LiveStatTile(
                             title: "涨跌",
                             value: live.pct,
                             text: KSSFormat.pctPoints(live.pct),
-                            tint: theme.signColor(live.pct),
-                            isLive: live.isLive
+                            tint: freshness == .stale ? theme.ma5 : theme.signColor(live.pct),
+                            isLive: isFreshLive
                         )
                         StatTile(title: "MA5 / MA20", value: "\(KSSFormat.number(latest.ma5)) / \(KSSFormat.number(latest.ma20))")
                         StatTile(title: "成交额", value: KSSFormat.compactMoney(latest.amount))

@@ -128,11 +128,51 @@ enum RealtimeMerge {
         return (last, pct, true)
     }
 
-    /// 展示区是否至少有一个可实时字段命中 map（badge「实时」口径）。
+    /// 展示区是否至少有一个可实时字段命中 map（badge「实时」口径，历史布尔口径，逐步被 worstFreshness 取代）。
     static func hasAnyLive(symbols: [String], quotes: [String: LongbridgeQuote]) -> Bool {
         symbols.contains { code in
             quotes[code.uppercased()]?.isLive == true
         }
+    }
+
+    /// 单个标的的新鲜度（KTD1/KTD2）：优先用 quote 自带的 `sourceAsofTs`，缺失/不可解析时
+    /// 回退该标的自己的接收时间（`receivedAtBySymbol`，不可用全局时间戳）。
+    static func freshness(
+        for symbol: String,
+        quotes: [String: LongbridgeQuote],
+        receivedAtBySymbol: [String: Date],
+        now: Date = Date()
+    ) -> RealtimeFreshness {
+        let code = symbol.uppercased()
+        let quote = quotes[code]
+        return RealtimeFreshness.status(
+            sourceAsofTs: quote?.sourceAsofTs,
+            fallbackReceivedAt: receivedAtBySymbol[code],
+            now: now
+        )
+    }
+
+    /// 页面级汇总（页头 badge 用）：展示标的中只要有一个 `.stale` 就诚实降级，
+    /// 其次有 `.fresh` 才算「实时」，否则 `.missing`（KTD2：页头是汇总，不是逐标的展示）。
+    static func worstFreshness(
+        symbols: [String],
+        quotes: [String: LongbridgeQuote],
+        receivedAtBySymbol: [String: Date],
+        now: Date = Date()
+    ) -> RealtimeFreshness {
+        var sawStale = false
+        var sawFresh = false
+        for code in symbols {
+            guard quotes[code.uppercased()] != nil else { continue }
+            switch freshness(for: code, quotes: quotes, receivedAtBySymbol: receivedAtBySymbol, now: now) {
+            case .stale: sawStale = true
+            case .fresh: sawFresh = true
+            case .missing: break
+            }
+        }
+        if sawStale { return .stale }
+        if sawFresh { return .fresh }
+        return .missing
     }
 
     /// 从 intraday-bars 收盘序列降采样为 sparkline（≤ maxPoints）。

@@ -4777,6 +4777,27 @@ def _longbridge_coverage_meta(symbol: str) -> dict[str, Any]:
     }
 
 
+LONGBRIDGE_QUOTE_DIAG_LOG = LOGS_DIR / "longbridge_quote_diag.log"
+
+
+def _log_longbridge_quote_diag(symbol: str, source_asof_ts: str | None) -> None:
+    """无条件记一行 symbol + source_asof_ts（U3 断连根因诊断，KTD3）。
+
+    不用进程内滚动计数器判定"冻结"——longbridge-quote 命令不在 subprocessOnlyCommands
+    里，正常走持久 sidecar，但 sidecar socket 不可用时 BridgeClient 会回退成每次调用
+    起一个全新 subprocess，此时任何进程内状态都会在调用间被重置。冻结判定改成日志外部
+    分析（同一 symbol 连续 N 条记录的 source_asof_ts 相同），不受进程生命周期影响。
+    日志写入失败不能影响正常取数，只静默吞掉。
+    """
+    try:
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        line = f"{datetime.now().isoformat()} symbol={symbol} source_asof_ts={source_asof_ts}\n"
+        with LONGBRIDGE_QUOTE_DIAG_LOG.open("a", encoding="utf-8") as f:
+            f.write(line)
+    except OSError:
+        pass
+
+
 def _longbridge_quote(symbol: str) -> dict[str, Any]:
     """实时快照（ChinaConnect LV1，接受延迟）。仅 covered（陆股通）标的.
 
@@ -4807,6 +4828,7 @@ def _longbridge_quote_inner(symbol: str) -> dict[str, Any]:
     if not res.ok:
         return {"symbol": meta["normalized_symbol"], "error": res.error or "empty", **meta}
     row = res.rows[0]
+    _log_longbridge_quote_diag(meta["normalized_symbol"], res.source_asof_ts)
     # 真值字段：直接透传数值，不拼自然语言（number_guard 可核）。
     return {
         "symbol": meta["normalized_symbol"],

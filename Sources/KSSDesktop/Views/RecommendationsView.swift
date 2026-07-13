@@ -18,6 +18,7 @@ struct RecommendationsView: View {
     var snapshot: AppSnapshot
     var onSelectSymbol: (String) -> Void
     var realtimeQuotes: [String: LongbridgeQuote] = [:]
+    var realtimeReceivedAtBySymbol: [String: Date] = [:]
     var tradingHours: TradingHours? = nil
     var realtimeAuthFailed: Bool = false
     var realtimeUpdatedAt: Date? = nil
@@ -42,8 +43,8 @@ struct RecommendationsView: View {
         RealtimeMerge.symbolsFromRecommendations(snapshot.recommendations)
     }
 
-    private var hasLiveFields: Bool {
-        RealtimeMerge.hasAnyLive(symbols: recSymbols, quotes: realtimeQuotes)
+    private var displayedFreshness: RealtimeFreshness {
+        RealtimeMerge.worstFreshness(symbols: recSymbols, quotes: realtimeQuotes, receivedAtBySymbol: realtimeReceivedAtBySymbol)
     }
 
     var body: some View {
@@ -55,7 +56,7 @@ struct RecommendationsView: View {
                     PageTitle("推荐", subtitle: snapshot.recommendationDate)
                     Spacer(minLength: 12)
                     RealtimeStatusBadge(
-                        hasLiveFields: hasLiveFields,
+                        freshness: displayedFreshness,
                         hours: tradingHours,
                         authFailed: realtimeAuthFailed,
                         updatedAt: realtimeUpdatedAt,
@@ -167,6 +168,12 @@ struct RecommendationsView: View {
     @ViewBuilder
     private func recPriceCells(_ item: Recommendation) -> some View {
         let quote = realtimeQuotes[item.symbol.uppercased()]
+        let freshness = RealtimeMerge.freshness(
+            for: item.symbol,
+            quotes: realtimeQuotes,
+            receivedAtBySymbol: realtimeReceivedAtBySymbol
+        )
+        let isFreshLive = { (disp: (close: Double, pct: Double, isLive: Bool)) in disp.isLive && freshness == .fresh }
         if let disp = RealtimeMerge.displayPrice(
             snapshotClose: item.latestClose,
             snapshotPct: nil,
@@ -175,8 +182,8 @@ struct RecommendationsView: View {
             LivePriceText(
                 value: disp.close,
                 text: KSSFormat.number(disp.close),
-                baseColor: theme.signColor(disp.isLive ? disp.pct : 0),
-                isLive: disp.isLive,
+                baseColor: freshness == .stale ? theme.ma5 : theme.signColor(disp.isLive ? disp.pct : 0),
+                isLive: isFreshLive(disp),
                 font: .system(size: 13, weight: .semibold, design: .monospaced)
             )
             .frame(width: 72, alignment: .trailing)
@@ -184,8 +191,8 @@ struct RecommendationsView: View {
                 LivePriceText(
                     value: disp.pct,
                     text: KSSFormat.pctPoints(disp.pct),
-                    baseColor: theme.signColor(disp.pct),
-                    isLive: true,
+                    baseColor: freshness == .stale ? theme.ma5 : theme.signColor(disp.pct),
+                    isLive: isFreshLive(disp),
                     font: .system(size: 12, weight: .semibold, design: .monospaced)
                 )
                 .frame(width: 64, alignment: .trailing)
