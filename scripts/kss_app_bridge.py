@@ -4534,6 +4534,14 @@ COMMANDS = {
         "args": ["NAME", "[LINES]", "[GREP]"],
     },
     "self-check": {"desc": "应用启动/手动自检(运行时/数据目录/各凭证)", "args": []},
+    "sql-query": {
+        "desc": (
+            "只读分析 SQL(DuckDB 引擎；仅 SELECT/WITH/SUMMARIZE/DESCRIBE，行上限200，5s超时)。"
+            "可查表=已割接域的 kss.db 表 + 行情 parquet 数据集，先看 get_data_catalog 了解列含义，"
+            "或用 SHOW TABLES / DESCRIBE <table> 自查。数字真值以本工具返回为准，勿凭记忆复述。"
+        ),
+        "args": ["SQL"],
+    },
 }
 
 # run_task 白名单 —— orientation 报此清单。须与 run_task() if-chain 实际接受集合一致
@@ -5364,6 +5372,12 @@ def dispatch(command: str, args: list[str]) -> Any:
         return _trends_day(args[0])
     if command == "data-catalog":
         return _data_catalog()
+    if command == "sql-query":
+        if not args or not args[0].strip():
+            raise ValueError("sql-query requires SQL")
+        from kss.storage.duck import run_query
+
+        return run_query(args[0])
     if command == "orientation":
         return _orientation()
     if command == "recipe-list":

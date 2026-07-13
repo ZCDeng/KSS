@@ -83,6 +83,11 @@ TOOL_SPECS: list[dict[str, Any]] = [
     _spec("get_report", "report", "读 storage 下 markdown 报告(相对 state root,受穿越护栏)",
           {"path": _STR}, ["path"]),
     _spec("get_data_catalog", "data-catalog", "全量数据资产字典:列/含义/粒度/最近日期/路径"),
+    _spec("run_sql_query", "sql-query",
+          "只读分析 SQL(DuckDB;仅 SELECT/WITH/SUMMARIZE/DESCRIBE,行上限200,5s超时)。"
+          "可查表=已割接域的 kss.db 表+行情 parquet 数据集,先 get_data_catalog 看列含义,"
+          "或 SHOW TABLES/DESCRIBE <table> 自查。数字结果以本工具返回为准,勿凭记忆复述",
+          {"sql": _STR}, ["sql"]),
     _spec("get_trends_month", "trends-month", "趋势页某月日历。month 为 YYYY-MM",
           {"month": _STR}, ["month"]),
     _spec("get_trends_day", "trends-day", "趋势页某日明细。date 为 YYYY-MM-DD",
