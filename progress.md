@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-07-13 — 发布加固 Phase C：U16 DuckDB 分析层 + U17 catalog 反射（`docs/plans/2026-07-12-005-feat-release-hardening-settings-plan.md`）
+
+**已交付**
+
+- **U16（`kss/storage/duck.py`，新文件）**：Seesaw 只读分析 SQL 工具。DuckDB 内存会话 + 域割接台账门控（`migration_ledger.json` `goldenResult=pass` 的域，其表才对 SQL 层可见，逐表 `CREATE VIEW ... FROM sqlite_scan(...)` 而非整库 `ATTACH`）+ 引擎级目录围栏（`allowed_directories` 须先于 `enable_external_access=false` 设置，`lock_configuration=true` 收尾——真机验证的顺序，反过来会报错）。语句校验层除计划列出的黑名单外，额外拦截 `sqlite_scan`/`sqlite_attach`/`sqlite_query`（真机验证：这三者绕过引擎级目录围栏，且可嵌套进合法 SELECT 内部，只能靠全文黑名单挡）。bridge `sql-query` 命令 + Seesaw `run_sql_query` 工具 + MCP 平价，`kss/tests/test_duck_query.py` 26 用例全绿。
+- **U17（`scripts/build_data_catalog.py` / `kss/config/data_catalog_meta.yaml` / 自检）**：catalog 反射新增 `kss_unified` 数据集（kss.db），table_allowlist 复用 duck.py 同一份域割接门控逻辑（单一真源，惰性求值）；排除 `app_task_runs.stdout/stderr`（原始进程输出，S5 纪律）；移除 U15 已归档的 `prediction_ledger`/`factor_health` 两个死条目。**顺带修复一个真实撞名 bug**：`datasette/kss.db` 与新增的 `storage/kss.db` 若都靠 `Path(sub).stem` 推导数据集名会同时得到 `"kss"`——`_DB_CANDIDATES` 改为显式命名。overlay 补 `kss_unified` 表含义（watchlist/predictions/paper_trade_picks/indicator_registry 等）。`self-check` 追加 `kss_db`（fail 级）与 `duckdb_ext`（warn 级，非阻断）两项探针。
+
+**验证**：`uv run pytest kss/tests -q` → 2086 passed（新增 34 用例：duck 26 + catalog 3 + selfcheck 5），既有 4 项基线失败（`version` 命令未登记 COMMANDS / cron manifest job 数 / longbridge 路由两项）与本次改动无关，经 `git stash` 对照确认 stash 前后失败集合一致。`scripts/build_data_catalog.py` 手动跑通，`data_catalog.json` 21/21 datasets、`kss_unified` 零 overlayDrift。
+
+**已知缺口（用户确认先跳过，非遗漏）**：U17 Definition of Done 里的「交付演练」——在非开发 Mac 或干净用户账户上走完整 F1 首启流程 + AE1-AE9 九条验收、全程零代码/配置文件手工操作——需要实体机器/账户访问，本次会话未做。计划的 Verification Contract 与 DoD 均把这条列为独立门禁项，留待用户在真机上执行；届时可直接用计划文档里的 AE1-AE9 清单逐条核对。
+
+**范围决定（有意不做，非遗漏）**：U16 未注册 `cs_data`/`mf` 等 csv-glob 数据集视图——其物理文件在 `STATE_ROOT` 顶层而非 `storage/` 树下，纳入会迫使 `allowed_directories` 放宽到整个项目根，与白名单目录围栏的意图相悖；AE9 的换手率需求已由 parquet 数据集 `dailybasic_latest`/`hs300_dailybasic` 覆盖。duckdb 扩展 vendor 下载到打包流程（离线首启可加载）也未接线——U16 只做了可配置的 `extension_directory` 开关，实际下载步骤留给未来的 packaging follow-up。
+
+---
+
 ## 2026-06-19 — macOS App 第十六阶段：图表恢复醒目红绿 + 放大适配 + 边栏精简（4 项反馈）
 
 **已交付**
