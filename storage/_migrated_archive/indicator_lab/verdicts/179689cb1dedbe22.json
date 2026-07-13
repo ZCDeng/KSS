@@ -1,0 +1,124 @@
+{
+  "family": "rsi_threshold",
+  "params": {
+    "period": 14,
+    "entry_level": 30.0,
+    "exit_level": 70.0,
+    "oversold": 30,
+    "overbought": 70
+  },
+  "symbols": [
+    "688017.SH",
+    "688322.SH"
+  ],
+  "go": true,
+  "results": [
+    {
+      "symbol": "688017.SH",
+      "status": "judged",
+      "go": true,
+      "dimensions": [
+        {
+          "name": "经济意义",
+          "passed": true,
+          "value": {
+            "strategy_total": 4.4393,
+            "strategy_sharpe": 1.462,
+            "buy_and_hold_total": 2.2709
+          },
+          "detail": "策略总收益 443.93%（夏普 1.46）vs buy&hold 227.09%"
+        },
+        {
+          "name": "稳健",
+          "passed": true,
+          "value": {
+            "best_total": 4.4393,
+            "other_positive_combos": 5,
+            "grid_size": 6
+          },
+          "detail": "网格 6 组合中，除最优组外还有 5 组同样正收益"
+        },
+        {
+          "name": "可交易",
+          "passed": true,
+          "value": {
+            "trade_count": 11,
+            "per_year": 3.3,
+            "net_avg_after_slippage": 0.1797
+          },
+          "detail": "共 11 笔交易（约 3.3 笔/年），滑点后均笔收益 17.97%"
+        },
+        {
+          "name": "可解释",
+          "passed": true,
+          "value": {
+            "rule_sentence": "RSI 阈值（{'period': 14, 'entry_level': 30.0, 'exit_level': 70.0, 'oversold': 30, 'overbought': 70}）：RSI 上穿入场阈值入场、下穿离场阈值离场"
+          },
+          "detail": "RSI 阈值（{'period': 14, 'entry_level': 30.0, 'exit_level': 70.0, 'oversold': 30, 'overbought': 70}）：RSI 上穿入场阈值入场、下穿离场阈值离场"
+        },
+        {
+          "name": "运维",
+          "passed": true,
+          "value": {
+            "batchable": true
+          },
+          "detail": "复用通用回测引擎与固定基元族，可日终批跑，单票失败不拖垮整池"
+        }
+      ]
+    },
+    {
+      "symbol": "688322.SH",
+      "status": "judged",
+      "go": true,
+      "dimensions": [
+        {
+          "name": "经济意义",
+          "passed": true,
+          "value": {
+            "strategy_total": 1.9492,
+            "strategy_sharpe": 0.796,
+            "buy_and_hold_total": 3.3147
+          },
+          "detail": "策略总收益 194.92%（夏普 0.80）vs buy&hold 331.47%"
+        },
+        {
+          "name": "稳健",
+          "passed": true,
+          "value": {
+            "best_total": 1.9492,
+            "other_positive_combos": 5,
+            "grid_size": 6
+          },
+          "detail": "网格 6 组合中，除最优组外还有 5 组同样正收益"
+        },
+        {
+          "name": "可交易",
+          "passed": true,
+          "value": {
+            "trade_count": 11,
+            "per_year": 3.3,
+            "net_avg_after_slippage": 0.1188
+          },
+          "detail": "共 11 笔交易（约 3.3 笔/年），滑点后均笔收益 11.88%"
+        },
+        {
+          "name": "可解释",
+          "passed": true,
+          "value": {
+            "rule_sentence": "RSI 阈值（{'period': 14, 'entry_level': 30.0, 'exit_level': 70.0, 'oversold': 30, 'overbought': 70}）：RSI 上穿入场阈值入场、下穿离场阈值离场"
+          },
+          "detail": "RSI 阈值（{'period': 14, 'entry_level': 30.0, 'exit_level': 70.0, 'oversold': 30, 'overbought': 70}）：RSI 上穿入场阈值入场、下穿离场阈值离场"
+        },
+        {
+          "name": "运维",
+          "passed": true,
+          "value": {
+            "batchable": true
+          },
+          "detail": "复用通用回测引擎与固定基元族，可日终批跑，单票失败不拖垮整池"
+        }
+      ]
+    }
+  ],
+  "judgedAt": "2026-07-12T03:54:32.324153+00:00"
+}

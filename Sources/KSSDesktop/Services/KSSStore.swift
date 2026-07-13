@@ -57,6 +57,25 @@ final class KSSStore: ObservableObject {
     /// 启动时检测 Keychain 中是否有 OpenAI/DeepSeek 凭据
     @Published var hasLLMCredentials: Bool = false
 
+    // MARK: 启动自检（plan 2026-07-12-005 / U8）
+    @Published var selfCheckItems: [SelfCheckItem] = []
+    @Published var selfCheckGeneratedAt: String?
+    @Published var isRunningSelfCheck = false
+    /// 当前会话内是否已手动关闭 fail 横幅（会话内不再自动弹，重跑自检后重置）。
+    @Published var selfCheckBannerDismissed = false
+    var selfCheckHasFail: Bool { selfCheckItems.contains { $0.isFail } }
+    var selfCheckHasWarn: Bool { selfCheckItems.contains { $0.isWarn } }
+    var showSelfCheckBanner: Bool { selfCheckHasFail && !selfCheckBannerDismissed }
+
+    /// 单一凭证真源（U9/R12）：某数据源是否已配置。以 self-check 结果为准（沿用
+    /// U4 hasLLMCredentials 的先例，按源扩展为字典查询）。自检结果到达前返回 nil
+    /// （"未知"而非"未配置"）——避免首帧还没跑完自检就误判成缺凭证闪一下卡片。
+    /// source ∈ "tushare" | "longbridge" | "telegram" | "llm"。
+    func isCredentialConfigured(_ source: String) -> Bool? {
+        guard let item = selfCheckItems.first(where: { $0.item == source }) else { return nil }
+        return !item.isWarn   // warn＝该源未配置；ok＝已配置（fail 不会用于凭证项，只用于 venv/storage）
+    }
+
     // MARK: 资讯雷达 reader workbench（plan 2026-07-10-001）
     @Published var selectedIntelItemID: String?
     @Published var intelArticleByID: [String: IntelArticleResponse] = [:]
@@ -810,11 +829,69 @@ final class KSSStore: ObservableObject {
         await task.value
     }
 
-    /// 启动时检测 OpenAI/DeepSeek Keychain 凭据是否存在。
+    /// 启动时检测 LLM Keychain 凭据是否存在——新六键（KSS_LLM_PRIMARY_KEY 优先判定，
+    /// FALLBACK_KEY 单独存在也算已配置）或旧 OpenAI/DeepSeek 键任一存在即算已配置，
+    /// 与 openai_client._resolve_credential_candidates() 的判定口径保持一致（U3/U9）。
     func refreshLLMCredentialsStatus() {
         let env = KeychainStore.injectedEnvironment()
-        hasLLMCredentials = (env["OPENAI_API_KEY"]?.isEmpty == false)
+        hasLLMCredentials = (env["KSS_LLM_PRIMARY_KEY"]?.isEmpty == false)
+            || (env["KSS_LLM_FALLBACK_KEY"]?.isEmpty == false)
+            || (env["OPENAI_API_KEY"]?.isEmpty == false)
             || (env["DEEPSEEK_API_KEY"]?.isEmpty == false)
+    }
+
+    /// 启动/手动自检（plan 2026-07-12-005 / U8）。bridge 不可达（sidecar 起不来）本身
+    /// 就是一项 fail——KTD4 明示由 Swift 侧兜底合成，self-check 命令自己跑不起来时
+    /// 无法自证，只能靠调用方判断"够不到"这件事本身。
+    func runSelfCheck() async {
+        isRunningSelfCheck = true
+        defer { isRunningSelfCheck = false }
+        guard let bridge else {
+            selfCheckItems = [SelfCheckItem(
+                item: "sidecar", status: "fail",
+                detail: "找不到项目根目录，后台服务未能启动",
+                fixHint: "检查安装完整性", fixAction: nil
+            )]
+            selfCheckBannerDismissed = false
+            return
+        }
+        let resp = try? await Task.detached { try bridge.selfCheck() }.value
+        guard let resp else {
+            selfCheckItems = [SelfCheckItem(
+                item: "sidecar", status: "fail",
+                detail: "后台服务无响应",
+                fixHint: "重新初始化运行时", fixAction: "reinit_runtime"
+            )]
+            selfCheckBannerDismissed = false
+            return
+        }
+        selfCheckItems = resp.items
+        selfCheckGeneratedAt = resp.generatedAt
+        selfCheckBannerDismissed = false   // 新一轮结果，重新允许横幅（若仍有 fail）
+    }
+
+    /// 横幅/设置页"关闭"——仅当前会话生效，重跑自检会重置。
+    func dismissSelfCheckBanner() {
+        selfCheckBannerDismissed = true
+    }
+
+    /// 自检 fixAction=reinit_runtime 的落地动作（U8）：强删旧 venv 重跑 uv sync，
+    /// 修复"解释器文件在但已损坏"的场景；完成后重启 sidecar 并重跑自检验证是否恢复。
+    @Published var isReinitializingRuntime = false
+
+    func reinitializeRuntime() async {
+        guard let bridge else { return }
+        isReinitializingRuntime = true
+        defer { isReinitializingRuntime = false }
+        do {
+            try await Task.detached {
+                try BridgeClient.reinitializeRuntime(projectRoot: bridge.projectRoot, stateRoot: bridge.stateRoot)
+            }.value
+            BridgeClient.restartSidecarForEnvChange()
+        } catch {
+            errorMessage = "重新初始化运行时失败：\(error.localizedDescription)"
+        }
+        await runSelfCheck()
     }
 
     /// U3: 加载 Dashboard 资讯摘要（轻量，仅取赛道计数 + 最近标题）。
@@ -1131,6 +1208,21 @@ final class KSSStore: ObservableObject {
     /// 启用/停用某任务，就地刷新该行状态。
     func toggleScheduledJob(_ label: String, enabled: Bool) async {
         await runScheduledAction(label) { bridge in try bridge.setJobEnabled(label, enabled: enabled) }
+    }
+
+    /// 应用内编辑任务排期（设置页任务分区，plan 2026-07-12-005 / U6），就地刷新该行状态。
+    func editScheduledJob(_ label: String, suffix: String, scheduleJSON: String) async {
+        await runScheduledAction(label) { bridge in
+            try bridge.editCronSchedule(suffix: suffix, scheduleJSON: scheduleJSON)
+        }
+    }
+
+    /// 自选列表同步给 Python 读者（plan 2026-07-12-005 / U15）。UI 真源仍是
+    /// @AppStorage("watchlistSymbols")，这里只是把它镜像进 kss.db 供 cron/bridge 读——
+    /// 同原先的 syncWatchlistFile 定位，静默失败不影响 UI（自选已经落地在 AppStorage）。
+    func syncWatchlistToDB(_ symbols: [String]) async {
+        guard let bridge else { return }
+        _ = try? await Task.detached { try bridge.setWatchlist(symbols) }.value
     }
 
     /// 漏跑任务（关机自检命中的）。

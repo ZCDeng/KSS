@@ -823,12 +823,42 @@ struct SectorTheme: Codable, Identifiable, Hashable {
 }
 
 /// 定时任务（launchd）一项：deploy/launchd/*.plist + launchctl 状态 + 日志末行。
+/// 排期结构化字段（bridge `cron-list` 的 `scheduleStruct`，plan 2026-07-12-005 / U6）。
+/// 供排期编辑器读初值——避免解析人读 `schedule` 文案的脆弱往返。
+struct ScheduleStruct: Codable, Hashable {
+    var hour: Int
+    var minute: Int
+    var weekdays: [Int]?   // daily 形态的工作日子集；nil＝每天
+    var weekly: Bool
+    var weekday: Int?      // weekly 形态的单一 weekday（launchd 1-7）
+
+    /// 序列化为 bridge `cron-edit-schedule` 期望的 schedule JSON。
+    func toScheduleJSON() -> String {
+        var payload: [String: Any] = [:]
+        if weekly {
+            payload["weekly"] = ["weekday": weekday ?? 1, "hour": hour, "minute": minute]
+        } else {
+            payload["hour"] = hour
+            payload["minute"] = minute
+            if let weekdays, !weekdays.isEmpty {
+                payload["weekdays"] = weekdays
+            }
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return json
+    }
+}
+
 struct ScheduledJob: Codable, Identifiable, Hashable {
     var id: String { label }
     var label: String
     var title: String
     var category: String      // 数据更新 / 扫描选股 / 板块复盘 / 纸交易 / 校验回测 / 盘中快讯 / 系统 / 其他
     var schedule: String      // 人读调度，如「工作日 17:30」
+    var scheduleStruct: ScheduleStruct?  // 编辑器初值（U6）；旧 sidecar 未带该字段时为 nil
     var script: String
     var enabled: Bool         // 是否启用（未被 launchctl disable）
     var needsInstall: Bool?   // 清单有但 ~/Library/LaunchAgents 未装 → 需同步（U4/R4）
@@ -882,6 +912,12 @@ struct CronActionResult: Codable, Hashable {
     var ok: Bool
     var error: String?
     var job: ScheduledJob?
+}
+
+/// watchlist-set 的返回（plan 2026-07-12-005 / U15：自选列表写 kss.db）。
+struct WatchlistSetResult: Codable, Hashable {
+    var ok: Bool
+    var symbols: [String]
 }
 
 /// cron-catchup / cron-rerun-many 批量结果。
@@ -1369,6 +1405,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     case runbook = "Runbook"
     case aiChat = "AI Chat"
     case architecture = "Architecture"
+    case settings = "Settings"
 
     var id: String { rawValue }
 
@@ -1386,6 +1423,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .stocks: return "股票池"
         case .aiChat: return "Seesaw"
         case .architecture: return "架构"
+        case .settings: return "设置"
         }
     }
 
@@ -1403,6 +1441,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .stocks: return "list.bullet.rectangle"
         case .aiChat: return "scale.3d"
         case .architecture: return "circle.hexagongrid"
+        case .settings: return "gearshape"
         }
     }
 
@@ -1413,8 +1452,8 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
 
     /// 不上侧栏的 section：代码、视图、路由均完整保留。两种排除原因不同——
     /// 暂停类（如曾经的舆情 digest）是"未达预期，等改进方案定了再恢复，从本数组移除即重新显示"；
-    /// 任务/架构/Seesaw 属于永久挪走类（改到右上角工具栏），不预期再回到侧边栏。
-    static let hidden: [WorkspaceSection] = [.runbook, .architecture, .aiChat]
+    /// 任务/架构/Seesaw/设置 属于永久挪走类（改到工具栏/侧边栏页脚），不预期再回到侧边栏导航列表。
+    static let hidden: [WorkspaceSection] = [.runbook, .architecture, .aiChat, .settings]
 
     /// 可被用户拖拽重排的 section（enum 原序，去掉置顶项与隐藏项）。
     static var reorderable: [WorkspaceSection] {
@@ -1793,6 +1832,105 @@ struct IntradayBars: Codable, Hashable {
         default:
             return nil
         }
+    }
+}
+
+// MARK: - 启动自检（plan 2026-07-12-005 / U8，bridge `self-check`）
+
+/// 单项自检结果。status: ok / warn / fail。
+struct SelfCheckItem: Codable, Hashable, Identifiable {
+    var id: String { item }
+    var item: String        // venv / storage / tushare / longbridge / telegram / llm
+    var status: String      // "ok" | "warn" | "fail"
+    var detail: String
+    var fixHint: String?
+    var fixAction: String?  // "reinit_runtime" | "open_settings" | nil
+
+    var isOK: Bool { status == "ok" }
+    var isWarn: Bool { status == "warn" }
+    var isFail: Bool { status == "fail" }
+
+    /// 人读条目名（横幅/设置页共用）。
+    var displayName: String {
+        switch item {
+        case "venv": return "运行时"
+        case "storage": return "数据目录"
+        case "tushare": return "Tushare"
+        case "longbridge": return "Longbridge"
+        case "telegram": return "Telegram"
+        case "llm": return "LLM 端点"
+        case "sidecar": return "后台服务"
+        default: return item
+        }
+    }
+}
+
+struct SelfCheckResponse: Codable, Hashable {
+    var items: [SelfCheckItem]
+    var generatedAt: String
+}
+
+// MARK: - 日志分区（plan 2026-07-12-005 / U7，bridge `log-list` / `log-tail`）
+
+/// 单个日志文件（含轮转代）。
+struct LogFileEntry: Codable, Hashable, Identifiable {
+    var id: String { name }
+    var name: String     // 相对 storage/logs/ 的路径，如 "sidecar.log" 或 "cron/scanner.log"
+    var size: Int
+    var mtime: String
+
+    var sizeLabel: String {
+        if size < 1024 { return "\(size)B" }
+        if size < 1024 * 1024 { return String(format: "%.0fKB", Double(size) / 1024) }
+        return String(format: "%.1fMB", Double(size) / (1024 * 1024))
+    }
+}
+
+struct LogListResponse: Codable, Hashable {
+    var logs: [LogFileEntry]
+}
+
+struct LogTailResponse: Codable, Hashable {
+    var name: String
+    var lines: [String]
+    var totalMatched: Int
+    var error: String?
+}
+
+// MARK: - 数据源连通性测试（plan 2026-07-12-005 / U4，bridge `datasource-test`）
+
+/// 单候选（主/备）探测结果。
+struct DataSourceCandidateProbe: Codable, Hashable, Identifiable {
+    var role: String        // "primary" | "fallback"
+    var model: String?
+    var ok: Bool
+    var latencyMs: Double?
+    var error: String?
+    var hint: String?
+
+    var id: String { role }
+
+    enum CodingKeys: String, CodingKey {
+        case role, model, ok
+        case latencyMs = "latency_ms"
+        case error, hint
+    }
+}
+
+/// 数据源连通性测试结果（bridge `datasource-test <source>`）。R7。
+struct DataSourceTestResult: Codable, Hashable {
+    var source: String
+    var ok: Bool
+    var latencyMs: Double?
+    var error: String?
+    var hint: String?
+    /// 仅 LLM 源非空：主/备各一条。
+    var candidates: [DataSourceCandidateProbe]?
+
+    enum CodingKeys: String, CodingKey {
+        case source, ok
+        case latencyMs = "latency_ms"
+        case error, hint, candidates
     }
 }
 

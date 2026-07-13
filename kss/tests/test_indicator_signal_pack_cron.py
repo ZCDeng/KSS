@@ -88,8 +88,16 @@ def test_script_main_refreshes_solidified_entries_and_skips_mi(tmp_path: Path, m
     rc = mod.main()
     assert rc == 0
 
-    assert (tmp_path / "storage" / "indicator_signals" / "ma1" / "latest" / "688017.SH.json").exists()
-    assert not (tmp_path / "storage" / "mi_signals").exists()  # MI 不在本脚本范围内，未被触碰
+    import sqlite3
+
+    conn = sqlite3.connect(tmp_path / "storage" / "kss.db")
+    row = conn.execute(
+        "SELECT 1 FROM indicator_signal_packs WHERE entry_id=? AND symbol=?", ("ma1", "688017.SH")
+    ).fetchone()
+    mi_row = conn.execute("SELECT 1 FROM mi_signal_packs LIMIT 1").fetchone()
+    conn.close()
+    assert row is not None
+    assert mi_row is None  # MI 不在本脚本范围内，未被触碰
 
     from kss.prediction.ledger import PredictionLedger
 

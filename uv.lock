@@ -399,6 +399,21 @@ wheels = [
 ]
 
 [[package]]
+name = "duckdb"
+version = "1.5.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/31/29/9bad86ed7aa812d8c822a27c15c355b6d5423b991feeec86ed18027b6daa/duckdb-1.5.4.tar.gz", hash = "sha256:f9e32f1cdd106793d79d190186bed9e75289d51e68bd9174e47c04bffedeab6f", size = 18046634, upload-time = "2026-06-17T10:48:52.499Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/56/bb/7921dabd50daef3969f14cd8a5a14c24eee337db7914a462f2defa8add92/duckdb-1.5.4-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:3fb41d9cfccb7e44511eeeed263ae98143ca63bdb1ef84631ba637c314efa1b5", size = 32663142, upload-time = "2026-06-17T10:47:45.471Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/83/2137765eaba6a9aefe3bb9848ddaac7407fe3ba19b292f98b31f3b7ab27f/duckdb-1.5.4-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:8ba7b666bc9c78d6a930ee9f469024149f0c6a23fb7d2c3418aad6774339bec0", size = 17321485, upload-time = "2026-06-17T10:47:47.778Z" },
+    { url = "https://files.pythonhosted.org/packages/0e/b2/a02c1ee43fd7e8cf1fc2e3d377f3dcf9d4a3e58a4549557516e1866ff0da/duckdb-1.5.4-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:9d9e6817fcbc09d2605a2c8c041ac7824d738d917c35a4d427e977647e1d7944", size = 15470820, upload-time = "2026-06-17T10:47:49.977Z" },
+    { url = "https://files.pythonhosted.org/packages/d8/48/a243d30223b024bc6057abe472b002cff01e97efefb4d2f0b0dcc5aece0b/duckdb-1.5.4-cp311-cp311-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:02dd9f9a6124069213f13e3a474c208028c472fe1acdae12b38761f954fe4fc6", size = 19341849, upload-time = "2026-06-17T10:47:52.205Z" },
+    { url = "https://files.pythonhosted.org/packages/08/ff/a5d48de4771e2403a8ef26a20dc7457b1c8f7e398ff0caf9c0cad8805f89/duckdb-1.5.4-cp311-cp311-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:ccc7f2694d02b4763fee61021d45e12f7bc5743993686563957df0cef799fbae", size = 21451698, upload-time = "2026-06-17T10:47:54.653Z" },
+    { url = "https://files.pythonhosted.org/packages/79/b8/8244d7741b4afae67775cf0cb0d4eb9e923a83110907e4801e17fa078480/duckdb-1.5.4-cp311-cp311-win_amd64.whl", hash = "sha256:4c430e788d99b50854209bf2833ba36a45df75e57f86efb477046cd408bbd077", size = 13132643, upload-time = "2026-06-17T10:47:56.75Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/57/8169822a37f6dd7d561c567f9007e3cf04bf97bccb619afe90db849c0962/duckdb-1.5.4-cp311-cp311-win_arm64.whl", hash = "sha256:e2dc8340cfb6006025a798c50f40126d6e945a1d2487be94667bb4166556ce7b", size = 13986386, upload-time = "2026-06-17T10:47:59.345Z" },
+]
+
+[[package]]
 name = "email-validator"
 version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -830,6 +845,7 @@ dependencies = [
     { name = "curl-cffi" },
     { name = "cycler" },
     { name = "decorator" },
+    { name = "duckdb" },
     { name = "et-xmlfile" },
     { name = "fastmcp" },
     { name = "fonttools" },
@@ -840,6 +856,7 @@ dependencies = [
     { name = "jsonpath" },
     { name = "kiwisolver" },
     { name = "lightgbm" },
+    { name = "longbridge" },
     { name = "lxml" },
     { name = "markdown-it-py" },
     { name = "markupsafe" },
@@ -898,6 +915,7 @@ requires-dist = [
     { name = "curl-cffi", specifier = "==0.15.0" },
     { name = "cycler", specifier = "==0.12.1" },
     { name = "decorator", specifier = "==5.3.1" },
+    { name = "duckdb", specifier = "==1.5.4" },
     { name = "et-xmlfile", specifier = "==2.0.0" },
     { name = "fastmcp", specifier = "==3.3.1" },
     { name = "fonttools", specifier = "==4.63.0" },
@@ -908,6 +926,7 @@ requires-dist = [
     { name = "jsonpath", specifier = "==0.82.2" },
     { name = "kiwisolver", specifier = "==1.5.0" },
     { name = "lightgbm", specifier = "==4.6.0" },
+    { name = "longbridge", specifier = "==4.3.3" },
     { name = "lxml", specifier = "==6.1.1" },
     { name = "markdown-it-py", specifier = "==4.2.0" },
     { name = "markupsafe", specifier = "==3.0.3" },
@@ -968,6 +987,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/64/41/4fbde2c3d29e25ee7c41d87df2f2e5eda65b431ee154d4d462c31041846c/lightgbm-4.6.0-py3-none-manylinux2014_aarch64.whl", hash = "sha256:4d68712bbd2b57a0b14390cbf9376c1d5ed773fa2e71e099cac588703b590336", size = 3454567, upload-time = "2025-02-15T04:02:56.443Z" },
     { url = "https://files.pythonhosted.org/packages/42/86/dabda8fbcb1b00bcfb0003c3776e8ade1aa7b413dff0a2c08f457dace22f/lightgbm-4.6.0-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:cb19b5afea55b5b61cbb2131095f50538bd608a00655f23ad5d25ae3e3bf1c8d", size = 3569831, upload-time = "2025-02-15T04:02:58.925Z" },
     { url = "https://files.pythonhosted.org/packages/5e/23/f8b28ca248bb629b9e08f877dd2965d1994e1674a03d67cd10c5246da248/lightgbm-4.6.0-py3-none-win_amd64.whl", hash = "sha256:37089ee95664b6550a7189d887dbf098e3eadab03537e411f52c63c121e3ba4b", size = 1451509, upload-time = "2025-02-15T04:03:01.515Z" },
+]
+
+[[package]]
+name = "longbridge"
+version = "4.3.3"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/97/88/5a82bba6c1cd7fbb0b4c8e286603a105c4c10421a495d8bcf9317438c180/longbridge-4.3.3-cp311-cp311-macosx_10_12_x86_64.whl", hash = "sha256:ff97ecce9091286452381427790915a00f42fd5ec5f5eb45a9975cf2c7cc6325", size = 10476887, upload-time = "2026-06-26T08:29:19.227Z" },
+    { url = "https://files.pythonhosted.org/packages/df/48/60b69728ea7225bae25ad2ab894fbc5663ba0bd348bd063df6aa149299b1/longbridge-4.3.3-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:ba57dbbc734f35dab2a9f22d30ed7c81d8279871ea60b5db13e68d48a55969a3", size = 9994404, upload-time = "2026-06-26T08:29:21.12Z" },
+    { url = "https://files.pythonhosted.org/packages/42/1c/9f27714c591022e5f98679290e78bc1200448e6a11c8d2acbc17ef3c9ddb/longbridge-4.3.3-cp311-cp311-manylinux_2_39_aarch64.whl", hash = "sha256:aca04b31028dacbbadaab92f41a7b2570ed47bdcd66dc000e0a1e1c9a805943f", size = 10470249, upload-time = "2026-06-26T08:29:23.43Z" },
+    { url = "https://files.pythonhosted.org/packages/99/54/5ba5bdfd2792496a61c5197061b74414f62bb0c5199a7161ebc0daae403e/longbridge-4.3.3-cp311-cp311-manylinux_2_39_x86_64.whl", hash = "sha256:8d92de3d91f5a006cd267ffb5de362e61b84f450c70ca1cc46a5fbb1dd8eba18", size = 10577562, upload-time = "2026-06-26T08:29:25.829Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/3d/5876973a690257075503ec47e6709b8f548ecc0c4a004f713c434c35e302/longbridge-4.3.3-cp311-cp311-musllinux_1_2_aarch64.whl", hash = "sha256:e90f70bcea562951dfbff572c7d9238c5e65b90be23a097b0e1b9e7c89a0773f", size = 10645055, upload-time = "2026-06-26T08:29:28.468Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/dc/49a4102e8af4429374cd70e8a43541a20a6b5dd1d519b7c4d5d198ab4812/longbridge-4.3.3-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:3fa962a4b813cf3662a4fa24e31d61ab33b912d4f125475a967bd3f6a5b38e17", size = 10822621, upload-time = "2026-06-26T08:29:30.664Z" },
+    { url = "https://files.pythonhosted.org/packages/63/c6/4d5ee8613c967477a18bcfafa05dcf7ac50d62b08362d0a0919f9d85792f/longbridge-4.3.3-cp311-cp311-win_amd64.whl", hash = "sha256:5bdcea04d066094a012f1e5117e71049e43ab395dfed11f12878b6f88afbcd30", size = 11036111, upload-time = "2026-06-26T08:29:32.683Z" },
 ]
 
 [[package]]

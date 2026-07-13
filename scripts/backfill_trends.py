@@ -67,16 +67,16 @@ def main(argv: list[str]) -> int:
         print("无可回填交易日", file=sys.stderr)
         return 0
 
+    from kss.storage.trends import day_exists
+
     ok = skipped = 0
     miss = {"north": 0, "etf": 0, "sector": 0, "recs": 0}
     for d in dates:
-        out = atd.TRENDS_DIR / f"{d}.json"
-        if out.exists() and not args.force:
+        if day_exists(d, atd.ROOT / "storage" / "kss.db") and not args.force:
             skipped += 1
             continue
-        path = atd.write_trend_day(d, force=True)
-        import json
-        flags = json.loads(path.read_text(encoding="utf-8"))["flags"]
+        payload = atd.write_trend_day(d, force=True)
+        flags = payload["flags"]
         for k in miss:
             if not flags[k]:
                 miss[k] += 1

@@ -1,0 +1,19 @@
+{
+  "item_id": "3eadf44532fb59b3",
+  "kind": "investment",
+  "track_key": "semi",
+  "day": "20260710",
+  "status": "failed",
+  "title": "As AI Moves from Training to Inference, Optics Moves Closer to the Chip",
+  "url": "https://www.eetimes.com/as-ai-moves-from-training-to-inference-optics-moves-closer-to-the-chip/",
+  "source": "EE Times",
+  "time": "07-09 15:15",
+  "started_at_ts": 1783645959.4966981,
+  "started_at": "2026-07-10 09:12:39",
+  "error": "未配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY；wrapper 应从 Hermes .env grep 注入",
+  "error_type": "unavailable",
+  "body_text": "Imec researchers argue that co-packaged optics will not be enough for future AI systems, pushing the industry toward 2.5D and eventually 3D optical I/O. The pos",
+  "body_mode": "summary",
+  "body_char_count": 160,
+  "body_error": "TimeoutError: The read operation timed out"
+}

@@ -9,7 +9,6 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase   // U5: Timer lifecycle gate (R14)
     @AppStorage("sidebarOrder") private var sidebarOrder = ""
     @State private var searchText = ""
-    @State private var showNetworkSettings = false
 
     private var watchlist: [String] {
         watchlistSymbols
@@ -18,14 +17,10 @@ struct ContentView: View {
             .filter { !$0.isEmpty }
     }
 
-    /// 给盘后 collect_intraday 读：state-root/storage/watchlist_symbols.txt（一行一码）
-    private func syncWatchlistFile(_ symbols: [String]) {
-        guard let root = store.bridge?.stateRoot else { return }
-        let dir = root.appending(path: "storage")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let url = dir.appending(path: "watchlist_symbols.txt")
-        let body = symbols.joined(separator: "\n") + (symbols.isEmpty ? "" : "\n")
-        try? body.write(to: url, atomically: true, encoding: .utf8)
+    /// 给 collect_intraday / mi_signal_pack 等 Python 读者同步自选列表：写 kss.db
+    /// watchlist 表（plan 2026-07-12-005 / U15，割接自原先直接写 watchlist_symbols.txt）。
+    private func syncWatchlistToStore(_ symbols: [String]) {
+        Task { await store.syncWatchlistToDB(symbols) }
     }
 
     /// 价格页：完整四态 badge（页内）。其余页仅工具栏 status dot。
@@ -113,15 +108,9 @@ struct ContentView: View {
                             }
                             .foregroundStyle(store.selectedSection == .runbook ? theme.accent : theme.textSecondary)
                             .help(WorkspaceSection.runbook.displayName)
-                            Button {
-                                store.selectedSection = .architecture
-                            } label: {
-                                Label(WorkspaceSection.architecture.displayName, systemImage: WorkspaceSection.architecture.symbol)
-                            }
-                            .foregroundStyle(store.selectedSection == .architecture ? theme.accent : theme.textSecondary)
-                            .help(WorkspaceSection.architecture.displayName)
                             // Divider() 在这个 ToolbarItemGroup 里渲染成水平短横线而非竖线分隔符（KTD5 预见到的风险），
-                            // 改用固定宽度的竖线 Text 代替。分隔管理组（任务/架构）与用户组（主题/网络与凭据/刷新）。
+                            // 改用固定宽度的竖线 Text 代替。分隔管理组（任务）与用户组（主题/设置/刷新）。
+                            // 架构入口（plan 2026-07-12-005 U2）已移到侧边栏页脚与 GitHub 并排，不再占工具栏位。
                             // Seesaw 不在工具栏——它是全应用唯一的 AI 入口，改成侧边栏里常驻的 Post 式大按钮
                             // （SidebarView.seesawCTA），比工具栏小图标更醒目。
                             Text("|")
@@ -129,10 +118,12 @@ struct ContentView: View {
                                 .padding(.horizontal, 2)
                             themeMenu
                             Button {
-                                showNetworkSettings = true
+                                store.selectedSection = .settings
                             } label: {
-                                Label("网络与凭据", systemImage: "key.fill")
+                                Label(WorkspaceSection.settings.displayName, systemImage: WorkspaceSection.settings.symbol)
                             }
+                            .foregroundStyle(store.selectedSection == .settings ? theme.accent : theme.textSecondary)
+                            .help(WorkspaceSection.settings.displayName)
                             Button {
                                 Task { await store.loadSnapshot() }
                             } label: {
@@ -142,12 +133,23 @@ struct ContentView: View {
                     }
             }
         }
-        .sheet(isPresented: $showNetworkSettings) {
-            NetworkSettingsView()
-        }
         .frame(minWidth: 1080, minHeight: 720)
-        .onAppear { syncWatchlistFile(watchlist) }
+        .onAppear { syncWatchlistToStore(watchlist) }
         .onChange(of: scenePhase) { _, phase in store.updateSceneActive(phase == .active) }   // U5: Timer lifecycle gate
+        .overlay(alignment: .top) {
+            if store.showSelfCheckBanner {
+                SelfCheckBanner(
+                    items: store.selfCheckItems.filter { $0.isFail },
+                    isBusy: store.isRunningSelfCheck || store.isReinitializingRuntime,
+                    onDismiss: { store.dismissSelfCheckBanner() },
+                    onOpenSettings: { store.selectedSection = .settings },
+                    onReinitRuntime: { Task { await store.reinitializeRuntime() } }
+                )
+                .padding(.top, 12)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: store.showSelfCheckBanner)
         .overlay(alignment: .bottom) {
             if let sym = store.importingSymbol {
                 HStack(spacing: 10) {
@@ -238,6 +240,7 @@ struct ContentView: View {
                     snapshot: snapshot,
                     onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } },
                     onOpenSection: { section in store.selectedSection = section },
+                    tushareConfigured: store.isCredentialConfigured("tushare"),
                     realtimeQuote: store.realtimeQuote,
                     realtimeQuotes: store.realtimeQuotesBySymbol,
                     realtimeSparklines: store.realtimeSparklinesBySymbol,
@@ -287,19 +290,7 @@ struct ContentView: View {
                     pythonEnvironment: snapshot.pythonEnvironment,
                     isRunning: store.isRunningTask,
                     results: store.taskResults,
-                    scheduledJobs: store.scheduledJobs,
-                    categoryOrder: store.cronCategoryOrder,
-                    scheduledBusy: store.scheduledBusy,
-                    scheduledBatchBusy: store.scheduledBatchBusy,
-                    scheduledBatchNote: store.scheduledBatchNote,
-                    onRun: { task in Task { await store.runTask(task) } },
-                    onLoadSchedules: { Task { await store.loadScheduledJobs() } },
-                    onRerunSchedule: { label in Task { await store.rerunScheduledJob(label) } },
-                    onToggleSchedule: { label, enabled in Task { await store.toggleScheduledJob(label, enabled: enabled) } },
-                    onSyncSchedule: { label in Task { await store.syncScheduledJobs(label) } },
-                    onCatchUp: { Task { await store.catchUpStaleJobs() } },
-                    onRerunMany: { labels in Task { await store.rerunScheduledJobs(labels) } },
-                    onDismissBatchNote: { store.scheduledBatchNote = nil }
+                    onRun: { task in Task { await store.runTask(task) } }
                 )
             case .themes:
                 ThemesView(
@@ -378,6 +369,8 @@ struct ContentView: View {
                     .environmentObject(store)
             case .architecture:
                 ArchitectureView()
+            case .settings:
+                SettingsView()
             }
         } else {
             VStack(spacing: 12) {
@@ -392,7 +385,7 @@ struct ContentView: View {
         let result = WatchlistToggle.apply(watchlist, toggling: symbol)
         // watchlist 先持久化，生成失败不回滚自选。
         watchlistSymbols = result.list.joined(separator: ",")
-        syncWatchlistFile(result.list)
+        syncWatchlistToStore(result.list)
         // U5: 仅「加入」分支触发即时复盘（取消不触发）。
         if result.generate {
             Task { await store.generateReview(for: symbol) }

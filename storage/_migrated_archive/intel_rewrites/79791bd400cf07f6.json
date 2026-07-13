@@ -1,0 +1,19 @@
+{
+  "item_id": "79791bd400cf07f6",
+  "kind": "investment",
+  "track_key": "ai",
+  "day": "20260710",
+  "status": "failed",
+  "title": "提示词压缩竟成大模型新漏洞？港科大提出黑盒攻击框架COMA | ASE 2026",
+  "url": "https://mp.weixin.qq.com/s?__biz=MzA3MzI4MjgzMw==&mid=2651043143&idx=3&sn=fae11a4bb5c730ba8d9b6a984c1a8c76",
+  "source": "机器之心",
+  "time": "07-08 11:02",
+  "started_at_ts": 1783645825.8368242,
+  "started_at": "2026-07-10 09:10:25",
+  "error": "未配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY；wrapper 应从 Hermes .env grep 注入",
+  "error_type": "unavailable",
+  "body_text": "Agent 系统的安全分析，远不止 LLM 本身。",
+  "body_mode": "summary",
+  "body_char_count": 25,
+  "body_error": "body too short"
+}

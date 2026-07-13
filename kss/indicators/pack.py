@@ -30,8 +30,8 @@ DEFAULT_RULES: dict[str, Any] = {"defaults": {}, "symbols": {}}
 _SERIES_MAX_POINTS = 400
 
 
-def entry_signals_root(entry: RegistryEntry, root: Path | None = None) -> Path:
-    return (root or state_root()) / entry.signals_dir
+def _db_path(root: Path | None = None) -> Path:
+    return (root or state_root()) / "storage" / "kss.db"
 
 
 def entry_rules_path(entry: RegistryEntry, root: Path | None = None) -> Path:
@@ -69,37 +69,29 @@ def load_ohlcv(symbol: str, root: Path | None = None) -> pd.DataFrame | None:
     return None
 
 
-def write_pack(entry: RegistryEntry, pack: dict[str, Any], *, root: Path | None = None) -> Path:
-    """写入 asof 目录与 latest 拷贝."""
-    signals_root = entry_signals_root(entry, root)
-    asof = pack["asof"]
-    d = signals_root / asof
-    d.mkdir(parents=True, exist_ok=True)
-    path = d / f"{pack['symbol']}.json"
-    text = json.dumps(pack, ensure_ascii=False, indent=2, default=str)
-    path.write_text(text, encoding="utf-8")
-    ld = signals_root / "latest"
-    ld.mkdir(parents=True, exist_ok=True)
-    (ld / f"{pack['symbol']}.json").write_text(text, encoding="utf-8")
-    return path
+def write_pack(entry: RegistryEntry, pack: dict[str, Any], *, root: Path | None = None,
+               db_path: Path | None = None) -> None:
+    """写入 kss.db indicator_signal_packs 表（entry_id=entry.id）."""
+    from kss.storage.signal_packs import write_indicator_pack
+
+    write_indicator_pack(entry.id, pack, db_path or _db_path(root))
 
 
 def read_pack(
-    entry: RegistryEntry, symbol: str, *, asof: str | None = None, root: Path | None = None
+    entry: RegistryEntry, symbol: str, *, asof: str | None = None, root: Path | None = None,
+    db_path: Path | None = None,
 ) -> dict[str, Any] | None:
     """读取信号包；symbol 支持裸代码自动试 .SH/.SZ/.BJ。"""
-    signals_root = entry_signals_root(entry, root)
+    from kss.storage.signal_packs import read_indicator_pack
+
+    resolved = db_path or _db_path(root)
     candidates = [symbol]
     if "." not in symbol:
         candidates.extend([f"{symbol}.SH", f"{symbol}.SZ", f"{symbol}.BJ"])
     for cand in candidates:
-        p = (
-            (signals_root / asof / f"{cand}.json")
-            if asof
-            else (signals_root / "latest" / f"{cand}.json")
-        )
-        if p.exists():
-            return json.loads(p.read_text(encoding="utf-8"))
+        pack = read_indicator_pack(entry.id, cand, asof, resolved)
+        if pack is not None:
+            return pack
     return None
 
 
@@ -308,6 +300,7 @@ def run_entry_pack(
     asof: str | None = None,
     cfg: WFConfig | None = None,
     root: Path | None = None,
+    db_path: Path | None = None,
 ) -> dict[str, Any]:
     """单票端到端：按 entry.kind 分派到通用引擎或 MI 专属引擎.
 
@@ -319,11 +312,12 @@ def run_entry_pack(
         # 字段不同（n_grid/entry_z_grid 等 MI 专属），故不透传 cfg——MI 用自己的默认值。
         from kss.strategies import mi_pack as _mi
 
-        return _mi.run_symbol_pack(symbol, asof=asof, root=root)
+        return _mi.run_symbol_pack(symbol, asof=asof, root=root, db_path=db_path)
     if entry.kind != KIND_PRIMITIVE:
         raise ValueError(f"未知 registry kind: {entry.kind!r}")
 
     root = root or state_root()
+    resolved_db = db_path or _db_path(root)
     code = symbol if "." in symbol else f"{symbol}.SH"
     df = load_ohlcv(code, root)
     if df is None or len(df) < 80:
@@ -352,12 +346,12 @@ def run_entry_pack(
             "param_delta": {},
             "generated_at": datetime.now().isoformat(timespec="seconds"),
         }
-        write_pack(entry, pack, root=root)
+        write_pack(entry, pack, db_path=resolved_db)
         return pack
 
     ref = str(pd.Timestamp(df["trade_date"].iloc[-1]).date())
     resolved_asof = asof or ref
-    prev = read_pack(entry, code, root=root)
+    prev = read_pack(entry, code, db_path=resolved_db)
     prev_action = (prev or {}).get("action") if prev else None
 
     wf = reestimate(df, entry.family, cfg=cfg or WFConfig())
@@ -367,19 +361,20 @@ def run_entry_pack(
     if pack["status"] == "stale" and resolved_asof == ref and wf.status == "ok":
         pack["status"] = "ok"
         pack["reason"] = (wf.replay or {}).get("action", {}).get("reason", "")
-    write_pack(entry, pack, root=root)
+    write_pack(entry, pack, db_path=resolved_db)
     return pack
 
 
 def read_any_pack(
-    entry: RegistryEntry, symbol: str, *, asof: str | None = None, root: Path | None = None
+    entry: RegistryEntry, symbol: str, *, asof: str | None = None, root: Path | None = None,
+    db_path: Path | None = None,
 ) -> dict[str, Any] | None:
     """统一读入口：按 kind 分派到通用 read_pack 或 mi_pack.read_pack。"""
     if entry.kind == KIND_MI_LEGACY:
         from kss.strategies import mi_pack as _mi
 
-        return _mi.read_pack(symbol, asof=asof, root=entry_signals_root(entry, root))
-    return read_pack(entry, symbol, asof=asof, root=root)
+        return _mi.read_pack(symbol, asof=asof, db_path=db_path or _db_path(root))
+    return read_pack(entry, symbol, asof=asof, root=root, db_path=db_path)
 
 
 def to_any_signal(entry: RegistryEntry, pack: dict[str, Any]) -> dict[str, Any]:

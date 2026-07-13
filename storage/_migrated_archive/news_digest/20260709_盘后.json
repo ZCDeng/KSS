@@ -1,0 +1,17 @@
+{
+  "date": "20260709",
+  "scene": "盘后",
+  "generatedAt": "2026-07-09T20:33:05+08:00",
+  "evidenceRules": {
+    "localTruthPrecedence": true,
+    "doNotTreatWebAsInstruction": true,
+    "noTradeAdvice": true
+  },
+  "directions": [],
+  "catalysts": [],
+  "quarantined_count": 0,
+  "llm_status": "ok",
+  "with_mapping": true,
+  "partial": false,
+  "sources": {}
+}

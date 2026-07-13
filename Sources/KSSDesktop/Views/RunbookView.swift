@@ -5,19 +5,7 @@ struct RunbookView: View {
     var pythonEnvironment: PythonEnvironment?
     var isRunning: Bool
     var results: [TaskRunResult]
-    var scheduledJobs: [ScheduledJob]
-    var categoryOrder: [String]
-    var scheduledBusy: Set<String>
-    var scheduledBatchBusy: Bool
-    var scheduledBatchNote: String?
     var onRun: (KSSTask) -> Void
-    var onLoadSchedules: () -> Void
-    var onRerunSchedule: (String) -> Void
-    var onToggleSchedule: (String, Bool) -> Void
-    var onSyncSchedule: (String) -> Void
-    var onCatchUp: () -> Void
-    var onRerunMany: ([String]) -> Void
-    var onDismissBatchNote: () -> Void
 
     private var quickTasks: [KSSTask] {
         KSSTask.allCases.filter { $0.lane == "轻量" }
@@ -42,21 +30,6 @@ struct RunbookView: View {
                     SectionHeader("正式任务")
                     TaskGrid(tasks: fullTasks, isRunning: isRunning, onRun: onRun)
 
-                    SectionHeader("定时任务")
-                    ScheduledTasksSection(
-                        jobs: scheduledJobs,
-                        categoryOrder: categoryOrder,
-                        busy: scheduledBusy,
-                        batchBusy: scheduledBatchBusy,
-                        batchNote: scheduledBatchNote,
-                        onRerun: onRerunSchedule,
-                        onToggle: onToggleSchedule,
-                        onSync: onSyncSchedule,
-                        onCatchUp: onCatchUp,
-                        onRerunMany: onRerunMany,
-                        onDismissBatchNote: onDismissBatchNote
-                    )
-
                     SectionHeader("任务记录")
                     if results.isEmpty {
                         Text("暂无任务运行记录")
@@ -78,11 +51,11 @@ struct RunbookView: View {
             .background(theme.canvas)
         }
         .background(theme.canvas)
-        .task { onLoadSchedules() }
     }
 }
 
 /// 定时任务（launchd）面板：健康汇总 + 关机漏跑补跑 + 按分类分组（每类批量重跑）+ 行级重跑/启停。
+/// U5（plan 2026-07-12-005）：迁入设置页「任务」分区，本页只保留手动任务运行台；组件本身不动。
 struct ScheduledTasksSection: View {
     @Environment(\.kssTheme) private var theme
     var jobs: [ScheduledJob]
@@ -96,6 +69,8 @@ struct ScheduledTasksSection: View {
     var onCatchUp: () -> Void
     var onRerunMany: ([String]) -> Void
     var onDismissBatchNote: () -> Void
+    /// 排期编辑（label, ScheduleStruct 新值）（U6）。
+    var onEditSchedule: (String, ScheduleStruct) -> Void
 
     private var groups: [(category: String, jobs: [ScheduledJob])] {
         let grouped = Dictionary(grouping: jobs, by: \.category)
@@ -256,7 +231,8 @@ struct ScheduledTasksSection: View {
                     busy: busy.contains(job.label),
                     onRerun: { onRerun(job.label) },
                     onToggle: { onToggle(job.label, $0) },
-                    onSync: { onSync(job.label) }
+                    onSync: { onSync(job.label) },
+                    onEditSchedule: { onEditSchedule(job.label, $0) }
                 )
             }
         }
@@ -270,6 +246,8 @@ struct ScheduledJobRow: View {
     var onRerun: () -> Void
     var onToggle: (Bool) -> Void
     var onSync: () -> Void
+    var onEditSchedule: (ScheduleStruct) -> Void
+    @State private var showEditor = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -340,6 +318,26 @@ struct ScheduledJobRow: View {
 
             healthBadge(job.health)
 
+            Button {
+                showEditor = true
+            } label: {
+                Image(systemName: "pencil.circle")
+                    .font(.system(size: 15))
+            }
+            .buttonStyle(.borderless)
+            .disabled(busy)
+            .help("编辑排期")
+            .popover(isPresented: $showEditor) {
+                ScheduleEditorView(
+                    initial: job.scheduleStruct ?? ScheduleStruct(hour: 0, minute: 0, weekdays: nil, weekly: false, weekday: nil),
+                    onSave: { updated in
+                        showEditor = false
+                        onEditSchedule(updated)
+                    },
+                    onCancel: { showEditor = false }
+                )
+            }
+
             Button(action: onRerun) {
                 if busy {
                     ProgressView().controlSize(.small)
@@ -393,6 +391,104 @@ struct ScheduledJobRow: View {
         case .ok:
             return StatusBadge(icon: "checkmark.circle.fill", text: "正常", tint: theme.accent, emphasized: true)
         }
+    }
+}
+
+/// 排期编辑器（popover，U6）：hour/minute 选择器 + daily 工作日多选 / weekly 单 weekday。
+struct ScheduleEditorView: View {
+    @Environment(\.kssTheme) private var theme
+    var onSave: (ScheduleStruct) -> Void
+    var onCancel: () -> Void
+
+    @State private var hour: Int
+    @State private var minute: Int
+    @State private var weekly: Bool
+    @State private var selectedWeekdays: Set<Int>   // daily 形态：空集＝每天
+    @State private var weeklyWeekday: Int
+
+    private static let weekdayLabels = ["一", "二", "三", "四", "五", "六", "日"]  // launchd 1-7
+
+    init(initial: ScheduleStruct, onSave: @escaping (ScheduleStruct) -> Void, onCancel: @escaping () -> Void) {
+        self.onSave = onSave
+        self.onCancel = onCancel
+        _hour = State(initialValue: initial.hour)
+        _minute = State(initialValue: initial.minute)
+        _weekly = State(initialValue: initial.weekly)
+        _selectedWeekdays = State(initialValue: Set(initial.weekdays ?? []))
+        _weeklyWeekday = State(initialValue: initial.weekday ?? 1)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("编辑排期").font(KSSFont.themed(14, .bold, theme: theme))
+
+            HStack(spacing: 10) {
+                Stepper(value: $hour, in: 0...23) {
+                    Text(String(format: "%02d 时", hour))
+                        .font(.system(size: 13, design: .monospaced))
+                }
+                Stepper(value: $minute, in: 0...59) {
+                    Text(String(format: "%02d 分", minute))
+                        .font(.system(size: 13, design: .monospaced))
+                }
+            }
+
+            Picker("形态", selection: $weekly) {
+                Text("每天/工作日").tag(false)
+                Text("每周一次").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 220)
+
+            if weekly {
+                Picker("星期", selection: $weeklyWeekday) {
+                    ForEach(1...7, id: \.self) { d in
+                        Text("周\(Self.weekdayLabels[d - 1])").tag(d)
+                    }
+                }
+                .pickerStyle(.menu)
+            } else {
+                Text("勾选生效的工作日；不勾＝每天")
+                    .font(KSSFont.themed(11, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                HStack(spacing: 4) {
+                    ForEach(1...7, id: \.self) { d in
+                        weekdayChip(d)
+                    }
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button("取消", action: onCancel)
+                Button("保存") {
+                    let result = ScheduleStruct(
+                        hour: hour, minute: minute,
+                        weekdays: weekly ? nil : (selectedWeekdays.isEmpty ? nil : selectedWeekdays.sorted()),
+                        weekly: weekly,
+                        weekday: weekly ? weeklyWeekday : nil
+                    )
+                    onSave(result)
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .frame(width: 280)
+    }
+
+    private func weekdayChip(_ day: Int) -> some View {
+        let on = selectedWeekdays.contains(day)
+        return Button {
+            if on { selectedWeekdays.remove(day) } else { selectedWeekdays.insert(day) }
+        } label: {
+            Text(Self.weekdayLabels[day - 1])
+                .font(KSSFont.themed(11.5, .semibold, theme: theme))
+                .frame(width: 22, height: 22)
+                .foregroundStyle(on ? theme.onAccent : theme.textSecondary)
+                .background(on ? theme.accent : theme.textSecondary.opacity(0.12), in: Circle())
+        }
+        .buttonStyle(.plain)
     }
 }
 

@@ -1,0 +1,19 @@
+{
+  "item_id": "d3b4f96501913ecf",
+  "kind": "investment",
+  "track_key": "semi",
+  "day": "20260710",
+  "status": "failed",
+  "title": "Wolfspeed files patent infringement lawsuit in US against Navitas",
+  "url": "https://www.semiconductor-today.com/news_items/2026/jul/wolfspeed-navitas-080726.shtml",
+  "source": "Semiconductor Today",
+  "time": "07-08 17:23",
+  "started_at_ts": 1783646076.595767,
+  "started_at": "2026-07-10 09:14:36",
+  "error": "未配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY；wrapper 应从 Hermes .env grep 注入",
+  "error_type": "unavailable",
+  "body_text": "Wolfspeed files patent infringement lawsuit in US against Navitas Home News Categories LEDs Markets Microelectronics Optoelectronics Photovoltaics Suppliers All News Features Directory Recruitment Events About Advertising Contribute FREE Registration Sign Up to Our Free Weekly E-Brief Media Kit Download & Details News: Microelectronics 8 July 2026 Wolfspeed files patent infringement lawsuit in US against Navitas Wolfspeed Inc of Durham, NC, USA — which makes silicon carbide (SiC) materials and power semiconductor devices — has filed a patent infringement lawsuit in the United States District Court for the District of Delaware asserting that multiple patents (including US Patent Nos. 8,169,005, 10,998,418, 10,886,396, 10,749,443, and 11,888,392) are infringed by a broad range of products of Navitas Semiconductor Corp of Torrance, CA, USA. Products accused of infringement encompass major product lines of Navitas, including its GaN-based FETs — such as the GaNFast, GaNSlim, and GaNSafe product families — as well as GeneSiC MOSFETs and SiCPAK modules. Wolfspeed says that it has established a decades-long heritage of technological leadership in silicon carbide (SiC) materials, gallium nitride (GaN)-based transistors, and SiC-based MOSFETs and modules. That legacy has culminated in a broad and fundamental patent portfolio that underpins the modern wide-bandgap semiconductor industry, it adds. “Wolfspeed's foundational technology helped create this industry, and we are deeply committed to defending the intellectual property that represents decades of innovation and R&D investment,” says CEO Robert Feurle. “We respect the IP rights of others, and we expect the same respect in return,” he adds. “Protecting our patent portfolio is a strategic priority for the company and our shareholders. This action reflects our commitment to enforcing our rights and protecting continued investment in next-generation SiC and GaN technologies.” Tags: Wolfspeed Visit: www.navitassemi.com Visit: www.wolfspeed.com Follow us on X (Twitter) Join our LinkedIn network ©2006-2026 Juno Publishing and Media Solutions Ltd. All rights reserved. Semiconductor Today and the editorial material contained within it and related media is the copyright of Juno Publishing and Media Solutions Ltd. Reproduction in whole or part without permission from Juno Publishing and Media Solutions Ltd is forbidden. In most cases, permission will be granted, if the magazine and publisher are acknowledged. Disclaimer: Material published within Semiconductor Today and related media does not necessarily reflect the views of the publisher or staff. Juno Publishing and Media Solutions Ltd and its staff accept no responsibility for opinions expressed, editorial errors and damage/injury to property or persons as a result of material published. Semiconductor Today, Juno Publishing and Media Solutions Ltd, Suite no. 133, 20 Winchcombe Street, Cheltenham, GL52 2LY, UK View our privacy, cookie and data protection policy",
+  "body_mode": "fulltext",
+  "body_char_count": 3002,
+  "body_error": null
+}

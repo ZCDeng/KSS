@@ -36,7 +36,7 @@ def test_resolve_unpinned(tmp_path: Path) -> None:
 
 
 def test_write_read_roundtrip(tmp_path: Path) -> None:
-    root = tmp_path / "mi_signals"
+    db_path = tmp_path / "kss.db"
     pack = {
         "schema_version": 1,
         "symbol": "688017.SH",
@@ -56,8 +56,8 @@ def test_write_read_roundtrip(tmp_path: Path) -> None:
         "param_history": [],
         "param_delta": {},
     }
-    write_pack(pack, root=root)
-    loaded = read_pack("688017.SH", root=root)
+    write_pack(pack, db_path=db_path)
+    loaded = read_pack("688017.SH", db_path=db_path)
     assert loaded is not None
     assert loaded["n"] == 12
     assert to_mi_signal(loaded)["action"] == "STAY_FLAT"
@@ -67,12 +67,14 @@ def test_write_read_roundtrip(tmp_path: Path) -> None:
 
 
 def test_read_pack_uses_state_root_env(tmp_path: Path, monkeypatch) -> None:
-    """bundle 模式：代码在 Resources，pack 在 KSS_STATE_ROOT/storage/mi_signals。"""
+    """bundle 模式：代码在 Resources，pack 在 KSS_STATE_ROOT/storage/kss.db。"""
+    import json
+
     from kss.strategies import mi_pack as mp
+    from kss.storage.db import connect, ensure_schema
 
     state = tmp_path / "state"
-    sig = state / "storage" / "mi_signals" / "latest"
-    sig.mkdir(parents=True)
+    db_path = state / "storage" / "kss.db"
     pack = {
         "schema_version": 1,
         "symbol": "688017.SH",
@@ -81,9 +83,12 @@ def test_read_pack_uses_state_root_env(tmp_path: Path, monkeypatch) -> None:
         "action": "STAY_FLAT",
         "n": 20,
     }
-    (sig / "688017.SH.json").write_text(
-        __import__("json").dumps(pack), encoding="utf-8"
-    )
+    with connect(db_path) as conn:
+        ensure_schema(conn)
+        conn.execute(
+            "INSERT OR REPLACE INTO mi_signal_packs (asof, symbol, payload_json, created_at) VALUES (?,?,?,?)",
+            (pack["asof"], pack["symbol"], json.dumps(pack), None),
+        )
     monkeypatch.setenv("KSS_STATE_ROOT", str(state))
     # 模拟代码根 ≠ 状态根
     monkeypatch.setenv("KSS_PROJECT_ROOT", str(tmp_path / "code_only"))
@@ -154,6 +159,11 @@ def test_run_symbol_pack_fixture(tmp_path: Path) -> None:
     )
     assert pack["symbol"] == "688017.SH"
     assert pack["status"] in ("ok", "skipped", "error")
-    assert (tmp_path / "storage" / "mi_signals" / "latest" / "688017.SH.json").exists() or pack[
-        "status"
-    ] != "ok"
+    import sqlite3
+
+    conn = sqlite3.connect(tmp_path / "storage" / "kss.db")
+    row = conn.execute(
+        "SELECT 1 FROM mi_signal_packs WHERE symbol=?", ("688017.SH",)
+    ).fetchone()
+    conn.close()
+    assert row is not None or pack["status"] != "ok"

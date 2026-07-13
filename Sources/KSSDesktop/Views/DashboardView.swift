@@ -5,6 +5,8 @@ struct DashboardView: View {
     var snapshot: AppSnapshot
     var onSelectSymbol: (String) -> Void
     var onOpenSection: (WorkspaceSection) -> Void
+    /// nil＝自检尚未跑完（未知，不判定）；false＝明确未配置（U9/R12，AE1）。
+    var tushareConfigured: Bool? = nil
     // U2 实时接线：页面加载触发 Longbridge 实时拉取，展示新鲜度徽标。
     var realtimeQuote: LongbridgeQuote? = nil
     var realtimeQuotes: [String: LongbridgeQuote] = [:]
@@ -45,6 +47,14 @@ struct DashboardView: View {
                                 updatedAt: realtimeUpdatedAt,
                                 onRetry: onRetryRealtime
                             )
+                        }
+                    }
+
+                    // 缺 Tushare 凭证 + 股票池确实为空 → 明确指引（U9/R12，AE1），不是静默空白。
+                    // 凭证已配但数据加载失败走既有错误路径，不用这张卡（两种情况不能混淆）。
+                    if tushareConfigured == false, snapshot.stocks.isEmpty {
+                        MissingCredentialCard(sourceDisplayName: "Tushare Token") {
+                            onOpenSection(.settings)
                         }
                     }
 

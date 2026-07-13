@@ -225,3 +225,11 @@ jobs:
     category: 系统
     catchup: true
     enabled: true
+
+  - suffix: rotate_cron_logs
+    wrapper: scripts/run_rotate_cron_logs.sh
+    schedule: {hour: 3, minute: 10}
+    title: 日志轮转
+    category: 系统
+    catchup: false
+    enabled: true

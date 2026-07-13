@@ -16,6 +16,7 @@ import json
 import math
 import os
 import re
+import shutil
 import statistics
 import subprocess
 import sys
@@ -34,18 +35,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 # 可变状态根（storage/.cache）；默认回落 PROJECT_ROOT → 未设 env 时与历史行为逐字一致。
 STATE_ROOT = _env_path("KSS_STATE_ROOT") or PROJECT_ROOT
-PAPER_DIR = STATE_ROOT / "storage" / "paper_trade"
 REVIEW_DIR = STATE_ROOT / "storage" / "daily_review"
 REPORT_DIR = STATE_ROOT / "storage" / "reports"
 BJ_SCAN_DIR = REPORT_DIR / "bj50_scan"
 BJ_CACHE_DIR = STATE_ROOT / "storage" / "bj_cache"
-APP_RUN_DIR = STATE_ROOT / "storage" / "app_runs"
-TASK_LOG_PATH = APP_RUN_DIR / "kss_desktop_tasks.jsonl"
-NAMES_PATH = STATE_ROOT / "storage" / "stock_names.csv"
 SUPPLY_CHAIN_PATH = PROJECT_ROOT / "kss" / "config" / "supply_chain.yaml"  # config = 代码，随 bundle
-SECTOR_ROTATION_DIR = STATE_ROOT / "storage" / "sector_rotation"
-NEWS_DIGEST_DIR = STATE_ROOT / "storage" / "news_digest"  # 舆情热点 digest 归档(cron 生成)
-INTEL_RADAR_DIR = STATE_ROOT / "storage" / "intel_radar"   # 资讯雷达 12 赛道 RSS 缓存
 DATA_CATALOG_PATH = STATE_ROOT / "storage" / "data_catalog.json"  # 由 build_data_catalog.py 生成
 TOP_N = 5
 TOP_PCT = 0.2
@@ -160,18 +154,22 @@ def _read_csv_rows(path: Path) -> list[dict[str, str]]:
 
 
 def _load_names() -> dict[str, dict[str, str]]:
+    """自选/龙头等展示名查询表。db_path 显式从本模块 STATE_ROOT 派生（同
+    _indicator_watchlist_symbols 惯例）——测试靠 monkeypatch.setattr(b, "STATE_ROOT", ...)
+    隔离，走隐式默认会绕过这层隔离（plan 2026-07-12-005 / U15 割接自 stock_names.csv）。"""
+    from kss.storage.stock_names import load_stock_names  # noqa: PLC0415
+
     out: dict[str, dict[str, str]] = {}
     supply_names = _load_supply_chain_names()
-    if NAMES_PATH.exists():
-        rows = _read_csv_rows(NAMES_PATH)
-        for row in rows:
-            symbol = row.get("ts_code", "")
-            if symbol:
-                out[symbol] = {
-                    "name": row.get("name", "") or "",
-                    "industry": row.get("industry", "") or "",
-                    "concept": row.get("concept", "") or "",
-                }
+    names_df = load_stock_names(db_path=STATE_ROOT / "storage" / "kss.db")
+    for row in names_df.to_dict("records"):
+        symbol = row.get("ts_code", "")
+        if symbol:
+            out[symbol] = {
+                "name": row.get("name", "") or "",
+                "industry": row.get("industry", "") or "",
+                "concept": row.get("concept", "") or "",
+            }
     for symbol, meta in supply_names.items():
         existing = out.get(symbol, {})
         out[symbol] = {
@@ -276,13 +274,9 @@ def _load_stock_summaries(names: dict[str, dict[str, str]]) -> list[dict[str, An
 
 
 def _latest_paper_log() -> dict[str, Any] | None:
-    files = sorted(PAPER_DIR.glob("*.json"))
-    for path in reversed(files):
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-    return None
+    from kss.storage.paper_trade import read_latest_day
+
+    return read_latest_day(STATE_ROOT / "storage" / "kss.db")
 
 
 def _tracking_return(symbol: str, prediction_date: str) -> float | None:
@@ -575,13 +569,9 @@ def _full_python() -> Path | None:
 
 
 def _paper_summary() -> dict[str, Any]:
-    files = sorted(PAPER_DIR.glob("*.json"))
-    entries: list[dict[str, Any]] = []
-    for path in files:
-        try:
-            entries.append(json.loads(path.read_text(encoding="utf-8")))
-        except Exception:
-            continue
+    from kss.storage.paper_trade import read_all_days
+
+    entries = read_all_days(STATE_ROOT / "storage" / "kss.db")
 
     daily_returns: list[dict[str, Any]] = []
     for entry in entries:
@@ -675,25 +665,50 @@ def _task_result(
 
 
 def _append_task_history(result: dict[str, Any]) -> None:
-    APP_RUN_DIR.mkdir(parents=True, exist_ok=True)
-    with TASK_LOG_PATH.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(result, ensure_ascii=False, allow_nan=False, separators=(",", ":")) + "\n")
+    from kss.storage.db import connect, ensure_schema
+
+    db_path = STATE_ROOT / "storage" / "kss.db"
+    with connect(db_path) as conn:
+        ensure_schema(conn)
+        conn.execute(
+            """INSERT OR REPLACE INTO app_task_runs
+            (task_id, started_at, title, finished_at, status, exit_code, summary, stdout, stderr, artifacts_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                result.get("taskId"), result.get("startedAt"), result.get("title"),
+                result.get("finishedAt"), result.get("status", "unknown"), result.get("exitCode"),
+                result.get("summary"), result.get("stdout"), result.get("stderr"),
+                json.dumps(result.get("artifacts") or [], ensure_ascii=False),
+            ),
+        )
 
 
 def _task_history(limit: int = 25) -> list[dict[str, Any]]:
-    if not TASK_LOG_PATH.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    for line in TASK_LOG_PATH.read_text(encoding="utf-8", errors="ignore").splitlines():
-        if not line.strip():
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            rows.append(payload)
-    return list(reversed(rows[-limit:]))
+    from kss.storage.db import connect, ensure_schema
+
+    db_path = STATE_ROOT / "storage" / "kss.db"
+    with connect(db_path) as conn:
+        ensure_schema(conn)
+        rows = conn.execute(
+            """SELECT task_id, started_at, title, finished_at, status, exit_code, summary,
+            stdout, stderr, artifacts_json FROM app_task_runs ORDER BY started_at DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        out.append({
+            "taskId": row["task_id"],
+            "startedAt": row["started_at"],
+            "title": row["title"],
+            "finishedAt": row["finished_at"],
+            "status": row["status"],
+            "exitCode": row["exit_code"],
+            "summary": row["summary"],
+            "stdout": row["stdout"],
+            "stderr": row["stderr"],
+            "artifacts": json.loads(row["artifacts_json"]) if row["artifacts_json"] else [],
+        })
+    return out
 
 
 def _run_process_task(
@@ -923,17 +938,16 @@ def _build_logmv_picks(date: str | None = None) -> tuple[str, list[dict[str, Any
     return target_date, picks
 
 
-def _save_picks(date: str, picks: list[dict[str, Any]], force: bool) -> tuple[Path, bool]:
-    PAPER_DIR.mkdir(parents=True, exist_ok=True)
-    out = PAPER_DIR / f"{date}.json"
-    if out.exists() and not force:
-        return out, False
+def _save_picks(date: str, picks: list[dict[str, Any]], force: bool) -> tuple[str, bool]:
+    from kss.storage.paper_trade import day_exists, write_day
+
+    db_path = STATE_ROOT / "storage" / "kss.db"
+    if day_exists(date, db_path) and not force:
+        return date, False
     payload = {
         "prediction_date": date,
         "generated_at": datetime.now().isoformat(),
         "strategy": "log_mv_reverse",
-        "source": "KSSDesktop stdlib bridge",
-        "use_execution": False,
         "top_pct": TOP_PCT,
         "top_n": TOP_N,
         "picks": [
@@ -947,8 +961,8 @@ def _save_picks(date: str, picks: list[dict[str, Any]], force: bool) -> tuple[Pa
             for item in picks
         ],
     }
-    out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return out, True
+    write_day(payload, db_path)
+    return date, True
 
 
 def _run_daily_picks(args: dict[str, str | bool]) -> dict[str, Any]:
@@ -966,8 +980,8 @@ def _run_daily_picks(args: dict[str, str | bool]) -> dict[str, Any]:
         ]
         artifacts: list[str] = []
         if save:
-            path, wrote = _save_picks(target_date, picks, force=force)
-            artifacts.append(str(path.relative_to(STATE_ROOT)))
+            _, wrote = _save_picks(target_date, picks, force=force)
+            artifacts.append("storage/kss.db")
             status = "success" if wrote else "skipped"
             action = "saved" if wrote else "already exists"
         else:
@@ -1119,15 +1133,9 @@ def _run_logmv_backtest(args: dict[str, str | bool]) -> dict[str, Any]:
 
 
 def _load_radar_archives() -> list[dict[str, Any]]:
-    archives: list[dict[str, Any]] = []
-    for path in sorted((STATE_ROOT / "storage" / "etf_radar").glob("*.json")):
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        payload["_path"] = str(path.relative_to(STATE_ROOT))
-        archives.append(payload)
-    return archives
+    from kss.storage.etf_radar import read_all_ascending
+
+    return read_all_ascending(STATE_ROOT / "storage" / "kss.db")
 
 
 def _run_radar_archive_analysis() -> dict[str, Any]:
@@ -1273,20 +1281,20 @@ def _run_formal_daily_picks(args: dict[str, str | bool]) -> dict[str, Any]:
         started,
         timeout=300,
     )
-    # 落盘断言：当日 paper_trade JSON 必须存在
+    # 落盘断言：当日 paper_trade_picks 必须存在
     if target_date is None:
         target_date = datetime.now().strftime("%Y-%m-%d")
-    log_path = PAPER_DIR / f"{target_date}.json"
-    if result.get("status") == "success" and not log_path.exists():
+    from kss.storage.paper_trade import day_exists
+
+    exists = day_exists(target_date, STATE_ROOT / "storage" / "kss.db")
+    if result.get("status") == "success" and not exists:
         result = dict(result)
         result["status"] = "failed"
-        result["summary"] = f"选股进程 exit 0 但日志缺失: {log_path}"
+        result["summary"] = f"选股进程 exit 0 但落库缺失: {target_date}"
         result["exitCode"] = 2
-    elif result.get("status") == "success" and log_path.exists():
+    elif result.get("status") == "success" and exists:
         result = dict(result)
-        result["artifacts"] = list(result.get("artifacts") or []) + [
-            str(log_path.relative_to(STATE_ROOT))
-        ]
+        result["artifacts"] = list(result.get("artifacts") or []) + ["storage/kss.db"]
     return result
 
 
@@ -1491,7 +1499,7 @@ def _run_refresh_sector_rotation() -> dict[str, Any]:
         "刷新板块热点轮动",
         [str(python), "scripts/refresh_hotspot_rotation.py", "--date", "latest", "--lookback-days", "5", "--enable-kaipan", "--enable-leaders"],
         started,
-        artifacts=["storage/sector_rotation"],
+        artifacts=["storage/kss.db"],
         timeout=300,
     )
 
@@ -1551,7 +1559,7 @@ def _run_daily_review_symbol(args: dict[str, str | bool]) -> dict[str, Any]:
 
 
 def _run_mi_signal_pack(args: dict[str, str | bool]) -> dict[str, Any]:
-    """日终 MI Signal Pack：自选 walk-forward 后写 storage/mi_signals."""
+    """日终 MI Signal Pack：自选 walk-forward 后写 kss.db mi_signal_packs 表."""
     started = _now_iso()
     python = _full_python()
     if python is None:
@@ -1565,7 +1573,7 @@ def _run_mi_signal_pack(args: dict[str, str | bool]) -> dict[str, Any]:
         "MI Signal Pack",
         command,
         started,
-        artifacts=["storage/mi_signals/latest"],
+        artifacts=["storage/kss.db"],
         timeout=900,
     )
 
@@ -1585,7 +1593,7 @@ def _run_indicator_signal_pack(args: dict[str, str | bool]) -> dict[str, Any]:
         "指标 Signal Pack",
         command,
         started,
-        artifacts=["storage/indicator_signals"],
+        artifacts=["storage/kss.db"],
         timeout=900,
     )
 
@@ -1726,13 +1734,11 @@ def _recommendation_tracking(names: dict[str, dict[str, str]]) -> list[dict[str,
     ledger_rows = _ledger_tracking(names)
     if ledger_rows is not None:
         return ledger_rows
-    # 回退: 账本不可用时读旧 JSON (退役过渡期的回放来源)
+    # 回退: 账本不可用时读 paper_trade_picks
+    from kss.storage.paper_trade import read_all_days
+
     out: list[dict[str, Any]] = []
-    for path in sorted(PAPER_DIR.glob("*.json"), reverse=True):
-        try:
-            log = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
+    for log in reversed(read_all_days(STATE_ROOT / "storage" / "kss.db")):
         date = log.get("prediction_date")
         if not date:
             continue
@@ -1865,7 +1871,6 @@ def _bj_detail(symbol: str) -> dict[str, Any] | None:
 
 _DAILYBASIC_JSON = STATE_ROOT / "storage" / "macro" / "dailybasic_latest.json"
 _MARKET_STRIP_JSON = STATE_ROOT / "storage" / "macro" / "market_strip.json"
-ETF_RADAR_DIR = STATE_ROOT / "storage" / "etf_radar"
 
 
 def _market_strip() -> dict[str, Any] | None:
@@ -2085,24 +2090,22 @@ def _commentary_to_md(raw: str) -> str:
 def _sector_reviews(limit: int = 40) -> list[dict[str, Any]]:
     """每日板块复盘序列：逐份 etf_radar 切片，新到旧。
 
-    数据源 storage/etf_radar/YYYYMMDD.json；同名 .commentary.md 为投顾点评
-    （含 概念轮动 / 七大主题 / 加减仓建议 等段落）。板块复盘与个股复盘一样每日一篇，
-    返回列表供复盘页按日期浏览；总览板块信息图取首项（最新一天）。
+    数据源 kss.db etf_radar_snapshots；同表 etf_radar_commentary_index 记投顾点评
+    （.commentary.md，仍是文件，含 概念轮动 / 七大主题 / 加减仓建议 等段落）路径。
+    板块复盘与个股复盘一样每日一篇，返回列表供复盘页按日期浏览；总览板块信息图取
+    首项（最新一天）。
     """
-    if not ETF_RADAR_DIR.exists():
-        return []
-    files = sorted(ETF_RADAR_DIR.glob("*.json"), reverse=True)[:limit]
+    from kss.storage.etf_radar import read_commentary_path, read_history
+
     out: list[dict[str, Any]] = []
-    for fp in files:
-        try:
-            d = json.loads(fp.read_text(encoding="utf-8"))
-        except Exception:
-            continue
+    for d in read_history(limit, STATE_ROOT / "storage" / "kss.db"):
         pulse = _pulse_from_dict(d)
         if not pulse:
             continue
-        commentary_path = fp.with_name(f"{fp.stem}.commentary.md")
-        if commentary_path.exists():
+        trade_date = str(d.get("trade_date") or "")
+        rel_path = read_commentary_path(trade_date, STATE_ROOT / "storage" / "kss.db")
+        commentary_path = (STATE_ROOT / rel_path) if rel_path else None
+        if commentary_path is not None and commentary_path.exists():
             try:
                 pulse["commentary"] = _commentary_to_md(commentary_path.read_text(encoding="utf-8"))
             except Exception:
@@ -2112,47 +2115,28 @@ def _sector_reviews(limit: int = 40) -> list[dict[str, Any]]:
         out.append(pulse)
     return out
 
-def _sector_rotation_snapshot(path: Path) -> dict[str, Any] | None:
-    """读取一份板块热点轮动归档；失败返回 None."""
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
 
 def _news_digest(date: str = "", scene: str = "") -> dict[str, Any]:
-    """舆情热点 digest:读 cron 归档的结构化 JSON,供 UI 两段式渲染(plan U11)。
+    """舆情热点 digest:读 kss.db 归档的结构化数据,供 UI 两段式渲染(plan U11)。
 
-    ``storage/news_digest/{date}_{scene}.json`` 由 run_news_digest.py 写出。
+    kss.db news_digest_entries 表由 run_news_digest.py 写出。
     无参 → 取最新一份;指定 date/scene → 取该份。返回:
       ``{available, selected: <digest|None>, index: [{date,scene}...]}``
     index 新到旧,供面板切换场次/历史。读舆情面板不在此实时生成(避免阻塞 UI)。
     """
-    index: list[dict[str, str]] = []
-    by_key: dict[tuple[str, str], Path] = {}
-    if NEWS_DIGEST_DIR.exists():
-        for fp in sorted(NEWS_DIGEST_DIR.glob("*.json"), reverse=True):
-            stem = fp.stem  # {date}_{scene}
-            if "_" not in stem:
-                continue
-            d, _, sc = stem.partition("_")
-            index.append({"date": d, "scene": sc})
-            by_key[(d, sc)] = fp
+    from kss.storage.news_digest import list_index, read_entry
 
-    selected_path: Path | None = None
+    db_path = STATE_ROOT / "storage" / "kss.db"
+    keys = list_index(db_path)
+    index = [{"date": k.digest_date, "scene": k.scene} for k in keys]
+
+    target: tuple[str, str] | None = None
     if date and scene:
-        selected_path = by_key.get((date, scene))
-    elif index:
-        first = index[0]
-        selected_path = by_key.get((first["date"], first["scene"]))
+        target = (date, scene)
+    elif keys:
+        target = (keys[0].digest_date, keys[0].scene)
 
-    selected: dict[str, Any] | None = None
-    if selected_path is not None:
-        try:
-            selected = json.loads(selected_path.read_text(encoding="utf-8"))
-        except Exception:
-            selected = None
-
+    selected = read_entry(target[0], target[1], db_path) if target else None
     return {"available": selected is not None, "selected": selected, "index": index}
 
 
@@ -2398,19 +2382,14 @@ def _sector_rotation_history(limit: int = 30) -> list[dict[str, Any]]:
     仅返回用于日期列表的轻量字段（tradeDate、leaderCoverage、
     crossSourceSignals 计数），避免把全部 leader 矩阵塞进快照。
     """
-    if not SECTOR_ROTATION_DIR.exists():
-        return []
-    files = sorted(SECTOR_ROTATION_DIR.glob("*.json"), reverse=True)
+    from kss.storage.sector_rotation import read_history
+
+    snaps = read_history(limit, STATE_ROOT / "storage" / "kss.db")
     out: list[dict[str, Any]] = []
-    for fp in files:
-        if len(out) >= limit:
-            break
-        snap = _sector_rotation_snapshot(fp)
-        if snap is None:
-            continue
+    for snap in snaps:
         signals = snap.get("crossSourceSignals") or {}
         out.append({
-            "tradeDate": snap.get("tradeDate", fp.stem),
+            "tradeDate": snap.get("tradeDate"),
             "lookbackDays": snap.get("lookbackDays"),
             "historyCoverage": snap.get("historyCoverage"),
             "leaderCoverage": snap.get("leaderCoverage"),
@@ -2429,12 +2408,9 @@ def _latest_sector_rotation(limit_boards: int = 6, limit_leaders: int = 5) -> di
         limit_boards: 每个分类保留的板块数量。
         limit_leaders: 返回的龙头总数。
     """
-    if not SECTOR_ROTATION_DIR.exists():
-        return None
-    files = sorted(SECTOR_ROTATION_DIR.glob("*.json"), reverse=True)
-    if not files:
-        return None
-    snap = _sector_rotation_snapshot(files[0])
+    from kss.storage.sector_rotation import read_latest
+
+    snap = read_latest(STATE_ROOT / "storage" / "kss.db")
     if snap is None:
         return None
     signals = snap.get("crossSourceSignals") or {}
@@ -2547,7 +2523,7 @@ def _perilla_pick_enrich(code: str, reg: Any) -> tuple[str, float | None, float 
     """
     try:
         from kss.perilla_enrich import aggregate
-        e = aggregate.enrich(code, registry=reg, cache_dir=aggregate.CACHE_DIR, cache_only=True)
+        e = aggregate.enrich(code, registry=reg, db_path=STATE_ROOT / "storage" / "kss.db", cache_only=True)
     except Exception:
         return "", None, None
 
@@ -2590,7 +2566,7 @@ def _perilla_enrich(symbol: str) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         return {"symbol": symbol, "status": "unavailable", "reason": str(exc)[:120]}
     try:
-        return aggregate.enrich(symbol, cache_dir=aggregate.CACHE_DIR)
+        return aggregate.enrich(symbol, db_path=STATE_ROOT / "storage" / "kss.db")
     except Exception as exc:  # noqa: BLE001
         return {"symbol": symbol, "status": "unavailable", "reason": str(exc)[:120]}
 
@@ -2717,15 +2693,12 @@ def _expand_sector_leaders(snap: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _adapt_sector_hotspot() -> dict[str, Any] | None:
     """板块热点管道 → PipelineResult（成分股展开后归一化 heatScore）。"""
-    if not SECTOR_ROTATION_DIR.exists():
-        return None
-    files = sorted(SECTOR_ROTATION_DIR.glob("*.json"), reverse=True)
-    if not files:
-        return None
-    snap = _sector_rotation_snapshot(files[0])
+    from kss.storage.sector_rotation import read_latest
+
+    snap = read_latest(STATE_ROOT / "storage" / "kss.db")
     if snap is None:
         return None
-    date = str(snap.get("tradeDate") or files[0].stem)
+    date = str(snap.get("tradeDate"))
     expanded = _expand_sector_leaders(snap)
     if not expanded:
         # 降级：归档无 leaderStocks → 板块管道当日空候选（不编造 ts_code）
@@ -3139,7 +3112,36 @@ def _indicator_detail_projections(
 # 不拼接用户输入，杜绝注入。
 # ---------------------------------------------------------------------------
 
-LAUNCHD_DIR = PROJECT_ROOT / "deploy" / "launchd"
+def _launchd_deploy_dir() -> Path:
+    """deploy/launchd 双根解析（plan 2026-07-12-005 / U6 KTD2, U11 R17）。
+
+    dev 模式（STATE_ROOT == PROJECT_ROOT）：原样用 PROJECT_ROOT 副本，行为不变。
+    bundle 模式（STATE_ROOT != PROJECT_ROOT）：改用 STATE_ROOT 副本——签名 .app 内的
+    PROJECT_ROOT/deploy/launchd 只读，写入即破坏签名。首次访问**重渲染**（不是原样
+    拷贝 bundle 模板）——bundle 内模板的 HOME/日志路径烙的是作者本机值（U11 修复前
+    的已知缺口），重渲染让 HOME 取交付对象自己的 Path.home()、日志路径落交付对象的
+    STATE_ROOT，而非承袭作者机器的值。渲染失败（清单/wrapper 异常，理论不该发生）
+    兜底退回原样拷贝，保证首启不因这一步彻底瘫痪。
+    此后 STATE_ROOT 副本是唯一可写工作态，排期编辑（cron-edit-schedule）只回写这里。
+    """
+    bundle_deploy = PROJECT_ROOT / "deploy" / "launchd"
+    if STATE_ROOT == PROJECT_ROOT:
+        return bundle_deploy
+    state_deploy = STATE_ROOT / "deploy" / "launchd"
+    if not state_deploy.is_dir() and bundle_deploy.is_dir():
+        state_deploy.mkdir(parents=True, exist_ok=True)
+        try:
+            import render_launchd_plists as _render_mod  # noqa: PLC0415
+
+            _render_mod.render_all(str(PROJECT_ROOT), state_deploy, state_root=str(STATE_ROOT))
+        except Exception as exc:  # noqa: BLE001 - 首启不能因这步崩，退回旧行为
+            print(f"[launchd] 重渲染 deploy/launchd 失败，退回原样拷贝: {exc}", file=sys.stderr)
+            for src in bundle_deploy.glob("com.zcdeng.kss.*.plist"):
+                shutil.copy2(src, state_deploy / src.name)
+    return state_deploy
+
+
+LAUNCHD_DIR = _launchd_deploy_dir()
 # 已装副本目录（~/Library/LaunchAgents）—— 仅作「已装态」对账：loaded/running/enabled
 # 与 needsInstall 漂移判定。清单是任务枚举的唯一真源（U4 / R4）。
 LAUNCHAGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
@@ -3214,6 +3216,29 @@ def _parse_schedule(interval: Any) -> str:
         else:
             parts.append(_hm(e))
     return " / ".join(parts)
+
+
+def _schedule_struct(interval: Any) -> dict[str, Any]:
+    """StartCalendarInterval → 结构化字段（U6），供设置页排期编辑器初始化表单。
+    人读串 `schedule` 给展示用，这个给编辑器读初值——避免解析人读文案的脆弱往返。"""
+    entries = _interval_entries(interval)
+    if not entries:
+        return {"hour": 0, "minute": 0, "weekdays": None, "weekly": False, "weekday": None}
+    if len(entries) == 1 and "Weekday" in entries[0]:
+        e = entries[0]
+        return {"hour": int(e.get("Hour", 0)), "minute": int(e.get("Minute", 0)),
+                "weekdays": None, "weekly": True, "weekday": int(e["Weekday"])}
+    times = {_hm(e) for e in entries}
+    weekdays_set = {int(e["Weekday"]) for e in entries if "Weekday" in e}
+    if len(times) == 1:
+        hour, minute = (int(x) for x in next(iter(times)).split(":"))
+        weekdays = sorted(weekdays_set) if weekdays_set else None
+        return {"hour": hour, "minute": minute, "weekdays": weekdays, "weekly": False, "weekday": None}
+    # 混合形态（各 entry 时刻不同）——排期编辑器不支持这类任务，回退首条近似值，
+    # 保存时会按该近似值覆盖成单一时刻（用户在编辑器里能看到、可另行调整）。
+    e = entries[0]
+    return {"hour": int(e.get("Hour", 0)), "minute": int(e.get("Minute", 0)),
+            "weekdays": None, "weekly": False, "weekday": None}
 
 
 def _interval_entries(interval: Any) -> list[dict]:
@@ -3397,6 +3422,7 @@ def _scheduled_job(
         "title": cm.title_for(suffix),
         "category": cm.category_for(suffix),
         "schedule": schedule,
+        "scheduleStruct": _schedule_struct(interval),
         "script": script,
         "enabled": enabled,
         "loaded": status["loaded"],
@@ -3529,6 +3555,258 @@ def _cron_action(label: str, action: str) -> dict[str, Any]:
     if errors:
         return {"ok": False, "error": "; ".join(errors), "job": job}
     return {"ok": True, "job": job}
+
+
+def _cron_edit_schedule(suffix: str, schedule_json: str) -> dict[str, Any]:
+    """应用内排期编辑（R8/KTD2，plan 2026-07-12-005/U6）：写 overlay → 渲染单 plist
+    （持久安装位 + deploy 副本双写）→ bootout/bootstrap。渲染或 launchctl 任一步
+    失败即回滚 overlay 条目，不留半成品状态——面板保持原排期，用户可重试。"""
+    import yaml  # noqa: PLC0415
+
+    try:
+        schedule_raw = json.loads(schedule_json)
+    except json.JSONDecodeError as exc:
+        return {"ok": False, "error": "bad_schedule_json", "hint": str(exc)}
+    if not isinstance(schedule_raw, dict):
+        return {"ok": False, "error": "bad_schedule_json", "hint": "schedule 须为 JSON 对象"}
+
+    cm = _cron_manifest()
+    try:
+        current = cm.load_manifest()
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": "manifest_load_failed", "hint": str(exc)}
+    if current.job(suffix) is None:
+        return {"ok": False, "error": "unknown_suffix", "hint": f"未知任务: {suffix!r}"}
+
+    overlay_path = cm.OVERLAY_PATH
+    existing_overlay = cm._load_overlay(overlay_path)
+    merged_overlay = dict(existing_overlay)
+    merged_overlay[suffix] = schedule_raw
+
+    try:
+        new_manifest = cm._apply_overlay(current, merged_overlay)
+    except Exception as exc:  # noqa: BLE001 - CronManifestError 等校验失败
+        return {"ok": False, "error": "invalid_schedule", "hint": str(exc)}
+    new_job = new_manifest.job(suffix)
+
+    # 写盘前记住旧 overlay 文本，失败时原样恢复（不留半成品）。
+    old_overlay_text = overlay_path.read_text(encoding="utf-8") if overlay_path.is_file() else None
+
+    def _write_overlay(text: str | None) -> None:
+        if text is None:
+            overlay_path.unlink(missing_ok=True)
+            return
+        overlay_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = overlay_path.with_suffix(overlay_path.suffix + ".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        tmp.replace(overlay_path)
+
+    _write_overlay(yaml.safe_dump(merged_overlay, allow_unicode=True))
+
+    label = new_job.label
+    try:
+        import render_launchd_plists as render_mod  # noqa: PLC0415
+
+        agents_path = LAUNCHAGENTS_DIR / f"{label}.plist"
+        deploy_path = LAUNCHD_DIR / f"{label}.plist"
+        state_root_arg = str(STATE_ROOT) if STATE_ROOT != PROJECT_ROOT else None
+        # 持久安装位（~/Library/LaunchAgents）：launchd 重启后据此自动重载。
+        pl = render_mod.render(str(PROJECT_ROOT), new_job, agents_path, state_root=state_root_arg)
+        # deploy 副本：_launchd_plists() 枚举/bootstrap 的优先来源，双写保持一致。
+        LAUNCHD_DIR.mkdir(parents=True, exist_ok=True)
+        deploy_tmp = deploy_path.with_suffix(deploy_path.suffix + ".tmp")
+        deploy_tmp.write_bytes(render_mod._to_xml(pl))
+        deploy_tmp.replace(deploy_path)
+    except Exception as exc:  # noqa: BLE001
+        _write_overlay(old_overlay_text)
+        return {"ok": False, "error": "render_failed", "hint": str(exc)}
+
+    uid = os.getuid()
+    domain = f"gui/{uid}"
+    _run_launchctl(["bootout", f"{domain}/{label}"])
+    rc, _, err = _run_launchctl(["bootstrap", domain, str(agents_path)])
+    if rc != 0 and "already" not in err.lower():
+        _write_overlay(old_overlay_text)
+        return {"ok": False, "error": "launchctl_failed", "hint": err.strip() or f"bootstrap rc={rc}"}
+    _run_launchctl(["enable", f"{domain}/{label}"])
+
+    disabled = _disabled_labels(uid)
+    job_payload = _scheduled_job(label, agents_path, uid, disabled)
+    return {"ok": True, "job": job_payload}
+
+
+# ---------------------------------------------------------------------------
+# 日志查看（plan 2026-07-12-005 / U7 KTD10）——设置页日志分区。只读命令，
+# 路径白名单锁定 STATE_ROOT/storage/logs/ 内（同 _resolve_markdown_path 护栏思路）。
+# ---------------------------------------------------------------------------
+
+LOGS_DIR = STATE_ROOT / "storage" / "logs"
+
+
+def _log_list() -> dict[str, Any]:
+    """枚举 storage/logs/ 下全部日志文件，含 sidecar 轮转代（.log.1/.2/.3）与
+    cron 各任务日志（cron/ 子目录）。轮转代与当前文件一并可见，AE5 不因轮转丢线索。"""
+    entries: list[dict[str, Any]] = []
+    if LOGS_DIR.is_dir():
+        for p in sorted(LOGS_DIR.rglob("*.log*")):
+            if not p.is_file():
+                continue
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            entries.append({
+                "name": str(p.relative_to(LOGS_DIR)),
+                "size": st.st_size,
+                "mtime": datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+            })
+    return {"logs": entries}
+
+
+def _resolve_log_path(name: str) -> Path:
+    """name → 校验后绝对路径；越界/非法一律 SystemExit（护栏，同 report 路径思路）。"""
+    if not name or "\x00" in name:
+        raise SystemExit("invalid log name")
+    candidate = (LOGS_DIR / name).resolve()
+    try:
+        candidate.relative_to(LOGS_DIR.resolve())
+    except ValueError as exc:
+        raise SystemExit(f"log path escapes storage/logs/: {name!r}") from exc
+    return candidate
+
+
+def _log_tail(name: str, lines: int = 500, grep: str = "") -> dict[str, Any]:
+    """尾部读取 + 可选关键词过滤（只读，R9/AE5）。lines 上限 2000 防超大响应。
+    grep 在 bridge 侧做，避免整份大文件过桥到 Swift 再本地过滤。"""
+    path = _resolve_log_path(name)
+    if not path.is_file():
+        return {"name": name, "error": "not_found", "lines": [], "totalMatched": 0}
+    capped_lines = max(1, min(lines, 2000))
+    try:
+        all_lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError as exc:
+        return {"name": name, "error": str(exc), "lines": [], "totalMatched": 0}
+    if grep:
+        all_lines = [ln for ln in all_lines if grep in ln]
+    tail = all_lines[-capped_lines:]
+    return {"name": name, "lines": tail, "totalMatched": len(all_lines)}
+
+
+# ---------------------------------------------------------------------------
+# 启动自检（plan 2026-07-12-005 / U8 KTD4）——纯 stdlib、目标 <2s。
+# 失败分级：fail＝功能不可用（venv 损坏/目录不可写），warn＝功能受限（凭证未配）。
+# sidecar 本身不可达是第三种 fail（本函数跑得起来即说明 sidecar 已可达），那一项
+# 由 Swift 侧在 bridge 调用失败时兜底合成，不在这里出现。
+# ---------------------------------------------------------------------------
+
+def _check_venv() -> dict[str, Any]:
+    """运行时探针：子进程里真跑一次 `import pandas`，超时/失败即 fail（KTD4）。"""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", "import pandas"],
+            capture_output=True, timeout=5, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {"item": "venv", "status": "fail", "detail": "运行时探针超时(5s)",
+                 "fixHint": "重新初始化运行时", "fixAction": "reinit_runtime"}
+    except OSError as exc:
+        return {"item": "venv", "status": "fail", "detail": f"运行时不可用: {exc}",
+                 "fixHint": "重新初始化运行时", "fixAction": "reinit_runtime"}
+    if proc.returncode != 0:
+        stderr = proc.stderr.decode("utf-8", "ignore")[:200]
+        return {"item": "venv", "status": "fail", "detail": f"依赖不可用: {stderr}",
+                 "fixHint": "重新初始化运行时", "fixAction": "reinit_runtime"}
+    return {"item": "venv", "status": "ok", "detail": f"运行时正常（{sys.executable}）",
+             "fixHint": None, "fixAction": None}
+
+
+def _check_storage_writable() -> dict[str, Any]:
+    probe = STATE_ROOT / "storage" / ".selfcheck_probe"
+    try:
+        probe.parent.mkdir(parents=True, exist_ok=True)
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except OSError as exc:
+        return {"item": "storage", "status": "fail", "detail": f"数据目录不可写: {exc}",
+                 "fixHint": "检查磁盘权限与磁盘空间", "fixAction": None}
+    return {"item": "storage", "status": "ok", "detail": "数据目录可写", "fixHint": None, "fixAction": None}
+
+
+_CREDENTIAL_CHECKS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("tushare", "Tushare", ("TUSHARE_TOKEN",)),
+    ("longbridge", "Longbridge", ("LONGBRIDGE_APP_KEY", "LONGBRIDGE_APP_SECRET", "LONGBRIDGE_ACCESS_TOKEN")),
+    ("telegram", "Telegram", ("TELEGRAM_BOT_TOKEN",)),
+)
+
+
+def _check_credential(item: str, label: str, keys: tuple[str, ...]) -> dict[str, Any]:
+    """凭证在/不在（env 层面，够快够纯 stdlib）；缺失是 warn 不是 fail——
+    R12 认可的合法终态，不阻断应用可用性。"""
+    if all(os.environ.get(k, "").strip() for k in keys):
+        return {"item": item, "status": "ok", "detail": f"{label} 已配置",
+                 "fixHint": None, "fixAction": None}
+    return {"item": item, "status": "warn", "detail": f"未配置 {label}",
+             "fixHint": "去设置页数据源分区填写", "fixAction": "open_settings"}
+
+
+def _check_llm_credential() -> dict[str, Any]:
+    from kss.llm.openai_client import LLMUnavailable, _resolve_credential_candidates  # noqa: PLC0415
+
+    try:
+        _resolve_credential_candidates()
+    except LLMUnavailable:
+        return {"item": "llm", "status": "warn", "detail": "未配置任何 LLM 凭据",
+                 "fixHint": "去设置页数据源分区填写", "fixAction": "open_settings"}
+    return {"item": "llm", "status": "ok", "detail": "LLM 凭据已配置", "fixHint": None, "fixAction": None}
+
+
+def _check_kss_db() -> dict[str, Any]:
+    """统一库可开探针（U17）：只读连接 + 最小查询，验证 kss.db 未损坏可用。"""
+    import sqlite3  # noqa: PLC0415
+
+    db_path = STATE_ROOT / "storage" / "kss.db"
+    if not db_path.is_file():
+        return {"item": "kss_db", "status": "fail", "detail": "kss.db 不存在",
+                 "fixHint": "检查数据目录初始化/迁移是否完成", "fixAction": None}
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            con.execute("SELECT 1").fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error as exc:
+        return {"item": "kss_db", "status": "fail", "detail": f"kss.db 不可开: {exc}",
+                 "fixHint": "检查磁盘/文件完整性", "fixAction": None}
+    return {"item": "kss_db", "status": "ok", "detail": "kss.db 可正常打开",
+             "fixHint": None, "fixAction": None}
+
+
+def _check_duckdb_extension() -> dict[str, Any]:
+    """duckdb sqlite 扩展可加载探针（U17/KTD11）：真开会话 LOAD sqlite。
+    非阻断项——首次联网下载扩展失败时 sql-query 工具暂不可用，其余功能不受影响。"""
+    try:
+        import duckdb  # noqa: PLC0415
+
+        con = duckdb.connect(":memory:")
+        try:
+            con.execute("INSTALL sqlite")
+            con.execute("LOAD sqlite")
+        finally:
+            con.close()
+    except Exception as exc:  # noqa: BLE001 — duckdb 扩展加载失败面广，统一按 warn 兜底
+        return {"item": "duckdb_ext", "status": "warn", "detail": f"duckdb sqlite 扩展不可加载: {exc}",
+                 "fixHint": "检查网络(首次需联网下载扩展)", "fixAction": None}
+    return {"item": "duckdb_ext", "status": "ok", "detail": "duckdb sqlite 扩展可加载",
+             "fixHint": None, "fixAction": None}
+
+
+def _self_check() -> dict[str, Any]:
+    """应用启动/手动自检（R3/R4）：venv + 数据目录 + 统一库 + duckdb 扩展 + 各凭证。"""
+    items = [_check_venv(), _check_storage_writable(), _check_kss_db(), _check_duckdb_extension()]
+    for item, label, keys in _CREDENTIAL_CHECKS:
+        items.append(_check_credential(item, label, keys))
+    items.append(_check_llm_credential())
+    return {"items": items, "generatedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 
 def _kickstart_labels(labels: list[str], require_stale: bool) -> dict[str, Any]:
@@ -3717,11 +3995,9 @@ def _theme_leaders() -> list[dict[str, Any]]:
     if not themes:
         return []
 
-    snap: dict[str, Any] = {}
-    if SECTOR_ROTATION_DIR.exists():
-        files = sorted(SECTOR_ROTATION_DIR.glob("*.json"), reverse=True)
-        if files:
-            snap = _sector_rotation_snapshot(files[0]) or {}
+    from kss.storage.sector_rotation import read_latest
+
+    snap = read_latest(STATE_ROOT / "storage" / "kss.db") or {}
 
     leaders_by_board: dict[str, list[dict]] = {}
     for b in snap.get("leaderBoards") or []:
@@ -3772,16 +4048,23 @@ _INDICATOR_BACKTEST_MAX_SYMBOLS = 8
 
 
 def _indicator_watchlist_symbols() -> list[str]:
-    """自选列表（App 写 storage/watchlist_symbols.txt，一行一码）；同 collect_intraday 惯例。"""
-    path = STATE_ROOT / "storage" / "watchlist_symbols.txt"
-    if not path.is_file():
-        return []
-    out: list[str] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        s = line.strip()
-        if s and not s.startswith("#"):
-            out.append(s)
-    return out
+    """自选列表（kss.db watchlist 表，plan 2026-07-12-005 / U15 割接自 txt 文件）。
+    db_path 显式从本模块 STATE_ROOT 派生（不用 kss.storage.db 的默认值）——STATE_ROOT
+    在测试里靠 monkeypatch.setattr(b, "STATE_ROOT", tmp_path) 隔离，走隐式默认会绕过
+    这层隔离，悄悄读写真仓库的 storage/kss.db（同 INDICATOR_LAB_DIR 等既有先例）。"""
+    from kss.storage.watchlist import load_watchlist  # noqa: PLC0415
+
+    return load_watchlist(db_path=STATE_ROOT / "storage" / "kss.db")
+
+
+def _watchlist_set(symbols_csv: str) -> dict[str, Any]:
+    """自选列表整表替换（App UI 每次增删触发）。写 kss.db，不再写 watchlist_symbols.txt
+    （U15 割接：Tier A 域不再产生新散文件）。"""
+    from kss.storage.watchlist import set_watchlist  # noqa: PLC0415
+
+    symbols = [s.strip() for s in symbols_csv.split(",") if s.strip()]
+    set_watchlist(symbols, db_path=STATE_ROOT / "storage" / "kss.db")
+    return {"ok": True, "symbols": symbols}
 
 
 def _verdict_key(family: str, params: dict[str, Any]) -> str:
@@ -3810,16 +4093,24 @@ def _indicator_lab_list() -> dict[str, Any]:
     }
 
 
+def _indicator_lab_db_path() -> Path:
+    return STATE_ROOT / "storage" / "kss.db"
+
+
 def _indicator_lab_recent_verdicts(limit: int = 20) -> list[dict[str, Any]]:
-    if not INDICATOR_LAB_VERDICTS_DIR.exists():
-        return []
-    files = sorted(
-        INDICATOR_LAB_VERDICTS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
-    )
+    """指标裁决表（kss.db，plan 2026-07-12-005 / U15 割接自 verdicts/*.json）。"""
+    from kss.storage.db import connect, ensure_schema  # noqa: PLC0415
+
+    with connect(_indicator_lab_db_path()) as conn:
+        ensure_schema(conn)
+        rows = conn.execute(
+            "SELECT payload_json FROM indicator_lab_verdicts ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
     out: list[dict[str, Any]] = []
-    for p in files[:limit]:
+    for row in rows:
         try:
-            out.append(json.loads(p.read_text(encoding="utf-8")))
+            out.append(json.loads(row["payload_json"]))
         except Exception:  # noqa: BLE001
             continue
     return out
@@ -3828,28 +4119,40 @@ def _indicator_lab_recent_verdicts(limit: int = 20) -> list[dict[str, Any]]:
 def _persist_verdict(
     family: str, params: dict[str, Any], symbols: list[str], results: list[dict[str, Any]], overall_go: bool
 ) -> str | None:
-    """裁决落盘（含 NO-GO 记忆，供 indicator-suggest 避免重复提议）；fail-silent，不影响返回。"""
+    """裁决落库（含 NO-GO 记忆，供 indicator-suggest 避免重复提议）；fail-silent，不影响返回。
+    返回值不再是文件相对路径（该概念随 U15 割接消失），改为 verdict_id 本身，仅供调用方
+    展示引用用（`_write_indicator_report` 的 verdict_ref 仍走独立参数，不依赖这个返回值
+    去读文件——见 `_indicator_solidify` 调用点，传参本就是 `verdict_ref` 字符串本身）。"""
+    from kss.storage.db import connect, ensure_schema  # noqa: PLC0415
+
     try:
-        INDICATOR_LAB_VERDICTS_DIR.mkdir(parents=True, exist_ok=True)
         key = _verdict_key(family, params)
-        path = INDICATOR_LAB_VERDICTS_DIR / f"{key}.json"
+        entry_id = f"{family}_{key}"
         payload = {
             "family": family, "params": params, "symbols": symbols,
             "go": overall_go, "results": results, "judgedAt": _now_iso(),
         }
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        return str(path.relative_to(STATE_ROOT))
+        with connect(_indicator_lab_db_path()) as conn:
+            ensure_schema(conn)
+            conn.execute(
+                "INSERT OR REPLACE INTO indicator_lab_verdicts (verdict_id, entry_id, payload_json, created_at) VALUES (?,?,?,?)",
+                (key, entry_id, json.dumps(payload, ensure_ascii=False), payload["judgedAt"]),
+            )
+        return key
     except Exception:  # noqa: BLE001
         return None
 
 
 def _indicator_no_go_keys() -> set[str]:
-    if not INDICATOR_LAB_VERDICTS_DIR.exists():
-        return set()
+    from kss.storage.db import connect, ensure_schema  # noqa: PLC0415
+
+    with connect(_indicator_lab_db_path()) as conn:
+        ensure_schema(conn)
+        rows = conn.execute("SELECT payload_json FROM indicator_lab_verdicts").fetchall()
     out: set[str] = set()
-    for p in INDICATOR_LAB_VERDICTS_DIR.glob("*.json"):
+    for row in rows:
         try:
-            data = json.loads(p.read_text(encoding="utf-8"))
+            data = json.loads(row["payload_json"])
         except Exception:  # noqa: BLE001
             continue
         if data.get("go") is False:
@@ -3958,7 +4261,7 @@ def _indicator_solidify(
             KIND_PRIMITIVE,
             RegistryEntry,
             load_registry,
-            registry_path as _registry_path,
+            registry_db_path as _registry_path,
             save_registry,
             upsert_entry,
         )
@@ -3999,7 +4302,7 @@ def _indicator_solidify(
     reg_path = _registry_path()
     prior_entries = load_registry(reg_path)  # 固化前快照，失败时回退用
     try:
-        upsert_entry(entry, path=reg_path)
+        upsert_entry(entry, db_path=reg_path)
         packs = [ipack.run_entry_pack(entry, sym) for sym in symbols]
         failed = [p for p in packs if p.get("status") == "error"]
         if failed:
@@ -4018,15 +4321,23 @@ def _indicator_solidify(
 
 
 def _write_indicator_report(entry: Any, packs: list[dict[str, Any]], verdict_ref: str) -> str | None:
-    """固化收尾：生成 AI回测报告 md（U5）。失败 fail-silent——报告缺失不回滚已固化的指标。"""
+    """固化收尾：生成 AI回测报告 md（U5）。失败 fail-silent——报告缺失不回滚已固化的指标。
+    verdict_ref 是 kss.db indicator_lab_verdicts 表的 verdict_id（plan 2026-07-12-005 /
+    U15 割接自 verdicts/*.json——旧格式是相对文件路径，现在是纯 id，按 id 查表读回）。"""
     try:
         from kss.indicators.report import format_report
+        from kss.storage.db import connect, ensure_schema  # noqa: PLC0415
 
         verdict_payload = None
         if verdict_ref:
-            vp = STATE_ROOT / verdict_ref
-            if vp.exists():
-                verdict_payload = json.loads(vp.read_text(encoding="utf-8"))
+            with connect(_indicator_lab_db_path()) as conn:
+                ensure_schema(conn)
+                row = conn.execute(
+                    "SELECT payload_json FROM indicator_lab_verdicts WHERE verdict_id=?",
+                    (verdict_ref,),
+                ).fetchone()
+            if row is not None:
+                verdict_payload = json.loads(row["payload_json"])
         text = format_report(entry, packs, verdict_payload)
         INDICATOR_LAB_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
         path = INDICATOR_LAB_REPORTS_DIR / f"{entry.id}.md"
@@ -4035,6 +4346,133 @@ def _write_indicator_report(entry: Any, packs: list[dict[str, Any]], verdict_ref
     except Exception as exc:  # noqa: BLE001
         print(f"indicator report for {entry.id}: {exc}", file=sys.stderr)
         return None
+
+
+# ---------------------------------------------------------------------------
+# 数据源连通性测试（plan 2026-07-12-005 / U4）——设置页「数据源」分区逐源探测。
+# 只读命令：不进 WRITE_COMMANDS，不需人工确认。凭据缺失明确报 not_configured，
+# 不当作探测失败混淆。
+# ---------------------------------------------------------------------------
+
+def _datasource_test_tushare() -> dict[str, Any]:
+    """Tushare 连通性：token 缺 → not_configured；否则跑一次极轻量 trade_cal 查询。"""
+    import os as _os
+    import time as _time
+
+    token = _os.environ.get("TUSHARE_TOKEN", "").strip()
+    if not token:
+        return {"source": "tushare", "ok": False, "error": "not_configured",
+                 "hint": "未配置 Tushare Token，去设置里填", "latency_ms": None}
+    t0 = _time.monotonic()
+    try:
+        from kss.data.tushare_client import TushareClient  # noqa: PLC0415
+
+        pro = TushareClient().get_pro()
+        df = pro.trade_cal(exchange="SSE", start_date="20260101", end_date="20260105")
+        ok = df is not None
+    except Exception as exc:  # noqa: BLE001
+        latency_ms = (_time.monotonic() - t0) * 1000
+        return {"source": "tushare", "ok": False, "error": type(exc).__name__,
+                 "hint": str(exc)[:200], "latency_ms": round(latency_ms, 1)}
+    latency_ms = (_time.monotonic() - t0) * 1000
+    if not ok:
+        return {"source": "tushare", "ok": False, "error": "empty_response",
+                 "hint": "trade_cal 返回空，token 可能无效或已过期", "latency_ms": round(latency_ms, 1)}
+    return {"source": "tushare", "ok": True, "error": None, "hint": None,
+             "latency_ms": round(latency_ms, 1)}
+
+
+def _datasource_test_longbridge() -> dict[str, Any]:
+    """Longbridge 连通性：三凭据缺任一 → not_configured；否则只建连不拉行情（免耗标的配额）。"""
+    import os as _os
+    import time as _time
+
+    creds = ("LONGBRIDGE_APP_KEY", "LONGBRIDGE_APP_SECRET", "LONGBRIDGE_ACCESS_TOKEN")
+    if not all(_os.environ.get(k, "").strip() for k in creds):
+        return {"source": "longbridge", "ok": False, "error": "not_configured",
+                 "hint": "未配置 Longbridge 三件套凭据，去设置里填", "latency_ms": None}
+    t0 = _time.monotonic()
+    from kss.data.intraday_client import LongbridgeProvider  # noqa: PLC0415
+
+    _ctx, err = LongbridgeProvider()._ensure_context()
+    latency_ms = (_time.monotonic() - t0) * 1000
+    if err:
+        return {"source": "longbridge", "ok": False, "error": err,
+                 "hint": "建立行情连接失败，请核对凭据", "latency_ms": round(latency_ms, 1)}
+    return {"source": "longbridge", "ok": True, "error": None, "hint": None,
+             "latency_ms": round(latency_ms, 1)}
+
+
+def _datasource_test_telegram() -> dict[str, Any]:
+    """Telegram 连通性：只调 getMe，不发消息（避免测试骚扰真实 chat）。"""
+    import os as _os
+    import time as _time
+
+    token = _os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        return {"source": "telegram", "ok": False, "error": "not_configured",
+                 "hint": "未配置 Telegram Bot Token，去设置里填", "latency_ms": None}
+    api_url = (_os.environ.get("TELEGRAM_API_URL") or "https://api.telegram.org").rstrip("/")
+    t0 = _time.monotonic()
+    try:
+        import requests  # noqa: PLC0415
+
+        resp = requests.get(f"{api_url}/bot{token}/getMe", timeout=10)
+        payload = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        latency_ms = (_time.monotonic() - t0) * 1000
+        return {"source": "telegram", "ok": False, "error": type(exc).__name__,
+                 "hint": str(exc)[:200], "latency_ms": round(latency_ms, 1)}
+    latency_ms = (_time.monotonic() - t0) * 1000
+    if not payload.get("ok"):
+        return {"source": "telegram", "ok": False, "error": "auth_failed",
+                 "hint": payload.get("description", "token 无效"), "latency_ms": round(latency_ms, 1)}
+    return {"source": "telegram", "ok": True, "error": None, "hint": None,
+             "latency_ms": round(latency_ms, 1)}
+
+
+def _datasource_test_llm() -> dict[str, Any]:
+    """LLM 端点连通性：主/备两套三元组分别测（备已配置时），双结果呈现（KTD6）。"""
+    from kss.llm.openai_client import (  # noqa: PLC0415
+        LLMUnavailable,
+        _resolve_credential_candidates,
+        probe_credential_candidate,
+    )
+
+    try:
+        candidates = _resolve_credential_candidates()
+    except LLMUnavailable as exc:
+        return {"source": "llm", "ok": False, "error": "not_configured",
+                 "hint": str(exc), "latency_ms": None, "candidates": []}
+
+    roles = ["primary", "fallback"]
+    results = []
+    for role, candidate in zip(roles, candidates):
+        probe = probe_credential_candidate(candidate)
+        results.append({"role": role, "model": candidate[2], **probe})
+    return {
+        "source": "llm",
+        "ok": all(r["ok"] for r in results),
+        "error": None if all(r["ok"] for r in results) else "candidate_failed",
+        "hint": None,
+        "latency_ms": results[0]["latency_ms"] if results else None,
+        "candidates": results,
+    }
+
+
+def _datasource_test(source: str) -> dict[str, Any]:
+    """按数据源探测连通性（R7/KTD6）：只读、给出成功/失败与明确原因。"""
+    source = (source or "").strip().lower()
+    if source == "tushare":
+        return _datasource_test_tushare()
+    if source == "longbridge":
+        return _datasource_test_longbridge()
+    if source == "telegram":
+        return _datasource_test_telegram()
+    if source == "llm":
+        return _datasource_test_llm()
+    return {"source": source, "ok": False, "error": "unknown_source",
+             "hint": f"未知数据源: {source!r}", "latency_ms": None}
 
 
 def _indicator_retire(entry_id: str) -> dict[str, Any]:
@@ -4053,6 +4491,8 @@ def _indicator_retire(entry_id: str) -> dict[str, Any]:
 WRITE_COMMANDS = frozenset({
     "run", "import", "resolve",
     "cron-rerun", "cron-enable", "cron-disable", "cron-catchup", "cron-rerun-many", "cron-sync",
+    "cron-edit-schedule",  # 排期编辑（U6）：写 overlay + 渲染 + bootout/bootstrap
+    "watchlist-set",  # 自选列表整表替换（U15）：写 kss.db watchlist 表
     "intel-digest-save",  # 写文件到 storage/notes/
     "intel-rewrite",      # 写 rewrite pool
     "intel-rewrite-run",  # worker 写 pool
@@ -4087,6 +4527,11 @@ COMMANDS = {
     "cron-sync": {"desc": "同步 LaunchAgents（使任务从清单进入可调度态）", "args": []},
     "cron-catchup": {"desc": "补跑漏跑任务", "args": []},
     "cron-rerun-many": {"desc": "批量重跑", "args": ["LABELS"]},
+    "cron-edit-schedule": {
+        "desc": "应用内编辑任务排期(写 state-root overlay + 重渲染 + 生效)",
+        "args": ["SUFFIX", "SCHEDULE_JSON"],
+    },
+    "watchlist-set": {"desc": "自选列表整表替换(写 kss.db watchlist 表)", "args": ["SYMBOLS_CSV"]},
     "trends-month": {"desc": "趋势页某月日历", "args": ["YYYY-MM"]},
     "trends-day": {"desc": "趋势页某日明细", "args": ["YYYY-MM-DD"]},
     "data-catalog": {"desc": "全量数据资产字典", "args": []},
@@ -4119,6 +4564,24 @@ COMMANDS = {
         "args": ["FAMILY", "PARAMS_JSON", "SYMBOLS_CSV", "[VERDICT_REF]"],
     },
     "indicator-retire": {"desc": "退役已固化指标(status=retired，不删数据)", "args": ["ENTRY_ID"]},
+    "datasource-test": {
+        "desc": "数据源连通性测试(tushare/longbridge/telegram/llm)，只读",
+        "args": ["SOURCE"],
+    },
+    "log-list": {"desc": "枚举 storage/logs 下全部日志文件(含轮转代)", "args": []},
+    "log-tail": {
+        "desc": "日志尾部读取+关键词过滤(路径白名单锁 storage/logs/)",
+        "args": ["NAME", "[LINES]", "[GREP]"],
+    },
+    "self-check": {"desc": "应用启动/手动自检(运行时/数据目录/各凭证)", "args": []},
+    "sql-query": {
+        "desc": (
+            "只读分析 SQL(DuckDB 引擎；仅 SELECT/WITH/SUMMARIZE/DESCRIBE，行上限200，5s超时)。"
+            "可查表=已割接域的 kss.db 表 + 行情 parquet 数据集，先看 get_data_catalog 了解列含义，"
+            "或用 SHOW TABLES / DESCRIBE <table> 自查。数字真值以本工具返回为准，勿凭记忆复述。"
+        ),
+        "args": ["SQL"],
+    },
 }
 
 # run_task 白名单 —— orientation 报此清单。须与 run_task() if-chain 实际接受集合一致
@@ -4443,35 +4906,24 @@ def _intraday_expected_bars(interval_minutes: int) -> int:
     return max(1, 240 // int(interval_minutes))
 
 
-def _intraday_session_cache_path(symbol: str, interval_minutes: int) -> Path:
-    from kss.config.paths import STORAGE_ROOT  # noqa: PLC0415
-
-    safe = symbol.replace("/", "_").replace("\\", "_")
-    d = STORAGE_ROOT / "intraday_session_cache"
-    d.mkdir(parents=True, exist_ok=True)
-    return d / f"{safe}_{int(interval_minutes)}m.json"
-
-
 def _save_intraday_session_cache(
     symbol: str, interval_minutes: int, bars: list[dict[str, Any]], session_date: str | None
 ) -> None:
-    """页内成功拉取附带沉淀（KTD6 R7）：轻量 JSON，供非交易时段 local 降级。"""
+    """页内成功拉取附带沉淀（KTD6 R7）：kss.db 缓存，供非交易时段 local 降级
+    （plan 2026-07-12-005 / U15 割接自 storage/intraday_session_cache/*.json）。"""
     if not bars:
         return
     try:
-        import json as _json  # noqa: PLC0415
         from datetime import datetime  # noqa: PLC0415
         from zoneinfo import ZoneInfo  # noqa: PLC0415
 
-        path = _intraday_session_cache_path(symbol, interval_minutes)
-        payload = {
-            "symbol": symbol,
-            "interval_minutes": interval_minutes,
-            "session_date": session_date,
-            "saved_at": datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(timespec="seconds"),
-            "bars": bars,
-        }
-        path.write_text(_json.dumps(payload, ensure_ascii=False, default=str), encoding="utf-8")
+        from kss.storage.intraday_session_cache import save_session_bars  # noqa: PLC0415
+
+        saved_at = datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(timespec="seconds")
+        save_session_bars(
+            symbol, interval_minutes, bars, session_date, saved_at,
+            db_path=STATE_ROOT / "storage" / "kss.db",
+        )
     except Exception:  # noqa: BLE001
         pass
 
@@ -4513,16 +4965,15 @@ def _symbol_cache_aliases(symbol: str) -> list[str]:
 def _load_local_session_bars(
     symbol: str, interval_minutes: int
 ) -> tuple[list[dict[str, Any]], str | None]:
-    """本地降级：session cache JSON（纯 stdlib，不依赖 pandas/longbridge）。"""
-    import json as _json  # noqa: PLC0415
+    """本地降级：session cache（kss.db，plan 2026-07-12-005 / U15 割接自 JSON 文件）。"""
+    from kss.storage.intraday_session_cache import load_session_bars  # noqa: PLC0415
 
     # 1) 页内 cache（最常命中）；别名互查
     for sym in _symbol_cache_aliases(symbol):
         try:
-            path = _intraday_session_cache_path(sym, interval_minutes)
-            if not path.is_file():
+            data = load_session_bars(sym, interval_minutes, db_path=STATE_ROOT / "storage" / "kss.db")
+            if data is None:
                 continue
-            data = _json.loads(path.read_text(encoding="utf-8"))
             bars = data.get("bars") or []
             if isinstance(bars, list) and bars:
                 sd = data.get("session_date") or _infer_session_date_from_bars(bars)
@@ -4911,7 +5362,8 @@ def dispatch(command: str, args: list[str]) -> Any:
     if command == "sector-rotation":
         if not args:
             return _latest_sector_rotation() or {}
-        return _sector_rotation_snapshot(SECTOR_ROTATION_DIR / f"{args[0]}.json") or {}
+        from kss.storage.sector_rotation import read_by_date
+        return read_by_date(args[0], STATE_ROOT / "storage" / "kss.db") or {}
     if command == "sector-rotation-history":
         limit = int(args[0]) if args and args[0].isdigit() else 30
         return _sector_rotation_history(limit=limit)
@@ -4944,6 +5396,12 @@ def dispatch(command: str, args: list[str]) -> Any:
     if command == "cron-rerun-many":
         labels = [s for s in (args[0].split(",") if args else []) if s]
         return _cron_rerun_many(labels)
+    if command == "cron-edit-schedule":
+        if len(args) < 2:
+            raise ValueError("cron-edit-schedule requires SUFFIX SCHEDULE_JSON")
+        return _cron_edit_schedule(args[0], args[1])
+    if command == "watchlist-set":
+        return _watchlist_set(args[0] if args else "")
     if command == "trends-month":
         if not args:
             raise ValueError("trends-month requires YYYY-MM")
@@ -4954,6 +5412,12 @@ def dispatch(command: str, args: list[str]) -> Any:
         return _trends_day(args[0])
     if command == "data-catalog":
         return _data_catalog()
+    if command == "sql-query":
+        if not args or not args[0].strip():
+            raise ValueError("sql-query requires SQL")
+        from kss.storage.duck import run_query
+
+        return run_query(args[0])
     if command == "orientation":
         return _orientation()
     if command == "recipe-list":
@@ -5039,6 +5503,20 @@ def dispatch(command: str, args: list[str]) -> Any:
         if not args:
             raise ValueError("indicator-retire requires ENTRY_ID")
         return _indicator_retire(args[0])
+    if command == "datasource-test":
+        if not args:
+            raise ValueError("datasource-test requires SOURCE")
+        return _datasource_test(args[0])
+    if command == "log-list":
+        return _log_list()
+    if command == "log-tail":
+        if not args:
+            raise ValueError("log-tail requires NAME")
+        lines = int(args[1]) if len(args) > 1 and args[1] else 500
+        grep = args[2] if len(args) > 2 else ""
+        return _log_tail(args[0], lines, grep)
+    if command == "self-check":
+        return _self_check()
     if command == "version":
         # 返回 sidecar 代码版本指纹，供 Swift 端校验陈旧进程。
         return {"version": _sidecar_version_fingerprint()}

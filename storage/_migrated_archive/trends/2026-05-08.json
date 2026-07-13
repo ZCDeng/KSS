@@ -1,0 +1,88 @@
+{
+  "date": "2026-05-08",
+  "isTrading": true,
+  "north": {
+    "money": 35.7,
+    "unit": "亿",
+    "dir": "in"
+  },
+  "etfs": [
+    {
+      "code": "563360.SH",
+      "name": "A500ETF",
+      "pct": -0.43
+    },
+    {
+      "code": "159361.SZ",
+      "name": "A500ETF",
+      "pct": -0.45
+    }
+  ],
+  "inflowScore": 0.11,
+  "inflowDir": "in",
+  "sectorTop": [],
+  "sectorCount": 0,
+  "topSector": null,
+  "recs": [
+    {
+      "symbol": "688114.SH",
+      "name": "华大智造",
+      "fwd": {
+        "t1": null,
+        "t5": null,
+        "t20": null,
+        "asof": null
+      }
+    },
+    {
+      "symbol": "688278.SH",
+      "name": "特宝生物",
+      "fwd": {
+        "t1": null,
+        "t5": null,
+        "t20": null,
+        "asof": null
+      }
+    },
+    {
+      "symbol": "688608.SH",
+      "name": "恒玄科技",
+      "fwd": {
+        "t1": null,
+        "t5": null,
+        "t20": null,
+        "asof": null
+      }
+    },
+    {
+      "symbol": "688349.SH",
+      "name": "三一重能",
+      "fwd": {
+        "t1": null,
+        "t5": null,
+        "t20": null,
+        "asof": null
+      }
+    },
+    {
+      "symbol": "688169.SH",
+      "name": "石头科技",
+      "fwd": {
+        "t1": null,
+        "t5": null,
+        "t20": null,
+        "asof": null
+      }
+    }
+  ],
+  "recCount": 5,
+  "recAvgFwd": null,
+  "heat": 0.595,
+  "sectorHeat": null,
+  "flags": {
+    "north": true,
+    "etf": true,
+    "sector": false,
+    "recs": true
+  }
+}

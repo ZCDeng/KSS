@@ -45,6 +45,7 @@ from kss.memory.review_recall import (  # noqa: E402
     today_features_from_stock,
 )
 from kss.memory.temporal_decay import timestamp_ms_for_date  # noqa: E402
+from kss.storage.daily_review import record_review  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -1056,6 +1057,12 @@ def main():
         else:
             archive_path.write_text(header + body, encoding='utf-8')
             logger.info(f"  存档: {archive_path}")
+            rel_path = (
+                str(archive_path.relative_to(PROJECT_ROOT))
+                if archive_path.is_relative_to(PROJECT_ROOT)
+                else str(archive_path)
+            )
+            record_review(today_str, ts_code, rel_path, _KSS_STATE / 'storage' / 'kss.db')
 
     if args.dry_run:
         for i, c in enumerate(chunks):

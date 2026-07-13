@@ -1,0 +1,88 @@
+{
+  "date": "2026-05-21",
+  "isTrading": true,
+  "north": {
+    "money": 40.05,
+    "unit": "亿",
+    "dir": "in"
+  },
+  "etfs": [
+    {
+      "code": "563360.SH",
+      "name": "A500ETF",
+      "pct": -1.68
+    },
+    {
+      "code": "159361.SZ",
+      "name": "A500ETF",
+      "pct": -1.44
+    }
+  ],
+  "inflowScore": -0.28,
+  "inflowDir": "out",
+  "sectorTop": [],
+  "sectorCount": 0,
+  "topSector": null,
+  "recs": [
+    {
+      "symbol": "688114.SH",
+      "name": "华大智造",
+      "fwd": {
+        "t1": 0.0,
+        "t5": -0.95,
+        "t20": null,
+        "asof": "2026-05-29"
+      }
+    },
+    {
+      "symbol": "688278.SH",
+      "name": "特宝生物",
+      "fwd": {
+        "t1": -1.26,
+        "t5": -4.51,
+        "t20": null,
+        "asof": "2026-05-29"
+      }
+    },
+    {
+      "symbol": "688349.SH",
+      "name": "三一重能",
+      "fwd": {
+        "t1": -0.9,
+        "t5": -3.38,
+        "t20": null,
+        "asof": "2026-05-29"
+      }
+    },
+    {
+      "symbol": "688297.SH",
+      "name": "中无人机",
+      "fwd": {
+        "t1": -1.99,
+        "t5": 2.81,
+        "t20": null,
+        "asof": "2026-05-29"
+      }
+    },
+    {
+      "symbol": "688608.SH",
+      "name": "恒玄科技",
+      "fwd": {
+        "t1": -0.02,
+        "t5": -1.4,
+        "t20": null,
+        "asof": "2026-05-29"
+      }
+    }
+  ],
+  "recCount": 5,
+  "recAvgFwd": -1.49,
+  "heat": 0.667,
+  "sectorHeat": null,
+  "flags": {
+    "north": true,
+    "etf": true,
+    "sector": false,
+    "recs": true
+  }
+}

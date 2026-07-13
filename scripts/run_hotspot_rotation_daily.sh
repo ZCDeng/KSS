@@ -17,18 +17,25 @@
 set -e
 set -o pipefail
 
-PROJECT_ROOT="/Users/zcdeng/projects/KSS"
-PYTHON="/opt/homebrew/opt/python@3.11/bin/python3.11"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+if [ -n "${KSS_PYTHON:-}" ]; then
+    PYTHON="$KSS_PYTHON"
+elif [ -x "$HOME/Library/Application Support/KSS/venv/bin/python3" ]; then
+    PYTHON="$HOME/Library/Application Support/KSS/venv/bin/python3"
+elif [ -x "$PROJECT_ROOT/.venv-desktop/bin/python" ]; then
+    PYTHON="$PROJECT_ROOT/.venv-desktop/bin/python"
+else
+    echo "no usable python interpreter found (checked KSS_PYTHON, state-root venv, .venv-desktop)" >&2
+    exit 1
+fi
 KSS_ENV="$PROJECT_ROOT/.env"
 
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') hotspot_rotation_daily 开始 ====="
 
 # 只 grep 需要的变量（.env 可能混有特殊字符行，整体 source 会炸）。
-if [ -f "$KSS_ENV" ]; then
-  TUSHARE_TOKEN=$(grep -E '^TUSHARE_TOKEN=' "$KSS_ENV" | head -1 | cut -d= -f2-)
-  TUSHARE_TOKEN="${TUSHARE_TOKEN%\"}"; TUSHARE_TOKEN="${TUSHARE_TOKEN#\"}"
-  export TUSHARE_TOKEN
-fi
+source "$PROJECT_ROOT/scripts/lib_cron_credentials.sh"
+kss_load_credential TUSHARE_TOKEN "$KSS_ENV" || true
 
 cd "$PROJECT_ROOT"
 

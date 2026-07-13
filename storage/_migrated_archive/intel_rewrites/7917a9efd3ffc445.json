@@ -1,0 +1,19 @@
+{
+  "item_id": "7917a9efd3ffc445",
+  "kind": "investment",
+  "track_key": "semi",
+  "day": "20260710",
+  "status": "failed",
+  "title": "Sandia selects LayTec’s EpiX mapping station for optical wafer characterization",
+  "url": "https://www.semiconductor-today.com/news_items/2026/jul/laytec-sandia-090726.shtml",
+  "source": "Semiconductor Today",
+  "time": "07-09 17:22",
+  "started_at_ts": 1783645954.858012,
+  "started_at": "2026-07-10 09:12:34",
+  "error": "未配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY；wrapper 应从 Hermes .env grep 注入",
+  "error_type": "unavailable",
+  "body_text": "Sandia selects LayTec’s EpiX mapping station for optical wafer characterization Home News Categories LEDs Markets Microelectronics Optoelectronics Photovoltaics Suppliers All News Features Directory Recruitment Events About Advertising Contribute FREE Registration Sign Up to Our Free Weekly E-Brief Media Kit Download & Details News: Suppliers 9 July 2026 Sandia selects LayTec’s EpiX mapping station for optical wafer characterization Optical in-situ metrology system maker LayTec AG of Berlin, Germany says that Sandia National Laboratories has purchased a customized manual-loading version of its EpiX mapping station, combining white light reflectance (WLR) and photoluminescence (PL) metrology for non-contact optical wafer mapping. Picture: EpiX XYZ mapping stage and WLR + PL optics. The system comes in a UV–vis configuration optimized for aluminium gallium nitride (AlGaN) power, RF, and optoelectronic applications, as well as novel materials, supporting Sandia’s advanced semiconductor research by providing spatially resolved insight into key wafer properties. EpiX is said to uniquely enable 2D mapping of parameters such as layer thickness, composition-related optical signatures and luminescence characteristics for high-electronic-mobility transistors (HEMTs) and other device structures, helping researchers to evaluate uniformity across complex semiconductor wafers. “The customized configuration reflects exactly what EpiX was designed for: flexible, high-quality optical wafer characterization for demanding compound semiconductor R&D,” says LayTec’s CEO Volker Blank. See related items: LayTec launches EpiX modular wafer mapping station for compound semiconductor R&D Tags: LayTec Visit: www.laytec.de Follow us on X (Twitter) Join our LinkedIn network ©2006-2026 Juno Publishing and Media Solutions Ltd. All rights reserved. Semiconductor Today and the editorial material contained within it and related media is the copyright of Juno Publishing and Media Solutions Ltd. Reproduction in whole or part without permission from Juno Publishing and Media Solutions Ltd is forbidden. In most cases, permission will be granted, if the magazine and publisher are acknowledged. Disclaimer: Material published within Semiconductor Today and related media does not necessarily reflect the views of the publisher or staff. Juno Publishing and Media Solutions Ltd and its staff accept no responsibility for opinions expressed, editorial errors and damage/injury to property or persons as a result of material published. Semiconductor Today, Juno Publishing and Media Solutions Ltd, Suite no. 133, 20 Winchcombe Street, Cheltenham, GL52 2LY, UK View our privacy, cookie and data protection policy",
+  "body_mode": "fulltext",
+  "body_char_count": 2707,
+  "body_error": null
+}

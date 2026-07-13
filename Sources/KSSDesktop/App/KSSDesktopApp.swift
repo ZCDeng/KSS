@@ -83,6 +83,7 @@ struct KSSDesktopApp: App {
                 .tint(theme.tokens.accent)
                 .task {
                     await store.loadSnapshot()
+                    await store.runSelfCheck()
                 }
         }
         .commands {

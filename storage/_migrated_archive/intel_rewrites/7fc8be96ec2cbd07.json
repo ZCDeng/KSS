@@ -1,0 +1,19 @@
+{
+  "item_id": "7fc8be96ec2cbd07",
+  "kind": "investment",
+  "track_key": "ai",
+  "day": "20260710",
+  "status": "failed",
+  "title": "国产开源新突破！5万小时真机数据，撕开行业最大痛点",
+  "url": "https://mp.weixin.qq.com/s?__biz=MzI3MTA0MTk1MA==&mid=2652711354&idx=1&sn=702fbde8ab793f923cd6d9939f7a348c",
+  "source": "新智元",
+  "time": "07-08 11:45",
+  "started_at_ts": 1783645789.779532,
+  "started_at": "2026-07-10 09:09:49",
+  "error": "content too thin",
+  "error_type": "thin",
+  "body_text": "",
+  "body_mode": "empty",
+  "body_char_count": 0,
+  "body_error": "body too short"
+}

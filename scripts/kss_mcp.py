@@ -123,6 +123,16 @@ def get_data_catalog() -> dict:
 
 
 @mcp.tool
+def run_sql_query(sql: str) -> dict:
+    """只读分析 SQL(DuckDB 引擎；仅 SELECT/WITH/SUMMARIZE/DESCRIBE，行上限200，5s超时)。
+
+    可查表 = 已割接域的 kss.db 表 + 行情 parquet 数据集；先用 get_data_catalog 了解列含义，
+    或用 SHOW TABLES / DESCRIBE <table> 自查。数字结果以本工具返回为准，勿凭记忆复述。
+    """
+    return _call("sql-query", [sql])
+
+
+@mcp.tool
 def get_orientation() -> dict:
     """一次调用上手：dispatch 命令图 + run_task 白名单 + 数据目录摘要 + cron 新鲜度 + 关键文档指针。"""
     return _call("orientation")
@@ -202,6 +212,15 @@ def get_intraday_snapshot(symbol: str, interval_minutes: int = 1) -> dict:
     return _call("intraday-snapshot", [symbol, str(interval_minutes)])
 
 
+@mcp.tool
+def test_datasource(source: str) -> dict:
+    """数据源连通性测试（只读，不需 confirm）。source ∈ tushare|longbridge|telegram|llm。
+
+    凭证缺失返回 not_configured（非探测失败）；llm 源对主/备候选分别测试，双结果呈现。
+    """
+    return _call("datasource-test", [source])
+
+
 # ---- 写命令（paper-only：仅 KSS_MCP_LIVE=1 注册，且每调用须 confirm）----
 
 if _LIVE:
@@ -221,6 +240,17 @@ if _LIVE:
         if not confirm:
             return {"error": "live_write_requires_confirm", "hint": "传 confirm=True"}
         return _call(f"cron-{action}", [label])
+
+    @mcp.tool
+    def cron_edit_schedule(suffix: str, schedule_json: str, confirm: bool = False) -> dict:
+        """编辑计划任务排期（写 state-root overlay + 重渲染 + 生效）。须 confirm=True。
+
+        schedule_json 形如 '{"hour":18,"minute":30,"weekdays":[1,2,3,4,5]}'（daily）
+        或 '{"weekly":{"weekday":5,"hour":20,"minute":0}}'（weekly）。
+        """
+        if not confirm:
+            return {"error": "live_write_requires_confirm", "hint": "传 confirm=True"}
+        return _call("cron-edit-schedule", [suffix, schedule_json])
 
     @mcp.tool
     def cron_sync(confirm: bool = False) -> dict:

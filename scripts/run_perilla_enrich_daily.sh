@@ -7,23 +7,29 @@
 # 手动测试 (冒烟, 只跑1只):
 #   bash scripts/run_perilla_enrich_daily.sh --limit 1
 #
-# cron 部署 (每交易日 18:10, 北证/沪深收盘 + tushare 延迟 buffer):
-#   10 18 * * 1-5 /Users/zcdeng/projects/KSS/scripts/run_perilla_enrich_daily.sh >> /Users/zcdeng/projects/KSS/storage/logs/cron/perilla_enrich_daily.log 2>&1
+# 部署：kss/config/cron_jobs.yaml 清单条目 + scripts/sync_launchd.py（不再手动 crontab -e）。
 
 set -e
 set -o pipefail
 
-PROJECT_ROOT="/Users/zcdeng/projects/KSS"
-PYTHON="/opt/homebrew/opt/python@3.11/bin/python3.11"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+if [ -n "${KSS_PYTHON:-}" ]; then
+    PYTHON="$KSS_PYTHON"
+elif [ -x "$HOME/Library/Application Support/KSS/venv/bin/python3" ]; then
+    PYTHON="$HOME/Library/Application Support/KSS/venv/bin/python3"
+elif [ -x "$PROJECT_ROOT/.venv-desktop/bin/python" ]; then
+    PYTHON="$PROJECT_ROOT/.venv-desktop/bin/python"
+else
+    echo "no usable python interpreter found (checked KSS_PYTHON, state-root venv, .venv-desktop)" >&2
+    exit 1
+fi
 KSS_ENV="$PROJECT_ROOT/.env"
 
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') perilla_enrich_daily 开始 ====="
 
-if [ -f "$KSS_ENV" ]; then
-  TUSHARE_TOKEN=$( (grep -E '^TUSHARE_TOKEN=' "$KSS_ENV" || true) | head -1 | cut -d= -f2-)
-  TUSHARE_TOKEN="${TUSHARE_TOKEN%\"}"; TUSHARE_TOKEN="${TUSHARE_TOKEN#\"}"
-  export TUSHARE_TOKEN
-fi
+source "$PROJECT_ROOT/scripts/lib_cron_credentials.sh"
+kss_load_credential TUSHARE_TOKEN "$KSS_ENV" || true
 
 cd "$PROJECT_ROOT"
 "$PYTHON" scripts/refresh_perilla_enrich.py "$@"

@@ -130,7 +130,7 @@ def test_cache_only_never_touches_network(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(aggregate._us, "fetch_us_peer",
                         lambda *a, **k: pytest.fail("cache_only must not hit yfinance")
                         if not k.get("cache_only") else {"status": "unavailable", "reason": "cache_miss"})
-    out = aggregate.enrich(sym, registry=reg, today=TODAY, cache_dir=tmp_path,
+    out = aggregate.enrich(sym, registry=reg, today=TODAY, db_path=tmp_path / "kss.db",
                            client=_FakeClient(raise_on={"holders", "pe"}), cache_only=True)
     assert out["status"] == "ok"  # 整体不抛
     assert out["institutional"]["top10"]["status"] == "unavailable"
@@ -151,3 +151,21 @@ def test_fx_unavailable_keeps_pe_compare(monkeypatch) -> None:
     assert up["pe_ratio_a_over_peer"] is not None          # PE 对比无需汇率
     assert up.get("mcap_multiple_status") == "fx_unavailable"
     assert "peer_to_a_mcap_multiple" not in up
+
+
+def test_cached_df_returns_fresh_data_when_cache_write_lock_contended(monkeypatch, tmp_path):
+    """回归：sqlite3.OperationalError（写锁竞争）不是 OSError 子类，缓存写失败的异常处理
+    如果窄捕成 except OSError 会让它逃出 _cached_df，白白丢掉刚抓到的有效 df。"""
+    import sqlite3
+
+    def _boom_write(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(aggregate, "write_cache_entry", _boom_write)
+    fresh = pd.DataFrame({"end_date": ["20260630"], "hold_ratio": [1.0]})
+    df = aggregate._cached_df(
+        "holders", "688017.SH", "20260630", lambda: fresh,
+        tmp_path / "kss.db", TODAY,
+    )
+    assert df is not None
+    assert df.equals(fresh)

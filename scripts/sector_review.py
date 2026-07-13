@@ -75,19 +75,19 @@ def _fmt_display_date(yyyymmdd: str) -> str:
 
 
 def _archive_radar(trade_date: str, payload: dict) -> None:
-    """雷达 payload 落盘 ``storage/etf_radar/YYYYMMDD.json``.
+    """雷达 payload 落盘 kss.db etf_radar_snapshots 表.
 
     first-write-wins: 存档是校验底稿, 回放旧日期不得改写当时发布的内容.
     """
-    RADAR_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
-    path = RADAR_ARCHIVE_DIR / f"{trade_date}.json"
-    if path.exists():
-        logger.info("雷达存档已存在, 跳过: %s", path)
+    from kss.storage.etf_radar import read_by_date, write_snapshot
+
+    db_path = _KSS_STATE / "storage" / "kss.db"
+    if read_by_date(trade_date, db_path) is not None:
+        logger.info("雷达存档已存在, 跳过: %s", trade_date)
         return
     payload = {"trade_date": trade_date, "source": "live", **payload}
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=1),
-                    encoding="utf-8")
-    logger.info("雷达存档: %s", path)
+    write_snapshot(payload, db_path)
+    logger.info("雷达存档: %s", trade_date)
 
 
 def run_review(
@@ -136,7 +136,8 @@ def run_review(
 
 
 def _archive_commentary(trade_date: str, commentary: str) -> None:
-    """投顾点评落盘 ``storage/etf_radar/YYYYMMDD.commentary.md``（桌面端复盘读取）。
+    """投顾点评落盘 ``storage/etf_radar/YYYYMMDD.commentary.md``（桌面端复盘读取，
+    Tier C 仍留文件）+ kss.db etf_radar_commentary_index 记路径。
 
     first-write-wins：与雷达存档一致，回放旧日期不覆盖当时发布内容。
     """
@@ -148,6 +149,10 @@ def _archive_commentary(trade_date: str, commentary: str) -> None:
         logger.info("点评存档已存在, 跳过: %s", path)
         return
     path.write_text(commentary, encoding="utf-8")
+    from kss.storage.etf_radar import record_commentary
+
+    rel_path = str(path.relative_to(PROJECT_ROOT)) if path.is_relative_to(PROJECT_ROOT) else str(path)
+    record_commentary(trade_date, rel_path, _KSS_STATE / "storage" / "kss.db")
     logger.info("点评存档: %s", path)
 
 

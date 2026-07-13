@@ -1,0 +1,19 @@
+{
+  "item_id": "c92f43f70499f188",
+  "kind": "investment",
+  "track_key": "semi",
+  "day": "20260710",
+  "status": "failed",
+  "title": "MEMS Heralds an Overdue Step Change in Switching Technology",
+  "url": "https://www.eetimes.com/mems-heralds-an-overdue-step-change-in-switching-technology/",
+  "source": "EE Times",
+  "time": "07-08 15:40",
+  "started_at_ts": 1783646093.137723,
+  "started_at": "2026-07-10 09:14:53",
+  "error": "未配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY；wrapper 应从 Hermes .env grep 注入",
+  "error_type": "unavailable",
+  "body_text": "Ditch creaky relays: MEMS switches slash heat, power draw and bulk for AI data centers and automation. The post MEMS Heralds an Overdue Step Change in Switching",
+  "body_mode": "summary",
+  "body_char_count": 160,
+  "body_error": "TimeoutError: The read operation timed out"
+}

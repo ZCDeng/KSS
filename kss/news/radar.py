@@ -24,8 +24,7 @@ SOURCES_FILE = HERE / "news_sources.json"
 
 # 可变状态根（bundle 双根：dev 下 ≈ 仓库根，bundle 下 ≈ ~/Library/Application Support/KSS）。
 _STATE_ROOT = Path(os.environ["KSS_STATE_ROOT"]) if os.environ.get("KSS_STATE_ROOT") else HERE.parents[1]
-CACHE_DIR = _STATE_ROOT / "storage" / "intel_radar"
-CACHE_FILE = CACHE_DIR / "radar.json"
+DB_PATH = _STATE_ROOT / "storage" / "kss.db"
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
@@ -146,18 +145,29 @@ def fetch_radar() -> dict:
             "failed_sources": failed,
         },
     }
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = CACHE_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(CACHE_FILE)  # 原子改名，防两次并发刷新交错写坏缓存
+    from kss.storage.db import connect, ensure_schema
+
+    with connect(DB_PATH) as conn:
+        ensure_schema(conn)
+        conn.execute(
+            "INSERT OR REPLACE INTO intel_radar_cache (singleton, payload_json, generated_at) VALUES ('default', ?, ?)",
+            (json.dumps(data, ensure_ascii=False), data.get("generated_at")),
+        )
     return data
 
 
 def load_cache() -> dict | None:
-    """读缓存 JSON；文件不存在或损坏返回 None。"""
+    """读缓存；kss.db 无行或损坏返回 None。"""
+    from kss.storage.db import connect, ensure_schema
+
     try:
-        return json.loads(CACHE_FILE.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError):
+        with connect(DB_PATH) as conn:
+            ensure_schema(conn)
+            row = conn.execute(
+                "SELECT payload_json FROM intel_radar_cache WHERE singleton='default'"
+            ).fetchone()
+        return json.loads(row["payload_json"]) if row else None
+    except json.JSONDecodeError:
         return None
 
 

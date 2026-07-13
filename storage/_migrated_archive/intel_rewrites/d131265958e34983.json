@@ -1,0 +1,19 @@
+{
+  "item_id": "d131265958e34983",
+  "kind": "investment",
+  "track_key": "semi",
+  "day": "20260710",
+  "status": "failed",
+  "title": "Simplifying Intelligent Wireless Design and Security Certification for Healthcare Devices",
+  "url": "https://www.eetimes.com/simplifying-intelligent-wireless-design-and-security-certification-for-healthcare-devices/",
+  "source": "EE Times",
+  "time": "07-10 01:32",
+  "started_at_ts": 1783645890.399094,
+  "started_at": "2026-07-10 09:11:30",
+  "error": "未配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY；wrapper 应从 Hermes .env grep 注入",
+  "error_type": "unavailable",
+  "body_text": "Join Infineon Technologies and Ezurio for a 60-minute webinar exploring the challenges of designing and certifying secured wireless devices for healthcare appli",
+  "body_mode": "summary",
+  "body_char_count": 160,
+  "body_error": "TimeoutError: The read operation timed out"
+}

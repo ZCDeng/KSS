@@ -54,15 +54,19 @@ def _norm(raw: str) -> str:
     return raw.strip().upper().replace(".SH", "").replace(".SZ", "")
 
 
-def load_watchlist(path: Path = WATCHLIST_PATH) -> list[str]:
-    if not path.exists():
-        return ["688017", "688322"]
-    out = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        out.append(_norm(line))
+def load_watchlist(path: Path | None = None) -> list[str]:
+    """自选列表：默认读 kss.db（plan 2026-07-12-005 / U15 割接自 txt 文件）；
+    传显式 ``path`` 时仍读该文件（测试/临时对照用）。"""
+    if path is not None:
+        if not path.exists():
+            return ["688017", "688322"]
+        out = [_norm(ln) for ln in path.read_text(encoding="utf-8").splitlines()
+               if ln.strip() and not ln.strip().startswith("#")]
+        return out or ["688017", "688322"]
+
+    from kss.storage.watchlist import load_watchlist as _load_db  # noqa: PLC0415
+
+    out = [_norm(s) for s in _load_db()]
     return out or ["688017", "688322"]
 
 

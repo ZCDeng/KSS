@@ -3,7 +3,7 @@
 关键覆盖：
 - 行业维度索引正确
 - 概念字段按 ' / ' 切分多值入索引
-- 文件 / 列缺失容错
+- 库缺失容错
 - S620 回归保护：正则不能宽松匹配
 """
 
@@ -11,18 +11,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pandas as pd
-
 from kss.sector.kcb_overlay import (
     KcbOverlay,
     build_kcb_overlay,
     discover_active_pool,
 )
+from kss.storage.stock_names import set_stock_names
 
 
-def _write_csv(path: Path, rows: list[dict[str, str]]) -> None:
-    """写入测试 stock_names.csv."""
-    pd.DataFrame(rows).to_csv(path, index=False)
+def _write_names_db(path: Path, rows: list[dict[str, str]]) -> Path:
+    """写入测试 stock_names（kss.db），返回 db_path 供 build_kcb_overlay 用。"""
+    set_stock_names(rows, db_path=path)
+    return path
 
 
 # ====================================================================== #
@@ -60,18 +60,17 @@ class TestDiscoverActivePool:
 
 
 class TestBuildKcbOverlay:
-    """从 stock_names.csv 构建 industry/concept 双维索引."""
+    """从 stock_names 构建 industry/concept 双维索引."""
 
     def test_industry_index_built_correctly(self, tmp_path: Path) -> None:
         """3 只股，行业半导体 x2 + 软件服务 x1 → industry_to_codes 命中数正确."""
-        csv = tmp_path / "stock_names.csv"
-        _write_csv(csv, [
+        db = _write_names_db(tmp_path / "kss.db", [
             {"ts_code": "688008.SH", "name": "澜起科技", "industry": "半导体", "concept": ""},
             {"ts_code": "688012.SH", "name": "中微公司", "industry": "半导体", "concept": ""},
             {"ts_code": "688088.SH", "name": "虹软科技", "industry": "软件服务", "concept": ""},
         ])
         overlay = build_kcb_overlay(
-            stock_names_path=csv,
+            db_path=db,
             active_pool={"688008.SH", "688012.SH", "688088.SH"},
         )
         assert overlay.count_for_industry("半导体") == 2
@@ -81,15 +80,14 @@ class TestBuildKcbOverlay:
 
     def test_concept_split_by_slash(self, tmp_path: Path) -> None:
         """concept 字段 '集成电路概念 / 转融券标的' → 两个概念都映射到该 ts_code."""
-        csv = tmp_path / "stock_names.csv"
-        _write_csv(csv, [
+        db = _write_names_db(tmp_path / "kss.db", [
             {
                 "ts_code": "688099.SH", "name": "晶晨股份", "industry": "半导体",
                 "concept": "集成电路概念 / 转融券标的",
             },
         ])
         overlay = build_kcb_overlay(
-            stock_names_path=csv,
+            db_path=db,
             active_pool={"688099.SH"},
         )
         assert overlay.count_for_concept("集成电路概念") == 1
@@ -98,66 +96,59 @@ class TestBuildKcbOverlay:
 
     def test_empty_concept_not_indexed(self, tmp_path: Path) -> None:
         """concept 为空字符串 → 不进 concept 索引，不外抛."""
-        csv = tmp_path / "stock_names.csv"
-        _write_csv(csv, [
+        db = _write_names_db(tmp_path / "kss.db", [
             {"ts_code": "688008.SH", "name": "澜起", "industry": "半导体", "concept": ""},
         ])
         overlay = build_kcb_overlay(
-            stock_names_path=csv,
+            db_path=db,
             active_pool={"688008.SH"},
         )
         assert overlay.concept_to_codes == {}
 
     def test_active_pool_filters_unrelated_stocks(self, tmp_path: Path) -> None:
-        """stock_names.csv 含池外股票 → 不进索引."""
-        csv = tmp_path / "stock_names.csv"
-        _write_csv(csv, [
+        """stock_names 含池外股票 → 不进索引."""
+        db = _write_names_db(tmp_path / "kss.db", [
             {"ts_code": "688008.SH", "name": "A", "industry": "半导体", "concept": ""},
             {"ts_code": "688999.SH", "name": "B", "industry": "半导体", "concept": ""},
         ])
         # 池中只有 688008
         overlay = build_kcb_overlay(
-            stock_names_path=csv,
+            db_path=db,
             active_pool={"688008.SH"},
         )
         assert overlay.count_for_industry("半导体") == 1
         assert overlay.codes_for_industry("半导体") == ["688008.SH"]
 
-    def test_missing_concept_column_compatibility(self, tmp_path: Path) -> None:
-        """旧版 stock_names.csv（无 concept 列）→ concept_to_codes 为空 + warning，不外抛."""
-        csv = tmp_path / "stock_names.csv"
-        _write_csv(csv, [
+    def test_concept_column_absent_in_row_treated_as_empty(self, tmp_path: Path) -> None:
+        """行未提供 concept 键（.get 落 None）→ concept_to_codes 为空，不外抛。
+
+        （原 CSV 版本测的是"旧格式无 concept 列"；kss.db 表 schema 固定 4 列，
+        这个场景现在对应"某行 concept 值缺失/NULL"，行为等价：概念维度该行不计入。）
+        """
+        db = _write_names_db(tmp_path / "kss.db", [
             {"ts_code": "688008.SH", "name": "A", "industry": "半导体"},
         ])
         overlay = build_kcb_overlay(
-            stock_names_path=csv,
+            db_path=db,
             active_pool={"688008.SH"},
         )
         assert overlay.count_for_industry("半导体") == 1
         assert overlay.concept_to_codes == {}
 
-    def test_file_missing_returns_empty_overlay(self, tmp_path: Path) -> None:
-        """stock_names.csv 不存在 → 返回空 overlay + warning，不外抛."""
-        overlay = build_kcb_overlay(stock_names_path=tmp_path / "no_such_file.csv")
+    def test_missing_db_returns_empty_overlay(self, tmp_path: Path) -> None:
+        """kss.db 不存在 → connect() 新建空库，stock_names 表为空 → 空 overlay，不外抛."""
+        overlay = build_kcb_overlay(db_path=tmp_path / "no_such.db", active_pool={"688008.SH"})
         assert isinstance(overlay, KcbOverlay)
         assert overlay.industry_to_codes == {}
         assert overlay.concept_to_codes == {}
 
-    def test_missing_ts_code_column_returns_empty(self, tmp_path: Path) -> None:
-        """缺 ts_code 列 → 返回空 overlay + warning."""
-        csv = tmp_path / "stock_names.csv"
-        _write_csv(csv, [{"name": "A", "industry": "半导体"}])
-        overlay = build_kcb_overlay(stock_names_path=csv, active_pool={"688008.SH"})
-        assert overlay.industry_to_codes == {}
-
     def test_active_pool_no_intersection_returns_empty(self, tmp_path: Path) -> None:
-        """CSV 与 active_pool 无交集 → 空 overlay，但 active_pool 字段保留."""
-        csv = tmp_path / "stock_names.csv"
-        _write_csv(csv, [
+        """DB 与 active_pool 无交集 → 空 overlay，但 active_pool 字段保留."""
+        db = _write_names_db(tmp_path / "kss.db", [
             {"ts_code": "688008.SH", "name": "A", "industry": "半导体", "concept": ""},
         ])
         overlay = build_kcb_overlay(
-            stock_names_path=csv,
+            db_path=db,
             active_pool={"688999.SH"},  # 不存在的代码
         )
         assert overlay.industry_to_codes == {}
@@ -168,14 +159,13 @@ class TestBuildKcbOverlay:
         (tmp_path / "cs_data_688008.csv").touch()
         (tmp_path / "cs_data_688012.csv").touch()
 
-        csv = tmp_path / "stock_names.csv"
-        _write_csv(csv, [
+        db = _write_names_db(tmp_path / "kss.db", [
             {"ts_code": "688008.SH", "name": "A", "industry": "半导体", "concept": ""},
             {"ts_code": "688012.SH", "name": "B", "industry": "半导体", "concept": ""},
             {"ts_code": "688999.SH", "name": "C", "industry": "软件服务", "concept": ""},
         ])
         overlay = build_kcb_overlay(
-            stock_names_path=csv,
+            db_path=db,
             active_pool=None,
             data_dir=tmp_path,
         )
@@ -184,15 +174,14 @@ class TestBuildKcbOverlay:
 
     def test_concept_with_extra_whitespace_normalized(self, tmp_path: Path) -> None:
         """概念字段含额外空格 → strip 后入索引."""
-        csv = tmp_path / "stock_names.csv"
-        _write_csv(csv, [
+        db = _write_names_db(tmp_path / "kss.db", [
             {
                 "ts_code": "688099.SH", "name": "A", "industry": "半导体",
                 "concept": "  集成电路概念  /   转融券标的  ",
             },
         ])
         overlay = build_kcb_overlay(
-            stock_names_path=csv,
+            db_path=db,
             active_pool={"688099.SH"},
         )
         # strip 后的概念名作为 key

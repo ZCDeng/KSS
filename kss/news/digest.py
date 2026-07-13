@@ -183,19 +183,24 @@ def render_markdown(digest: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def archive_digest(digest: dict[str, Any], *, directory: str | Path | None = None, overwrite: bool = True) -> Path:
-    """按 ``{date}_{scene}.md``(人读)+ ``{date}_{scene}.json``(供 UI/bridge 读)归档。
+def archive_digest(
+    digest: dict[str, Any], *, directory: str | Path | None = None,
+    db_path: str | Path | None = None, overwrite: bool = True,
+) -> Path:
+    """按 ``{date}_{scene}.md``(人读，仍是文件)归档 + kss.db news_digest_entries 表
+    (供 UI/bridge 读)。
 
     默认覆盖=最新一次为准。返回 markdown 路径。
     """
+    from kss.storage.news_digest import write_entry
+
     d = Path(directory) if directory is not None else _ARCHIVE_DIR
     d.mkdir(parents=True, exist_ok=True)
     md_path = d / f"{digest['date']}_{digest['scene']}.md"
-    json_path = d / f"{digest['date']}_{digest['scene']}.json"
     if md_path.exists() and not overwrite:
         return md_path
     md_path.write_text(render_markdown(digest), encoding="utf-8")
-    json_path.write_text(json.dumps(digest, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_entry(digest, db_path)
     return md_path
 
 
@@ -208,12 +213,13 @@ def run_news_digest(
     theme_leaders: list[dict] | None = None,
     with_mapping: bool = True,
     directory: str | Path | None = None,
+    db_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """顶层:构建 → 渲染 → 归档。返回 digest dict(含 ``archive_path``)。"""
     digest = build_digest(
         scene, date=date, bundle=bundle, client=client,
         theme_leaders=theme_leaders, with_mapping=with_mapping,
     )
-    path = archive_digest(digest, directory=directory)
+    path = archive_digest(digest, directory=directory, db_path=db_path)
     digest["archive_path"] = str(path)
     return digest

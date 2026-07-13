@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import io
 import logging
 from datetime import date as _date, timedelta
 from pathlib import Path
@@ -18,15 +19,16 @@ from typing import Any
 
 import pandas as pd
 
-from kss.config.paths import STORAGE_ROOT
+from kss.config.paths import KSS_DB
 from kss.perilla_enrich import holdings as _h
 from kss.perilla_enrich import us_peer as _us
 from kss.perilla_enrich import valuation as _v
+from kss.storage.perilla_cache import read_cache_entry, write_cache_entry
 from kss.supply_chain.registry import ChainRegistry
 
 logger = logging.getLogger(__name__)
 
-CACHE_DIR: Path = STORAGE_ROOT / "perilla_cache"
+DB_PATH: Path = KSS_DB
 _HOLDER_LOOKBACK_DAYS = 720   # 前十大流通股东回看 ~2 年(覆盖多季)
 _PE_LOOKBACK_DAYS = 730       # PE 历史回看 ~2 年
 
@@ -36,7 +38,7 @@ def enrich(
     *,
     registry: ChainRegistry | None = None,
     client: Any | None = None,
-    cache_dir: Path | None = None,
+    db_path: Path | None = None,
     today: _date | None = None,
     cache_only: bool = False,
 ) -> dict[str, Any]:
@@ -75,7 +77,7 @@ def enrich(
         start = (today - timedelta(days=_HOLDER_LOOKBACK_DAYS)).strftime("%Y%m%d")
         df = _cached_df("holders", info.ts_code, end,
                         lambda: _client().fetch_top10_floatholders(info.ts_code, start, end),
-                        cache_dir, today, cache_only=cache_only)
+                        db_path, today, cache_only=cache_only)
         result["institutional"] = {
             "top10": _h.top10_dynamics(df),
             "northbound": _h.northbound_trend(df),
@@ -89,7 +91,7 @@ def enrich(
         start = (today - timedelta(days=_PE_LOOKBACK_DAYS)).strftime("%Y%m%d")
         df = _cached_df("pe", info.ts_code, end,
                         lambda: _client().fetch_daily_basic_history(info.ts_code, start, end),
-                        cache_dir, today, cache_only=cache_only)
+                        db_path, today, cache_only=cache_only)
         result["valuation_pe"] = _v.pe_dynamics(df)
         if df is not None and not df.empty and "total_mv" in df:
             mv = pd.to_numeric(df.sort_values("trade_date")["total_mv"], errors="coerce").dropna()
@@ -102,7 +104,7 @@ def enrich(
     # ── 块3: 美股对标 ──
     try:
         result["us_peer"] = _us_peer_block(info, a_share_total_mv_wan,
-                                           result.get("valuation_pe"), cache_dir, today,
+                                           result.get("valuation_pe"), db_path, today,
                                            cache_only=cache_only)
     except Exception as exc:  # noqa: BLE001
         logger.warning("enrich %s us_peer 失败: %s", symbol, exc)
@@ -115,12 +117,12 @@ def _us_peer_block(
     info: Any,
     a_share_total_mv_wan: float | None,
     valuation_pe: dict[str, Any] | None,
-    cache_dir: Path | None,
+    db_path: Path | None,
     today: _date,
     cache_only: bool = False,
 ) -> dict[str, Any]:
     """美股对标块：取对标估值 + 算 PE 对比(无需汇率) + 市值倍数(需汇率)."""
-    peer = _us.fetch_us_peer(info.us_peer_ticker or None, cache_dir=cache_dir,
+    peer = _us.fetch_us_peer(info.us_peer_ticker or None, db_path=db_path,
                              today=today, cache_only=cache_only)
     if peer.get("status") != "ok":
         return peer  # no_peer / unavailable 原样返回
@@ -142,7 +144,7 @@ def _us_peer_block(
     # 市值倍数(需汇率): 对标市值 / A股市值, >10 → 印证"市值<龙头1/10"
     peer_usd = peer.get("market_cap")
     if a_share_total_mv_wan and peer_usd:
-        usdcny = _us.fetch_usdcny(cache_dir=cache_dir, today=today, cache_only=cache_only)
+        usdcny = _us.fetch_usdcny(db_path=db_path, today=today, cache_only=cache_only)
         if usdcny:
             a_share_usd = a_share_total_mv_wan * 1.0e4 / usdcny  # 万元→元→USD
             block["a_share_market_cap_usd"] = round(a_share_usd, 0)
@@ -157,24 +159,25 @@ def _cached_df(
     ts_code: str,
     stamp: str,
     fetch_fn: Any,
-    cache_dir: Path | None,
+    db_path: Path | None,
     today: _date,
     max_age_days: int = 1,
     cache_only: bool = False,
 ) -> pd.DataFrame | None:
-    """带本地 CSV 缓存的 df 取数。cache_dir=None → 直取不缓存(测试用)。
+    """带 kss.db 缓存的 df 取数。db_path=None → 直取不缓存(测试用)。
 
     ``cache_only=True``：仅读缓存，命中返回、未命中返回 None（绝不触网）。
     """
-    if cache_dir is None:
+    if db_path is None:
         return None if cache_only else fetch_fn()
 
-    path = Path(cache_dir) / f"{ts_code}_{kind}.csv"
-    if path.exists():
-        age = (today - _date.fromtimestamp(path.stat().st_mtime)).days
-        if age <= max_age_days:
+    entry = read_cache_entry(ts_code, kind, db_path)
+    if entry is not None:
+        payload, cached_at = entry
+        age = _age_days(cached_at, today)
+        if age is not None and age <= max_age_days:
             try:
-                return pd.read_csv(path, dtype={"end_date": str, "trade_date": str})
+                return pd.read_csv(io.StringIO(payload), dtype={"end_date": str, "trade_date": str})
             except (OSError, pd.errors.ParserError):
                 pass
 
@@ -184,8 +187,19 @@ def _cached_df(
     df = fetch_fn()
     if df is not None and not df.empty:
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            df.to_csv(path, index=False)
-        except OSError as exc:
-            logger.debug("perilla_cache 写失败 %s: %s", path, exc)
+            write_cache_entry(ts_code, kind, df.to_csv(index=False), today.strftime("%Y-%m-%d"), db_path)
+        except Exception as exc:  # noqa: BLE001 — 缓存写失败不该丢掉刚抓到的有效 df（sqlite3.Error
+            # 不是 OSError 子类，锁竞争下 write_cache_entry 可能抛 sqlite3.OperationalError，
+            # 窄捕获会让它逃出这里，df 永远返回不到调用方）
+            logger.debug("perilla_enrich_cache 写失败 %s/%s: %s", ts_code, kind, exc)
     return df
+
+
+def _age_days(cached_at: str | None, today: _date) -> int | None:
+    if not cached_at:
+        return None
+    try:
+        y, m, d = (int(x) for x in cached_at.split("-"))
+        return (today - _date(y, m, d)).days
+    except (ValueError, TypeError):
+        return None

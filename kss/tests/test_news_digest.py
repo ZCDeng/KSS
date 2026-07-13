@@ -58,14 +58,23 @@ def test_numbers_from_code_not_llm(monkeypatch):
 
 def test_archive_filename(tmp_path, monkeypatch):
     monkeypatch.setattr("kss.news.hotspot.default_lexicon", lambda: LEX)
+    db_path = tmp_path / "kss.db"
     dg = D.run_news_digest("盘前", date="20260629", bundle=_bundle(),
-                           client=_FakeClient("0: 偏多"), with_mapping=False, directory=tmp_path)
+                           client=_FakeClient("0: 偏多"), with_mapping=False,
+                           directory=tmp_path, db_path=db_path)
     assert (tmp_path / "20260629_盘前.md").exists()
     assert dg["archive_path"].endswith("20260629_盘前.md")
     # 盘后场是另一文件
     D.run_news_digest("盘后", date="20260629", bundle=_bundle(),
-                      client=_FakeClient("0: 偏多"), with_mapping=False, directory=tmp_path)
+                      client=_FakeClient("0: 偏多"), with_mapping=False,
+                      directory=tmp_path, db_path=db_path)
     assert (tmp_path / "20260629_盘后.md").exists()
+
+    from kss.storage.news_digest import list_index, read_entry
+
+    keys = list_index(db_path)
+    assert {(k.digest_date, k.scene) for k in keys} == {("20260629", "盘前"), ("20260629", "盘后")}
+    assert read_entry("20260629", "盘前", db_path)["scene"] == "盘前"
 
 
 def test_llm_failure_still_renders(monkeypatch):

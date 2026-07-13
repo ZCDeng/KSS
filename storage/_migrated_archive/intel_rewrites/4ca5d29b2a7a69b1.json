@@ -1,0 +1,19 @@
+{
+  "item_id": "4ca5d29b2a7a69b1",
+  "kind": "investment",
+  "track_key": "ai",
+  "day": "20260710",
+  "status": "failed",
+  "title": "20种机器人本体通吃！蚂蚁新一代VLA具身大脑刚刚开源了",
+  "url": "https://mp.weixin.qq.com/s?__biz=MzA3MzI4MjgzMw==&mid=2651043143&idx=1&sn=b76e194c2c1a4c4c7aec0a39ae8f31e6",
+  "source": "机器之心",
+  "time": "07-08 11:02",
+  "started_at_ts": 1783645803.4276469,
+  "started_at": "2026-07-10 09:10:03",
+  "error": "未配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY；wrapper 应从 Hermes .env grep 注入",
+  "error_type": "unavailable",
+  "body_text": "具身智能不缺Demo，缺一颗能实战的通用大脑。",
+  "body_mode": "summary",
+  "body_char_count": 23,
+  "body_error": "body too short"
+}

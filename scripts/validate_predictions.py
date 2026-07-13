@@ -46,7 +46,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 REVIEW_DIR = PROJECT_ROOT / "storage" / "daily_review"
-RADAR_ARCHIVE_DIR = PROJECT_ROOT / "storage" / "etf_radar"
 
 # 一年回测基线 (storage/reports/momentum_regime_research_20260607.md, 非重叠抽样)
 GRADE_BASELINE: dict[str, tuple[float, float]] = {
@@ -356,13 +355,9 @@ def print_details(s: dict) -> None:
 
 def load_radar_archives() -> list[dict]:
     """读全部雷达存档 (累积校验, 不限 lookback), 按日期升序."""
-    out = []
-    for path in sorted(RADAR_ARCHIVE_DIR.glob("*.json")):
-        try:
-            out.append(json.loads(path.read_text(encoding="utf-8")))
-        except (OSError, json.JSONDecodeError) as exc:
-            logger.warning("雷达存档损坏, 跳过 %s: %s", path.name, exc)
-    return out
+    from kss.storage.etf_radar import read_all_ascending
+
+    return read_all_ascending(PROJECT_ROOT / "storage" / "kss.db")
 
 
 def build_radar_panel(start: str, end: str):

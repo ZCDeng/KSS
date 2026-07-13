@@ -1,0 +1,19 @@
+{
+  "item_id": "88ffcc328f81aa1f",
+  "kind": "investment",
+  "track_key": "ai",
+  "day": "20260710",
+  "status": "failed",
+  "title": "全球首个小时级世界模型来了！中国造，已开源",
+  "url": "https://mp.weixin.qq.com/s?__biz=MzI3MTA0MTk1MA==&mid=2652711965&idx=1&sn=fc50af04d4f723844a7e6a73ffabe53d",
+  "source": "新智元",
+  "time": "07-09 12:43",
+  "started_at_ts": 1783645731.226718,
+  "started_at": "2026-07-10 09:08:51",
+  "error": "content too thin",
+  "error_type": "thin",
+  "body_text": "",
+  "body_mode": "empty",
+  "body_char_count": 0,
+  "body_error": "body too short"
+}

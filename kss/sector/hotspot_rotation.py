@@ -25,7 +25,6 @@ Phase 3 扩展：
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -43,7 +42,6 @@ from kss.sector.scorer import compute_heat_score, load_config
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_OUTPUT_DIR = Path("storage") / "sector_rotation"
 _SOURCE_KEY_MAP: dict[str, str] = {
     "industry": "industries",
     "concept": "concepts",
@@ -118,11 +116,11 @@ def _load_trade_calendar(
     trade_date: str,
     lookback_days: int,
     client: TushareClient | None = None,
-    output_dir: Path = DEFAULT_OUTPUT_DIR,
+    db_path: str | Path | None = None,
 ) -> list[str]:
     """获取以 ``trade_date`` 结尾的最近 ``lookback_days`` 个交易日.
 
-    优先用 Tushare ``trade_cal``；失败时退而扫描 ``output_dir/*.json`` 归档文件名.
+    优先用 Tushare ``trade_cal``；失败时退而扫描 kss.db 归档的 trade_date.
     返回 newest first 的日期列表.
     """
     if client is None:
@@ -149,13 +147,19 @@ def _load_trade_calendar(
         logger.warning("[hotspot_rotation] trade_cal 获取失败: %s", exc)
 
     try:
-        files = sorted(output_dir.glob("*.json"), reverse=True)
-        dates = [p.stem for p in files if p.stem.isdigit() and len(p.stem) == 8]
+        from kss.storage.db import connect, ensure_schema
+
+        with connect(db_path) as conn:
+            ensure_schema(conn)
+            rows = conn.execute(
+                "SELECT trade_date FROM sector_rotation_snapshots ORDER BY trade_date DESC"
+            ).fetchall()
+        dates = [r["trade_date"] for r in rows]
         if trade_date in dates:
             idx = dates.index(trade_date)
             return dates[idx : idx + lookback_days]
-    except OSError as exc:
-        logger.warning("[hotspot_rotation] 扫描归档目录失败: %s", exc)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[hotspot_rotation] 扫描归档失败: %s", exc)
 
     days: list[str] = []
     d = end_dt
@@ -169,20 +173,21 @@ def _load_trade_calendar(
 def _load_historical_boards(
     trade_date: str,
     source: str,
-    output_dir: Path = DEFAULT_OUTPUT_DIR,
+    db_path: str | Path | None = None,
 ) -> list[HotspotBoard] | None:
     """加载指定日期的历史归档中某 source 的板块列表."""
-    path = output_dir / f"{trade_date}.json"
-    if not path.exists():
+    from kss.storage.sector_rotation import read_by_date
+
+    data = read_by_date(trade_date, db_path)
+    if data is None:
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
         key = _SOURCE_KEY_MAP.get(source)
         if key is None or key not in data:
             return []
         return [HotspotBoard(**b) for b in data[key]]
-    except (json.JSONDecodeError, TypeError, OSError) as exc:
-        logger.warning("[hotspot_rotation] 加载 %s 归档失败: %s", path, exc)
+    except (TypeError, KeyError) as exc:
+        logger.warning("[hotspot_rotation] 加载 %s 归档失败: %s", trade_date, exc)
         return None
 
 
@@ -395,9 +400,9 @@ def _apply_classification(
 def build_hotspot_rotation_snapshot(
     trade_date: str,
     client: TushareClient | None = None,
-    config_path: str | Path = "storage/sector_review_config.json",
+    config_path: str | Path | None = None,
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
-    output_dir: str | Path = DEFAULT_OUTPUT_DIR,
+    db_path: str | Path | None = None,
     top_n_industry: int | None = None,
     top_n_concept: int | None = None,
     top_n_kaipan: int | None = None,
@@ -412,9 +417,11 @@ def build_hotspot_rotation_snapshot(
     Args:
         trade_date: 交易日，``YYYYMMDD``.
         client: ``TushareClient`` 实例；``None`` 时用默认单例.
-        config_path: 评分配置文件路径.
+        config_path: 评分配置 kss.db 路径覆盖（测试用）；``None`` 走默认 STATE_ROOT 解析
+            （plan 2026-07-12-005 / U15 割接自 storage/sector_review_config.json）.
         lookback_days: 历史回看交易日数（含当日）.
-        output_dir: 历史归档目录.
+        db_path: kss.db 路径覆盖（测试用）；``None`` 走默认 STATE_ROOT 解析
+            （plan 2026-07-12-005 / U15 割接自 storage/sector_rotation/*.json）.
         top_n_industry: 行业榜保留前 N；``None`` 保留全部.
         top_n_concept: 概念榜保留前 N；``None`` 保留全部.
         top_n_kaipan: KAIPAN 榜保留前 N；``None`` 保留全部.
@@ -430,7 +437,6 @@ def build_hotspot_rotation_snapshot(
     if client is None:
         client = TushareClient()
 
-    out_dir = Path(output_dir)
     config = load_config(config_path)
 
     raw_ind = client.fetch_moneyflow_ind_dc(trade_date)
@@ -440,7 +446,7 @@ def build_hotspot_rotation_snapshot(
         logger.warning("[hotspot_rotation] %s 行业与概念数据均缺失，无法生成快照", trade_date)
         return None
 
-    trading_days = _load_trade_calendar(trade_date, lookback_days, client=client, output_dir=out_dir)
+    trading_days = _load_trade_calendar(trade_date, lookback_days, client=client, db_path=db_path)
     if not trading_days or trading_days[0] != trade_date:
         logger.warning("[hotspot_rotation] %s 无法获取交易日历或当日不在日历中", trade_date)
         return None
@@ -457,8 +463,8 @@ def build_hotspot_rotation_snapshot(
 
     history: list[tuple[str, list[HotspotBoard]]] = []
     for d in history_days:
-        ind_hist = _load_historical_boards(d, "industry", output_dir=out_dir)
-        cnt_hist = _load_historical_boards(d, "concept", output_dir=out_dir)
+        ind_hist = _load_historical_boards(d, "industry", db_path=db_path)
+        cnt_hist = _load_historical_boards(d, "concept", db_path=db_path)
         combined = (ind_hist or []) + (cnt_hist or [])
         if combined:
             history.append((d, combined))
@@ -568,15 +574,10 @@ def snapshot_to_dict(snap: HotspotRotationSnapshot) -> dict[str, Any]:
 
 def save_snapshot(
     snap: HotspotRotationSnapshot,
-    output_dir: str | Path = DEFAULT_OUTPUT_DIR,
-) -> Path:
-    """保存快照到 ``output_dir/YYYYMMDD.json``."""
-    out_dir = Path(output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_file = out_dir / f"{snap.tradeDate}.json"
-    out_file.write_text(
-        json.dumps(snapshot_to_dict(snap), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    logger.info("[hotspot_rotation] 快照已保存: %s", out_file)
-    return out_file
+    db_path: str | Path | None = None,
+) -> None:
+    """保存快照到 kss.db sector_rotation_snapshots 表."""
+    from kss.storage.sector_rotation import write_snapshot
+
+    write_snapshot(snapshot_to_dict(snap), db_path)
+    logger.info("[hotspot_rotation] 快照已保存: %s", snap.tradeDate)

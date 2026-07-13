@@ -1,0 +1,19 @@
+{
+  "item_id": "30c006ca90faa512",
+  "kind": "investment",
+  "track_key": "semi",
+  "day": "20260710",
+  "status": "failed",
+  "title": "Navitas refutes Wolfspeed’s allegations of patent infringement",
+  "url": "https://www.semiconductor-today.com/news_items/2026/jul/navitas-wolfspeed-090726.shtml",
+  "source": "Semiconductor Today",
+  "time": "07-09 17:01",
+  "started_at_ts": 1783645956.554744,
+  "started_at": "2026-07-10 09:12:36",
+  "error": "未配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY；wrapper 应从 Hermes .env grep 注入",
+  "error_type": "unavailable",
+  "body_text": "Navitas refutes Wolfspeed’s allegations of patent infringement Home News Categories LEDs Markets Microelectronics Optoelectronics Photovoltaics Suppliers All News Features Directory Recruitment Events About Advertising Contribute FREE Registration Sign Up to Our Free Weekly E-Brief Media Kit Download & Details News: Microelectronics 9 July 2026 Navitas refutes Wolfspeed’s allegations of patent infringement Regarding the patent infringement complaint filed against it by Wolfspeed Inc of Durham, NC, USA — which makes silicon carbide (SiC) materials and power semiconductor devices — in the United States District Court for the District of Delaware, gallium nitride (GaN) power IC and silicon carbide (SiC) technology firm Navitas Semiconductor Corp of Torrance, CA, USA says that it disputes the allegations, will “vigorously defend itself and its products against baseless accusations of infringement”, and expects to prevail in the litigation. In the meantime, Navitas remains “fully committed to executing its growth strategy and delivering innovative products that address the rapidly expanding demand for next-generation power semiconductors”. Navitas claims that it has built its business through decades of innovation, engineering excellence, and the development of industry-leading technologies backed by its own robust global intellectual property portfolio. Navitas says that it respects intellectual property, and its technology is the product of decades of independent innovation, research, development and investment. The firm is “disappointed that Wolfspeed would file the recent baseless litigation in an attempt to seek an advantage that they are unable to gain through healthy competition”. See related items: Wolfspeed files patent infringement lawsuit in US against Navitas Tags: Wolfspeed Visit: www.navitassemi.com Visit: www.wolfspeed.com Follow us on X (Twitter) Join our LinkedIn network ©2006-2026 Juno Publishing and Media Solutions Ltd. All rights reserved. Semiconductor Today and the editorial material contained within it and related media is the copyright of Juno Publishing and Media Solutions Ltd. Reproduction in whole or part without permission from Juno Publishing and Media Solutions Ltd is forbidden. In most cases, permission will be granted, if the magazine and publisher are acknowledged. Disclaimer: Material published within Semiconductor Today and related media does not necessarily reflect the views of the publisher or staff. Juno Publishing and Media Solutions Ltd and its staff accept no responsibility for opinions expressed, editorial errors and damage/injury to property or persons as a result of material published. Semiconductor Today, Juno Publishing and Media Solutions Ltd, Suite no. 133, 20 Winchcombe Street, Cheltenham, GL52 2LY, UK View our privacy, cookie and data protection policy",
+  "body_mode": "fulltext",
+  "body_char_count": 2847,
+  "body_error": null
+}

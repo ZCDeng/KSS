@@ -1,9 +1,6 @@
 """U1: intraday-bars live→local 降级与会话 cache。"""
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import scripts.kss_app_bridge as b
 
 
@@ -26,18 +23,7 @@ def test_aggregate_bars_to_interval():
 
 
 def test_session_cache_roundtrip(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "kss.config.paths.STORAGE_ROOT",
-        tmp_path,
-        raising=False,
-    )
-    # 直接 monkeypatch 路径 helper
-    def _path(symbol: str, interval_minutes: int) -> Path:
-        d = tmp_path / "intraday_session_cache"
-        d.mkdir(parents=True, exist_ok=True)
-        return d / f"{symbol}_{interval_minutes}m.json"
-
-    monkeypatch.setattr(b, "_intraday_session_cache_path", _path)
+    monkeypatch.setattr(b, "STATE_ROOT", tmp_path)
     bars = [
         {
             "time": "2026-07-10T14:55:00+08:00",

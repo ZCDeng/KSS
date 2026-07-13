@@ -1,0 +1,19 @@
+{
+  "item_id": "234b7bc078bb3b9f",
+  "kind": "investment",
+  "track_key": "ai",
+  "day": "20260710",
+  "status": "failed",
+  "title": "现代AI之父新作：13个大模型实测，检索agent真的可信吗？",
+  "url": "https://mp.weixin.qq.com/s?__biz=MzI3MTA0MTk1MA==&mid=2652711965&idx=3&sn=1161ef369875162fe980ce2f3c441636",
+  "source": "新智元",
+  "time": "07-09 12:43",
+  "started_at_ts": 1783645745.4243891,
+  "started_at": "2026-07-10 09:09:05",
+  "error": "content too thin",
+  "error_type": "thin",
+  "body_text": "",
+  "body_mode": "empty",
+  "body_char_count": 0,
+  "body_error": "body too short"
+}

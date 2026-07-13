@@ -1,0 +1,19 @@
+{
+  "item_id": "029f713670002b25",
+  "kind": "investment",
+  "track_key": "semi",
+  "day": "20260710",
+  "status": "failed",
+  "title": "OECD Is Putting Supply Chain, Value Chain, and Subsidies in the Spotlight",
+  "url": "https://www.allaboutcircuits.com/news/oecd-is-putting-supply-chain-value-china-and-subsidies-in-the-spotlight/",
+  "source": "All About Circuits",
+  "time": "07-09 15:00",
+  "started_at_ts": 1783646034.448504,
+  "started_at": "2026-07-10 09:13:54",
+  "error": "未配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY；wrapper 应从 Hermes .env grep 注入",
+  "error_type": "unavailable",
+  "body_text": "The OECD is analyzing the semiconductor industry, focusing on supply chain resilience, global value chain mapping, and the impact of rising industrial subsidies",
+  "body_mode": "summary",
+  "body_char_count": 160,
+  "body_error": "http 403"
+}

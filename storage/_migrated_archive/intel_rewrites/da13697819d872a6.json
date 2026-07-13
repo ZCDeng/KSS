@@ -1,0 +1,19 @@
+{
+  "item_id": "da13697819d872a6",
+  "kind": "investment",
+  "track_key": "ai",
+  "day": "20260710",
+  "status": "failed",
+  "title": "中国科学院携手全球顶尖机构发布首个十亿参数级的手术视频基础模型SurgMotion！",
+  "url": "https://mp.weixin.qq.com/s?__biz=MzA3MzI4MjgzMw==&mid=2651043143&idx=2&sn=22a3dc2927b9921240930c0e9a90dca9",
+  "source": "机器之心",
+  "time": "07-08 11:02",
+  "started_at_ts": 1783645819.255106,
+  "started_at": "2026-07-10 09:10:19",
+  "error": "未配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY；wrapper 应从 Hermes .env grep 注入",
+  "error_type": "unavailable",
+  "body_text": "从“像素重建”到“时空运动预测”跨越式进化，Hugging Face 全球下载量第一",
+  "body_mode": "summary",
+  "body_char_count": 42,
+  "body_error": "body too short"
+}

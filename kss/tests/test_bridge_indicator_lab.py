@@ -97,13 +97,21 @@ def test_backtest_end_to_end_persists_verdict(isolated_root: Path) -> None:
     assert out["results"][0]["symbol"] == "688017.SH"
     assert out["results"][0]["status"] == "judged"
     assert out["verdictRef"] is not None
-    verdict_path = isolated_root / out["verdictRef"]
-    assert verdict_path.exists()
+
+    import sqlite3
+
+    conn = sqlite3.connect(isolated_root / "storage" / "kss.db")
+    row = conn.execute(
+        "SELECT payload_json FROM indicator_lab_verdicts WHERE verdict_id=?", (out["verdictRef"],)
+    ).fetchone()
+    conn.close()
+    assert row is not None
 
 
 def test_backtest_uses_watchlist_when_symbols_omitted(isolated_root: Path) -> None:
-    (isolated_root / "storage").mkdir(parents=True, exist_ok=True)
-    (isolated_root / "storage" / "watchlist_symbols.txt").write_text("688017.SH\n", encoding="utf-8")
+    from kss.storage.watchlist import set_watchlist
+
+    set_watchlist(["688017.SH"], db_path=isolated_root / "storage" / "kss.db")
     _write_fixture_csv(isolated_root / "cs_data_688017.csv")
     out = b.dispatch("indicator-backtest", ["ma_cross", "{}", ""])
     assert "error" not in out
@@ -115,16 +123,26 @@ def test_suggest_skips_no_go_and_covered_families(isolated_root: Path) -> None:
     assert out["family"] in ("ma_cross", "rsi_threshold", "boll_atr")
 
     # 手动记一条该 family 的 NO-GO 裁决，再次建议应跳过它
+    import sqlite3
+
     from kss.indicators.primitives import default_params
+    from kss.storage.db import ensure_schema
 
     first_family = out["family"]
     key = b._verdict_key(first_family, default_params(first_family))
-    verdicts_dir = isolated_root / "storage" / "indicator_lab" / "verdicts"
-    verdicts_dir.mkdir(parents=True, exist_ok=True)
-    (verdicts_dir / f"{key}.json").write_text(
-        json.dumps({"family": first_family, "params": default_params(first_family), "go": False}),
-        encoding="utf-8",
+    conn = sqlite3.connect(isolated_root / "storage" / "kss.db")
+    conn.row_factory = sqlite3.Row
+    ensure_schema(conn)
+    conn.execute(
+        "INSERT INTO indicator_lab_verdicts (verdict_id, entry_id, payload_json, created_at) VALUES (?,?,?,?)",
+        (
+            key, f"{first_family}_{key}",
+            json.dumps({"family": first_family, "params": default_params(first_family), "go": False}),
+            None,
+        ),
     )
+    conn.commit()
+    conn.close()
     out2 = b.dispatch("indicator-suggest", [])
     assert out2["family"] != first_family
 
@@ -138,7 +156,7 @@ def test_solidify_then_retire_roundtrip(isolated_root: Path) -> None:
 
     from kss.indicators.registry import get_entry, load_registry
 
-    entries = load_registry(isolated_root / "storage" / "indicator_registry.yaml")
+    entries = load_registry(isolated_root / "storage" / "kss.db")
     entry = get_entry(entry_id, entries)
     assert entry is not None
     assert entry.status == "active"
@@ -146,7 +164,7 @@ def test_solidify_then_retire_roundtrip(isolated_root: Path) -> None:
 
     retire_out = b.dispatch("indicator-retire", [entry_id])
     assert retire_out.get("ok") is True
-    entries2 = load_registry(isolated_root / "storage" / "indicator_registry.yaml")
+    entries2 = load_registry(isolated_root / "storage" / "kss.db")
     assert get_entry(entry_id, entries2).status == "retired"
 
 
@@ -251,7 +269,7 @@ def test_solidify_rolls_back_registry_on_pack_failure(isolated_root: Path, monke
 
     from kss.indicators.registry import load_registry
 
-    entries = load_registry(isolated_root / "storage" / "indicator_registry.yaml")
+    entries = load_registry(isolated_root / "storage" / "kss.db")
     ids = {e.id for e in entries}
     assert not any(i.startswith("ma_cross_") for i in ids)
 

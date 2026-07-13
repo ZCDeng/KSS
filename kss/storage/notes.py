@@ -1,13 +1,14 @@
-"""本地 notes（沉淀库）— markdown + JSON 双格式 atomic 写。
+"""本地 notes（沉淀库）— markdown 文件（人读） + kss.db 结构化（agent/检索用）。
 
 本轮（plan 2026-07-09-001）仅支持资讯雷达 digest 的写入；阅读 UI 留待后续
 Notes 页面（沉淀库只写不读由用户确认）。
 
-文件布局::
+存储布局（plan 2026-07-12-005 / U15 域割接：结构化部分从 .json 文件切到
+kss.db intel_digest_notes 表；.md 仍是文件，Tier C，不动）::
 
     STATE_ROOT/storage/notes/
-        intel_digest_20260709_ai.md      # 人读
-        intel_digest_20260709_ai.json    # 结构化（agent/检索用）
+        intel_digest_20260709_ai.md      # 人读，Tier C
+    kss.db.intel_digest_notes            # 结构化，Tier A
 """
 
 from __future__ import annotations
@@ -18,6 +19,8 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from kss.storage.db import connect, ensure_schema
 
 
 def _state_root() -> Path:
@@ -30,6 +33,10 @@ def _state_root() -> Path:
 
 def _notes_dir() -> Path:
     return _state_root() / "storage" / "notes"
+
+
+def _db_path() -> Path:
+    return _state_root() / "storage" / "kss.db"
 
 
 def _date_str() -> str:
@@ -64,7 +71,8 @@ def save_intel_digest(
     *,
     date: str | None = None,
 ) -> Path:
-    """写入单赛道 AI digest 沉淀：md（人读）+ json（结构化），atomic 双写。
+    """写入单赛道 AI digest 沉淀：md（人读，atomic 写文件）+ 结构化 payload（kss.db，
+    agent/检索用；plan 2026-07-12-005 / U15 割接自 .json 文件）。
 
     Returns:
         md 文件路径。
@@ -72,13 +80,12 @@ def save_intel_digest(
     date = date or _date_str()
     stem = f"intel_digest_{date}_{track_key}"
     md_path = _notes_dir() / f"{stem}.md"
-    json_path = _notes_dir() / f"{stem}.json"
 
-    # md：纯文本标题 + 要点
+    # md：纯文本标题 + 要点（Tier C，不动）
     md_content = f"# {track_name} 要点 · {date}\n\n{response.strip()}\n"
     _atomic_write(md_path, md_content)
 
-    # json：完整结构化 payload（prompt / response / model / items / 时间戳）
+    # 结构化 payload（prompt / response / model / items / 时间戳）→ kss.db
     payload = {
         "track_key": track_key,
         "track_name": track_name,
@@ -90,7 +97,12 @@ def save_intel_digest(
         "items": items,
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
-    _atomic_write(json_path, json.dumps(payload, ensure_ascii=False, indent=2))
+    with connect(_db_path()) as conn:
+        ensure_schema(conn)
+        conn.execute(
+            "INSERT OR REPLACE INTO intel_digest_notes (digest_date, track_key, payload_json, created_at) VALUES (?,?,?,?)",
+            (date, track_key, json.dumps(payload, ensure_ascii=False), payload["generated_at"]),
+        )
     return md_path
 
 

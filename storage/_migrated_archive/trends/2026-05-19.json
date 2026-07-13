@@ -1,0 +1,88 @@
+{
+  "date": "2026-05-19",
+  "isTrading": true,
+  "north": {
+    "money": 35.87,
+    "unit": "亿",
+    "dir": "in"
+  },
+  "etfs": [
+    {
+      "code": "563360.SH",
+      "name": "A500ETF",
+      "pct": 0.51
+    },
+    {
+      "code": "159361.SZ",
+      "name": "A500ETF",
+      "pct": 0.61
+    }
+  ],
+  "inflowScore": 0.511,
+  "inflowDir": "in",
+  "sectorTop": [],
+  "sectorCount": 0,
+  "topSector": null,
+  "recs": [
+    {
+      "symbol": "688114.SH",
+      "name": "华大智造",
+      "fwd": {
+        "t1": 3.21,
+        "t5": 0.93,
+        "t20": -7.76,
+        "asof": "2026-06-17"
+      }
+    },
+    {
+      "symbol": "688278.SH",
+      "name": "特宝生物",
+      "fwd": {
+        "t1": -0.48,
+        "t5": -3.38,
+        "t20": -4.68,
+        "asof": "2026-06-17"
+      }
+    },
+    {
+      "symbol": "688349.SH",
+      "name": "三一重能",
+      "fwd": {
+        "t1": -0.18,
+        "t5": -1.76,
+        "t20": -15.24,
+        "asof": "2026-06-17"
+      }
+    },
+    {
+      "symbol": "688297.SH",
+      "name": "中无人机",
+      "fwd": {
+        "t1": 0.18,
+        "t5": -0.78,
+        "t20": 3.41,
+        "asof": "2026-06-17"
+      }
+    },
+    {
+      "symbol": "688617.SH",
+      "name": "惠泰医疗",
+      "fwd": {
+        "t1": -0.83,
+        "t5": -1.41,
+        "t20": -13.59,
+        "asof": "2026-06-17"
+      }
+    }
+  ],
+  "recCount": 5,
+  "recAvgFwd": -1.28,
+  "heat": 0.598,
+  "sectorHeat": null,
+  "flags": {
+    "north": true,
+    "etf": true,
+    "sector": false,
+    "recs": true
+  }
+}

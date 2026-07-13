@@ -1,0 +1,19 @@
+{
+  "item_id": "4462f59923d66ad5",
+  "kind": "investment",
+  "track_key": "semi",
+  "day": "20260710",
+  "status": "failed",
+  "title": "Fable: The Persistent Entrepreneur",
+  "url": "https://www.electronicsweekly.com/blogs/mannerisms/fable/fable-the-persistent-entrepreneur-2026-07/",
+  "source": "Electronics Weekly",
+  "time": "07-09 21:00",
+  "started_at_ts": 1783645930.15144,
+  "started_at": "2026-07-10 09:12:10",
+  "error": "未配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY；wrapper 应从 Hermes .env grep 注入",
+  "error_type": "unavailable",
+  "body_text": "There was once a guy who, after serving as an engineer in the army, decided, at the age of 43, to set up his own company. The company sold imported ... The post",
+  "body_mode": "summary",
+  "body_char_count": 160,
+  "body_error": "URLError: <urlopen error _ssl.c:999: The handshake operation timed out>"
+}

@@ -1,0 +1,29 @@
+{
+  "item_id": "26ade8664bb201ec",
+  "kind": "investment",
+  "track_key": "robot",
+  "day": "20260712",
+  "status": "ready",
+  "title": "ENCY Software and Stäubli Robotics partner to simplify robot programming",
+  "url": "https://www.therobotreport.com/ency-software-staubli-robotics-partner-simplify-robot-programming/",
+  "source": "Robotics Business Review",
+  "time": "07-08 23:02",
+  "started_at_ts": 1783856513.897331,
+  "started_at": "2026-07-12 19:41:53",
+  "text": "## 事件\n- ENCY Software与Stäubli Robotics签署全球合作协议，旨在简化机器人编程流程，使其更直观、快速且易于使用。\n\n## 影响\n- 该合作可能降低机器人编程门槛，提升工业自动化场景的部署效率与灵活性。\n\n## 标的线索\n- ENCY Software（待核实）、Stäubli Robotics（待核实）、机器人编程及自动化系统集成商（待核实）\n\n## 待验证\n- 合作具体技术路线与集成方案细节尚未披露。",
+  "sections": {
+    "事件": "- ENCY Software与Stäubli Robotics签署全球合作协议，旨在简化机器人编程流程，使其更直观、快速且易于使用。",
+    "影响": "- 该合作可能降低机器人编程门槛，提升工业自动化场景的部署效率与灵活性。",
+    "标的线索": "- ENCY Software（待核实）、Stäubli Robotics（待核实）、机器人编程及自动化系统集成商（待核实）",
+    "待验证": "- 合作具体技术路线与集成方案细节尚未披露。"
+  },
+  "model": "deepseek-v4-flash",
+  "generated_at": "2026-07-12 19:41:58",
+  "prompt_system": "你是「资讯雷达」投研向改写助手。任务：把用户提供的一篇资讯压成可读的投研草稿。\n\n硬性要求：\n1. 严格用下面四个中文小节标题（Markdown ##），顺序固定，每节 1-4 条短句：\n## 事件\n## 影响\n## 标的线索\n## 待验证\n2. 只客观陈述；不推荐买卖；不预测涨跌；不构成投资建议。\n3. 「标的线索」只能写可能相关的公司/板块/主题，并标注「待核实」；没有则写「暂无明确标的线索」。\n4. 「待验证」写需要交叉核对的事实或缺口；没有则写「暂无」。\n5. 不要输出前后缀寒暄、不要编造文中不存在的数字。\n",
+  "body_text": "ENCY Software and Stäubli Robotics have signed a global agreement to make robot programming more intuitive, faster, and more accessible. The post ENCY Software",
+  "body_mode": "summary",
+  "body_char_count": 160,
+  "body_error": "http 403",
+  "error": null,
+  "error_type": null
+}

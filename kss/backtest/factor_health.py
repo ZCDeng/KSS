@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -45,11 +46,12 @@ import numpy as np
 import pandas as pd
 
 from kss.backtest.significance import Significance
+from kss.config.paths import KSS_DB
 
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_HEALTH_DB = PROJECT_ROOT / "storage" / "factor_health" / "factor_health.db"
+DEFAULT_HEALTH_DB = KSS_DB
 DEFAULT_THRESHOLDS_PATH = (
     PROJECT_ROOT / "kss" / "config" / "factor_health_thresholds.yaml"
 )
@@ -392,10 +394,22 @@ class FactorHealthTracker:
     def _connect(self) -> Iterator[sqlite3.Connection]:
         # 单机双写（cron 回测 hook + app 读）会 database is locked：connect timeout +
         # busy_timeout 让写锁竞争等待而非立刻抛错；WAL 让读写不互斥。
+        # journal_mode=WAL 只在库尚未是 WAL 模式时才发；读探测仍有 TOCTOU 窗口，
+        # 短重试兜底（见 kss/storage/db.py:connect() 同款修法 + 实测记录）。
         conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=30000")
-        conn.execute("PRAGMA journal_mode=WAL")
+        for attempt in range(5):
+            current_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+            if str(current_mode).lower() == "wal":
+                break
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                break
+            except sqlite3.OperationalError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
         try:
             yield conn
             conn.commit()
@@ -583,10 +597,22 @@ class FactorCrashRegistry:
     def _connect(self) -> Iterator[sqlite3.Connection]:
         # 单机双写（cron 回测 hook + app 读）会 database is locked：connect timeout +
         # busy_timeout 让写锁竞争等待而非立刻抛错；WAL 让读写不互斥。
+        # journal_mode=WAL 只在库尚未是 WAL 模式时才发；读探测仍有 TOCTOU 窗口，
+        # 短重试兜底（见 kss/storage/db.py:connect() 同款修法 + 实测记录）。
         conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=30000")
-        conn.execute("PRAGMA journal_mode=WAL")
+        for attempt in range(5):
+            current_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+            if str(current_mode).lower() == "wal":
+                break
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                break
+            except sqlite3.OperationalError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
         try:
             yield conn
             conn.commit()

@@ -156,7 +156,14 @@ def test_run_entry_pack_primitive_end_to_end(tmp_path: Path) -> None:
     assert p1["status"] in ("ok", "skipped", "error")
     if p1["status"] == "ok":
         assert p1["indicator_id"] == "ma1"
-        assert (tmp_path / "storage/indicator_signals/ma1/latest/688017.SH.json").exists()
+        import sqlite3
+
+        conn = sqlite3.connect(tmp_path / "storage" / "kss.db")
+        row = conn.execute(
+            "SELECT 1 FROM indicator_signal_packs WHERE entry_id=? AND symbol=?", ("ma1", "688017.SH")
+        ).fetchone()
+        conn.close()
+        assert row is not None
         p2 = ipack.run_entry_pack(entry, "688017.SH", cfg=cfg, root=tmp_path)
         assert p1["action"] == p2["action"]
 

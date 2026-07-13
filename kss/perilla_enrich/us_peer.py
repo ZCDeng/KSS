@@ -5,7 +5,10 @@
 ``{pe, market_cap, price, currency, status}``, 任何失败都降级为 status 标记而非抛出.
 
 设计约束(R3/R4/R6):
-- 带本地 JSON 缓存(``storage/us_peer_cache/<ticker>.json``), 默认 1 天有效, 避免重复打 Yahoo.
+- 带 kss.db 缓存（perilla_enrich_cache 表，kind="us_peer"，ts_code 借用存 ticker；
+  U15 割接自 storage/us_peer_cache/<ticker>.json——该目录在生产中从未真正落过
+  地，因为唯一实际调用方 aggregate.enrich() 一直显式传 cache_dir 覆盖此模块自带
+  默认值，实际写入位置一直是 storage/perilla_cache/），默认 1 天有效，避免重复打 Yahoo。
 - yFinance 是非官方 Yahoo API、无 key、需外网; 断网/未知 ticker → status="unavailable".
 - ticker 为 None(该股无干净美股对标) → status="no_peer", 完全不触网.
 """
@@ -18,16 +21,11 @@ from datetime import date as _date
 from pathlib import Path
 from typing import Any
 
-from kss.config.paths import STORAGE_ROOT
+from kss.storage.perilla_cache import read_cache_entry, write_cache_entry
 
 logger = logging.getLogger(__name__)
 
-CACHE_DIR: Path = STORAGE_ROOT / "us_peer_cache"
-
-
-def _cache_path(ticker: str, cache_dir: Path | None = None) -> Path:
-    base = cache_dir or CACHE_DIR
-    return base / f"{ticker.upper()}.json"
+_KIND = "us_peer"
 
 
 def _fetch_live(ticker: str) -> dict[str, Any]:
@@ -80,7 +78,7 @@ def fetch_us_peer(
     ticker: str | None,
     *,
     max_age_days: int = 1,
-    cache_dir: Path | None = None,
+    db_path: Path | None = None,
     today: _date | None = None,
     cache_only: bool = False,
 ) -> dict[str, Any]:
@@ -89,7 +87,7 @@ def fetch_us_peer(
     Args:
         ticker: 美股代码(如 ``LRCX``); ``None`` 表示该股无干净对标.
         max_age_days: 缓存有效天数; 超过则重新拉.
-        cache_dir: 覆盖缓存目录(测试用).
+        db_path: kss.db 路径; ``None`` → 直取不缓存(测试用).
         today: 覆盖"今天"(测试用).
         cache_only: 只读缓存、绝不触网; 未命中 → unavailable(reason=cache_miss).
 
@@ -102,10 +100,9 @@ def fetch_us_peer(
 
     ticker = ticker.upper()
     today = today or _date.today()
-    path = _cache_path(ticker, cache_dir)
 
     # 1) 缓存命中且未过期 → 直接用, 不触网.
-    cached = _read_cache(path)
+    cached = _read_cache(ticker, db_path) if db_path is not None else None
     if cached is not None:
         age = _age_days(cached.get("as_of"), today)
         if age is not None and age <= max_age_days:
@@ -129,14 +126,15 @@ def fetch_us_peer(
         "as_of": today.strftime("%Y-%m-%d"),
         **live,
     }
-    _write_cache(path, result)
+    if db_path is not None:
+        _write_cache(ticker, result, db_path)
     return result
 
 
 def fetch_usdcny(
     *,
     max_age_days: int = 1,
-    cache_dir: Path | None = None,
+    db_path: Path | None = None,
     today: _date | None = None,
     cache_only: bool = False,
 ) -> float | None:
@@ -145,31 +143,31 @@ def fetch_usdcny(
     复用 us_peer 的缓存与降级路径；不可达时返回 None（市值倍数随之降级，
     但 PE 对比无需汇率不受影响）。
     """
-    r = fetch_us_peer("CNY=X", max_age_days=max_age_days, cache_dir=cache_dir,
+    r = fetch_us_peer("CNY=X", max_age_days=max_age_days, db_path=db_path,
                       today=today, cache_only=cache_only)
     if r.get("status") == "ok":
         return _num(r.get("price"))
     return None
 
 
-def _read_cache(path: Path) -> dict[str, Any] | None:
-    if not path.exists():
+def _read_cache(ticker: str, db_path: Path) -> dict[str, Any] | None:
+    entry = read_cache_entry(ticker, _KIND, db_path)
+    if entry is None:
         return None
+    payload, _cached_at = entry
     try:
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.debug("us_peer 缓存读失败 %s: %s", path, exc)
+        return json.loads(payload)
+    except json.JSONDecodeError as exc:
+        logger.debug("us_peer 缓存读失败 %s: %s", ticker, exc)
         return None
 
 
-def _write_cache(path: Path, data: dict[str, Any]) -> None:
+def _write_cache(ticker: str, data: dict[str, Any], db_path: Path) -> None:
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
-    except OSError as exc:
-        logger.debug("us_peer 缓存写失败 %s: %s", path, exc)
+        write_cache_entry(ticker, _KIND, json.dumps(data, ensure_ascii=False), data.get("as_of"), db_path)
+    except Exception as exc:  # noqa: BLE001 — sqlite3.Error 不是 OSError 子类，锁竞争下窄捕获
+        # 会让异常逃出这里，调用方 fetch_us_peer 里紧跟的 return result 就执行不到。
+        logger.debug("us_peer 缓存写失败 %s: %s", ticker, exc)
 
 
 def _age_days(as_of: str | None, today: _date) -> int | None:

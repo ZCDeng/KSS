@@ -37,9 +37,11 @@ struct SidebarView: View {
                 .padding(.bottom, 52)
             Spacer(minLength: 0)
 
-            SidebarFooter(collapsed: collapsed)
-                .padding(.horizontal, collapsed ? 8 : 12)
-                .padding(.bottom, 10)
+            SidebarFooter(collapsed: collapsed, isArchitectureSelected: selection == .architecture) {
+                selection = .architecture
+            }
+            .padding(.horizontal, collapsed ? 8 : 12)
+            .padding(.bottom, 10)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.canvas)   // 实色暖纸底，覆盖窗口 vibrancy
@@ -338,8 +340,57 @@ private struct ToggleButton: View {
     }
 }
 
-/// 边栏底部：只保留 GitHub 跳转（折叠态仅图标）。xcom 模式下补胶囊形 hover 反馈。
+/// 边栏底部：架构入口（图标，plan 2026-07-12-005 U2）与 GitHub 跳转并排。
+/// 展开态左右并排；折叠态纵排（两者都仅图标，都保持可达）。xcom 模式下补胶囊/圆形 hover 反馈。
 struct SidebarFooter: View {
+    @Environment(\.kssTheme) private var theme
+    var collapsed: Bool
+    var isArchitectureSelected: Bool
+    var onSelectArchitecture: () -> Void
+
+    var body: some View {
+        if collapsed {
+            VStack(spacing: 6) {
+                ArchitectureFooterButton(isSelected: isArchitectureSelected, action: onSelectArchitecture)
+                GitHubFooterLink(collapsed: true)
+            }
+        } else {
+            HStack(spacing: 6) {
+                ArchitectureFooterButton(isSelected: isArchitectureSelected, action: onSelectArchitecture)
+                GitHubFooterLink(collapsed: false)
+            }
+        }
+    }
+}
+
+/// 架构入口图标按钮：仅图标，悬停有 `.help()` 说明；选中态用 accent 着色。
+private struct ArchitectureFooterButton: View {
+    @Environment(\.kssTheme) private var theme
+    var isSelected: Bool
+    var action: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        let isXcom = theme.system == .xcom
+        let hoverTint = theme.textPrimary.opacity(theme.appearance == .dark ? 0.10 : 0.06)
+        Button(action: action) {
+            Image(systemName: WorkspaceSection.architecture.symbol)
+                .font(KSSFont.themed(14, .semibold, chirpWeight: .medium, theme: theme))
+                .foregroundStyle(isSelected ? theme.accent : theme.textSecondary)
+                .frame(width: 28, height: 28)
+                .background(
+                    isXcom && isHovering ? hoverTint : Color.clear,
+                    in: Circle()
+                )
+        }
+        .buttonStyle(.plain)
+        .help(WorkspaceSection.architecture.displayName)
+        .onHover { isHovering = $0 }
+    }
+}
+
+/// GitHub 跳转：折叠态仅图标，展开态图标+文字。
+private struct GitHubFooterLink: View {
     @Environment(\.kssTheme) private var theme
     var collapsed: Bool
     @State private var isHovering = false
@@ -358,7 +409,6 @@ struct SidebarFooter: View {
                             isXcom && isHovering ? hoverTint : Color.clear,
                             in: Circle()
                         )
-                        .frame(maxWidth: .infinity, minHeight: 28)
                 } else {
                     HStack(spacing: 8) {
                         Image(systemName: "chevron.left.forwardslash.chevron.right")
@@ -379,6 +429,7 @@ struct SidebarFooter: View {
                         isXcom && isHovering ? hoverTint : Color.clear,
                         in: RoundedRectangle(cornerRadius: theme.chipRadius)
                     )
+                    .frame(maxWidth: .infinity)
                 }
             }
             .buttonStyle(.plain)

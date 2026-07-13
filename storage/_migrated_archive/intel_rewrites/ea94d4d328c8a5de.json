@@ -1,0 +1,19 @@
+{
+  "item_id": "ea94d4d328c8a5de",
+  "kind": "investment",
+  "track_key": "semi",
+  "day": "20260710",
+  "status": "failed",
+  "title": "Voyager Spacecraft: The Ultimate Power Management Challenge?",
+  "url": "https://www.eetimes.com/voyager-spacecraft-the-ultimate-power-management-challenge/",
+  "source": "EE Times",
+  "time": "07-09 22:00",
+  "started_at_ts": 1783645915.2207391,
+  "started_at": "2026-07-10 09:11:55",
+  "error": "未配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY；wrapper 应从 Hermes .env grep 注入",
+  "error_type": "unavailable",
+  "body_text": "Voyager’s plutonium heart is fading, forcing NASA to kill instruments one by one; see how engineers ration watts 15B miles away. The post Voyager Spacecraft: Th",
+  "body_mode": "summary",
+  "body_char_count": 160,
+  "body_error": "TimeoutError: The read operation timed out"
+}

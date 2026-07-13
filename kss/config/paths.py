@@ -56,6 +56,10 @@ REPORT_DIR: Path = STORAGE_ROOT / "reports"
 # ----- 分时数据层 (plan 005；隔离 SQLite 库，解析于 STATE_ROOT 防 bundle 双根坑) -----
 INTRADAY_DB: Path = STORAGE_ROOT / "intraday_quotes.db"
 
+# ----- 统一 Tier A 库 (plan 2026-07-12-005 / U14 KTD1；与 datasette/kss.db 同名不同路径，
+# 那是仓库根的探索性原型，不是同一个文件——见 appendix-storage-inventory 命名提醒) -----
+KSS_DB: Path = STORAGE_ROOT / "kss.db"
+
 
 __all__ = [
     "CREDIT_DIR",
@@ -65,6 +69,7 @@ __all__ = [
     "HS300_PE_PARQUET",
     "HSGT_PARQUET",
     "INDUSTRY_MAP_PARQUET",
+    "KSS_DB",
     "MACRO_ROOT",
     "MARGIN_PARQUET",
     "MONTHLY_PARQUET",

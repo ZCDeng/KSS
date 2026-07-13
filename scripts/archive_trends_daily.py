@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
 """趋势页单日归档构建器（U1）。
 
-给定日期 → 聚合三类内容落 storage/trends/YYYY-MM-DD.json：
+给定日期 → 聚合三类内容落 kss.db trends_days 表：
   - 主力资金：北向净额（hsgt_daily.parquet，需 pandas+parquet 引擎）+ A500ETF（best-effort）
-  - 板块：etf_radar/<YYYYMMDD>.json 经 bridge _pulse_from_dict 取 top 主题
+  - 板块：etf_radar_snapshots（kss.db）经 bridge _pulse_from_dict 取 top 主题
   - 推荐：bridge _build_logmv_picks(date) 重算 + T+1/T+5/T+20（_horizon_return）
           并记 asof 实际落点，防停牌/跳空把远期行当近期。
 
 被 backfill_trends.py（U2，历史批量）与 archive_trends_daily.sh（U3，每日）共用。
 重活（parquet）走 .venv-desktop；bridge 函数为 stdlib，可直接 import。
-原子写：.tmp → os.replace。缺源字段置 null + flags 标记，stderr 记缺失（Fail loud）。
+缺源字段置 null + flags 标记，stderr 记缺失（Fail loud）。
 
 用法： python archive_trends_daily.py [YYYY-MM-DD]   # 缺省=最新交易日
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -25,9 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 import kss_app_bridge as kb  # noqa: E402  bridge 的 stdlib 函数（picks 重算 / T+N / 板块切片）
 
-TRENDS_DIR = ROOT / "storage" / "trends"
 HSGT_PARQUET = ROOT / "storage" / "macro" / "hsgt_daily.parquet"
-ETF_RADAR_DIR = ROOT / "storage" / "etf_radar"
 NORTH_HEAT_REF_YI = 60.0  # 北向量级归一化参考（亿元），|净额|≥此值热度封顶
 
 
@@ -128,14 +125,11 @@ def _etfs_for_date(date: str) -> list[dict[str, Any]] | None:
 
 def _sector_for_date(compact_date: str) -> tuple[list[dict[str, Any]], int, float | None]:
     """板块 top 主题（对齐 _pulse_from_dict 的 grade 字段）+ 总数 + 强度归一化。"""
-    fp = ETF_RADAR_DIR / f"{compact_date}.json"
-    if not fp.exists():
-        _log(f"etf_radar 无 {compact_date}.json（板块段空）")
-        return [], 0, None
-    try:
-        d = json.loads(fp.read_text(encoding="utf-8"))
-    except Exception as exc:  # noqa: BLE001
-        _log(f"读 etf_radar 失败: {exc}")
+    from kss.storage.etf_radar import read_by_date
+
+    d = read_by_date(compact_date, ROOT / "storage" / "kss.db")
+    if d is None:
+        _log(f"etf_radar 无 {compact_date}（板块段空）")
         return [], 0, None
     pulse = kb._pulse_from_dict(d)
     if not pulse:
@@ -261,17 +255,16 @@ def build_trend_day(date: str) -> dict[str, Any]:
     }
 
 
-def write_trend_day(date: str, force: bool = True) -> Path:
-    """原子写 storage/trends/<date>.json。"""
-    TRENDS_DIR.mkdir(parents=True, exist_ok=True)
-    out = TRENDS_DIR / f"{date}.json"
-    if out.exists() and not force:
-        return out
+def write_trend_day(date: str, force: bool = True) -> dict[str, Any]:
+    """写 kss.db trends_days 表。返回写入（或已存在）的 payload。"""
+    from kss.storage.trends import day_exists, read_by_date, write_day
+
+    db_path = ROOT / "storage" / "kss.db"
+    if not force and day_exists(date, db_path):
+        return read_by_date(date, db_path)
     payload = build_trend_day(date)
-    tmp = out.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, out)  # 原子
-    return out
+    write_day(payload, db_path)
+    return payload
 
 
 def _compact_to_dash(cd: str) -> str:
@@ -333,10 +326,9 @@ def main(argv: list[str]) -> int:
     else:
         dates = _recent_trading_dates(_latest_trading_date(), ARCHIVE_WINDOW)
     for date in dates:
-        out = write_trend_day(date)
-        payload = json.loads(out.read_text(encoding="utf-8"))
+        payload = write_trend_day(date)
         flags = payload["flags"]
-        _log(f"写 {out.name}: north={flags['north']} etf={flags['etf']} "
+        _log(f"写 {date}: north={flags['north']} etf={flags['etf']} "
              f"sector={flags['sector']}({payload['sectorCount']}) recs={flags['recs']}({payload['recCount']})")
     return 0
 

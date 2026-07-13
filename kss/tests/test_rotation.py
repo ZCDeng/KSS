@@ -219,12 +219,12 @@ def test_load_industry_map_empty_rows_filtered(tmp_path: Path) -> None:
 
 
 def test_load_industry_map_csv_fallback_when_parquet_missing(tmp_path: Path) -> None:
-    """parquet 不存在时降级走 storage/stock_names.csv (默认路径)."""
+    """parquet 不存在时降级走 kss.db 的 stock_names 表 (默认路径)."""
     missing_parquet = tmp_path / "nope.parquet"
-    # 默认 csv 在仓库里有 KCB 数据
+    # 默认库在仓库里有 KCB 数据（真实 storage/kss.db，U14 迁移产物）
     m = load_industry_map(path=missing_parquet)
     assert isinstance(m, dict)
-    # KCB 600+ 股 csv 应非空（除非完整剥离 csv，本仓没剥离）
+    # KCB 600+ 股应非空（除非完整清空 kss.db，本仓没清空）
     assert len(m) > 0
     # 抽 1 个已知 KCB 票
     assert "688526.SH" in m
@@ -233,10 +233,10 @@ def test_load_industry_map_csv_fallback_when_parquet_missing(tmp_path: Path) -> 
 def test_load_industry_map_both_missing_returns_empty(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """parquet 和 csv 都缺时返回空 dict（不抛）."""
+    """parquet 和 stock_names 库都缺时返回空 dict（不抛）."""
     missing_parquet = tmp_path / "nope.parquet"
-    missing_csv = tmp_path / "nope_stock_names.csv"
-    monkeypatch.setattr("kss.macro.rotation._STOCK_NAMES_CSV", missing_csv)
+    missing_db = tmp_path / "nope_stock_names.db"
+    monkeypatch.setattr("kss.macro.rotation._STOCK_NAMES_DB", missing_db)
     assert load_industry_map(path=missing_parquet) == {}
 
 

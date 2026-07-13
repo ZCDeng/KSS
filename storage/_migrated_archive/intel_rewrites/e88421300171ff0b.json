@@ -1,0 +1,19 @@
+{
+  "item_id": "e88421300171ff0b",
+  "kind": "investment",
+  "track_key": "semi",
+  "day": "20260710",
+  "status": "failed",
+  "title": "SambaNova Raises $1B, Signs JPMorganChase as a Customer",
+  "url": "https://www.eetimes.com/sambanova-raises-1-billion-signs-jpmorganchase-as-a-customer/",
+  "source": "EE Times",
+  "time": "07-08 15:45",
+  "started_at_ts": 1783646078.371962,
+  "started_at": "2026-07-10 09:14:38",
+  "error": "未配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY；wrapper 应从 Hermes .env grep 注入",
+  "error_type": "unavailable",
+  "body_text": "The enterprise market is beginning to kick in, SambaNova CEO tells EE Times. The post SambaNova Raises $1B, Signs JPMorganChase as a Customer appeared first on",
+  "body_mode": "summary",
+  "body_char_count": 159,
+  "body_error": "TimeoutError: The read operation timed out"
+}

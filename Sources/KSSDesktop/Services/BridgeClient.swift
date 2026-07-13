@@ -115,6 +115,26 @@ struct BridgeClient {
         try run(["paper-summary"], as: TrackingSummary.self)
     }
 
+    /// 日志分区（设置页，plan 2026-07-12-005 / U7）：枚举 storage/logs 下全部文件（含轮转代）。
+    func logList() throws -> LogListResponse {
+        try run(["log-list"], as: LogListResponse.self)
+    }
+
+    /// 日志尾部读取 + 可选关键词过滤。name 为 log-list 返回的相对路径（路径白名单锁 bridge 侧校验）。
+    func logTail(name: String, lines: Int = 500, grep: String = "") throws -> LogTailResponse {
+        try run(["log-tail", name, String(lines), grep], as: LogTailResponse.self)
+    }
+
+    /// 启动/手动自检（plan 2026-07-12-005 / U8）：运行时、数据目录、各凭证。
+    func selfCheck() throws -> SelfCheckResponse {
+        try run(["self-check"], as: SelfCheckResponse.self)
+    }
+
+    /// 数据源连通性测试（设置页数据源分区，plan 2026-07-12-005 / U4）。只读，不需写确认。
+    func datasourceTest(source: String) throws -> DataSourceTestResult {
+        try run(["datasource-test", source], as: DataSourceTestResult.self)
+    }
+
     /// 会话开场确定性候选建议（plan 2026-07-12-004 U9）：代码规则选一个，不调 LLM。
     func suggestIndicator() throws -> IndicatorSuggestion {
         try run(["indicator-suggest"], as: IndicatorSuggestion.self)
@@ -302,6 +322,19 @@ struct BridgeClient {
         try run(["cron-rerun-many", labels.joined(separator: ",")], as: CronBatchResult.self)
     }
 
+    /// 应用内排期编辑（设置页任务分区，plan 2026-07-12-005 / U6）。写命令，需人在环内确认。
+    /// scheduleJSON 形如 `{"hour":18,"minute":30,"weekdays":[1,2,3,4,5]}` 或
+    /// `{"weekly":{"weekday":5,"hour":20,"minute":0}}`。
+    func editCronSchedule(suffix: String, scheduleJSON: String) throws -> CronActionResult {
+        try run(["cron-edit-schedule", suffix, scheduleJSON], as: CronActionResult.self)
+    }
+
+    /// 自选列表整表替换（plan 2026-07-12-005 / U15）：写 kss.db，取代原先直接写
+    /// storage/watchlist_symbols.txt 的 syncWatchlistFile。
+    func setWatchlist(_ symbols: [String]) throws -> WatchlistSetResult {
+        try run(["watchlist-set", symbols.joined(separator: ",")], as: WatchlistSetResult.self)
+    }
+
     /// 趋势页：某月月度格子。
     func trendsMonth(_ month: String) throws -> TrendMonth {
         try run(["trends-month", month], as: TrendMonth.self)
@@ -478,16 +511,41 @@ struct BridgeClient {
     /// sidecar 是常驻 daemon，此前 stdout/stderr 一律丢 /dev/null——排障时拿不到任何
     /// Python logging 输出。改落 storage/logs/sidecar.log（与既有 storage/logs/cron/*.log
     /// 同族约定），文件不存在则建；打开失败兜底回 /dev/null（不让日志问题拖垮 spawn）。
+    /// 轮转（plan 2026-07-12-005 / U7 KTD10）：打开前检查大小，>10MB 轮转保留 3 代
+    /// （sidecar.log.1/.2/.3），旧到 .3 的直接丢弃——只在 spawn 时机检查一次，足够。
     private static func sidecarLogHandle(stateRoot: URL) -> FileHandle {
         let logURL = stateRoot.appending(path: "storage/logs/sidecar.log")
         try? FileManager.default.createDirectory(
             at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        rotateSidecarLogIfNeeded(logURL: logURL)
         if !FileManager.default.fileExists(atPath: logURL.path) {
             FileManager.default.createFile(atPath: logURL.path, contents: nil)
         }
         guard let handle = try? FileHandle(forWritingTo: logURL) else { return .nullDevice }
         handle.seekToEndOfFile()
         return handle
+    }
+
+    static let sidecarLogRotateThresholdBytes: UInt64 = 10 * 1024 * 1024
+    static let sidecarLogRotateKeepGenerations = 3
+
+    /// internal（非 private）以便 @testable 单测覆盖轮转纪律，不经真实 spawn 路径。
+    static func rotateSidecarLogIfNeeded(logURL: URL) {
+        let fm = FileManager.default
+        guard let attrs = try? fm.attributesOfItem(atPath: logURL.path),
+              let size = attrs[.size] as? UInt64,
+              size > sidecarLogRotateThresholdBytes else { return }
+        // .3 → 丢弃；.2 → .3；.1 → .2；current → .1（从最老代开始挪，避免覆盖冲突）。
+        let oldestGen = logURL.appendingPathExtension(String(sidecarLogRotateKeepGenerations))
+        try? fm.removeItem(at: oldestGen)
+        for gen in stride(from: sidecarLogRotateKeepGenerations - 1, through: 1, by: -1) {
+            let src = logURL.appendingPathExtension(String(gen))
+            let dst = logURL.appendingPathExtension(String(gen + 1))
+            if fm.fileExists(atPath: src.path) {
+                try? fm.moveItem(at: src, to: dst)
+            }
+        }
+        try? fm.moveItem(at: logURL, to: logURL.appendingPathExtension("1"))
     }
 
     private func cleanupSidecarFiles() {
@@ -901,10 +959,23 @@ struct BridgeClient {
     /// bundle-mode 首启：state-root venv 缺失则 `uv sync --frozen` provision（dev-mode 跳过）。
     static func provisionRuntimeIfNeeded(projectRoot: URL, stateRoot: URL) throws {
         guard !isDevMode else { return }                 // dev 用 .venv-desktop，不 bootstrap
+        let venvPy = stateRoot.appending(path: "venv/bin/python3")
+        if FileManager.default.isExecutableFile(atPath: venvPy.path) { return }   // 已 provision
+        try runUVSync(projectRoot: projectRoot, stateRoot: stateRoot)
+    }
+
+    /// 自检"重新初始化运行时"（plan 2026-07-12-005 / U8 KTD4）：解释器文件存在但已损坏
+    /// （import 失败）时，`provisionRuntimeIfNeeded` 的存在性检查会误判"已 provision"而跳过——
+    /// 这里强制先删旧 venv 再重跑同一套 uv sync，修复损坏但文件仍在的场景。
+    static func reinitializeRuntime(projectRoot: URL, stateRoot: URL) throws {
+        guard !isDevMode else { return }
+        try? FileManager.default.removeItem(at: stateRoot.appending(path: "venv"))
+        try runUVSync(projectRoot: projectRoot, stateRoot: stateRoot)
+    }
+
+    private static func runUVSync(projectRoot: URL, stateRoot: URL) throws {
         let fm = FileManager.default
         let venvPy = stateRoot.appending(path: "venv/bin/python3")
-        if fm.isExecutableFile(atPath: venvPy.path) { return }   // 已 provision
-
         guard let uv = findUV() else {
             throw BridgeError.runtimeBootstrapFailed(
                 "未找到 uv，请先安装：curl -LsSf https://astral.sh/uv/install.sh | sh")
@@ -912,7 +983,8 @@ struct BridgeClient {
         try? fm.createDirectory(at: stateRoot, withIntermediateDirectories: true)
         let p = Process()
         p.executableURL = uv
-        p.arguments = ["sync", "--frozen", "--project", projectRoot.path]
+        // --no-dev（plan 2026-07-12-005 / U11 R16）：生产 venv 不带 pytest 等 dev 依赖组。
+        p.arguments = ["sync", "--frozen", "--no-dev", "--project", projectRoot.path]
         var env = ProcessInfo.processInfo.environment
         env["UV_PROJECT_ENVIRONMENT"] = stateRoot.appending(path: "venv").path
         p.environment = env
@@ -962,7 +1034,8 @@ struct BridgeClient {
         DispatchQueue.global(qos: .utility).async {
             let p = Process()
             p.executableURL = uv
-            p.arguments = ["sync", "--frozen", "--project", projectRoot.path]
+            // --no-dev（plan 2026-07-12-005 / U11 R16）：生产 venv 不带 pytest 等 dev 依赖组。
+            p.arguments = ["sync", "--frozen", "--no-dev", "--project", projectRoot.path]
             var env = ProcessInfo.processInfo.environment
             env["UV_PROJECT_ENVIRONMENT"] = venvDir.path
             p.environment = env

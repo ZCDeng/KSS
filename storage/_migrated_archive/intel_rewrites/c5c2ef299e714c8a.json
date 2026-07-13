@@ -1,0 +1,29 @@
+{
+  "item_id": "c5c2ef299e714c8a",
+  "kind": "investment",
+  "track_key": "energy",
+  "day": "20260710",
+  "status": "ready",
+  "title": "Former FERC officials weigh in on Supreme Court ruling expanding president’s power to fire regulators",
+  "url": "https://www.utilitydive.com/news/former-ferc-officials-supreme-court-slaughter-ruling-expanding-presidential-power-fire-regulators/824842/",
+  "source": "Utility Dive",
+  "time": "07-10 22:35",
+  "started_at_ts": 1783696941.335995,
+  "started_at": "2026-07-10 23:22:21",
+  "text": "## 事件\n- 美国最高法院裁定扩大总统解雇联邦能源监管委员会（FERC）等独立监管机构官员的权力。  \n- 这一裁决基于近期相关案件，直接挑战了FERC作为独立机构的法律地位。\n\n## 影响\n- 可能削弱FERC的决策独立性，使能源市场监管更易受行政权力干预。  \n- 潜在影响包括消费者在竞争性能源市场中失去原有保护机制。\n\n## 标的线索\n- 暂无明确标的线索（待核实：与FERC监管相关的美国能源公司、新能源及电网板块可能受政策预期扰动）。\n\n## 待验证\n- 裁决的具体适用范围及对现有FERC案件/规则的生效时间。  \n- 市场对“独立性削弱”的实际反应及后续立法或行政补救措施。",
+  "sections": {
+    "事件": "- 美国最高法院裁定扩大总统解雇联邦能源监管委员会（FERC）等独立监管机构官员的权力。  \n- 这一裁决基于近期相关案件，直接挑战了FERC作为独立机构的法律地位。",
+    "影响": "- 可能削弱FERC的决策独立性，使能源市场监管更易受行政权力干预。  \n- 潜在影响包括消费者在竞争性能源市场中失去原有保护机制。",
+    "标的线索": "- 暂无明确标的线索（待核实：与FERC监管相关的美国能源公司、新能源及电网板块可能受政策预期扰动）。",
+    "待验证": "- 裁决的具体适用范围及对现有FERC案件/规则的生效时间。  \n- 市场对“独立性削弱”的实际反应及后续立法或行政补救措施。"
+  },
+  "model": "deepseek-v4-flash",
+  "generated_at": "2026-07-10 23:22:30",
+  "prompt_system": "你是「资讯雷达」投研向改写助手。任务：把用户提供的一篇资讯压成可读的投研草稿。\n\n硬性要求：\n1. 严格用下面四个中文小节标题（Markdown ##），顺序固定，每节 1-4 条短句：\n## 事件\n## 影响\n## 标的线索\n## 待验证\n2. 只客观陈述；不推荐买卖；不预测涨跌；不构成投资建议。\n3. 「标的线索」只能写可能相关的公司/板块/主题，并标注「待核实」；没有则写「暂无明确标的线索」。\n4. 「待验证」写需要交叉核对的事实或缺口；没有则写「暂无」。\n5. 不要输出前后缀寒暄、不要编造文中不存在的数字。\n",
+  "body_text": "&ldquo;Stripping those agencies of their independence will leave consumers exposed to the worst aspects of competitive markets without the protections of inform",
+  "body_mode": "summary",
+  "body_char_count": 160,
+  "body_error": "http 403",
+  "error": null,
+  "error_type": null
+}
