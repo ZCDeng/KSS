@@ -16,6 +16,7 @@ set -e
 set -o pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+: "${KSS_STATE_ROOT:=$PROJECT_ROOT}"
 
 if [ -n "${KSS_PYTHON:-}" ]; then
     PYTHON="$KSS_PYTHON"
@@ -28,7 +29,7 @@ else
     exit 1
 fi
 KSS_ENV="$PROJECT_ROOT/.env"
-LOG_DIR="$PROJECT_ROOT/storage/logs/cron"
+LOG_DIR="$KSS_STATE_ROOT/storage/logs/cron"
 
 POST_CLOSE=0
 UPDATE_ARGS=()

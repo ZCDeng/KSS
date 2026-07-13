@@ -55,12 +55,21 @@ private struct SettingsPlaceholderCard: View {
 /// 密钥分区：原样承接 NetworkSettingsView 的 Keychain 读写与"保存后重启 sidecar"语义。
 struct SettingsKeysSection: View {
     @Environment(\.kssTheme) private var theme
+    @EnvironmentObject private var store: KSSStore
 
     @State private var tushareToken = ""
     @State private var telegramBotToken = ""
     @State private var telegramChatId = ""
     @State private var telegramApiUrl = ""
-    // AI 复盘助手（#4）：LLM 凭据 + live 写开关。注入 sidecar env，openai_client 据此解析网关。
+    // BYOK 端点泛化（U3，plan 2026-07-12-005）：主用/备用两组独立 base_url/key/model，
+    // 有序候选——主用先试、备用兜底。openai_client._resolve_credential_candidates() 同源解析。
+    @State private var llmPrimaryBaseUrl = ""
+    @State private var llmPrimaryKey = ""
+    @State private var llmPrimaryModel = ""
+    @State private var llmFallbackBaseUrl = ""
+    @State private var llmFallbackKey = ""
+    @State private var llmFallbackModel = ""
+    // 兼容旧配置（新六键全空时才生效，见 _resolve_credential_candidates 的兼容映射）。
     @State private var openaiApiKey = ""
     @State private var openaiBaseUrl = ""
     @State private var deepseekApiKey = ""
@@ -86,8 +95,19 @@ struct SettingsKeysSection: View {
             Divider().padding(.vertical, 2)
             Text("Seesaw")
                 .font(KSSFont.themed(13, .bold, theme: theme)).foregroundStyle(theme.textPrimary)
-            Text("二选一填 key（优先 DeepSeek；都填以 DeepSeek 为准）。保存后自动重启 sidecar 生效。")
+            Text("主用/备用可各配一套 OpenAI 兼容端点（base_url/key/model），主用失败时自动降级到备用。"
+                 + "留空则退回下方兼容旧配置。保存后自动重启 sidecar 生效。")
                 .font(KSSFont.themed(11, theme: theme)).foregroundStyle(theme.textSecondary)
+            Text("主用").font(KSSFont.themed(11, .semibold, theme: theme)).foregroundStyle(theme.textPrimary)
+            field("主用 API Key", text: $llmPrimaryKey, secure: true)
+            field("主用 Base URL（网关/oneAPI，可选，留空用官方端点）", text: $llmPrimaryBaseUrl, secure: false)
+            field("主用模型 ID（可选）", text: $llmPrimaryModel, secure: false)
+            Text("备用").font(KSSFont.themed(11, .semibold, theme: theme)).foregroundStyle(theme.textPrimary)
+            field("备用 API Key", text: $llmFallbackKey, secure: true)
+            field("备用 Base URL（可选）", text: $llmFallbackBaseUrl, secure: false)
+            field("备用模型 ID（可选）", text: $llmFallbackModel, secure: false)
+            Text("兼容旧配置（仅上方主用/备用均为空时生效）")
+                .font(KSSFont.themed(11, .semibold, theme: theme)).foregroundStyle(theme.textSecondary)
             field("DeepSeek API Key", text: $deepseekApiKey, secure: true)
             field("OpenAI API Key（fallback）", text: $openaiApiKey, secure: true)
             field("OpenAI Base URL（网关/oneAPI，可选）", text: $openaiBaseUrl, secure: false)
@@ -157,6 +177,12 @@ struct SettingsKeysSection: View {
         telegramBotToken = KeychainStore.read("TELEGRAM_BOT_TOKEN") ?? ""
         telegramChatId = KeychainStore.read("TELEGRAM_CHAT_ID") ?? ""
         telegramApiUrl = KeychainStore.read("TELEGRAM_API_URL") ?? ""
+        llmPrimaryBaseUrl = KeychainStore.read("KSS_LLM_PRIMARY_BASE_URL") ?? ""
+        llmPrimaryKey = KeychainStore.read("KSS_LLM_PRIMARY_KEY") ?? ""
+        llmPrimaryModel = KeychainStore.read("KSS_LLM_PRIMARY_MODEL") ?? ""
+        llmFallbackBaseUrl = KeychainStore.read("KSS_LLM_FALLBACK_BASE_URL") ?? ""
+        llmFallbackKey = KeychainStore.read("KSS_LLM_FALLBACK_KEY") ?? ""
+        llmFallbackModel = KeychainStore.read("KSS_LLM_FALLBACK_MODEL") ?? ""
         openaiApiKey = KeychainStore.read("OPENAI_API_KEY") ?? ""
         openaiBaseUrl = KeychainStore.read("OPENAI_BASE_URL") ?? ""
         deepseekApiKey = KeychainStore.read("DEEPSEEK_API_KEY") ?? ""
@@ -172,6 +198,12 @@ struct SettingsKeysSection: View {
         KeychainStore.write("TELEGRAM_BOT_TOKEN", telegramBotToken)
         KeychainStore.write("TELEGRAM_CHAT_ID", telegramChatId)
         KeychainStore.write("TELEGRAM_API_URL", telegramApiUrl)
+        KeychainStore.write("KSS_LLM_PRIMARY_BASE_URL", llmPrimaryBaseUrl)
+        KeychainStore.write("KSS_LLM_PRIMARY_KEY", llmPrimaryKey)
+        KeychainStore.write("KSS_LLM_PRIMARY_MODEL", llmPrimaryModel)
+        KeychainStore.write("KSS_LLM_FALLBACK_BASE_URL", llmFallbackBaseUrl)
+        KeychainStore.write("KSS_LLM_FALLBACK_KEY", llmFallbackKey)
+        KeychainStore.write("KSS_LLM_FALLBACK_MODEL", llmFallbackModel)
         KeychainStore.write("OPENAI_API_KEY", openaiApiKey)
         KeychainStore.write("OPENAI_BASE_URL", openaiBaseUrl)
         KeychainStore.write("DEEPSEEK_API_KEY", deepseekApiKey)
@@ -182,6 +214,11 @@ struct SettingsKeysSection: View {
         KeychainStore.write("LONGBRIDGE_ACCESS_TOKEN", longbridgeAccessToken)
         // 凭据/开关变更后重启常驻 sidecar，使新 env 生效（SIGHUP re-exec 留旧 env，须全杀重启）。
         BridgeClient.restartSidecarForEnvChange()
+        // 保存后刷新两条独立的"已配置"判定源，否则缺凭证卡片/IntelView 的 LLM 门禁要等
+        // 手动重跑自检或重启才消失（U8/U9 优雅缺失承诺；self-check 与 hasLLMCredentials
+        // 是两条历史上各自维护的判定路径，缺一个都会留旧状态）。
+        store.refreshLLMCredentialsStatus()
+        Task { await store.runSelfCheck() }
         saved = true
     }
 }

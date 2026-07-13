@@ -165,7 +165,8 @@ def _read_cache(ticker: str, db_path: Path) -> dict[str, Any] | None:
 def _write_cache(ticker: str, data: dict[str, Any], db_path: Path) -> None:
     try:
         write_cache_entry(ticker, _KIND, json.dumps(data, ensure_ascii=False), data.get("as_of"), db_path)
-    except OSError as exc:
+    except Exception as exc:  # noqa: BLE001 — sqlite3.Error 不是 OSError 子类，锁竞争下窄捕获
+        # 会让异常逃出这里，调用方 fetch_us_peer 里紧跟的 return result 就执行不到。
         logger.debug("us_peer 缓存写失败 %s: %s", ticker, exc)
 
 

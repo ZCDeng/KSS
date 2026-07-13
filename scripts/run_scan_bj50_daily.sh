@@ -18,6 +18,7 @@ set -e
 set -o pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+: "${KSS_STATE_ROOT:=$PROJECT_ROOT}"
 
 if [ -n "${KSS_PYTHON:-}" ]; then
     PYTHON="$KSS_PYTHON"
@@ -54,7 +55,7 @@ kss_load_credential TUSHARE_TOKEN "$KSS_ENV" || true
 echo "[wrapper] loaded TELEGRAM_BOT_TOKEN length=${#TELEGRAM_BOT_TOKEN} / TUSHARE_TOKEN length=${#TUSHARE_TOKEN}"
 
 # 准备 log 目录
-mkdir -p "$PROJECT_ROOT/storage/logs/cron"
+mkdir -p "$KSS_STATE_ROOT/storage/logs/cron"
 
 cd "$PROJECT_ROOT"
 # 不可 exec：扫描后还需增量刷新 bj_cache 到今日（App 日线真源）。

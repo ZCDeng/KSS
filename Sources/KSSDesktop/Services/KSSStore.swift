@@ -829,10 +829,14 @@ final class KSSStore: ObservableObject {
         await task.value
     }
 
-    /// 启动时检测 OpenAI/DeepSeek Keychain 凭据是否存在。
+    /// 启动时检测 LLM Keychain 凭据是否存在——新六键（KSS_LLM_PRIMARY_KEY 优先判定，
+    /// FALLBACK_KEY 单独存在也算已配置）或旧 OpenAI/DeepSeek 键任一存在即算已配置，
+    /// 与 openai_client._resolve_credential_candidates() 的判定口径保持一致（U3/U9）。
     func refreshLLMCredentialsStatus() {
         let env = KeychainStore.injectedEnvironment()
-        hasLLMCredentials = (env["OPENAI_API_KEY"]?.isEmpty == false)
+        hasLLMCredentials = (env["KSS_LLM_PRIMARY_KEY"]?.isEmpty == false)
+            || (env["KSS_LLM_FALLBACK_KEY"]?.isEmpty == false)
+            || (env["OPENAI_API_KEY"]?.isEmpty == false)
             || (env["DEEPSEEK_API_KEY"]?.isEmpty == false)
     }
 

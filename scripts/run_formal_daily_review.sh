@@ -15,7 +15,7 @@ set -o pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${KSS_STATE_ROOT:=$PROJECT_ROOT}"
-LOG_DIR="$PROJECT_ROOT/storage/logs/cron"
+LOG_DIR="$KSS_STATE_ROOT/storage/logs/cron"
 
 if [ -n "${KSS_PYTHON:-}" ]; then
     PYTHON="$KSS_PYTHON"

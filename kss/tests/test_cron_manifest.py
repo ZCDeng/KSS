@@ -86,10 +86,17 @@ def test_metadata_backfilled_jobs_not_other() -> None:
 
 
 def test_scanner_wrapper_uses_launchd_log_path() -> None:
-    """scanner wrapper 的内层日志必须与 launchd StandardOutPath 对齐。"""
+    """scanner wrapper 的内层日志必须与 launchd StandardOutPath 对齐。
+
+    wrapper 侧改用 $KSS_STATE_ROOT（非 $PROJECT_DIR）拼日志路径（code review 发现的
+    真实回归：bundle 模式下 PROJECT_DIR 指向签名 .app 内只读 Resources，往那写会破坏
+    code-signing seal——同 render_launchd_plists.py:108-111 的 KTD9 纪律）。dev 模式下
+    KSS_STATE_ROOT 未被 plist 注入，wrapper 自身 ``: "${KSS_STATE_ROOT:=$PROJECT_DIR}"``
+    回落到 PROJECT_DIR，数值上仍与已渲染 plist 的 StandardOutPath 一致。
+    """
     with (_DEPLOY / "com.zcdeng.kss.scanner.plist").open("rb") as fh:
         pl = plistlib.load(fh)
-    expected = pl["StandardOutPath"].replace(str(_REPO), "$PROJECT_DIR")
+    expected = pl["StandardOutPath"].replace(str(_REPO), "$KSS_STATE_ROOT")
     wrapper = (_REPO / "run_scanner.sh").read_text(encoding="utf-8")
     assert f'LOG_FILE="{expected}"' in wrapper
 

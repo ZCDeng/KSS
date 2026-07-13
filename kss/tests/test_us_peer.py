@@ -127,3 +127,15 @@ def test_db_path_none_skips_caching(monkeypatch) -> None:
     r2 = us_peer.fetch_us_peer("LRCX", db_path=None, today=date(2026, 6, 30))
     assert r1["status"] == "ok" and r2["status"] == "ok"
     assert calls == ["LRCX", "LRCX"]  # 无缓存 → 每次都触网
+
+
+def test_fetch_returns_result_when_cache_write_lock_contended(monkeypatch, db_path: Path) -> None:
+    """回归：sqlite3.OperationalError（写锁竞争）不是 OSError 子类，_write_cache 窄捕获
+    会让它逃出 fetch_us_peer，紧跟的 return result 就执行不到，白白丢掉刚抓到的有效数据。"""
+    monkeypatch.setattr(us_peer, "_fetch_live",
+                         lambda t: {"pe": 25.0, "market_cap": 5.0e11, "price": 426.6, "currency": "USD"})
+    monkeypatch.setattr(us_peer, "write_cache_entry",
+                         lambda *a, **k: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")))
+    r = us_peer.fetch_us_peer("lrcx", db_path=db_path, today=date(2026, 6, 30))
+    assert r["status"] == "ok"
+    assert r["pe"] == 25.0

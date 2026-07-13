@@ -30,6 +30,11 @@ DIRECT_SYSTEM_PYTHON_RE = re.compile(r"/usr/bin/python3\b")
 UNCONDITIONAL_STATE_ROOT_EXPORT_RE = re.compile(
     r'^\s*export\s+KSS_STATE_ROOT="?\$PROJECT_ROOT"?\s*$', re.MULTILINE
 )
+# KTD9：storage/ 下任何可写/可读路径必须源自 KSS_STATE_ROOT，不能是 PROJECT_ROOT/PROJECT_DIR——
+# bundle 模式下后者指向签名 .app 内只读 Resources，往那写会破坏 code-signing seal（见
+# render_launchd_plists.py:build_plist 的同一条纪律）。code review 发现过一次真实回归：
+# 8 个 wrapper + run_scanner.sh 的 LOG_DIR/LOG_FILE 曾用 PROJECT_ROOT 拼 storage/ 路径。
+PROJECT_ROOT_STORAGE_RE = re.compile(r'\$\{?(PROJECT_ROOT|PROJECT_DIR)\}?["\']?/storage')
 
 # 解析链模板：$KSS_PYTHON 显式 > state-root venv > .venv-desktop > fail-loud。
 # 全部 25 个 scripts/run_*.sh wrapper 均需含这段（PYTHON 变量名固定；
@@ -67,6 +72,21 @@ def test_no_unconditional_state_root_export(path: Path) -> None:
     assert not UNCONDITIONAL_STATE_ROOT_EXPORT_RE.search(text), (
         f"{path.name} 无条件 export KSS_STATE_ROOT=\"$PROJECT_ROOT\"（应为 "
         ': "${KSS_STATE_ROOT:=$PROJECT_ROOT}" 尊重外部注入）'
+    )
+
+
+@pytest.mark.parametrize("path", WRAPPER_PATHS, ids=lambda p: p.name)
+def test_no_project_root_storage_path(path: Path) -> None:
+    """回归守卫：storage/ 下的路径不得由 PROJECT_ROOT/PROJECT_DIR 拼出（KTD9）。
+
+    bundle 模式下 PROJECT_ROOT 指向签名 .app 内只读 Resources，往 storage/ 写会破坏
+    code-signing seal 或直接失败；正确根是 KSS_STATE_ROOT（dev 模式下二者相等，
+    问题只在打包交付后才会暴露——正是这条回归曾经真实发生又被测试漏掉的原因）。
+    """
+    text = path.read_text(encoding="utf-8")
+    matches = PROJECT_ROOT_STORAGE_RE.findall(text)
+    assert not matches, (
+        f"{path.name} 用 PROJECT_ROOT/PROJECT_DIR 拼 storage/ 路径（应为 KSS_STATE_ROOT）: {matches}"
     )
 
 

@@ -15,7 +15,7 @@ set -o pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${KSS_STATE_ROOT:=$PROJECT_ROOT}"
-LOG_DIR="$PROJECT_ROOT/storage/logs/cron"
+LOG_DIR="$KSS_STATE_ROOT/storage/logs/cron"
 
 if [ -n "${KSS_PYTHON:-}" ]; then
     PYTHON="$KSS_PYTHON"
@@ -41,7 +41,7 @@ KSS_STATE_ROOT="$KSS_STATE_ROOT" TUSHARE_TOKEN="$TUSHARE_TOKEN" \
 TODAY=$(date '+%Y-%m-%d')
 # 若用户传了 --date / date= 则跳过「今日」硬检（脚本参数由 bridge 解析；这里只检今日 cron）
 if [[ "$*" != *date* ]]; then
-  LOG_FILE="$PROJECT_ROOT/storage/paper_trade/${TODAY}.json"
+  LOG_FILE="$KSS_STATE_ROOT/storage/paper_trade/${TODAY}.json"
   if [ ! -f "$LOG_FILE" ]; then
     echo "[formal_daily_picks] ALERT: 日志未落盘 $LOG_FILE" >&2
     exit 2

@@ -188,7 +188,9 @@ def _cached_df(
     if df is not None and not df.empty:
         try:
             write_cache_entry(ts_code, kind, df.to_csv(index=False), today.strftime("%Y-%m-%d"), db_path)
-        except OSError as exc:
+        except Exception as exc:  # noqa: BLE001 — 缓存写失败不该丢掉刚抓到的有效 df（sqlite3.Error
+            # 不是 OSError 子类，锁竞争下 write_cache_entry 可能抛 sqlite3.OperationalError，
+            # 窄捕获会让它逃出这里，df 永远返回不到调用方）
             logger.debug("perilla_enrich_cache 写失败 %s/%s: %s", ts_code, kind, exc)
     return df
 

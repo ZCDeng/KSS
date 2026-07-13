@@ -11,7 +11,7 @@ set -u
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${KSS_STATE_ROOT:=$PROJECT_ROOT}"
-LOG="$PROJECT_ROOT/storage/logs/cron/selfcheck.log"
+LOG="$KSS_STATE_ROOT/storage/logs/cron/selfcheck.log"
 
 if [ -n "${KSS_PYTHON:-}" ]; then
     PYTHON="$KSS_PYTHON"
@@ -25,7 +25,7 @@ else
 fi
 
 cd "$PROJECT_ROOT" || exit 1
-mkdir -p "$PROJECT_ROOT/storage/logs/cron"
+mkdir -p "$KSS_STATE_ROOT/storage/logs/cron"
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] selfcheck wake, sleep 90s 等待其它 agent bootstrap" >> "$LOG"
 sleep 90

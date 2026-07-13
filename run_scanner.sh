@@ -6,7 +6,8 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOG_FILE="$PROJECT_DIR/storage/logs/cron/scanner.log"
+: "${KSS_STATE_ROOT:=$PROJECT_DIR}"
+LOG_FILE="$KSS_STATE_ROOT/storage/logs/cron/scanner.log"
 
 if [ -n "${KSS_PYTHON:-}" ]; then
     PYTHON_BIN="$KSS_PYTHON"

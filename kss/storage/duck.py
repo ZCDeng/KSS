@@ -67,7 +67,11 @@ DOMAIN_TABLES: dict[str, tuple[str, ...]] = {
 }
 
 # 语句必须以此开头（大小写不敏感，去前导空白/注释后判断）。
-_ALLOWED_LEADING = ("SELECT", "WITH", "SUMMARIZE", "DESCRIBE")
+# SHOW（SHOW TABLES / SHOW ALL TABLES）与 DESCRIBE 同级：纯 schema 自查，不读用户数据、
+# 不暴露文件路径（不同于 duckdb_settings()/current_setting() 之类的引擎配置内省，那类仍
+# 靠全文黑名单挡）。三处工具描述都建议 LLM 用 SHOW TABLES 自查可用表，此前遗漏导致该建议
+# 永远返回 rejected。
+_ALLOWED_LEADING = ("SELECT", "WITH", "SUMMARIZE", "DESCRIBE", "SHOW")
 
 # 全文黑名单：语句级关键词（DDL/DML/会话控制/危险扩展函数）。全部按词边界匹配，
 # 防止 "selected_col" 之类的列名被 "SELECT" 之外的子串（如 "SET" 在 "asset" 里）误伤。
@@ -216,6 +220,16 @@ def open_session(
         if path.is_file():
             con.execute(f"CREATE VIEW \"{name}\" AS SELECT * FROM read_parquet('{_sql_literal(path)}')")
 
+    # temp_directory 必须先钉死在允许根之内，再锁 allowed_directories/enable_external_access——
+    # 真机验证发现：SET enable_external_access=false 时 DuckDB 会把 temp_directory 的当前值
+    # （默认是 "<进程 cwd>/.tmp/"，与两根设定无关、cron/sidecar 场景下很可能就是 PROJECT_ROOT）
+    # 静默追加进 allowed_directories，形成一个未声明的第三条白名单目录——实测复现：任意放在
+    # 该 cwd/.tmp 下的文件都能被 read_text/read_csv/glob 读出，绕过两根围栏。显式把
+    # temp_directory 钉在 STATE_ROOT/storage 下的子目录，追加的条目就只是已允许根的子集，
+    # 不再是无关路径。
+    duckdb_tmp = sroot / "storage" / ".duckdb_tmp"
+    con.execute(f"SET temp_directory='{_sql_literal(duckdb_tmp)}'")
+
     # 引擎级围栏（KTD11）：allowed_directories 必须先设，enable_external_access 才能改
     # （DuckDB 1.5.4 实测：顺序反过来会报 "Cannot change allowed_directories when
     # enable_external_access is disabled"）。双根：STATE_ROOT/storage + PROJECT_ROOT/storage/macro。
@@ -252,10 +266,14 @@ def run_query(
     except QueryRejected as exc:
         return {"status": "rejected", "reason": str(exc)}
 
-    con = open_session(
-        db_path=db_path, catalog_path=catalog_path, project_root=project_root,
-        state_root=state_root, ledger_path=ledger_path,
-    )
+    try:
+        con = open_session(
+            db_path=db_path, catalog_path=catalog_path, project_root=project_root,
+            state_root=state_root, ledger_path=ledger_path,
+        )
+    except Exception as exc:  # noqa: BLE001 — kss.db 缺失/被锁等会话建立失败也须走
+        # {"status": ...} 契约，不能让未捕获异常从这里逃到 dispatch()/MCP/CLI 各调用方。
+        return {"status": "error", "reason": f"会话建立失败: {str(exc)[:300]}"}
 
     result: dict[str, Any] = {}
     error: BaseException | None = None
