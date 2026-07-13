@@ -12,7 +12,7 @@ struct SettingsView: View {
             let w = min(geo.size.width - 48, 1080)
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    PageTitle("设置", subtitle: "密钥 / 数据源 / 任务 / 日志的唯一入口")
+                    PageTitle("设置", subtitle: "密钥 / 数据源 / 定时任务 / 日志的唯一入口")
                     SelfCheckStatusStrip()
 
                     SectionHeader("密钥")
