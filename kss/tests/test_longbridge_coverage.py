@@ -65,18 +65,21 @@ def test_route_covered_symbol_goes_longbridge():
     assert route_provider("688008", m) == PROVIDER_LONGBRIDGE  # 裸码归一后命中
 
 
-def test_route_unscanned_symbol_fails_safe_to_eastmoney():
-    """manifest 未扫标的 → 保守回退东财（不因漏扫误判有实时）。"""
+def test_route_unscanned_symbol_defaults_to_longbridge():
+    """manifest 未扫标的 → 默认长桥（2026-07 中旬改向：东财已实证不可达，
+    manifest.covered 是已扫精确图而非全池否定；显式 route_to_eastmoney 才回东财）。"""
     m = _manifest(covered=("688008.SH",))
-    assert route_provider("300999.SZ", m) == PROVIDER_EASTMONEY
+    assert route_provider("300999.SZ", m) == PROVIDER_LONGBRIDGE
 
 
-def test_route_missing_manifest_all_eastmoney(tmp_path):
-    """manifest 文件缺失 → 空 manifest，全体 fail-safe 归东财。"""
+def test_route_missing_manifest_defaults_to_longbridge(tmp_path):
+    """manifest 文件缺失 → 空 manifest，非北交所标的仍默认长桥（同上改向）；
+    北交所静态规则不受影响。"""
     missing = tmp_path / "nope.json"
     m = load_manifest(missing, use_cache=False)
     assert m.covered == frozenset()
-    assert route_provider("688008.SH", m) == PROVIDER_EASTMONEY
+    assert route_provider("688008.SH", m) == PROVIDER_LONGBRIDGE
+    assert route_provider("899050.BJ", m) == PROVIDER_EASTMONEY
 
 
 # --------------------------------------------------------------------------- #

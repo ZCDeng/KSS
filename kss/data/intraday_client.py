@@ -725,9 +725,13 @@ def _suppress_stdio():
 
 
 def _longbridge_bar_to_dict(bar: Any) -> dict[str, Any]:
-    """SDK Candlestick → canonical dict（getattr 兜底，容忍字段缺失）。"""
+    """SDK Candlestick → canonical dict（getattr 兜底，容忍字段缺失）。
+
+    timestamp 必须转 ISO 字符串：SDK 给的是 datetime 对象，直接透传会在 bridge
+    ``json.dumps``（无 default=）序列化时整链炸掉（quote 侧数值转 float 防 Decimal
+    同理；plan 2026-07-14-001 真机实测坑——详情页分钟档 TypeError）。"""
     return {
-        "timestamp": getattr(bar, "timestamp", None),
+        "timestamp": _to_iso_shanghai_any(getattr(bar, "timestamp", None)),
         "open": _lb_num(getattr(bar, "open", None)),
         "high": _lb_num(getattr(bar, "high", None)),
         "low": _lb_num(getattr(bar, "low", None)),

@@ -133,6 +133,15 @@ if [ "$UPDATE_RC" -eq 2 ]; then
   fi
 fi
 
+# 事件驱动链触发（plan 2026-07-14-001 / KTD1）：盘后模式且数据更新干净成功（rc=0）
+# 时踢下游选股，链式传递 picks→mi→indicator→review。触发点故意放在 step-2 之前——
+# 指数条刷新失败与 cs_data 新鲜度无关，不该拦断全链（KTD1 防污染细则(3)）。
+# rc=2（数据缺口告警）不触发：缺口数据不该生成产物，下游 gate 也会拦。
+if [ "$POST_CLOSE" -eq 1 ] && [ "$UPDATE_RC" -eq 0 ]; then
+  source "$PROJECT_ROOT/scripts/lib_cron_chain.sh"
+  kss_kick_next formal_daily_picks
+fi
+
 # 2) 指数行情入库（market_strip.json，仪表盘指数条）—— 折进日更，不另设 cron
 echo "[wrapper] [step-2] refresh_market_strip"
 run_with_retry "refresh_market_strip" "$PYTHON" scripts/refresh_market_strip.py

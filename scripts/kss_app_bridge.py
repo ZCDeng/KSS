@@ -1281,9 +1281,22 @@ def _run_formal_daily_picks(args: dict[str, str | bool]) -> dict[str, Any]:
         started,
         timeout=300,
     )
-    # 落盘断言：当日 paper_trade_picks 必须存在
+    # 落盘断言：目标数据日的 paper_trade_picks 必须存在。
+    # 参照系 = 数据侧最新交易日（prediction_date 语义即数据日），不是日历今天——
+    # 跨零点运行（回填/catchup/EOD 晚到过午夜）时 now() 会比数据日快一天而误报
+    # 「落库缺失」（plan 2026-07-14-001 全链演练实测坑）。
     if target_date is None:
-        target_date = datetime.now().strftime("%Y-%m-%d")
+        try:
+            from check_pipeline_gate import (  # noqa: PLC0415 — 同目录 stdlib-only 工具
+                DEFAULT_SENTINELS, compute_target_day, read_latest_trade_date,
+            )
+            latest = {s: read_latest_trade_date(PROJECT_ROOT / f"cs_data_{s.split('.')[0]}.csv")
+                      for s in DEFAULT_SENTINELS}
+            target_date, _ = compute_target_day(latest)
+        except Exception:  # noqa: BLE001
+            target_date = None
+        if target_date is None:
+            target_date = datetime.now().strftime("%Y-%m-%d")
     from kss.storage.paper_trade import day_exists
 
     exists = day_exists(target_date, STATE_ROOT / "storage" / "kss.db")
@@ -3417,12 +3430,20 @@ def _scheduled_job(
     stale = bool(not is_watchdog and enabled and expected is not None and (last_run_dt is None or last_run_dt < expected))
     missed = _missed_cycles(interval, now, last_run_dt) if stale else 0
 
+    # 事件驱动链成员（plan 2026-07-14-001 / R5）：schedule 人读文案标明触发关系，
+    # 固定时刻只是兜底档——否则「下次运行 23:00」会误导（正常日子链在 EOD 后即完成）。
+    triggered_by = cm.triggered_by_for(suffix)
+    if triggered_by:
+        upstream_title = cm.title_for(triggered_by)
+        schedule = f"随「{upstream_title}」触发 · 兜底 {schedule}"
+
     return {
         "label": label,
         "title": cm.title_for(suffix),
         "category": cm.category_for(suffix),
         "schedule": schedule,
         "scheduleStruct": _schedule_struct(interval),
+        "triggeredBy": triggered_by,
         "script": script,
         "enabled": enabled,
         "loaded": status["loaded"],
@@ -3760,6 +3781,23 @@ def _check_llm_credential() -> dict[str, Any]:
     return {"item": "llm", "status": "ok", "detail": "LLM 凭据已配置", "fixHint": None, "fixAction": None}
 
 
+def _check_intraday_secrets() -> dict[str, Any]:
+    """分时采集 secrets 探针（R3 plan 2026-07-14-001 / KTD5）：collect_intraday 设计上
+    只读 $KSS_STATE_ROOT/secrets/tushare_token（wrapper 不 grep .env）——该文件缺失曾
+    导致 token 全链为空 + trade_cal 失败（calendar_unknown）双故障静默持续数日。"""
+    path = STATE_ROOT / "secrets" / "tushare_token"
+    try:
+        if path.is_file() and path.read_text(encoding="utf-8").strip():
+            return {"item": "intraday_secrets", "status": "ok",
+                    "detail": "分时采集 token 文件已就位", "fixHint": None, "fixAction": None}
+    except OSError:
+        pass
+    return {"item": "intraday_secrets", "status": "warn",
+            "detail": "secrets/tushare_token 缺失或为空（分时采集将 token 全链为空）",
+            "fixHint": "从 .env 提取写入 $KSS_STATE_ROOT/secrets/tushare_token（0600）",
+            "fixAction": None}
+
+
 def _check_kss_db() -> dict[str, Any]:
     """统一库可开探针（U17）：只读连接 + 最小查询，验证 kss.db 未损坏可用。"""
     import sqlite3  # noqa: PLC0415
@@ -3802,7 +3840,8 @@ def _check_duckdb_extension() -> dict[str, Any]:
 
 def _self_check() -> dict[str, Any]:
     """应用启动/手动自检（R3/R4）：venv + 数据目录 + 统一库 + duckdb 扩展 + 各凭证。"""
-    items = [_check_venv(), _check_storage_writable(), _check_kss_db(), _check_duckdb_extension()]
+    items = [_check_venv(), _check_storage_writable(), _check_kss_db(), _check_duckdb_extension(),
+             _check_intraday_secrets()]
     for item, label, keys in _CREDENTIAL_CHECKS:
         items.append(_check_credential(item, label, keys))
     items.append(_check_llm_credential())

@@ -159,3 +159,29 @@ extension View {
         modifier(KSSCard(style: style, padding: padding, radiusOverride: radius))
     }
 }
+
+/// 主题化输入框（R2-U8 / plan 2026-07-14-001 KTD8）：替代系统 roundedBorder——
+/// 白底系统控件在 x.com 风等主题下与卡片风格脱节。主题 token 底色+描边+圆角，
+/// 8 套主题自适应；TextField/SecureField 通用。
+struct KSSInputStyle: ViewModifier {
+    @Environment(\.kssTheme) private var theme
+
+    func body(content: Content) -> some View {
+        content
+            .textFieldStyle(.plain)
+            .font(KSSFont.themed(12.5, theme: theme))
+            .foregroundStyle(theme.textPrimary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(theme.surfaceContainerHighest,
+                        in: RoundedRectangle(cornerRadius: KSSTheme.shapeS, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: KSSTheme.shapeS, style: .continuous)
+                    .strokeBorder(theme.outlineVariant, lineWidth: 1)
+            )
+    }
+}
+
+extension View {
+    func kssInput() -> some View { modifier(KSSInputStyle()) }
+}

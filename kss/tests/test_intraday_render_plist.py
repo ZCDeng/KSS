@@ -75,7 +75,8 @@ def test_collect_intraday_wrapper_and_log(roots):
     project_root, output = roots
     pl = render_mod.render(str(project_root), _collect_intraday_job(), output)
     prog = pl["ProgramArguments"]
-    assert len(prog) == 1
+    # plan 2026-07-14-001 / KTD6：分钟线源切 Longbridge，args 带 --provider auto。
+    assert prog[1:] == ["--provider", "auto"]
     assert Path(prog[0]) == project_root / "scripts" / "run_collect_intraday.sh"
     assert pl["StandardOutPath"] == str(
         project_root / "storage" / "logs" / "cron" / "collect_intraday.log"

@@ -14,6 +14,9 @@ struct ChartWebView: NSViewRepresentable {
     var activeMode: ChartDataMode = .daily
     /// 状态条文案（加载中 / 错误）；空则不改 legend。
     var statusText: String? = nil
+    /// 分钟档空态原因（R6/KTD7）：intradayBars 为空数组时 #empty 显示的具体原因；
+    /// nil 恢复默认「暂无行情数据」。
+    var emptyReason: String? = nil
     /// MI Signal Pack overlay（JSON 字串，null 清除）。
     var miOverlayJSON: String? = nil
     /// 通用多指标 overlay 数组（JSON 字串，与 miOverlayJSON 并存不冲突；"null"/"[]" 视为空）。
@@ -68,6 +71,17 @@ struct ChartWebView: NSViewRepresentable {
                 coord.pendingStatusScript = "window.kssSetStatus && window.kssSetStatus('\(escaped)');"
                 coord.bumpContent()
             }
+        }
+
+        let reason = emptyReason ?? ""
+        if reason != coord.latestEmptyReason {
+            coord.latestEmptyReason = reason
+            let escaped = reason
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "'", with: "\\'")
+            coord.pendingEmptyReasonScript =
+                "window.kssSetEmptyReason && window.kssSetEmptyReason('\(escaped)');"
+            coord.bumpContent()
         }
 
         if let bars = intradayBars {
@@ -135,8 +149,10 @@ struct ChartWebView: NSViewRepresentable {
         var isIntraday = false
         var latestTFKey = "D"
         var latestStatus = ""
+        var latestEmptyReason = ""
         var pendingTFScript: String?
         var pendingStatusScript: String?
+        var pendingEmptyReasonScript: String?
         var onSelectMode: ((ChartDataMode) -> Void)?
 
         init(onSelectMode: ((ChartDataMode) -> Void)?) {
@@ -180,6 +196,10 @@ struct ChartWebView: NSViewRepresentable {
             if let st = pendingStatusScript {
                 parts.append(st)
                 pendingStatusScript = nil
+            }
+            if let er = pendingEmptyReasonScript {
+                parts.append(er)
+                pendingEmptyReasonScript = nil
             }
             return parts.joined(separator: "\n")
         }

@@ -280,6 +280,14 @@ struct StockDetailView: View {
         return nil
     }
 
+    /// 分钟档空态卡原因（R6/KTD7，plan 2026-07-14-001）：K 线区 #empty 的显式文案，
+    /// 复用 loadIntraday 已分类的错误（无覆盖/无本地存档/网络失败）。
+    private var intradayEmptyReason: String? {
+        if intradayLoading { return "加载分钟线…" }
+        if let err = intradayError { return "分钟数据不可用：\(err)（可点上方「重试」）" }
+        return "暂无分钟数据 · 切回日线查看走势"
+    }
+
     private var freshness: RealtimeFreshness {
         RealtimeFreshness.status(sourceAsofTs: liveQuote?.sourceAsofTs, fallbackReceivedAt: liveReceivedAt, now: Date())
     }
@@ -423,10 +431,14 @@ struct StockDetailView: View {
                     }
                     ChartWebView(
                         points: detail.history,
-                        intradayBars: (chartMode != .daily && intradayBars?.isRenderable == true)
-                            ? intradayBars?.bars : nil,
+                        // R6/KTD7：分钟档无数据时传空数组（保持 intraday 分支 → #empty 空态卡），
+                        // 不再传 nil 静默回落日线渲染——那正是「点了没反应」的根源。
+                        intradayBars: chartMode != .daily
+                            ? (intradayBars?.isRenderable == true ? (intradayBars?.bars ?? []) : [])
+                            : nil,
                         activeMode: chartMode,
                         statusText: chartStatusText,
+                        emptyReason: chartMode != .daily ? intradayEmptyReason : nil,
                         miOverlayJSON: Self.encodeMiOverlay(detail.miOverlay),
                         indicatorOverlaysJSON: Self.encodeIndicatorOverlays(detail.indicatorOverlays),
                         onSelectMode: { mode in

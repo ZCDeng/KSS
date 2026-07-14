@@ -120,10 +120,13 @@ struct SettingsKeysSection: View {
     @State private var longbridgeAccessToken = ""
     @State private var saved = false
 
+    // R3-U8（plan 2026-07-14-001 / KTD8）字号规格以定时任务分区为基准：
+    // 小节头 14.5 bold / 标签 12.5 semibold / 说明文 11.5 / 等宽 system 11 mono /
+    // 按钮 12 semibold 统一 .bordered；输入框主题化自绘（kssInput）。
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("凭据存入 macOS Keychain，不写入磁盘明文。留空表示删除该项。")
-                .font(KSSFont.themed(12, theme: theme))
+                .font(KSSFont.themed(11.5, theme: theme))
                 .foregroundStyle(theme.textSecondary)
 
             field("Tushare Token", text: $tushareToken, secure: true)
@@ -132,21 +135,19 @@ struct SettingsKeysSection: View {
             field("Telegram API URL（自建中继，可选）", text: $telegramApiUrl, secure: false)
 
             Divider().padding(.vertical, 2)
-            Text("Seesaw")
-                .font(KSSFont.themed(13, .bold, theme: theme)).foregroundStyle(theme.textPrimary)
+            sectionHead("Seesaw")
             Text("主用/备用可各配一套 OpenAI 兼容端点（base_url/key/model），主用失败时自动降级到备用。"
                  + "留空则退回下方兼容旧配置。保存后自动重启 sidecar 生效。")
-                .font(KSSFont.themed(11, theme: theme)).foregroundStyle(theme.textSecondary)
-            Text("主用").font(KSSFont.themed(11, .semibold, theme: theme)).foregroundStyle(theme.textPrimary)
+                .font(KSSFont.themed(11.5, theme: theme)).foregroundStyle(theme.textSecondary)
+            subHead("主用")
             field("主用 API Key", text: $llmPrimaryKey, secure: true)
             field("主用 Base URL（网关/oneAPI，可选，留空用官方端点）", text: $llmPrimaryBaseUrl, secure: false)
             field("主用模型 ID（可选）", text: $llmPrimaryModel, secure: false)
-            Text("备用").font(KSSFont.themed(11, .semibold, theme: theme)).foregroundStyle(theme.textPrimary)
+            subHead("备用")
             field("备用 API Key", text: $llmFallbackKey, secure: true)
             field("备用 Base URL（可选）", text: $llmFallbackBaseUrl, secure: false)
             field("备用模型 ID（可选）", text: $llmFallbackModel, secure: false)
-            Text("兼容旧配置（仅上方主用/备用均为空时生效）")
-                .font(KSSFont.themed(11, .semibold, theme: theme)).foregroundStyle(theme.textSecondary)
+            subHead("兼容旧配置（仅上方主用/备用均为空时生效）")
             field("DeepSeek API Key", text: $deepseekApiKey, secure: true)
             field("OpenAI API Key（fallback）", text: $openaiApiKey, secure: true)
             field("OpenAI Base URL（网关/oneAPI，可选）", text: $openaiBaseUrl, secure: false)
@@ -154,18 +155,17 @@ struct SettingsKeysSection: View {
             Toggle(isOn: $appLive) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("允许 AI 执行写操作（live）")
-                        .font(KSSFont.themed(12, .semibold, theme: theme)).foregroundStyle(theme.textPrimary)
+                        .font(KSSFont.themed(12.5, .semibold, theme: theme)).foregroundStyle(theme.textPrimary)
                     Text("关：写操作弹窗确认后仍被拒（只读安全）。开：本人逐次 tap 确认后真执行。")
-                        .font(KSSFont.themed(10, theme: theme)).foregroundStyle(theme.textSecondary)
+                        .font(KSSFont.themed(11.5, theme: theme)).foregroundStyle(theme.textSecondary)
                 }
             }
             .onChange(of: appLive) { _, _ in saved = false }
 
             Divider().padding(.vertical, 2)
-            Text("Longbridge 实时行情")
-                .font(KSSFont.themed(13, .bold, theme: theme)).foregroundStyle(theme.textPrimary)
+            sectionHead("Longbridge 实时行情")
             Text("ChinaConnect LV1 实时（陆股通池），注入 sidecar 供 LongbridgeProvider 使用。")
-                .font(KSSFont.themed(11, theme: theme)).foregroundStyle(theme.textSecondary)
+                .font(KSSFont.themed(11.5, theme: theme)).foregroundStyle(theme.textSecondary)
             field("Longbridge App Key", text: $longbridgeAppKey, secure: true)
             field("Longbridge App Secret", text: $longbridgeAppSecret, secure: true)
             field("Longbridge Access Token", text: $longbridgeAccessToken, secure: true)
@@ -178,13 +178,14 @@ struct SettingsKeysSection: View {
                 }
                 Spacer()
                 Text("App v\(BridgeClient.appVersion) · Python 层 v\(BridgeClient.scriptsVersionOnDisk())")
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(theme.textSecondary)
                 Button {
                     save()
                 } label: {
-                    Text("保存").fontWeight(.semibold)
+                    Text("保存").font(KSSFont.themed(12, .semibold, theme: theme))
                 }
+                .buttonStyle(.bordered)
                 .keyboardShortcut(.defaultAction)
             }
         }
@@ -194,10 +195,24 @@ struct SettingsKeysSection: View {
     }
 
     @ViewBuilder
+    private func sectionHead(_ title: String) -> some View {
+        Text(title)
+            .font(KSSFont.themed(14.5, .bold, theme: theme))
+            .foregroundStyle(theme.textPrimary)
+    }
+
+    @ViewBuilder
+    private func subHead(_ title: String) -> some View {
+        Text(title)
+            .font(KSSFont.themed(12.5, .semibold, theme: theme))
+            .foregroundStyle(theme.textPrimary)
+    }
+
+    @ViewBuilder
     private func field(_ label: String, text: Binding<String>, secure: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(KSSFont.themed(11, .semibold, theme: theme))
+                .font(KSSFont.themed(12.5, .semibold, theme: theme))
                 .foregroundStyle(theme.textSecondary)
             Group {
                 if secure {
@@ -206,7 +221,7 @@ struct SettingsKeysSection: View {
                     TextField("", text: text)
                 }
             }
-            .textFieldStyle(.roundedBorder)
+            .kssInput()
             .onChange(of: text.wrappedValue) { _, _ in saved = false }
         }
     }
@@ -320,11 +335,14 @@ struct SettingsDataSourcesSection: View {
                     .fill(source.isConfigured ? theme.accent : theme.textSecondary.opacity(0.4))
                     .frame(width: 8, height: 8)
                 Text(source.displayName)
-                    .font(KSSFont.themed(14, .bold, theme: theme))
+                    .font(KSSFont.themed(14.5, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
+                // 状态 chip：与定时任务行 schedule 胶囊同规格（11.5 semibold + Capsule 底）
                 Text(source.isConfigured ? "已配置" : "未配置")
-                    .font(KSSFont.themed(11.5, theme: theme))
+                    .font(KSSFont.themed(11.5, .semibold, theme: theme))
                     .foregroundStyle(theme.textSecondary)
+                    .padding(.horizontal, 7).padding(.vertical, 1.5)
+                    .background(theme.textSecondary.opacity(0.12), in: Capsule())
                 Spacer()
                 Button {
                     Task { await runTest(source) }
@@ -367,25 +385,25 @@ struct SettingsDataSourcesSection: View {
         HStack(spacing: 6) {
             Image(systemName: ok ? "checkmark.circle.fill" : "xmark.octagon.fill")
                 .foregroundStyle(ok ? theme.accent : theme.up)
-                .font(.system(size: 11))
+                .font(KSSFont.themed(11.5, theme: theme))
             if let role {
                 Text(role == "primary" ? "主" : "备")
-                    .font(KSSFont.themed(11, .semibold, theme: theme))
+                    .font(KSSFont.themed(11.5, .semibold, theme: theme))
                     .foregroundStyle(theme.textSecondary)
             }
             if let model, !model.isEmpty {
                 Text(model)
-                    .font(.system(size: 10.5, design: .monospaced))
+                    .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(theme.textSecondary)
             }
             if let latencyMs {
                 Text(String(format: "%.0fms", latencyMs))
-                    .font(.system(size: 10.5, design: .monospaced))
+                    .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(theme.textSecondary)
             }
             if !ok, let hint, !hint.isEmpty {
                 Text(hint)
-                    .font(KSSFont.themed(11, theme: theme))
+                    .font(KSSFont.themed(11.5, theme: theme))
                     .foregroundStyle(theme.up)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -473,7 +491,7 @@ struct SettingsLogsSection: View {
                 Spacer()
 
                 TextField("搜索关键词", text: $searchText)
-                    .textFieldStyle(.roundedBorder)
+                    .kssInput()
                     .frame(maxWidth: 220)
                     .onSubmit { Task { await loadTail() } }
                 Button("搜索") { Task { await loadTail() } }
@@ -620,7 +638,7 @@ struct SelfCheckStatusStrip: View {
     private func selfCheckItemRow(_ item: SelfCheckItem) -> some View {
         HStack(spacing: 8) {
             Image(systemName: item.isOK ? "checkmark.circle.fill" : (item.isFail ? "xmark.octagon.fill" : "exclamationmark.triangle.fill"))
-                .font(.system(size: 11))
+                .font(KSSFont.themed(11.5, theme: theme))
                 .foregroundStyle(item.isOK ? theme.accent : (item.isFail ? theme.up : theme.ma5))
             Text(item.displayName)
                 .font(KSSFont.themed(12, .semibold, theme: theme))

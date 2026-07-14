@@ -32,27 +32,43 @@ echo "===== $(date '+%Y-%m-%d %H:%M:%S') formal_daily_picks 开始 ====="
 mkdir -p "$LOG_DIR"
 
 cd "$PROJECT_ROOT"
+source "$PROJECT_ROOT/scripts/lib_cron_chain.sh"
+
+# 事件驱动链 gate（plan 2026-07-14-001 / KTD2）：--date 回填运行跳过 gate/标记/踢链，
+# 只有常规当日运行走链语义。
+CHAIN_RUN=1
+if [[ "$*" == *date* ]]; then
+  CHAIN_RUN=0
+fi
+if [ "$CHAIN_RUN" -eq 1 ]; then
+  kss_gate_or_exit picks
+fi
+
 # TUSHARE_TOKEN 从 .env 加载
 TUSHARE_TOKEN=$(grep -E '^TUSHARE_TOKEN=' "$PROJECT_ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')
-KSS_STATE_ROOT="$KSS_STATE_ROOT" TUSHARE_TOKEN="$TUSHARE_TOKEN" \
+export KSS_STATE_ROOT TUSHARE_TOKEN
+# KTD3 超时护栏：选股撞网络断连期不再无限挂死（07-14 悬空事故）。
+kss_run_with_timeout 1800 \
   "$PYTHON" "$PROJECT_ROOT/scripts/kss_app_bridge.py" run formal-daily-picks --force "$@" 2>&1
 
-# 二次校验：当日选股必须落在 paper_trade_picks 表（与 bridge 内断言双保险）
-# R2-U2: 落盘目标 U15 割接后已从 storage/paper_trade/{date}.json 迁到 kss.db，
-# 校验也须跟着改读 kss.db，否则本检查永远查一个不再写入的文件、天天误报。
-TODAY=$(date '+%Y-%m-%d')
-# 若用户传了 --date / date= 则跳过「今日」硬检（脚本参数由 bridge 解析；这里只检今日 cron）
-if [[ "$*" != *date* ]]; then
+# 二次校验：本次运行的产物必须落库。prediction_date 语义 = 数据日（panel 最新交易日），
+# 参照系用 gate 的目标数据日——不能用日历今天（跨零点运行时 now() 比数据日快一天而误报，
+# plan 2026-07-14-001 全链演练实测坑）。
+if [ "$CHAIN_RUN" -eq 1 ]; then
   DB_PATH="$KSS_STATE_ROOT/storage/kss.db"
-  EXISTS=$("$PYTHON" -c "
+  TARGET_DAY=$("$PYTHON" "$PROJECT_ROOT/scripts/check_pipeline_gate.py" \
+    --task picks --action target-day --data-root "$PROJECT_ROOT" --state-root "$KSS_STATE_ROOT")
+  LANDED=$("$PYTHON" -c "
 import sys
 sys.path.insert(0, '$PROJECT_ROOT')
 from kss.storage.paper_trade import day_exists
-print('yes' if day_exists('$TODAY', db_path='$DB_PATH') else 'no')
+print('yes' if day_exists('$TARGET_DAY', db_path='$DB_PATH') else 'no')
 ")
-  if [ "$EXISTS" != "yes" ]; then
-    echo "[formal_daily_picks] ALERT: $TODAY 未落盘 paper_trade_picks（$DB_PATH）" >&2
+  if [ "$LANDED" != "yes" ]; then
+    echo "[formal_daily_picks] ALERT: 目标数据日 $TARGET_DAY 的 picks 未落库（$DB_PATH）" >&2
     exit 2
   fi
-  echo "[formal_daily_picks] ok: $TODAY 已落盘 paper_trade_picks（$DB_PATH）"
+  echo "[formal_daily_picks] ok: $TARGET_DAY picks 已落库（$DB_PATH）"
+  kss_mark_done picks
+  kss_kick_next mi_signal_pack
 fi

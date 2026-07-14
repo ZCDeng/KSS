@@ -871,6 +871,9 @@ struct ScheduledJob: Codable, Identifiable, Hashable {
     var missedCycles: Int     // 漏跑了几个预定周期
     var expectedAt: String?   // 最近一次本该触发的时刻
     var nextRunAt: String?    // 下次预定触发时刻
+    /// 事件驱动链上游 suffix（plan 2026-07-14-001 / R5）；非链成员为 nil。
+    /// schedule 人读文案已由 bridge 拼好触发关系，此字段供样式区分用。
+    var triggeredBy: String? = nil
 
     /// 综合健康态（监控用）：运行中 > 需同步 > 停用 > 漏跑 > 失败 > 正常。
     enum Health { case running, needsInstall, stale, failed, disabled, ok }
@@ -1900,6 +1903,9 @@ struct SelfCheckItem: Codable, Hashable, Identifiable {
         case "telegram": return "Telegram"
         case "llm": return "LLM 端点"
         case "sidecar": return "后台服务"
+        case "kss_db": return "统一库"
+        case "duckdb_ext": return "查询扩展"
+        case "intraday_secrets": return "分时采集凭证"
         default: return item
         }
     }

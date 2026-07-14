@@ -65,8 +65,11 @@ jobs:
     catchup: true
     enabled: true
 
+  # 分钟线数据源已切 Longbridge（plan 2026-07-14-001 / KTD6，2026-07-15 验收：
+  # 覆盖 114/115、count=240 覆盖全交易时段、SDK 双 venv 就位；北交所 899050.BJ 已知缺口）。
   - suffix: collect_intraday
     wrapper: scripts/run_collect_intraday.sh
+    args: ["--provider", "auto"]
     schedule: {hour: 15, minute: 5}
     title: 分时收盘采集
     category: 数据更新
@@ -114,37 +117,44 @@ jobs:
     catchup: true
     enabled: true
 
+  # 事件驱动链（plan 2026-07-14-001 / KTD1/KTD4）：EOD(update_data_daily_eod) 成功后
+  # 依次 kickstart picks→mi→indicator→review。以下 schedule 是深夜兜底档（链断裂时的
+  # 安全网），正常日子链在 EOD 后即完成、兜底档被三态 gate no-op。
   - suffix: formal_daily_picks
     wrapper: scripts/run_formal_daily_picks.sh
-    schedule: {hour: 17, minute: 0, weekdays: [1, 2, 3, 4, 5]}
+    schedule: {hour: 23, minute: 0, weekdays: [1, 2, 3, 4, 5]}
     title: 正式每日选股
     category: 扫描选股
     catchup: true
     enabled: true
+    triggered_by: update_data_daily_eod
 
   - suffix: mi_signal_pack
     wrapper: scripts/run_mi_signal_pack_daily.sh
-    schedule: {hour: 17, minute: 15, weekdays: [1, 2, 3, 4, 5]}
+    schedule: {hour: 23, minute: 3, weekdays: [1, 2, 3, 4, 5]}
     title: MI动量信号包（自选 walk-forward）
     category: 扫描选股
     catchup: true
     enabled: true
+    triggered_by: formal_daily_picks
 
   - suffix: indicator_signal_pack
     wrapper: scripts/run_indicator_signal_pack_daily.sh
-    schedule: {hour: 17, minute: 16, weekdays: [1, 2, 3, 4, 5]}
+    schedule: {hour: 23, minute: 6, weekdays: [1, 2, 3, 4, 5]}
     title: 指标信号包（注册表基元库条目）
     category: 扫描选股
     catchup: true
     enabled: true
+    triggered_by: mi_signal_pack
 
   - suffix: formal_daily_review
     wrapper: scripts/run_formal_daily_review.sh
-    schedule: {hour: 17, minute: 20, weekdays: [1, 2, 3, 4, 5]}
-    title: 正式每日个股复盘（含 MI 段，依赖 17:15 信号包）
+    schedule: {hour: 23, minute: 10, weekdays: [1, 2, 3, 4, 5]}
+    title: 正式每日个股复盘（含 MI 段）
     category: 板块复盘
     catchup: true
     enabled: true
+    triggered_by: indicator_signal_pack
 
   - suffix: news_digest_premarket
     wrapper: scripts/run_news_digest_premarket.sh

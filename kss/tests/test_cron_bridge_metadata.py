@@ -210,3 +210,19 @@ def test_rerun_many_empty_labels_uses_manifest_enabled_jobs(
     assert "com.zcdeng.kss.deploy_only_stale" not in res["skipped"]
     assert "com.zcdeng.kss.collect_intraday" in res["skipped"]
     assert "com.zcdeng.kss.disabled_job" not in kicked_labels
+
+
+def test_chain_member_schedule_carries_trigger_relation():
+    """R3-U4（plan 2026-07-14-001 / R5）：链成员 cron-list 带 triggeredBy 且
+    schedule 人读文案标明「随 xx 触发 · 兜底」。"""
+    out = b.dispatch("cron-list", [])
+    jobs = {j["label"]: j for j in out["jobs"]}
+    picks = jobs.get("com.zcdeng.kss.formal_daily_picks")
+    assert picks is not None
+    assert picks["triggeredBy"] == "update_data_daily_eod"
+    assert "触发" in picks["schedule"] and "兜底" in picks["schedule"]
+    # 非链成员不带触发文案
+    eod = jobs.get("com.zcdeng.kss.update_data_daily_eod")
+    assert eod is not None
+    assert eod.get("triggeredBy") is None
+    assert "触发" not in eod["schedule"]

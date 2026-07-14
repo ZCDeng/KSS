@@ -27,8 +27,26 @@ echo "===== $(date '+%Y-%m-%d %H:%M:%S') mi_signal_pack 开始 ====="
 mkdir -p "$LOG_DIR"
 
 cd "$PROJECT_ROOT"
+source "$PROJECT_ROOT/scripts/lib_cron_chain.sh"
+
+# 事件驱动链 gate（plan 2026-07-14-001 / KTD2）：显式传参（回填/定向跑）跳过链语义。
+CHAIN_RUN=1
+if [ "$#" -gt 0 ]; then
+  CHAIN_RUN=0
+fi
+if [ "$CHAIN_RUN" -eq 1 ]; then
+  kss_gate_or_exit mi_signal
+fi
+
 TUSHARE_TOKEN=$(grep -E '^TUSHARE_TOKEN=' "$PROJECT_ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')
 export TUSHARE_TOKEN
 
-"$PYTHON" "$PROJECT_ROOT/scripts/kss_app_bridge.py" run mi-signal-pack "$@" 2>&1
+# KTD3 超时护栏（信号包 10 分钟档）
+kss_run_with_timeout 600 \
+  "$PYTHON" "$PROJECT_ROOT/scripts/kss_app_bridge.py" run mi-signal-pack "$@" 2>&1
+
+if [ "$CHAIN_RUN" -eq 1 ]; then
+  kss_mark_done mi_signal
+  kss_kick_next indicator_signal_pack
+fi
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') mi_signal_pack 结束 ====="

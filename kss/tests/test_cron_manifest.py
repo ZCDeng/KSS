@@ -51,11 +51,11 @@ def _doc(jobs: list[dict], order: list[str] | None = None) -> dict:
 # --------------------------------------------------------------------------- #
 # happy：真实清单
 # --------------------------------------------------------------------------- #
-def test_real_manifest_loads_20_jobs() -> None:
+def test_real_manifest_loads_26_jobs() -> None:
     m = load_manifest()  # 默认读 kss/config/cron_jobs.yaml
-    assert len(m.jobs) == 20
+    assert len(m.jobs) == 26
     suffixes = {j.suffix for j in m.jobs}
-    assert len(suffixes) == 20  # 全唯一
+    assert len(suffixes) == 26  # 全唯一
     # 舆情热点两场已注册
     assert {"news_digest_premarket", "news_digest_postclose"} <= suffixes
     # 紫苏叶富化预热已注册（默认停用）
@@ -349,3 +349,37 @@ class TestOverlayMerge:
         )
         second = cm._default_manifest().job("demo_daily").schedule.hour
         assert second == 22
+
+
+class TestTriggeredBy:
+    """R3-U2（plan 2026-07-14-001 / KTD1/KTD4）：事件驱动链的 triggered_by 字段。"""
+
+    def test_triggered_by_parsed_and_default_none(self, tmp_path: Path) -> None:
+        doc = _doc([
+            _minimal_job(suffix="upstream"),
+            _minimal_job(suffix="downstream", triggered_by="upstream"),
+        ])
+        m = load_manifest(_write(tmp_path, doc))
+        assert m.job("upstream").triggered_by is None
+        assert m.job("downstream").triggered_by == "upstream"
+
+    def test_triggered_by_unknown_suffix_rejected(self, tmp_path: Path) -> None:
+        doc = _doc([_minimal_job(triggered_by="nonexistent_job")])
+        with pytest.raises(CronManifestError, match="triggered_by"):
+            load_manifest(_write(tmp_path, doc))
+
+    def test_triggered_by_empty_string_rejected(self, tmp_path: Path) -> None:
+        doc = _doc([_minimal_job(triggered_by="")])
+        with pytest.raises(CronManifestError, match="triggered_by"):
+            load_manifest(_write(tmp_path, doc))
+
+    def test_real_manifest_chain_wired(self) -> None:
+        """真实清单：EOD→picks→mi→indicator→review 链关系与兜底档时刻。"""
+        m = load_manifest()
+        assert m.job("formal_daily_picks").triggered_by == "update_data_daily_eod"
+        assert m.job("mi_signal_pack").triggered_by == "formal_daily_picks"
+        assert m.job("indicator_signal_pack").triggered_by == "mi_signal_pack"
+        assert m.job("formal_daily_review").triggered_by == "indicator_signal_pack"
+        for suffix in ("formal_daily_picks", "mi_signal_pack",
+                       "indicator_signal_pack", "formal_daily_review"):
+            assert m.job(suffix).schedule.hour == 23, f"{suffix} 应为深夜兜底档"

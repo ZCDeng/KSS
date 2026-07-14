@@ -32,19 +32,38 @@ echo "===== $(date '+%Y-%m-%d %H:%M:%S') formal_daily_review 开始 ====="
 mkdir -p "$LOG_DIR"
 
 cd "$PROJECT_ROOT"
+source "$PROJECT_ROOT/scripts/lib_cron_chain.sh"
+
+# 事件驱动链 gate（plan 2026-07-14-001 / KTD2）：--date 回填运行跳过链语义。
+CHAIN_RUN=1
+if [[ "$*" == *date* ]]; then
+  CHAIN_RUN=0
+fi
+if [ "$CHAIN_RUN" -eq 1 ]; then
+  kss_gate_or_exit review
+fi
+
 # TUSHARE_TOKEN 从 .env 加载
 TUSHARE_TOKEN=$(grep -E '^TUSHARE_TOKEN=' "$PROJECT_ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')
 export TUSHARE_TOKEN
 
-# 串行：先 MI Signal Pack，再正式复盘（pack 软失败不阻断 review）
-echo "----- $(date '+%Y-%m-%d %H:%M:%S') mi-signal-pack -----"
-set +e
-"$PYTHON" "$PROJECT_ROOT/scripts/kss_app_bridge.py" run mi-signal-pack 2>&1
-pack_rc=$?
-set -e
-if [ "$pack_rc" -ne 0 ]; then
-  echo "WARN: mi-signal-pack exit=$pack_rc （继续 formal-daily-review）"
+# 链式运行时 mi-signal-pack 刚在上一环跑完，无需重跑；手动/回填运行保留兜跑（软失败不阻断）。
+if [ "$CHAIN_RUN" -eq 0 ]; then
+  echo "----- $(date '+%Y-%m-%d %H:%M:%S') mi-signal-pack -----"
+  set +e
+  kss_run_with_timeout 600 "$PYTHON" "$PROJECT_ROOT/scripts/kss_app_bridge.py" run mi-signal-pack 2>&1
+  pack_rc=$?
+  set -e
+  if [ "$pack_rc" -ne 0 ]; then
+    echo "WARN: mi-signal-pack exit=$pack_rc （继续 formal-daily-review）"
+  fi
 fi
 
 echo "----- $(date '+%Y-%m-%d %H:%M:%S') formal-daily-review -----"
-"$PYTHON" "$PROJECT_ROOT/scripts/kss_app_bridge.py" run formal-daily-review "$@" 2>&1
+# KTD3 超时护栏（复盘 30 分钟档）
+kss_run_with_timeout 1800 \
+  "$PYTHON" "$PROJECT_ROOT/scripts/kss_app_bridge.py" run formal-daily-review "$@" 2>&1
+
+if [ "$CHAIN_RUN" -eq 1 ]; then
+  kss_mark_done review
+fi

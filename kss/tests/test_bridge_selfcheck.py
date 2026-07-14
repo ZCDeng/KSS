@@ -174,3 +174,32 @@ class TestDuckdbExtensionProbe:
         monkeypatch.setattr(builtins, "__import__", _boom)
         result = b._check_duckdb_extension()
         assert result["status"] == "warn"
+
+
+class TestIntradaySecretsProbe:
+    """R3-U3（plan 2026-07-14-001 / KTD5）：secrets/tushare_token 探针。"""
+
+    def test_present_nonempty_is_ok(self, tmp_path, monkeypatch):
+        (tmp_path / "secrets").mkdir()
+        (tmp_path / "secrets" / "tushare_token").write_text("tok123", encoding="utf-8")
+        monkeypatch.setattr(b, "STATE_ROOT", tmp_path)
+        result = b._check_intraday_secrets()
+        assert result["status"] == "ok"
+
+    def test_missing_is_warn_with_fix_hint(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(b, "STATE_ROOT", tmp_path)
+        result = b._check_intraday_secrets()
+        assert result["status"] == "warn"
+        assert result["fixHint"]
+
+    def test_empty_file_is_warn(self, tmp_path, monkeypatch):
+        (tmp_path / "secrets").mkdir()
+        (tmp_path / "secrets" / "tushare_token").write_text("  \n", encoding="utf-8")
+        monkeypatch.setattr(b, "STATE_ROOT", tmp_path)
+        result = b._check_intraday_secrets()
+        assert result["status"] == "warn"
+
+    def test_included_in_self_check_items(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(b, "STATE_ROOT", tmp_path)
+        items = {i["item"] for i in b._self_check()["items"]}
+        assert "intraday_secrets" in items

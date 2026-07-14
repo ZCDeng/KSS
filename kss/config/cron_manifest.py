@@ -76,6 +76,10 @@ class CronJob:
     catchup: bool
     enabled: bool
     args: tuple[str, ...] = field(default_factory=tuple)
+    # 事件驱动链（plan 2026-07-14-001 / KTD1）：非 None = 本任务由该 suffix 的任务
+    # 成功后 kickstart 触发，schedule 仅为深夜兜底档。渲染器不消费此字段；
+    # bridge cron-list 下发给 UI 展示触发关系（R5）。
+    triggered_by: str | None = None
 
     @property
     def label(self) -> str:
@@ -96,7 +100,7 @@ _REQUIRED_JOB_KEYS = {
     "catchup",
     "enabled",
 }
-_ALLOWED_JOB_KEYS = _REQUIRED_JOB_KEYS | {"args"}
+_ALLOWED_JOB_KEYS = _REQUIRED_JOB_KEYS | {"args", "triggered_by"}
 
 
 def _reject_credential_keys(obj: Any, *, where: str) -> None:
@@ -250,6 +254,10 @@ def _build_manifest(data: Any, *, path: Path) -> CronManifest:
             raise CronManifestError(f"{suffix}: args 须为列表")
         args = tuple(str(a) for a in args_raw)
 
+        triggered_by = raw.get("triggered_by")
+        if triggered_by is not None and (not isinstance(triggered_by, str) or not triggered_by):
+            raise CronManifestError(f"{suffix}: triggered_by 须为非空字符串或缺省")
+
         jobs.append(
             CronJob(
                 suffix=suffix,
@@ -260,8 +268,15 @@ def _build_manifest(data: Any, *, path: Path) -> CronManifest:
                 catchup=bool(raw["catchup"]),
                 enabled=bool(raw["enabled"]),
                 args=args,
+                triggered_by=triggered_by,
             )
         )
+
+    for job in jobs:
+        if job.triggered_by is not None and job.triggered_by not in seen:
+            raise CronManifestError(
+                f"{job.suffix}: triggered_by {job.triggered_by!r} 不是清单内的任务 suffix"
+            )
 
     return CronManifest(jobs=tuple(jobs), category_order=category_order)
 
@@ -359,6 +374,12 @@ def category_for(suffix: str) -> str:
     """suffix → 分类；缺失回退「其他」。"""
     job = _default_manifest().job(suffix)
     return job.category if job else "其他"
+
+
+def triggered_by_for(suffix: str) -> str | None:
+    """suffix → 事件驱动链上游 suffix（plan 2026-07-14-001 / KTD1）；非链成员返回 None。"""
+    job = _default_manifest().job(suffix)
+    return job.triggered_by if job else None
 
 
 def category_order() -> tuple[str, ...]:

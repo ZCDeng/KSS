@@ -246,7 +246,9 @@ struct ScheduledJobRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: job.running ? "arrow.triangle.2.circlepath" : "clock.arrow.circlepath")
+            // 链成员用链条图标区分（schedule 文案已带「随 xx 触发 · 兜底 HH:MM」，R5）
+            Image(systemName: job.running ? "arrow.triangle.2.circlepath"
+                  : (job.triggeredBy != nil ? "link" : "clock.arrow.circlepath"))
                 .font(KSSFont.themed(16, .semibold, theme: theme))
                 .foregroundStyle(job.needsInstall == true || job.stale ? theme.ma5 : theme.accent)
                 .frame(width: 22)

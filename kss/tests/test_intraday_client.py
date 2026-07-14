@@ -595,3 +595,22 @@ def test_fetch_quote_empty_response_returns_empty():
     assert res.rows == []
     assert res.error == "empty response"
     assert res.status_code == 200
+
+
+def test_longbridge_bar_dict_timestamp_is_json_safe():
+    """R3 真机坑：SDK Candlestick.timestamp 是 datetime，直接透传会在 bridge
+    json.dumps（无 default=）整链炸掉——bar dict 的 timestamp 必须是 ISO 字符串。"""
+    import json
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from kss.data.intraday_client import _longbridge_bar_to_dict
+
+    bar = SimpleNamespace(
+        timestamp=datetime(2026, 7, 14, 9, 31, tzinfo=timezone.utc),
+        open=1.0, high=2.0, low=0.5, close=1.5, volume=100, turnover=150.0,
+    )
+    row = _longbridge_bar_to_dict(bar)
+    json.dumps(row)   # 不抛即通过
+    assert isinstance(row["timestamp"], str)
+    assert row["timestamp"].startswith("2026-07-14")

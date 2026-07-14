@@ -570,6 +570,17 @@
       } catch (e) { /* ignore */ }
     };
 
+    // 空态原因注入（plan 2026-07-14-001 / R6/KTD7）：分钟档无数据时 #empty 显示
+    // 具体原因（无覆盖/无本地存档/网络失败），替代写死的「暂无行情数据」；
+    // 传空/null 恢复默认文案。textContent 赋值，无注入面。
+    window.kssSetEmptyReason = function (text) {
+      try {
+        const el = document.getElementById("empty");
+        if (!el) return;
+        el.textContent = text ? String(text) : "暂无行情数据";
+      } catch (e) { /* ignore */ }
+    };
+
     // 指标 key → 对应 series（BOLL/MACD 为多条）
     function indSeries(key) {
       switch (key) {

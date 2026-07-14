@@ -20,6 +20,9 @@ set -o pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${KSS_STATE_ROOT:=$PROJECT_ROOT}"
+# 显式导出：launchd 场景 plist 会注入 env，但手动/链式运行时默认值只是 shell 变量，
+# 采集器（python 子进程）读不到 → secrets/tushare_token 解析落空（R3-U3 实测坑）。
+export KSS_STATE_ROOT
 
 if [ -n "${KSS_PYTHON:-}" ]; then
     PYTHON="$KSS_PYTHON"
