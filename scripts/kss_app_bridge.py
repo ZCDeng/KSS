@@ -2052,10 +2052,16 @@ def _cs_metrics(symbol: str) -> dict[str, Any]:
 def _pulse_from_dict(d: dict[str, Any]) -> dict[str, Any] | None:
     """把一份 etf_radar 切片转成板块脉冲结构（资金申赎 + 强势确认分级）。"""
     themes_raw = d.get("themes") or {}
+    # R5：附主题代表 ETF 码（篮子首只），供 UI 挂 Longbridge 实时涨跌
+    try:
+        from kss.sector.etf_radar import ETF_BASKET  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 — 缺模块不影响脉冲主体
+        ETF_BASKET = {}
     themes: list[dict[str, Any]] = []
     for name, v in themes_raw.items():
         if not isinstance(v, dict):
             continue
+        basket = ETF_BASKET.get(name) or []
         themes.append({
             "name": name,
             "flow1d": v.get("flow_1d"),
@@ -2066,6 +2072,7 @@ def _pulse_from_dict(d: dict[str, Any]) -> dict[str, Any] | None:
             "accel": bool(v.get("accel")),
             "rank5d": v.get("rank_5d"),
             "nFunds": v.get("n_funds"),
+            "etfCode": basket[0][0] if basket else None,
         })
     if not themes:
         return None
@@ -4589,6 +4596,7 @@ COMMANDS = {
     "intel-rewrite": {"desc": "资讯雷达改写(investment|chinese,JSON_PAYLOAD)", "args": ["JSON_PAYLOAD"]},
     "intel-rewrite-run": {"desc": "资讯雷达Top-K改写worker(JSON_PAYLOAD可选)", "args": ["[JSON_PAYLOAD]"]},
     "longbridge-quote": {"desc": "Longbridge 实时快照(ChinaConnect LV1,仅陆股通标的)", "args": ["SYMBOL"]},
+    "longbridge-quotes": {"desc": "Longbridge 批量实时快照(单次 SDK 调用,逗号分隔)", "args": ["SYMBOLS"]},
     "intraday-snapshot": {"desc": "最新分钟 bar 快照(按覆盖路由 longbridge/东财,前向-only)", "args": ["SYMBOL", "[INTERVAL]"]},
     "intraday-bars": {"desc": "完整日内 bar 序列(K线图渲染,前向-only)", "args": ["SYMBOL", "[INTERVAL]"]},
     "trading-hours": {"desc": "交易时段查询(是否交易日/交易时段,门控实时拉取)", "args": []},
@@ -4883,6 +4891,82 @@ def _longbridge_quote_inner(symbol: str) -> dict[str, Any]:
         "eligibility": "forward_observed",  # 前向-only，非 PIT（红线）
         **meta,
     }
+
+
+def _longbridge_quotes(symbols_arg: str) -> dict[str, Any]:
+    """批量实时快照（R5：今日看盘全模块接线）。SYMBOLS 逗号分隔，单次 SDK 调用。
+
+    - covered（陆股通池）标的合并进一次 ``ctx.quote(list)``；
+    - 非 covered 标的返回结构化 ``error`` 行（与单标命令同语义）；
+    - 每行带 ``symbol``（归一码）供上层映射回展示码。
+    """
+    syms = [s for s in (x.strip() for x in (symbols_arg or "").split(",")) if s]
+    if not syms:
+        raise ValueError("longbridge-quotes requires SYMBOLS (comma-separated)")
+    syms = syms[:100]  # 防御性上限（SDK 单次 500，UI 每 tick 远低于此）
+    from kss.data.longbridge_coverage import PROVIDER_LONGBRIDGE  # noqa: PLC0415
+
+    covered: list[tuple[str, dict[str, Any]]] = []  # (原请求码, meta)
+    out: list[dict[str, Any]] = []
+    by_norm: dict[str, dict[str, Any]] = {}
+    for sym in syms:
+        meta = _longbridge_coverage_meta(sym)
+        if meta["routed_provider"] != PROVIDER_LONGBRIDGE:
+            out.append({
+                "symbol": meta["normalized_symbol"],
+                "error": "no_realtime_snapshot",
+                "hint": "该标的非陆股通/北交所，无实时快照；分钟 bar 请用 intraday-snapshot",
+                **meta,
+            })
+            continue
+        covered.append((sym, meta))
+
+    if covered:
+        from kss.data.intraday_client import LongbridgeProvider  # noqa: PLC0415
+
+        # REL-001 就地重试：_call_with_retry 只识别 dict 结果，FetchResult 需自判
+        res = LongbridgeProvider().fetch_quotes([s for s, _ in covered])
+        if not res.ok and (res.error or "") in _RETRYABLE_ERRORS:
+            _time.sleep(0.5)
+            res = LongbridgeProvider().fetch_quotes([s for s, _ in covered])
+        if not res.ok:
+            err = res.error or "empty"
+            out.extend(
+                {"symbol": m["normalized_symbol"], "error": err, **m} for _, m in covered
+            )
+        else:
+            for row in res.rows:
+                norm = str(row.get("symbol") or "").upper()
+                by_norm[norm] = row
+            for _, meta in covered:
+                norm = meta["normalized_symbol"]
+                row = by_norm.get(norm)
+                if row is None:
+                    out.append({"symbol": norm, "error": "empty", **meta})
+                    continue
+                out.append({
+                    "symbol": norm,
+                    "last_done": row.get("last_done"),
+                    "prev_close": row.get("prev_close"),
+                    "open": row.get("open"),
+                    "high": row.get("high"),
+                    "low": row.get("low"),
+                    "volume": row.get("volume"),
+                    "turnover": row.get("turnover"),
+                    "trade_status": row.get("trade_status"),
+                    # 数据层已把 timestamp 转 ISO（_longbridge_quote_to_dict），直接透传
+                    "source_asof_ts": row.get("timestamp"),
+                    "eligibility": "forward_observed",
+                    **meta,
+                })
+            # 冻结诊断：批量 tick 只记一行（canary 优先），避免日志按标翻倍
+            diag = by_norm.get("000001.SH") or (res.rows[0] if res.rows else None)
+            if diag is not None:
+                _log_longbridge_quote_diag(
+                    str(diag.get("symbol") or ""), diag.get("timestamp")
+                )
+
+    return {"quotes": out, "count": len(out)}
 
 
 def _intraday_snapshot(symbol: str, interval_minutes: int = 1, asset_kind: str = "stock") -> dict[str, Any]:
@@ -5530,6 +5614,8 @@ def dispatch(command: str, args: list[str]) -> Any:
         return _intel_rewrite_run(args[0] if args else "")
     if command == "longbridge-quote":
         return _longbridge_quote(args[0] if args else "")
+    if command == "longbridge-quotes":
+        return _longbridge_quotes(args[0] if args else "")
     if command == "intraday-snapshot":
         return _intraday_snapshot(
             args[0] if args else "",

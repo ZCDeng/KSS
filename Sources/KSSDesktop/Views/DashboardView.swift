@@ -94,7 +94,7 @@ struct DashboardView: View {
                     }
 
                     if let pulse = snapshot.sectorReviews?.first, !pulse.themes.isEmpty {
-                        SectorPulseStrip(pulse: pulse)
+                        SectorPulseStrip(pulse: pulse, quotes: realtimeQuotes)
                     }
 
                     mainRow(contentW: contentW)
@@ -147,7 +147,9 @@ struct DashboardView: View {
     private var picksColumn: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHeader("今日推荐", caption: "log_mv 反向选出的低市值 Top 5 · 买入 T+1 开盘")
-            TodayPicksList(items: Array(snapshot.recommendations.prefix(5)), onSelect: onSelectSymbol)
+            TodayPicksList(items: Array(snapshot.recommendations.prefix(5)),
+                           quotes: realtimeQuotes,
+                           onSelect: onSelectSymbol)
         }
     }
 
@@ -171,12 +173,13 @@ struct DashboardView: View {
 /// 列宽全部固定，表头与每一行共用，保证网格逐列对齐；代码与行业拆成独立列填满版面，
 /// 消除名称与右侧之间的大片留白。
 enum TodayPickSort: Hashable {
-    case rank, name, symbol, industry, status, weight, open, close
+    case rank, name, symbol, industry, status, price, open, close
 }
 
 struct TodayPicksList: View {
     @Environment(\.kssTheme) private var theme
     var items: [Recommendation]
+    var quotes: [String: LongbridgeQuote] = [:]
     var onSelect: (String) -> Void
 
     @State private var sortKey: TodayPickSort = .rank
@@ -218,13 +221,23 @@ struct TodayPicksList: View {
                 let r = $0.status.localizedCompare($1.status)
                 return asc ? r == .orderedAscending : r == .orderedDescending
             }
-        case .weight:
-            return items.sorted { asc ? $0.weight < $1.weight : $0.weight > $1.weight }
+        case .price:
+            return items.sorted { byNumber(displayPrice($0)?.close, displayPrice($1)?.close, asc: asc) }
         case .open:
             return items.sorted { byNumber($0.latestOpen, $1.latestOpen, asc: asc) }
         case .close:
             return items.sorted { byNumber($0.latestClose, $1.latestClose, asc: asc) }
         }
+    }
+
+    /// 现价列（R5，替代权重列——等权 20% 无信息量）：盘中 Longbridge 实时价，
+    /// 盘后/无 quote 回退快照收盘（非实时时中性着色）。
+    private func displayPrice(_ item: Recommendation) -> (close: Double, pct: Double, isLive: Bool)? {
+        RealtimeMerge.displayPrice(
+            snapshotClose: item.latestClose,
+            snapshotPct: nil,
+            quote: quotes[item.symbol.uppercased()]
+        )
     }
 
     /// 价格显示：两位小数，缺失显示「—」。
@@ -276,7 +289,7 @@ struct TodayPicksList: View {
                            alignment: .trailing, width: wOpen)
             SortHeaderCell(title: "收盘", key: TodayPickSort.close, selection: $sortKey, ascending: $ascending,
                            alignment: .trailing, width: wClose)
-            SortHeaderCell(title: "权重", key: TodayPickSort.weight, selection: $sortKey, ascending: $ascending,
+            SortHeaderCell(title: "现价", key: TodayPickSort.price, selection: $sortKey, ascending: $ascending,
                            alignment: .trailing, width: wWeight)
         }
         .font(KSSFont.themed(10.5, .medium, theme: theme))
@@ -319,15 +332,27 @@ struct TodayPicksList: View {
                 .foregroundStyle(theme.textPrimary)
                 .lineLimit(1)
                 .frame(width: wClose, alignment: .trailing)
-            Text(KSSFormat.percent(item.weight))
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                .foregroundStyle(theme.textSecondary)
-                .lineLimit(1)
+            priceCell(item)
                 .frame(width: wWeight, alignment: .trailing)
         }
         .contentShape(Rectangle())
         .padding(.horizontal, rowPadH)
         .padding(.vertical, 11)
+    }
+
+    /// 现价单元格：实时价按涨跌着色（对昨收），回退快照收盘时中性色。
+    @ViewBuilder
+    private func priceCell(_ item: Recommendation) -> some View {
+        if let disp = displayPrice(item) {
+            Text(priceText(disp.close))
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .foregroundStyle(disp.isLive ? theme.signColor(disp.pct) : theme.textSecondary)
+                .lineLimit(1)
+        } else {
+            Text("—")
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .foregroundStyle(theme.textSecondary)
+        }
     }
 }
 
@@ -625,6 +650,8 @@ struct PerillaPicksTable: View {
 struct SectorPulseStrip: View {
     @Environment(\.kssTheme) private var theme
     var pulse: SectorPulse
+    /// R5：代表 ETF 实时 quote map（产品码大写键），命中则主题卡显示当日实时涨跌。
+    var quotes: [String: LongbridgeQuote] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -646,7 +673,8 @@ struct SectorPulseStrip: View {
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 152), spacing: 12)], spacing: 12) {
                 ForEach(pulse.themes) { theme in
-                    SectorChip(theme: theme)
+                    SectorChip(theme: theme,
+                               quote: theme.etfCode.flatMap { quotes[$0.uppercased()] })
                 }
             }
         }
@@ -662,6 +690,14 @@ struct SectorPulseStrip: View {
 struct SectorChip: View {
     @Environment(\.kssTheme) private var tokens
     var theme: SectorTheme
+    /// 代表 ETF 实时 quote（R5）：live 时在近5日旁并列显示当日实时涨跌。
+    var quote: LongbridgeQuote? = nil
+
+    private var livePct: Double? {
+        guard let quote, quote.isLive, let last = quote.lastDone,
+              let prev = quote.prevClose, prev > 0 else { return nil }
+        return (last - prev) / prev * 100.0
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -686,6 +722,15 @@ struct SectorChip: View {
                 Text(theme.past5Ret.map { KSSFormat.percent($0 / 100) } ?? "—")
                     .font(KSSFont.harmonyNumber(18))
                     .foregroundStyle(tokens.signColor(theme.past5Ret ?? 0))
+                if let pct = livePct {
+                    Spacer(minLength: 4)
+                    Text("今日")
+                        .font(KSSFont.themed(10, theme: tokens))
+                        .foregroundStyle(tokens.textSecondary)
+                    Text(KSSFormat.percent(pct / 100))
+                        .font(KSSFont.harmonyNumber(14))
+                        .foregroundStyle(tokens.signColor(pct))
+                }
             }
             HStack(spacing: 10) {
                 flowItem("1日", theme.flow1d)

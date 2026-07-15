@@ -160,21 +160,21 @@ extension View {
     }
 }
 
-/// 主题化输入框（R2-U8 / plan 2026-07-14-001 KTD8）：替代系统 roundedBorder——
-/// 白底系统控件在 x.com 风等主题下与卡片风格脱节。主题 token 底色+描边+圆角，
-/// 8 套主题自适应；TextField/SecureField 通用。
+/// 主题化输入框（R2-U8 引入，R4 修订）：替代系统 roundedBorder。
+/// R4 反馈修订：**透明底 + 细描边**——底色填充（surfaceContainerHighest）在卡片内
+/// 造成成片色块的割裂感与审美疲劳；x.com 表单的做法是与容器同底、仅圆角描边定界。
+/// 字号 14（阅读优先），8 套主题自适应；TextField/SecureField 通用。
 struct KSSInputStyle: ViewModifier {
     @Environment(\.kssTheme) private var theme
 
     func body(content: Content) -> some View {
         content
             .textFieldStyle(.plain)
-            .font(KSSFont.themed(12.5, theme: theme))
+            .font(KSSFont.themed(14, theme: theme))
             .foregroundStyle(theme.textPrimary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(theme.surfaceContainerHighest,
-                        in: RoundedRectangle(cornerRadius: KSSTheme.shapeS, style: .continuous))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(Color.clear)
             .overlay(
                 RoundedRectangle(cornerRadius: KSSTheme.shapeS, style: .continuous)
                     .strokeBorder(theme.outlineVariant, lineWidth: 1)

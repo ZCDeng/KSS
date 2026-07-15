@@ -369,14 +369,15 @@ final class KSSStore: ObservableObject {
         } else {
             var priority: [String] = []
             if let sel = selectedSymbol { priority.append(sel) }
-            // 今日看盘堆叠卡：优先进 20 槽（实盘主视觉）
+            // 今日看盘堆叠卡：优先进预算槽（实盘主视觉）
             priority.append(contentsOf: RealtimeMerge.symbolsFromIndexStacks(snapshot?.marketStrip?.indexStacks))
             priority.append(contentsOf: RealtimeMerge.symbolsFromRecommendations(snapshot?.recommendations ?? []))
             priority.append(contentsOf: RealtimeMerge.symbolsFromThemes(themeLeaders))
             list = RealtimeMerge.harvestSymbols(
                 strip: snapshot?.marketStrip,
                 priority: priority,
-                extra: []
+                // R5：今日板块代表 ETF——排在 strip 热区之后、indexBoard 之前
+                extra: RealtimeMerge.symbolsFromSectorPulse(snapshot?.sectorReviews?.first)
             )
         }
         if list.isEmpty {
@@ -392,27 +393,39 @@ final class KSSStore: ObservableObject {
         var anySuccess = false
         var sawAuthFailed = false
 
+        // R5 批量化：整 tick 一次 `longbridge-quotes` 往返（旧逐标串行在 20+ 标时
+        // 每 tick 打 20 次 bridge，预算放宽到 60 后必须批量）。coalesce 仍按产品码逐标。
+        var toFetch: [(display: String, lb: String)] = []
         for displaySym in list {
             guard let lbSym = RealtimeMerge.toLongbridgeSymbol(displaySym) else { continue }
-            // coalesce 键用产品码，避免 HSI 与 HSI.HK 双槽
             if shouldSkipDispatch(cmd: "longbridge-quote", symbol: displaySym) {
                 if updated[displaySym]?.isLive == true { anySuccess = true }
                 continue
             }
-            let quote = try? await Task.detached {
-                try bridge.longbridgeQuote(symbol: lbSym)
-            }.value
-            guard let quote else { continue }
-            if quote.error == "auth_failed" {
-                sawAuthFailed = true
-                break
+            toFetch.append((displaySym, lbSym))
+        }
+        if !toFetch.isEmpty {
+            let lbSyms = toFetch.map(\.lb)
+            let quotes = (try? await Task.detached {
+                try bridge.longbridgeQuotes(symbols: lbSyms)
+            }.value) ?? []
+            // 响应行 symbol = 归一码（等于请求的 Longbridge 码）；映射回产品码
+            var displayByLb: [String: String] = [:]
+            for pair in toFetch { displayByLb[pair.lb.uppercased()] = pair.display }
+            for quote in quotes {
+                if quote.error == "auth_failed" {
+                    sawAuthFailed = true
+                    break
+                }
+                guard let norm = quote.symbol?.uppercased(),
+                      let displaySym = displayByLb[norm] else { continue }
+                if quote.isLive {
+                    updated[displaySym] = quote
+                    realtimeReceivedAtBySymbol[displaySym] = Date()
+                    anySuccess = true
+                }
+                // 软失败：不删除 map 已有项
             }
-            if quote.isLive {
-                updated[displaySym] = quote
-                realtimeReceivedAtBySymbol[displaySym] = Date()
-                anySuccess = true
-            }
-            // 软失败：不删除 map 已有项
         }
 
         if sawAuthFailed {

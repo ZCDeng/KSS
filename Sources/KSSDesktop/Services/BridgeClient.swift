@@ -96,6 +96,15 @@ struct BridgeClient {
         try run(["longbridge-quote", symbol], as: LongbridgeQuote.self)
     }
 
+    /// 批量实时快照（R5）：单次 bridge/SDK 往返覆盖整个 tick 的符号预算。
+    func longbridgeQuotes(symbols: [String]) throws -> [LongbridgeQuote] {
+        guard !symbols.isEmpty else { return [] }
+        return try run(
+            ["longbridge-quotes", symbols.joined(separator: ",")],
+            as: LongbridgeQuotesResponse.self
+        ).quotes
+    }
+
     /// 最新分钟 bar 快照（按覆盖路由，前向-only）。R2。
     func intradaySnapshot(symbol: String, interval: Int = 1) throws -> IntradaySnapshot {
         try run(["intraday-snapshot", symbol, String(interval)], as: IntradaySnapshot.self)

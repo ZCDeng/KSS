@@ -2,7 +2,9 @@ import Foundation
 
 /// Longbridge 实时报价合并 / 符号筛选（纯函数，可单测）。
 enum RealtimeMerge {
-    static let maxSymbolsPerTick = 20
+    /// 单 tick 符号预算。R5 起走 `longbridge-quotes` 批量命令（单次 SDK 往返），
+    /// 预算从 20（逐标串行时代）放宽到 60——覆盖堆叠卡+推荐+板块 ETF+指数一览全量。
+    static let maxSymbolsPerTick = 60
     static let canarySymbol = "000001.SH"
 
     /// strip / UI 产品码 → Longbridge 请求码。
@@ -76,6 +78,11 @@ enum RealtimeMerge {
     /// 推荐列表符号（保持 rank 序）。
     static func symbolsFromRecommendations(_ recs: [Recommendation]) -> [String] {
         recs.map(\.symbol)
+    }
+
+    /// 今日板块代表 ETF 码（R5：板块卡实时涨跌）。
+    static func symbolsFromSectorPulse(_ pulse: SectorPulse?) -> [String] {
+        (pulse?.themes ?? []).compactMap(\.etfCode)
     }
 
     /// 主题龙头优先、第二梯队殿后。

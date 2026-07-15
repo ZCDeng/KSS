@@ -1,12 +1,11 @@
 import SwiftUI
 
-/// 统一"设置"工作区页面（plan 2026-07-12-005 / U1，R2-U4 改 Tab 形态）：密钥、数据源、任务、
-/// 日志四个 tab。收敛原分散入口——工具栏"网络与凭据"弹窗（NetworkSettingsView）与任务页
-/// "定时任务"区块均并入本页，不保留重复 UI（U5/U10 见 Key Decisions）。
+/// 统一"设置"工作区页面（plan 2026-07-12-005 / U1；R2-U4 Tab 化；R4 合并为两 tab）：
+/// 「凭证与数据源」（按源合一卡：凭证字段 + 连通性测试同卡）与「任务与日志」（两者同源）。
 struct SettingsView: View {
     @Environment(\.kssTheme) private var theme
     @EnvironmentObject private var store: KSSStore
-    @State private var tab: SettingsTab = .keys
+    @State private var tab: SettingsTab = .credentials
     @State private var dataSourceResults: [String: DataSourceTestResult] = [:]
 
     private static let tabOptions: [(key: SettingsTab, label: String)] =
@@ -27,10 +26,10 @@ struct SettingsView: View {
             configured: dataSourcesConfigured,
             testsOK: dataSourceResults.values.map(\.ok)
         ) {
-            badged.insert(.dataSources)
+            badged.insert(.credentials)
         }
         if SettingsTabRouting.scheduledTasksNeedsBadge(jobs: store.scheduledJobs) {
-            badged.insert(.scheduledTasks)
+            badged.insert(.operations)
         }
         return badged
     }
@@ -40,7 +39,7 @@ struct SettingsView: View {
             let w = min(geo.size.width - 48, 1080)
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    PageTitle("设置", subtitle: "密钥 / 数据源 / 定时任务 / 日志的唯一入口")
+                    PageTitle("设置", subtitle: "数据源与凭证 / 任务与日志的唯一入口")
                     SelfCheckStatusStrip()
 
                     KSSSegmentedControl(
@@ -50,13 +49,11 @@ struct SettingsView: View {
                     )
 
                     switch tab {
-                    case .keys:
-                        SettingsKeysSection()
-                    case .dataSources:
-                        SettingsDataSourcesSection(results: $dataSourceResults)
-                    case .scheduledTasks:
+                    case .credentials:
+                        SettingsCredentialsSection(results: $dataSourceResults)
+                    case .operations:
                         SettingsTasksSection()
-                    case .logs:
+                        SectionHeader("日志")
                         SettingsLogsSection()
                     }
                 }
@@ -91,128 +88,168 @@ private struct SettingsPlaceholderCard: View {
     }
 }
 
-/// 密钥分区：原样承接 NetworkSettingsView 的 Keychain 读写与"保存后重启 sidecar"语义。
-struct SettingsKeysSection: View {
+/// 凭证与数据源（R4 合并）：按源合一卡——每张卡 = 该源的凭证字段 + 连通性测试 + 独立保存。
+/// Keychain 读写与「保存后全杀重启 sidecar」语义承袭原密钥分区。
+/// 字号规格（R4 修订，阅读优先）：卡标题 15 bold / 字段标签 13 semibold / 输入 14 /
+/// 说明 12.5；输入框透明底+描边（kssInput，去背景割裂）。
+struct SettingsCredentialsSection: View {
     @Environment(\.kssTheme) private var theme
     @EnvironmentObject private var store: KSSStore
+    @Binding var results: [String: DataSourceTestResult]
+    @State private var testing: Set<String> = []
 
     @State private var tushareToken = ""
     @State private var telegramBotToken = ""
     @State private var telegramChatId = ""
     @State private var telegramApiUrl = ""
-    // BYOK 端点泛化（U3，plan 2026-07-12-005）：主用/备用两组独立 base_url/key/model，
-    // 有序候选——主用先试、备用兜底。openai_client._resolve_credential_candidates() 同源解析。
+    // BYOK 端点泛化：主用/备用两组独立 base_url/key/model，主用先试、备用兜底。
     @State private var llmPrimaryBaseUrl = ""
     @State private var llmPrimaryKey = ""
     @State private var llmPrimaryModel = ""
     @State private var llmFallbackBaseUrl = ""
     @State private var llmFallbackKey = ""
     @State private var llmFallbackModel = ""
-    // 兼容旧配置（新六键全空时才生效，见 _resolve_credential_candidates 的兼容映射）。
+    // 兼容旧配置（新六键全空时才生效）。
     @State private var openaiApiKey = ""
     @State private var openaiBaseUrl = ""
     @State private var deepseekApiKey = ""
     @State private var llmModel = ""
     @State private var appLive = false
-    // Longbridge（U6 历史编号）：实时行情凭据，注入 sidecar env 供 LongbridgeProvider 读。
     @State private var longbridgeAppKey = ""
     @State private var longbridgeAppSecret = ""
     @State private var longbridgeAccessToken = ""
-    @State private var saved = false
+    /// 已保存反馈按卡显示（source.rawValue）。任一字段编辑即清除对应卡的反馈。
+    @State private var savedSources: Set<String> = []
 
-    // R3-U8（plan 2026-07-14-001 / KTD8）字号规格以定时任务分区为基准：
-    // 小节头 14.5 bold / 标签 12.5 semibold / 说明文 11.5 / 等宽 system 11 mono /
-    // 按钮 12 semibold 统一 .bordered；输入框主题化自绘（kssInput）。
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("凭据存入 macOS Keychain，不写入磁盘明文。留空表示删除该项。")
-                .font(KSSFont.themed(11.5, theme: theme))
+            Text("凭据存入 macOS Keychain，不写入磁盘明文。留空保存表示删除该项；保存后自动重启后台服务生效。")
+                .font(KSSFont.themed(12.5, theme: theme))
                 .foregroundStyle(theme.textSecondary)
 
-            field("Tushare Token", text: $tushareToken, secure: true)
-            field("Telegram Bot Token", text: $telegramBotToken, secure: true)
-            field("Telegram Chat ID", text: $telegramChatId, secure: false)
-            field("Telegram API URL（自建中继，可选）", text: $telegramApiUrl, secure: false)
-
-            Divider().padding(.vertical, 2)
-            sectionHead("Seesaw")
-            Text("主用/备用可各配一套 OpenAI 兼容端点（base_url/key/model），主用失败时自动降级到备用。"
-                 + "留空则退回下方兼容旧配置。保存后自动重启 sidecar 生效。")
-                .font(KSSFont.themed(11.5, theme: theme)).foregroundStyle(theme.textSecondary)
-            subHead("主用")
-            field("主用 API Key", text: $llmPrimaryKey, secure: true)
-            field("主用 Base URL（网关/oneAPI，可选，留空用官方端点）", text: $llmPrimaryBaseUrl, secure: false)
-            field("主用模型 ID（可选）", text: $llmPrimaryModel, secure: false)
-            subHead("备用")
-            field("备用 API Key", text: $llmFallbackKey, secure: true)
-            field("备用 Base URL（可选）", text: $llmFallbackBaseUrl, secure: false)
-            field("备用模型 ID（可选）", text: $llmFallbackModel, secure: false)
-            subHead("兼容旧配置（仅上方主用/备用均为空时生效）")
-            field("DeepSeek API Key", text: $deepseekApiKey, secure: true)
-            field("OpenAI API Key（fallback）", text: $openaiApiKey, secure: true)
-            field("OpenAI Base URL（网关/oneAPI，可选）", text: $openaiBaseUrl, secure: false)
-            field("模型 ID（KSS_LLM_MODEL，可选，默认 deepseek-v4-flash）", text: $llmModel, secure: false)
-            Toggle(isOn: $appLive) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("允许 AI 执行写操作（live）")
-                        .font(KSSFont.themed(12.5, .semibold, theme: theme)).foregroundStyle(theme.textPrimary)
-                    Text("关：写操作弹窗确认后仍被拒（只读安全）。开：本人逐次 tap 确认后真执行。")
-                        .font(KSSFont.themed(11.5, theme: theme)).foregroundStyle(theme.textSecondary)
-                }
+            sourceCard(.tushare, note: "日线/财务/日历数据主源。") {
+                field("Tushare Token", text: $tushareToken, secure: true, source: .tushare)
             }
-            .onChange(of: appLive) { _, _ in saved = false }
 
-            Divider().padding(.vertical, 2)
-            sectionHead("Longbridge 实时行情")
-            Text("ChinaConnect LV1 实时（陆股通池），注入 sidecar 供 LongbridgeProvider 使用。")
-                .font(KSSFont.themed(11.5, theme: theme)).foregroundStyle(theme.textSecondary)
-            field("Longbridge App Key", text: $longbridgeAppKey, secure: true)
-            field("Longbridge App Secret", text: $longbridgeAppSecret, secure: true)
-            field("Longbridge Access Token", text: $longbridgeAccessToken, secure: true)
+            sourceCard(.longbridge, note: "ChinaConnect LV1 实时行情与分钟 K 线（陆股通池，北交所不覆盖）。") {
+                field("App Key", text: $longbridgeAppKey, secure: true, source: .longbridge)
+                field("App Secret", text: $longbridgeAppSecret, secure: true, source: .longbridge)
+                field("Access Token", text: $longbridgeAccessToken, secure: true, source: .longbridge)
+            }
+
+            sourceCard(.telegram, note: "复盘/告警推送通道（可选自建中继）。") {
+                field("Bot Token", text: $telegramBotToken, secure: true, source: .telegram)
+                field("Chat ID", text: $telegramChatId, secure: false, source: .telegram)
+                field("API URL（自建中继，可选）", text: $telegramApiUrl, secure: false, source: .telegram)
+            }
+
+            sourceCard(.llm, note: "Seesaw 的 OpenAI 兼容端点：主用失败自动降级备用；两组全空时退回下方兼容旧配置。") {
+                subHead("主用")
+                field("API Key", text: $llmPrimaryKey, secure: true, source: .llm)
+                field("Base URL（网关/oneAPI，可选，留空用官方端点）", text: $llmPrimaryBaseUrl, secure: false, source: .llm)
+                field("模型 ID（可选）", text: $llmPrimaryModel, secure: false, source: .llm)
+                subHead("备用")
+                field("API Key", text: $llmFallbackKey, secure: true, source: .llm)
+                field("Base URL（可选）", text: $llmFallbackBaseUrl, secure: false, source: .llm)
+                field("模型 ID（可选）", text: $llmFallbackModel, secure: false, source: .llm)
+                subHead("兼容旧配置（仅上方主用/备用均为空时生效）")
+                field("DeepSeek API Key", text: $deepseekApiKey, secure: true, source: .llm)
+                field("OpenAI API Key（fallback）", text: $openaiApiKey, secure: true, source: .llm)
+                field("OpenAI Base URL（可选）", text: $openaiBaseUrl, secure: false, source: .llm)
+                field("模型 ID（KSS_LLM_MODEL，可选）", text: $llmModel, secure: false, source: .llm)
+                Toggle(isOn: $appLive) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("允许 AI 执行写操作（live）")
+                            .font(KSSFont.themed(13, .semibold, theme: theme))
+                            .foregroundStyle(theme.textPrimary)
+                        Text("关：写操作弹窗确认后仍被拒（只读安全）。开：本人逐次确认后真执行。")
+                            .font(KSSFont.themed(12.5, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                }
+                .onChange(of: appLive) { _, _ in savedSources.remove(SettingsDataSource.llm.rawValue) }
+            }
 
             HStack {
-                if saved {
-                    Label("已保存到 Keychain", systemImage: "checkmark.seal.fill")
-                        .font(KSSFont.themed(12, .semibold, theme: theme))
-                        .foregroundStyle(theme.up)
-                }
                 Spacer()
                 Text("App v\(BridgeClient.appVersion) · Python 层 v\(BridgeClient.scriptsVersionOnDisk())")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(theme.textSecondary)
+            }
+        }
+        .onAppear(perform: load)
+    }
+
+    // MARK: 卡片骨架
+
+    @ViewBuilder
+    private func sourceCard<Content: View>(
+        _ source: SettingsDataSource, note: String, @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(source.isConfigured ? theme.accent : theme.textSecondary.opacity(0.4))
+                    .frame(width: 8, height: 8)
+                Text(source.displayName)
+                    // R5：对齐「任务与日志」任务项标题的视觉字号——任务标题是 CJK
+                    // （14.5 bold 经 HarmonyOS 级联，字面大）；源名多为拉丁字，需 16 才光学等大
+                    .font(KSSFont.themed(16, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                Text(source.isConfigured ? "已配置" : "未配置")
+                    .font(KSSFont.themed(11.5, .semibold, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                    .padding(.horizontal, 7).padding(.vertical, 1.5)
+                    .background(theme.textSecondary.opacity(0.12), in: Capsule())
+                Spacer()
+                if savedSources.contains(source.rawValue) {
+                    Label("已保存", systemImage: "checkmark.seal.fill")
+                        .font(KSSFont.themed(12, .semibold, theme: theme))
+                        .foregroundStyle(theme.up)
+                }
                 Button {
-                    save()
+                    Task { await runTest(source) }
                 } label: {
-                    Text("保存").font(KSSFont.themed(12, .semibold, theme: theme))
+                    if testing.contains(source.rawValue) {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("测试").font(KSSFont.themed(12.5, .semibold, theme: theme))
+                    }
                 }
                 .buttonStyle(.bordered)
-                .keyboardShortcut(.defaultAction)
+                .disabled(testing.contains(source.rawValue))
+                Button {
+                    save(source)
+                } label: {
+                    Text("保存").font(KSSFont.themed(12.5, .semibold, theme: theme))
+                }
+                .buttonStyle(.bordered)
+            }
+            Text(note)
+                .font(KSSFont.themed(12.5, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+            content()
+            if let result = results[source.rawValue] {
+                resultDetail(result)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .kssCard(padding: 16)
-        .onAppear(perform: load)
-    }
-
-    @ViewBuilder
-    private func sectionHead(_ title: String) -> some View {
-        Text(title)
-            .font(KSSFont.themed(14.5, .bold, theme: theme))
-            .foregroundStyle(theme.textPrimary)
     }
 
     @ViewBuilder
     private func subHead(_ title: String) -> some View {
         Text(title)
-            .font(KSSFont.themed(12.5, .semibold, theme: theme))
+            .font(KSSFont.themed(13, .semibold, theme: theme))
             .foregroundStyle(theme.textPrimary)
+            .padding(.top, 2)
     }
 
     @ViewBuilder
-    private func field(_ label: String, text: Binding<String>, secure: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+    private func field(_ label: String, text: Binding<String>, secure: Bool, source: SettingsDataSource) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
             Text(label)
-                .font(KSSFont.themed(12.5, .semibold, theme: theme))
+                .font(KSSFont.themed(13, .semibold, theme: theme))
                 .foregroundStyle(theme.textSecondary)
             Group {
                 if secure {
@@ -222,9 +259,57 @@ struct SettingsKeysSection: View {
                 }
             }
             .kssInput()
-            .onChange(of: text.wrappedValue) { _, _ in saved = false }
+            .onChange(of: text.wrappedValue) { _, _ in savedSources.remove(source.rawValue) }
         }
     }
+
+    @ViewBuilder
+    private func resultDetail(_ result: DataSourceTestResult) -> some View {
+        if let candidates = result.candidates, !candidates.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(candidates) { c in
+                    candidateLine(role: c.role, model: c.model, ok: c.ok,
+                                   latencyMs: c.latencyMs, hint: c.hint)
+                }
+            }
+        } else {
+            candidateLine(role: nil, model: nil, ok: result.ok,
+                          latencyMs: result.latencyMs, hint: result.hint)
+        }
+    }
+
+    @ViewBuilder
+    private func candidateLine(role: String?, model: String?, ok: Bool, latencyMs: Double?, hint: String?) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: ok ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                .foregroundStyle(ok ? theme.accent : theme.up)
+                .font(KSSFont.themed(12, theme: theme))
+            if let role {
+                Text(role == "primary" ? "主" : "备")
+                    .font(KSSFont.themed(12, .semibold, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+            }
+            if let model, !model.isEmpty {
+                Text(model)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary)
+            }
+            if let latencyMs {
+                Text(String(format: "%.0fms", latencyMs))
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary)
+            }
+            if !ok, let hint, !hint.isEmpty {
+                Text(hint)
+                    .font(KSSFont.themed(12, theme: theme))
+                    .foregroundStyle(theme.up)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
+    }
+
+    // MARK: 读写
 
     private func load() {
         tushareToken = KeychainStore.read("TUSHARE_TOKEN") ?? ""
@@ -247,39 +332,53 @@ struct SettingsKeysSection: View {
         longbridgeAccessToken = KeychainStore.read("LONGBRIDGE_ACCESS_TOKEN") ?? ""
     }
 
-    private func save() {
-        KeychainStore.write("TUSHARE_TOKEN", tushareToken)
-        KeychainStore.write("TELEGRAM_BOT_TOKEN", telegramBotToken)
-        KeychainStore.write("TELEGRAM_CHAT_ID", telegramChatId)
-        KeychainStore.write("TELEGRAM_API_URL", telegramApiUrl)
-        KeychainStore.write("KSS_LLM_PRIMARY_BASE_URL", llmPrimaryBaseUrl)
-        KeychainStore.write("KSS_LLM_PRIMARY_KEY", llmPrimaryKey)
-        KeychainStore.write("KSS_LLM_PRIMARY_MODEL", llmPrimaryModel)
-        KeychainStore.write("KSS_LLM_FALLBACK_BASE_URL", llmFallbackBaseUrl)
-        KeychainStore.write("KSS_LLM_FALLBACK_KEY", llmFallbackKey)
-        KeychainStore.write("KSS_LLM_FALLBACK_MODEL", llmFallbackModel)
-        KeychainStore.write("OPENAI_API_KEY", openaiApiKey)
-        KeychainStore.write("OPENAI_BASE_URL", openaiBaseUrl)
-        KeychainStore.write("DEEPSEEK_API_KEY", deepseekApiKey)
-        KeychainStore.write("KSS_LLM_MODEL", llmModel)
-        KeychainStore.write("KSS_APP_LIVE", appLive ? "1" : "")
-        KeychainStore.write("LONGBRIDGE_APP_KEY", longbridgeAppKey)
-        KeychainStore.write("LONGBRIDGE_APP_SECRET", longbridgeAppSecret)
-        KeychainStore.write("LONGBRIDGE_ACCESS_TOKEN", longbridgeAccessToken)
-        // 凭据/开关变更后重启常驻 sidecar，使新 env 生效（SIGHUP re-exec 留旧 env，须全杀重启）。
+    /// 按源保存（只写该卡字段）；随后全杀重启 sidecar（SIGHUP re-exec 留旧 env）并刷新
+    /// 两条「已配置」判定源（self-check 与 hasLLMCredentials 历史上各自维护）。
+    private func save(_ source: SettingsDataSource) {
+        switch source {
+        case .tushare:
+            KeychainStore.write("TUSHARE_TOKEN", tushareToken)
+        case .longbridge:
+            KeychainStore.write("LONGBRIDGE_APP_KEY", longbridgeAppKey)
+            KeychainStore.write("LONGBRIDGE_APP_SECRET", longbridgeAppSecret)
+            KeychainStore.write("LONGBRIDGE_ACCESS_TOKEN", longbridgeAccessToken)
+        case .telegram:
+            KeychainStore.write("TELEGRAM_BOT_TOKEN", telegramBotToken)
+            KeychainStore.write("TELEGRAM_CHAT_ID", telegramChatId)
+            KeychainStore.write("TELEGRAM_API_URL", telegramApiUrl)
+        case .llm:
+            KeychainStore.write("KSS_LLM_PRIMARY_BASE_URL", llmPrimaryBaseUrl)
+            KeychainStore.write("KSS_LLM_PRIMARY_KEY", llmPrimaryKey)
+            KeychainStore.write("KSS_LLM_PRIMARY_MODEL", llmPrimaryModel)
+            KeychainStore.write("KSS_LLM_FALLBACK_BASE_URL", llmFallbackBaseUrl)
+            KeychainStore.write("KSS_LLM_FALLBACK_KEY", llmFallbackKey)
+            KeychainStore.write("KSS_LLM_FALLBACK_MODEL", llmFallbackModel)
+            KeychainStore.write("OPENAI_API_KEY", openaiApiKey)
+            KeychainStore.write("OPENAI_BASE_URL", openaiBaseUrl)
+            KeychainStore.write("DEEPSEEK_API_KEY", deepseekApiKey)
+            KeychainStore.write("KSS_LLM_MODEL", llmModel)
+            KeychainStore.write("KSS_APP_LIVE", appLive ? "1" : "")
+        }
         BridgeClient.restartSidecarForEnvChange()
-        // 保存后刷新两条独立的"已配置"判定源，否则缺凭证卡片/IntelView 的 LLM 门禁要等
-        // 手动重跑自检或重启才消失（U8/U9 优雅缺失承诺；self-check 与 hasLLMCredentials
-        // 是两条历史上各自维护的判定路径，缺一个都会留旧状态）。
         store.refreshLLMCredentialsStatus()
         Task { await store.runSelfCheck() }
-        saved = true
+        savedSources.insert(source.rawValue)
+    }
+
+    private func runTest(_ source: SettingsDataSource) async {
+        guard let bridge = store.bridge else { return }
+        testing.insert(source.rawValue)
+        defer { testing.remove(source.rawValue) }
+        let result = try? await Task.detached { try bridge.datasourceTest(source: source.rawValue) }.value
+        if let result {
+            results[source.rawValue] = result
+        }
     }
 }
 
-// MARK: - 数据源分区（U4）
+// MARK: - 数据源定义（配置状态判定，凭证卡与 tab 状态点共用）
 
-private enum SettingsDataSource: String, CaseIterable, Identifiable {
+enum SettingsDataSource: String, CaseIterable, Identifiable {
     case tushare, longbridge, telegram, llm
     var id: String { rawValue }
 
@@ -288,7 +387,7 @@ private enum SettingsDataSource: String, CaseIterable, Identifiable {
         case .tushare: return "Tushare"
         case .longbridge: return "Longbridge"
         case .telegram: return "Telegram"
-        case .llm: return "LLM 端点"
+        case .llm: return "Seesaw · LLM 端点"
         }
     }
 
@@ -307,117 +406,6 @@ private enum SettingsDataSource: String, CaseIterable, Identifiable {
             let legacy = !(KeychainStore.read("DEEPSEEK_API_KEY") ?? "").isEmpty
                 || !(KeychainStore.read("OPENAI_API_KEY") ?? "").isEmpty
             return newKeyed || legacy
-        }
-    }
-}
-
-/// 数据源分区：逐源展示配置状态（Keychain 本地读取）+ 连通性测试按钮（R7）。
-/// `results` 由父视图（SettingsView）持有，供 tab 状态点（KTD4：任一测试失败）复用同一份结果。
-struct SettingsDataSourcesSection: View {
-    @Environment(\.kssTheme) private var theme
-    @EnvironmentObject private var store: KSSStore
-    @Binding var results: [String: DataSourceTestResult]
-    @State private var testing: Set<String> = []
-
-    var body: some View {
-        VStack(spacing: 10) {
-            ForEach(SettingsDataSource.allCases) { source in
-                row(for: source)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func row(for source: SettingsDataSource) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                Circle()
-                    .fill(source.isConfigured ? theme.accent : theme.textSecondary.opacity(0.4))
-                    .frame(width: 8, height: 8)
-                Text(source.displayName)
-                    .font(KSSFont.themed(14.5, .bold, theme: theme))
-                    .foregroundStyle(theme.textPrimary)
-                // 状态 chip：与定时任务行 schedule 胶囊同规格（11.5 semibold + Capsule 底）
-                Text(source.isConfigured ? "已配置" : "未配置")
-                    .font(KSSFont.themed(11.5, .semibold, theme: theme))
-                    .foregroundStyle(theme.textSecondary)
-                    .padding(.horizontal, 7).padding(.vertical, 1.5)
-                    .background(theme.textSecondary.opacity(0.12), in: Capsule())
-                Spacer()
-                Button {
-                    Task { await runTest(source) }
-                } label: {
-                    if testing.contains(source.rawValue) {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Text("测试").font(KSSFont.themed(12, .semibold, theme: theme))
-                    }
-                }
-                .buttonStyle(.bordered)
-                .disabled(testing.contains(source.rawValue))
-            }
-            if let result = results[source.rawValue] {
-                resultDetail(result)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .kssCard(padding: 12)
-    }
-
-    @ViewBuilder
-    private func resultDetail(_ result: DataSourceTestResult) -> some View {
-        if let candidates = result.candidates, !candidates.isEmpty {
-            // LLM 源：主/备各一行。
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(candidates) { c in
-                    candidateLine(role: c.role, model: c.model, ok: c.ok,
-                                   latencyMs: c.latencyMs, hint: c.hint)
-                }
-            }
-        } else {
-            candidateLine(role: nil, model: nil, ok: result.ok,
-                          latencyMs: result.latencyMs, hint: result.hint)
-        }
-    }
-
-    @ViewBuilder
-    private func candidateLine(role: String?, model: String?, ok: Bool, latencyMs: Double?, hint: String?) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: ok ? "checkmark.circle.fill" : "xmark.octagon.fill")
-                .foregroundStyle(ok ? theme.accent : theme.up)
-                .font(KSSFont.themed(11.5, theme: theme))
-            if let role {
-                Text(role == "primary" ? "主" : "备")
-                    .font(KSSFont.themed(11.5, .semibold, theme: theme))
-                    .foregroundStyle(theme.textSecondary)
-            }
-            if let model, !model.isEmpty {
-                Text(model)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(theme.textSecondary)
-            }
-            if let latencyMs {
-                Text(String(format: "%.0fms", latencyMs))
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(theme.textSecondary)
-            }
-            if !ok, let hint, !hint.isEmpty {
-                Text(hint)
-                    .font(KSSFont.themed(11.5, theme: theme))
-                    .foregroundStyle(theme.up)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-        }
-    }
-
-    private func runTest(_ source: SettingsDataSource) async {
-        guard let bridge = store.bridge else { return }
-        testing.insert(source.rawValue)
-        defer { testing.remove(source.rawValue) }
-        let result = try? await Task.detached { try bridge.datasourceTest(source: source.rawValue) }.value
-        if let result {
-            results[source.rawValue] = result
         }
     }
 }

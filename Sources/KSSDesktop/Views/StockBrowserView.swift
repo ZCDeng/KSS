@@ -221,7 +221,7 @@ struct StockBrowserView: View {
         // 放大：铺满整个浏览区（列表+详情，随窗口尺寸动态最大化），而非尺寸受限的 sheet。
         .overlay {
             if showChartFullscreen, let detail {
-                ChartFullscreenView(detail: detail) { showChartFullscreen = false }
+                ChartFullscreenView(detail: detail, bridge: bridge) { showChartFullscreen = false }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(theme.canvas)
                     .transition(.opacity)
@@ -735,7 +735,31 @@ struct PerillaEnrichmentCard: View {
 struct ChartFullscreenView: View {
     @Environment(\.kssTheme) private var theme
     var detail: StockDetail
+    var bridge: BridgeClient? = nil
     var onClose: () -> Void
+
+    // R4-1：放大图表分钟线接线——与详情页同语义的独立状态（全屏是独立 chart 实例）。
+    @State private var chartMode: ChartDataMode = .daily
+    @State private var intradayBars: IntradayBars? = nil
+    @State private var intradayError: String? = nil
+    @State private var intradayLoading = false
+
+    private var statusText: String? {
+        if chartMode == .daily { return nil }
+        if intradayLoading { return "加载分钟线…" }
+        if let err = intradayError { return err }
+        if let bars = intradayBars, bars.isRenderable, let label = bars.sourceLabel {
+            return "\(label) · \(chartMode == .m5 ? "5分" : "1分")"
+        }
+        return nil
+    }
+
+    private var emptyReason: String? {
+        guard chartMode != .daily else { return nil }
+        if intradayLoading { return "加载分钟线…" }
+        if let err = intradayError { return "分钟数据不可用：\(err)" }
+        return "暂无分钟数据 · 切回日线查看走势"
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -747,6 +771,15 @@ struct ChartFullscreenView: View {
                     Text("\(detail.symbol) · 滚轮缩放 · 拖动平移")
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundStyle(theme.textSecondary)
+                }
+                if chartMode != .daily, let err = intradayError {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(KSSFont.themed(12, theme: theme))
+                        .foregroundStyle(theme.ma5)
+                    Text(err)
+                        .font(KSSFont.themed(12, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
                 }
                 Spacer()
                 Button {
@@ -767,17 +800,39 @@ struct ChartFullscreenView: View {
             }
             ChartWebView(
                 points: detail.history,
-                intradayBars: nil,
-                activeMode: .daily,
-                statusText: nil,
+                intradayBars: chartMode != .daily
+                    ? (intradayBars?.isRenderable == true ? (intradayBars?.bars ?? []) : [])
+                    : nil,
+                activeMode: chartMode,
+                statusText: statusText,
+                emptyReason: emptyReason,
                 miOverlayJSON: StockDetailView.encodeMiOverlay(detail.miOverlay),
                 indicatorOverlaysJSON: StockDetailView.encodeIndicatorOverlays(detail.indicatorOverlays),
-                onSelectMode: nil
+                onSelectMode: { mode in
+                    chartMode = mode
+                    if mode == .daily {
+                        intradayBars = nil
+                        intradayError = nil
+                        intradayLoading = false
+                    } else {
+                        Task { await loadIntraday(mode: mode) }
+                    }
+                }
             )
         }
         // 作为浏览区上的覆盖层铺满：随 app 窗口尺寸动态最大化。
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.chartSurface)
+    }
+
+    private func loadIntraday(mode: ChartDataMode) async {
+        intradayLoading = true; intradayError = nil; intradayBars = nil
+        defer { intradayLoading = false }
+        guard let bridge else { intradayError = "无法定位 bridge"; return }
+        let (bars, err) = await StockDetailView.fetchIntraday(
+            bridge: bridge, symbol: detail.symbol, mode: mode)
+        intradayBars = bars
+        intradayError = err
     }
 }
 
@@ -1021,32 +1076,38 @@ extension StockDetailView {
     func loadIntraday(symbol: String, mode: ChartDataMode) async {
         intradayLoading = true; intradayError = nil; intradayBars = nil
         defer { intradayLoading = false }
-        let interval = mode == .m5 ? 5 : 1
         guard let bridge else { intradayError = "无法定位 bridge"; return }
+        let (bars, err) = await Self.fetchIntraday(bridge: bridge, symbol: symbol, mode: mode)
+        intradayBars = bars
+        intradayError = err
+    }
+
+    /// 分钟线拉取 + 错误分类（详情页与全屏放大图共用，R4-1 接线时抽出防两处漂移）。
+    static func fetchIntraday(
+        bridge: BridgeClient, symbol: String, mode: ChartDataMode
+    ) async -> (IntradayBars?, String?) {
+        let interval = mode == .m5 ? 5 : 1
         do {
             let bars = try await Task.detached {
                 try bridge.intradayBars(symbol: symbol, interval: interval)
             }.value
             if bars.isRenderable {
-                intradayBars = bars
-                intradayError = nil
-            } else {
-                // 失败时保留日线主图；禁止笼统「bridge 调用失败」
-                switch bars.error {
-                case "auth_failed":
-                    intradayError = bars.hint
-                        ?? "实时源未连接 · 打开「网络与凭据」或等交易时段缓存"
-                case "not_covered", "unsupported_symbol":
-                    intradayError = "该标的暂无分钟线覆盖"
-                case let e? where !e.isEmpty:
-                    if let h = bars.hint, !h.isEmpty { intradayError = "\(h)（\(e)）" }
-                    else { intradayError = e }
-                default:
-                    intradayError = bars.hint ?? "暂无分钟线 · 无本地存档"
-                }
+                return (bars, nil)
+            }
+            // 失败时保留日线主图；禁止笼统「bridge 调用失败」
+            switch bars.error {
+            case "auth_failed":
+                return (nil, bars.hint ?? "实时源未连接 · 打开「网络与凭据」或等交易时段缓存")
+            case "not_covered", "unsupported_symbol":
+                return (nil, "该标的暂无分钟线覆盖")
+            case let e? where !e.isEmpty:
+                if let h = bars.hint, !h.isEmpty { return (nil, "\(h)（\(e)）") }
+                return (nil, e)
+            default:
+                return (nil, bars.hint ?? "暂无分钟线 · 无本地存档")
             }
         } catch {
-            intradayError = error.localizedDescription
+            return (nil, error.localizedDescription)
         }
     }
 }

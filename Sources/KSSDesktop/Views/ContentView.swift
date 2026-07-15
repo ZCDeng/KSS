@@ -23,19 +23,6 @@ struct ContentView: View {
         Task { await store.syncWatchlistToDB(symbols) }
     }
 
-    /// 价格页：完整四态 badge（页内）。其余页仅工具栏 status dot。
-    private static let priceSections: Set<WorkspaceSection> = [
-        .dashboard, .stocks, .watchlist, .recommendations, .themes
-    ]
-
-    private var toolbarFreshness: RealtimeFreshness {
-        RealtimeMerge.worstFreshness(
-            symbols: Array(store.realtimeQuotesBySymbol.keys),
-            quotes: store.realtimeQuotesBySymbol,
-            receivedAtBySymbol: store.realtimeReceivedAtBySymbol
-        )
-    }
-
     /// 用户自定义导航顺序（总览置顶），由 sidebarOrder 解析。
     private var orderedSections: [WorkspaceSection] {
         WorkspaceSection.ordered(from: sidebarOrder)
@@ -89,20 +76,10 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(theme.canvas)
                 .toolbar {
-                        // R2-U5：按点击频率重排——状态点（持续显示）→ 刷新（最高频）→ 任务台（频繁导航）
-                        // → 分隔符 → 主题 → 设置（低频配置类）。旧版 loading spinner 独立占位已删除，
+                        // R5 布局：刷新（最高频、独立组）→ 分隔符 → 任务台（纯图标）→ 主题 → 设置。
+                        // 状态点已删（R5：新鲜度语义在价格页有完整 badge，工具栏点无用户价值）；
                         // 加载态合并进刷新按钮本身（图标换 spinner + 禁用），避免间歇出现的元素挤动分组布局。
                         ToolbarItemGroup {
-                            // 非价格页：工具栏状态点；价格页自带完整 badge（今日看盘/个股等）
-                            if !Self.priceSections.contains(store.selectedSection) {
-                                RealtimeStatusDot(
-                                    freshness: toolbarFreshness,
-                                    hours: store.tradingHours,
-                                    authFailed: store.realtimeAuthFailed,
-                                    updatedAt: store.realtimeUpdatedAt
-                                )
-                                .padding(.trailing, 6)
-                            }
                             Button {
                                 Task { await store.loadSnapshot() }
                             } label: {
@@ -114,23 +91,22 @@ struct ContentView: View {
                             }
                             .disabled(store.isLoading)
                             .help("刷新")
-                            Button {
-                                store.selectedSection = .runbook
-                            } label: {
-                                Label(WorkspaceSection.runbook.displayName, systemImage: WorkspaceSection.runbook.symbol)
-                                    .labelStyle(.titleAndIcon)
-                                    .font(KSSFont.themed(12.5, .semibold, theme: theme))
-                            }
-                            .foregroundStyle(store.selectedSection == .runbook ? theme.accent : theme.textSecondary)
-                            .help(WorkspaceSection.runbook.displayName)
                             // Divider() 在这个 ToolbarItemGroup 里渲染成水平短横线而非竖线分隔符（KTD5 预见到的风险），
-                            // 改用固定宽度的竖线 Text 代替。分隔高频组（刷新/任务台）与低频组（主题/设置）。
+                            // 改用固定宽度的竖线 Text 代替。分隔数据动作（刷新）与导航/配置组（任务台/主题/设置）。
                             // 架构入口（plan 2026-07-12-005 U2）已移到侧边栏页脚与 GitHub 并排，不再占工具栏位。
                             // Seesaw 不在工具栏——它是全应用唯一的 AI 入口，改成侧边栏里常驻的 Post 式大按钮
                             // （SidebarView.seesawCTA），比工具栏小图标更醒目。
                             Text("|")
                                 .foregroundStyle(theme.textSecondary.opacity(0.4))
                                 .padding(.horizontal, 2)
+                            Button {
+                                store.selectedSection = .runbook
+                            } label: {
+                                Label(WorkspaceSection.runbook.displayName, systemImage: WorkspaceSection.runbook.symbol)
+                                    .labelStyle(.iconOnly)
+                            }
+                            .foregroundStyle(store.selectedSection == .runbook ? theme.accent : theme.textSecondary)
+                            .help(WorkspaceSection.runbook.displayName)
                             themeMenu
                             Button {
                                 store.selectedSection = .settings

@@ -424,3 +424,74 @@ def test_e2e_composite_intraday_bars_full_round_trip(monkeypatch):
     assert out["bars"], "bars should be non-empty for chart rendering"
     assert "error" not in out or out["error"] is None
     assert out["eligibility"] == "forward_observed"
+
+
+# --------------------------------------------------------------------------- #
+# 批量快照（R5：今日看盘全模块接线）：单次 SDK 调用 + 逐标 error 语义
+# --------------------------------------------------------------------------- #
+
+
+def _ok_quotes_result(symbols):
+    rows = [{
+        "symbol": s, "last_done": 100.0 + i, "prev_close": 100.0,
+        "open": 100.0, "high": 101.0 + i, "low": 99.5, "volume": 1000 + i,
+        "turnover": 1e5, "timestamp": "2026-07-15T10:30:00+08:00",
+        "trade_status": "Normal",
+    } for i, s in enumerate(symbols)]
+    return FetchResult(
+        rows=rows, raw_columns=("symbol", "last_done"),
+        source_asof_ts="2026-07-15T10:30:00+08:00",
+        status_code=200, latency_ms=15.0, error=None,
+    )
+
+
+class _FakeLongbridgeBatch:
+    name = "longbridge"
+
+    def __init__(self, result):
+        self._result = result
+        self.calls = []
+
+    def fetch_quotes(self, symbols):
+        self.calls.append(list(symbols))
+        return self._result
+
+
+def test_longbridge_quotes_registered_and_not_write():
+    assert "longbridge-quotes" in b.COMMANDS
+    assert "longbridge-quotes" not in b.WRITE_COMMANDS
+
+
+def test_longbridge_quotes_mixed_coverage_single_sdk_call(monkeypatch):
+    """covered 标的合并进一次 fetch_quotes；北交所标的逐标结构化 error。"""
+    import kss.data.intraday_client as ic
+    fake = _FakeLongbridgeBatch(_ok_quotes_result(["688008.SH", "510300.SH"]))
+    monkeypatch.setattr(ic, "LongbridgeProvider", lambda: fake)
+    out = b.dispatch("longbridge-quotes", ["688008.SH,510300.SH,830799.BJ"])
+    assert out["count"] == 3
+    by_sym = {q["symbol"]: q for q in out["quotes"]}
+    assert by_sym["688008.SH"]["last_done"] == 100.0
+    assert by_sym["510300.SH"]["last_done"] == 101.0
+    assert by_sym["688008.SH"]["source_asof_ts"] == "2026-07-15T10:30:00+08:00"
+    assert by_sym["830799.BJ"]["error"] == "no_realtime_snapshot"
+    # 单次 SDK 调用（批量化的意义所在）
+    assert len(fake.calls) == 1
+    assert fake.calls[0] == ["688008.SH", "510300.SH"]
+
+
+def test_longbridge_quotes_auth_failed_propagates_per_symbol(monkeypatch):
+    """整批 auth_failed → 每个 covered 标的带 error（上层据此置 realtimeAuthFailed）。"""
+    import kss.data.intraday_client as ic
+    err = FetchResult(
+        rows=[], raw_columns=(), source_asof_ts=None,
+        status_code=None, latency_ms=5.0, error="auth_failed",
+    )
+    monkeypatch.setattr(ic, "LongbridgeProvider", lambda: _FakeLongbridgeBatch(err))
+    out = b.dispatch("longbridge-quotes", ["688008.SH,510300.SH"])
+    assert all(q["error"] == "auth_failed" for q in out["quotes"])
+
+
+def test_longbridge_quotes_requires_symbols():
+    import pytest
+    with pytest.raises(ValueError):
+        b.dispatch("longbridge-quotes", [""])

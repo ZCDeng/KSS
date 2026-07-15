@@ -69,9 +69,16 @@ final class SettingsTabTests: XCTestCase {
         XCTAssertEqual(SettingsTabRouting.targetTab(forSelfCheckItem: "something_new"), .keys)
     }
 
-    // MARK: - SettingsTab 枚举完整性
+    // MARK: - SettingsTab 枚举完整性（R4：合并为 2 tab，旧名经由别名归并）
 
-    func testAllFourTabsPresent() {
-        XCTAssertEqual(Set(SettingsTab.allCases), [.keys, .dataSources, .scheduledTasks, .logs])
+    func testTwoTabsPresent() {
+        XCTAssertEqual(Set(SettingsTab.allCases), [.credentials, .operations])
+    }
+
+    func testLegacyTabAliasesMapToMergedTabs() {
+        XCTAssertEqual(SettingsTab.keys, .credentials)
+        XCTAssertEqual(SettingsTab.dataSources, .credentials)
+        XCTAssertEqual(SettingsTab.scheduledTasks, .operations)
+        XCTAssertEqual(SettingsTab.logs, .operations)
     }
 }

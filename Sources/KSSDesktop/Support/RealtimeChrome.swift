@@ -144,50 +144,6 @@ struct DailyFreshnessLabel: View {
     }
 }
 
-// MARK: - 紧凑状态点（非价格页）
-
-/// 绿=新鲜实时 / 黄=已过期 / 灰=非实时或非交易 / 红=未连接。
-struct RealtimeStatusDot: View {
-    @Environment(\.kssTheme) private var theme
-    var freshness: RealtimeFreshness
-    var hours: TradingHours?
-    var authFailed: Bool
-    var updatedAt: Date?
-
-    private var tint: Color {
-        if authFailed { return theme.down }
-        if let hours, !hours.isTradingSession { return theme.textSecondary }
-        switch freshness {
-        case .fresh: return theme.up
-        case .stale: return theme.ma5
-        case .missing: return theme.textSecondary
-        }
-    }
-
-    private var label: String {
-        if authFailed { return "实时源未连接" }
-        if let hours, !hours.isTradingSession { return "非交易时段" }
-        switch freshness {
-        case .fresh:
-            if let ts = updatedAt { return "实时 · \(RealtimeStatusBadge.formatted(ts))" }
-            return "实时"
-        case .stale:
-            if let ts = updatedAt { return "已过期 · \(RealtimeStatusBadge.formatted(ts))" }
-            return "已过期"
-        case .missing:
-            return "非实时"
-        }
-    }
-
-    var body: some View {
-        Circle()
-            .fill(tint)
-            .frame(width: 7, height: 7)
-            .help(label)
-            .accessibilityLabel(label)
-    }
-}
-
 // MARK: - 变价轻闪
 
 /// StatTile 变体：数值可闪（样式对齐 Dashboard `StatTile`）。

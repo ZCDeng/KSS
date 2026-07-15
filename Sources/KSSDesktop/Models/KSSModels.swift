@@ -820,6 +820,8 @@ struct SectorTheme: Codable, Identifiable, Hashable {
     var accel: Bool
     var rank5d: Int?
     var nFunds: Int?
+    /// 主题代表 ETF 码（篮子首只，R5）：UI 据此挂 Longbridge 实时涨跌。
+    var etfCode: String?
 }
 
 /// 定时任务（launchd）一项：deploy/launchd/*.plist + launchctl 状态 + 日志末行。
@@ -1498,41 +1500,45 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - 设置页 Tab（R2-U4：平铺长滚动 → Tab 形态，KTD3/KTD4）
+// MARK: - 设置页 Tab（R2-U4 Tab 化；R4 合并为两 tab：凭证与数据源 / 任务与日志）
 
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case keys, dataSources, scheduledTasks, logs
+    case credentials, operations
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .keys: return "密钥"
-        case .dataSources: return "数据源"
-        case .scheduledTasks: return "定时任务"
-        case .logs: return "日志"
+        case .credentials: return "数据源与凭证"
+        case .operations: return "任务与日志"
         }
     }
+
+    // 旧四 tab 深链值兼容（R2 时代的调用点语义）：keys/dataSources → credentials，
+    // scheduledTasks/logs → operations。
+    static let keys: SettingsTab = .credentials
+    static let dataSources: SettingsTab = .credentials
+    static let scheduledTasks: SettingsTab = .operations
+    static let logs: SettingsTab = .operations
 }
 
 enum SettingsTabRouting {
-    /// 自检 fail 项 → 目标 tab（Outstanding Questions 的分类规则）：凭证类落数据源
-    /// tab——四个 open_settings 项（tushare/longbridge/telegram/llm）的 fixHint 原文即
-    /// 「去设置页数据源分区填写」，与该判定一致；无法归类的兜底密钥 tab。
+    /// 自检 fail 项 → 目标 tab：凭证/数据源类落凭证 tab；任务健康类落任务与日志 tab；
+    /// 无法归类兜底凭证 tab。
     static func targetTab(forSelfCheckItem item: String) -> SettingsTab {
         switch item {
-        case "tushare", "longbridge", "telegram", "llm":
-            return .dataSources
+        case "tushare", "longbridge", "telegram", "llm", "intraday_secrets":
+            return .credentials
         default:
-            return .keys
+            return .credentials
         }
     }
 
-    /// KTD4：数据源 tab 状态点——任一数据源未配置，或最近一次连通性测试失败。
+    /// 凭证 tab 状态点——任一数据源未配置，或最近一次连通性测试失败。
     static func dataSourcesNeedsBadge(configured: [Bool], testsOK: [Bool]) -> Bool {
         configured.contains(false) || testsOK.contains(false)
     }
 
-    /// KTD4：定时任务 tab 状态点——任一任务 needsInstall / stale / failed。
+    /// 任务与日志 tab 状态点——任一任务 needsInstall / stale / failed。
     static func scheduledTasksNeedsBadge(jobs: [ScheduledJob]) -> Bool {
         jobs.contains { $0.health == .needsInstall || $0.health == .stale || $0.health == .failed }
     }
@@ -1705,6 +1711,12 @@ struct IntelSummary: Codable, Equatable {
 
 /// 实时快照（bridge `longbridge-quote`）。R1/R12——数字为 bridge 真值字段，直接渲染不经 LLM。
 /// 覆盖失败/非陆股通时 `error` 非空、数值字段 nil，UI 据此回退存量 + 标注"非实时"。
+/// `longbridge-quotes` 批量响应（R5）：quotes 逐标与单标命令同 shape（含逐标 error 行）。
+struct LongbridgeQuotesResponse: Codable {
+    var quotes: [LongbridgeQuote]
+    var count: Int?
+}
+
 struct LongbridgeQuote: Codable, Hashable {
     var symbol: String?
     var lastDone: Double?

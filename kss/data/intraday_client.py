@@ -675,6 +675,48 @@ class LongbridgeProvider:
             latency_ms=latency_ms, error=None,
         )
 
+    def fetch_quotes(self, symbols: list[str]) -> FetchResult:
+        """批量实时快照：一次 ``ctx.quote(list)`` 覆盖全部标的（SDK 上限 500）。
+
+        rows 顺序与 SDK 返回一致，每行 ``symbol`` 为 Longbridge 归一码；调用方
+        自持请求码↔展示码映射。异常吞为安全类目 error，不抛（数据层契约）。"""
+        t0 = time.monotonic()
+        if not symbols:
+            return FetchResult(
+                rows=[], raw_columns=_LONGBRIDGE_QUOTE_COLUMNS, source_asof_ts=None,
+                status_code=None, latency_ms=0.0, error="empty symbols",
+            )
+        ctx, ctx_err = self._ensure_context()
+        if ctx is None:
+            return FetchResult(
+                rows=[], raw_columns=(), source_asof_ts=None, status_code=None,
+                latency_ms=(time.monotonic() - t0) * 1000.0,
+                error=ctx_err or "auth_failed",
+            )
+        lb_symbols = [_resolve_longbridge_symbol(s) for s in symbols]
+        try:
+            with _suppress_stdio():
+                quotes = ctx.quote(lb_symbols)
+        except Exception as exc:  # noqa: BLE001
+            return FetchResult(
+                rows=[], raw_columns=(), source_asof_ts=None, status_code=None,
+                latency_ms=(time.monotonic() - t0) * 1000.0,
+                error=_classify_longbridge_error(exc),
+            )
+        latency_ms = (time.monotonic() - t0) * 1000.0
+        rows = [_longbridge_quote_to_dict(q) for q in (quotes or [])]
+        if not rows:
+            return FetchResult(
+                rows=[], raw_columns=_LONGBRIDGE_QUOTE_COLUMNS, source_asof_ts=None,
+                status_code=200, latency_ms=latency_ms, error="empty response",
+            )
+        newest = max((r.get("timestamp") for r in rows if r.get("timestamp")), default=None)
+        return FetchResult(
+            rows=rows, raw_columns=_LONGBRIDGE_QUOTE_COLUMNS,
+            source_asof_ts=_to_iso_shanghai_any(newest), status_code=200,
+            latency_ms=latency_ms, error=None,
+        )
+
 
 _LONGBRIDGE_BAR_COLUMNS: tuple[str, ...] = (
     "timestamp", "open", "high", "low", "close", "volume", "turnover",
@@ -759,7 +801,9 @@ def _longbridge_quote_to_dict(quote: Any) -> dict[str, Any]:
         "low": _lb_num(getattr(quote, "low", None)),
         "volume": _lb_num(getattr(quote, "volume", None)),
         "turnover": _lb_num(getattr(quote, "turnover", None)),
-        "timestamp": getattr(quote, "timestamp", None),
+        # datetime 在数据层即转 ISO：批量路径 rows 直接进 bridge json.dumps（无 default=），
+        # 透传 datetime 整链炸（与 _longbridge_bar_to_dict 同坑同修）。
+        "timestamp": _to_iso_shanghai_any(getattr(quote, "timestamp", None)),
         "trade_status": str(getattr(quote, "trade_status", "") or ""),
     }
 

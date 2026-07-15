@@ -181,6 +181,16 @@ def get_longbridge_quote(symbol: str) -> dict:
 
 
 @mcp.tool
+def get_longbridge_quotes(symbols: str) -> dict:
+    """Longbridge 批量实时快照（单次 SDK 调用）。symbols 逗号分隔，如 688008.SH,510300.SH。
+
+    语义与 get_longbridge_quote 逐标一致：仅陆股通标的有实时；非覆盖/北交所标的
+    在 quotes 数组内返回逐标 error。forward_observed、非 PIT。
+    """
+    return _call("longbridge-quotes", [symbols])
+
+
+@mcp.tool
 def get_indicator_lab() -> dict:
     """指标注册表 + 近期 GO/NO-GO 裁决。"""
     return _call("indicator-lab-list")
