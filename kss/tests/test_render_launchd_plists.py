@@ -251,3 +251,67 @@ def test_plutil_lint_all_outputs(project_root, tmp_path):
     for plist in sorted(out_dir.glob("com.zcdeng.kss.*.plist")):
         proc = subprocess.run(["plutil", "-lint", str(plist)], capture_output=True, text=True)
         assert proc.returncode == 0, f"{plist.name}: {proc.stdout}{proc.stderr}"
+
+
+# --------------------------------------------------------------------------- #
+# R6 U2：bundle 根守卫 —— launchd plist 绝不锚定 .app/Contents
+# --------------------------------------------------------------------------- #
+
+
+def test_reject_bundle_project_root(tmp_path):
+    """project_root 指向 .app bundle → RenderError 拒绝，不写文件。"""
+    bundle_root = tmp_path / "KSSDesktop.app" / "Contents" / "Resources"
+    bundle_root.mkdir(parents=True)
+    output = tmp_path / "out" / "com.zcdeng.kss.scanner.plist"
+    with pytest.raises(RenderError, match="bundle"):
+        render_mod.render(str(bundle_root), _job("scanner"), output)
+    assert not output.exists()
+
+
+def test_normal_root_paths_stay_inside_project(project_root, tmp_path):
+    """正常项目根：ProgramArguments / 日志路径均在项目内，无 .app/Contents。"""
+    pl = _render(project_root, "scanner", tmp_path)
+    for s in [*pl["ProgramArguments"], pl["StandardOutPath"], pl["WorkingDirectory"]]:
+        assert ".app/Contents" not in s
+        assert s.startswith(str(project_root)) or not s.startswith("/private")
+
+
+def test_bridge_launchd_project_root_resolution(tmp_path, monkeypatch):
+    """bridge 真根解析器：非 bundle 原样；bundle + 有效面包屑换真根；面包屑无效 fail loud。"""
+    sys.path.insert(0, str(_REPO / "scripts"))
+    import kss_app_bridge as b
+
+    # 非 bundle：原样返回
+    monkeypatch.setattr(b, "PROJECT_ROOT", _REPO)
+    assert b._launchd_project_root() == _REPO
+
+    # bundle + 有效面包屑：换真根（面包屑指向真仓库）
+    bundle = tmp_path / "KSSDesktop.app" / "Contents" / "Resources"
+    bundle.mkdir(parents=True)
+    monkeypatch.setattr(b, "PROJECT_ROOT", bundle)
+    crumb_dir = tmp_path / "appsupport"
+    crumb_dir.mkdir()
+    crumb = crumb_dir / "breadcrumb.json"
+    crumb.write_text(
+        '{"projectRoot": "%s", "stateRoot": "%s"}' % (_REPO, _REPO), encoding="utf-8"
+    )
+    real_home = Path.home()
+    fake_home = tmp_path / "home"
+    (fake_home / "Library" / "Application Support" / "KSS").mkdir(parents=True)
+    shutil.copy2(crumb, fake_home / "Library" / "Application Support" / "KSS" / "breadcrumb.json")
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
+    try:
+        assert b._launchd_project_root() == _REPO.resolve()
+
+        # 面包屑指向 bundle（无效）→ fail loud
+        bad = fake_home / "Library" / "Application Support" / "KSS" / "breadcrumb.json"
+        bad.write_text('{"projectRoot": "%s"}' % bundle, encoding="utf-8")
+        with pytest.raises(RuntimeError, match="拒绝"):
+            b._launchd_project_root()
+
+        # 面包屑缺失 → fail loud
+        bad.unlink()
+        with pytest.raises(RuntimeError, match="拒绝"):
+            b._launchd_project_root()
+    finally:
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: real_home))

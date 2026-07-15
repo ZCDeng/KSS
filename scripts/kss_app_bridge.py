@@ -297,11 +297,17 @@ def _tracking_return(symbol: str, prediction_date: str) -> float | None:
 def _recommendations(
     names: dict[str, dict[str, str]],
     stock_by_symbol: dict[str, dict[str, Any]],
-) -> tuple[str | None, list[dict[str, Any]]]:
+) -> tuple[str | None, str | None, list[dict[str, Any]]]:
     log = _latest_paper_log()
     if not log:
-        return None, []
+        return None, None, []
     date = log.get("prediction_date")
+    # R6 R5：执行日 = 数据日的下一交易日（T+1 开盘买入语义），供 UI 双日期标注。
+    execution_date: str | None = None
+    if date and len(date) == 10:
+        nxt = _next_open(date.replace("-", ""))
+        if nxt and len(nxt) == 8:
+            execution_date = f"{nxt[:4]}-{nxt[4:6]}-{nxt[6:8]}"
     items: list[dict[str, Any]] = []
     for pick in log.get("picks", []):
         symbol = pick.get("symbol", "")
@@ -327,7 +333,7 @@ def _recommendations(
             "trackingReturn": ret,
             "status": status,
         })
-    return date, items
+    return date, execution_date, items
 
 
 # U3: 按股归档文件名 {date}_{tscode}.md (新) vs {date}.md (旧, 兼容)。
@@ -2935,7 +2941,7 @@ def snapshot() -> dict[str, Any]:
     names = _load_names()
     stocks = _load_stock_summaries(names)
     stock_by_symbol = {item["symbol"]: item for item in stocks}
-    recommendation_date, recs = _recommendations(names, stock_by_symbol)
+    recommendation_date, recommendation_exec_date, recs = _recommendations(names, stock_by_symbol)
     latest_dates = [item["latestDate"] for item in stocks if item.get("latestDate")]
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
@@ -2943,6 +2949,7 @@ def snapshot() -> dict[str, Any]:
         "latestDataDate": max(latest_dates) if latest_dates else None,
         "stockCount": len(stocks),
         "recommendationDate": recommendation_date,
+        "recommendationExecutionDate": recommendation_exec_date,
         "stocks": stocks,
         "recommendations": recs,
         "reviews": _reviews(),
@@ -3132,6 +3139,37 @@ def _indicator_detail_projections(
 # 不拼接用户输入，杜绝注入。
 # ---------------------------------------------------------------------------
 
+def _launchd_project_root() -> Path:
+    """launchd plist 渲染/派发用的**真实项目根**（R6 KTD1 分域根规则）。
+
+    bundle 进程里 ``PROJECT_ROOT`` 落在 .app/Contents/Resources（代码版本对齐的
+    既有设计，不动），但 launchd plist 的 ProgramArguments/日志路径必须指向真实
+    仓库——bundle 只读且随升级整体替换，指进去的 plist 会在下次执行时炸
+    PermissionError（07-14 趋势归档实锤）。解析顺序：
+    - ``PROJECT_ROOT`` 不含 ``.app/Contents`` → 原样（dev / 项目内运行零回归）；
+    - 否则读安装期面包屑 ``~/Library/Application Support/KSS/breadcrumb.json`` 的
+      ``projectRoot``，校验 bridge 脚本存在且不含 ``.app/Contents``；
+    - 全部失败 → raise（fail loud），绝不静默回退 bundle 根。
+    """
+    if ".app/Contents" not in str(PROJECT_ROOT):
+        return PROJECT_ROOT
+    crumb_path = Path.home() / "Library" / "Application Support" / "KSS" / "breadcrumb.json"
+    try:
+        crumb = json.loads(crumb_path.read_text(encoding="utf-8"))
+        root = Path(str(crumb["projectRoot"])).expanduser().resolve()
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            f"launchd 项目根解析失败：PROJECT_ROOT 在 bundle 内且面包屑不可用 ({exc})；"
+            "拒绝把 bundle 路径写进 plist"
+        ) from exc
+    if ".app/Contents" in str(root) or not (root / "scripts" / "kss_app_bridge.py").is_file():
+        raise RuntimeError(
+            f"launchd 项目根解析失败：面包屑 projectRoot={root} 无效（bundle 内或缺 bridge）；"
+            "拒绝把 bundle 路径写进 plist"
+        )
+    return root
+
+
 def _launchd_deploy_dir() -> Path:
     """deploy/launchd 双根解析（plan 2026-07-12-005 / U6 KTD2, U11 R17）。
 
@@ -3153,7 +3191,8 @@ def _launchd_deploy_dir() -> Path:
         try:
             import render_launchd_plists as _render_mod  # noqa: PLC0415
 
-            _render_mod.render_all(str(PROJECT_ROOT), state_deploy, state_root=str(STATE_ROOT))
+            # R6 KTD1：渲染用真实项目根（bundle 根会被解析器拒绝 → 落入下方兜底拷贝）
+            _render_mod.render_all(str(_launchd_project_root()), state_deploy, state_root=str(STATE_ROOT))
         except Exception as exc:  # noqa: BLE001 - 首启不能因这步崩，退回旧行为
             print(f"[launchd] 重渲染 deploy/launchd 失败，退回原样拷贝: {exc}", file=sys.stderr)
             for src in bundle_deploy.glob("com.zcdeng.kss.*.plist"):
@@ -3515,15 +3554,17 @@ def _cron_sync() -> dict[str, Any]:
         return {"ok": False, "error": f"failed to load sync launcher: {exc}"}
 
     try:
+        # R6 KTD1：同步/渲染锚定真实项目根（bundle 根被拒 → fail loud 返回结构化错误）
+        launchd_root = _launchd_project_root()
         plan, notices = run_sync(
-            project_root=str(PROJECT_ROOT),
+            project_root=str(launchd_root),
             agents_dir=LAUNCHAGENTS_DIR,
             deploy_dir=LAUNCHD_DIR,
             apply=True,
             prune=False,
             acknowledge_schedule_change=False,
             state_root=str(STATE_ROOT),
-            manifest_path=str(PROJECT_ROOT / "kss" / "config" / "cron_jobs.yaml"),
+            manifest_path=str(launchd_root / "kss" / "config" / "cron_jobs.yaml"),
         )
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc), "notices": [str(exc)]}
@@ -3531,6 +3572,8 @@ def _cron_sync() -> dict[str, Any]:
     response: dict[str, Any] = {
         "ok": True,
         "notices": notices,
+        # 诊断留痕（R6 U2）：渲染用的项目根，供排障一眼定位
+        "launchdProjectRoot": str(launchd_root),
         "categoryOrder": list(_cron_manifest().category_order()),
         "jobs": _scheduled_jobs(),
         "plan": {
@@ -3639,7 +3682,8 @@ def _cron_edit_schedule(suffix: str, schedule_json: str) -> dict[str, Any]:
         deploy_path = LAUNCHD_DIR / f"{label}.plist"
         state_root_arg = str(STATE_ROOT) if STATE_ROOT != PROJECT_ROOT else None
         # 持久安装位（~/Library/LaunchAgents）：launchd 重启后据此自动重载。
-        pl = render_mod.render(str(PROJECT_ROOT), new_job, agents_path, state_root=state_root_arg)
+        # R6 KTD1：渲染锚定真实项目根（bundle 根被解析器拒绝 → render_failed 返回）
+        pl = render_mod.render(str(_launchd_project_root()), new_job, agents_path, state_root=state_root_arg)
         # deploy 副本：_launchd_plists() 枚举/bootstrap 的优先来源，双写保持一致。
         LAUNCHD_DIR.mkdir(parents=True, exist_ok=True)
         deploy_tmp = deploy_path.with_suffix(deploy_path.suffix + ".tmp")
@@ -5413,6 +5457,41 @@ def _reference_trade_date(*, now: Any | None = None, is_trade_day: bool | None =
         return _fmt(_prev_open(yday))
     # 非交易日：≤ 今天的最近交易日
     return _fmt(_prev_open(today))
+
+
+_NEXT_OPEN_CACHE: dict[str, str] = {}
+
+
+def _next_open(yyyymmdd: str) -> str | None:
+    """date 之后的第一个交易日（YYYYMMDD）。R6 KTD5：推荐区「执行日」真值。
+
+    仿 scripts/daily_review.py:next_trade_date 的 trade_cal 前向 15 日窗口；
+    **日历失败返回 None**（UI 退回单数据日显示，不用可能误判节假日的工作日猜测——
+    诚实语义优先）。按日缓存：推荐区在快照渲染路径上，不能每次渲染都打一次日历。
+    """
+    cached = _NEXT_OPEN_CACHE.get(yyyymmdd)
+    if cached:
+        return cached
+    from datetime import datetime, timedelta  # noqa: PLC0415
+
+    try:
+        from kss.data.tushare_client import TushareClient  # noqa: PLC0415
+
+        pro = TushareClient().get_pro()
+        end = (datetime.strptime(yyyymmdd, "%Y%m%d") + timedelta(days=15)).strftime("%Y%m%d")
+        df = pro.trade_cal(exchange="SSE", start_date=yyyymmdd, end_date=end)
+        if df is not None and not df.empty:
+            open_days = sorted(
+                str(row["cal_date"])
+                for _, row in df.iterrows()
+                if int(row.get("is_open", 0)) == 1 and str(row["cal_date"]) > yyyymmdd
+            )
+            if open_days:
+                _NEXT_OPEN_CACHE[yyyymmdd] = open_days[0]
+                return open_days[0]
+    except Exception:  # noqa: BLE001 — 日历失败不猜，交给 UI 退化
+        pass
+    return None
 
 
 def _is_trade_day(yyyymmdd: str) -> bool:

@@ -159,6 +159,40 @@ enum RealtimeMerge {
         )
     }
 
+    /// 今日看盘页头汇总的**核心展示集合**（R6 R9/KTD6）：堆叠卡 + 首行 ETF。
+    /// 曾用全量 harvest（60 标）做 worstFreshness——任一低频成交标的 asof 落后 300s
+    /// 就把刚刷新的页头拖成「已过期」（07-15 14:53 实锤误报）。外围标的（指数一览/
+    /// 板块 ETF/推荐）各卡自带逐标的口径，不参与页头汇总。
+    static func coreDisplaySymbols(strip: MarketStrip?) -> [String] {
+        var out = symbolsFromIndexStacks(strip?.indexStacks)
+        out.append(contentsOf: (strip?.etfs ?? []).map(\.code))
+        return out.map { $0.uppercased() }.filter { isLiveableSymbol($0) }
+    }
+
+    /// 诊断（R6 U8）：给定集合中最陈旧的标的及其 asof 落后秒数（仅统计已命中 quote 的）。
+    static func stalestSymbol(
+        symbols: [String],
+        quotes: [String: LongbridgeQuote],
+        receivedAtBySymbol: [String: Date],
+        now: Date = Date()
+    ) -> (symbol: String, ageSeconds: TimeInterval)? {
+        var worst: (String, TimeInterval)?
+        for code in symbols {
+            let key = code.uppercased()
+            guard let quote = quotes[key] else { continue }
+            let anchor: Date?
+            if let ts = quote.sourceAsofTs, let parsed = RealtimeFreshness.parseSourceAsofTs(ts) {
+                anchor = parsed
+            } else {
+                anchor = receivedAtBySymbol[key]
+            }
+            guard let anchor else { continue }
+            let age = now.timeIntervalSince(anchor)
+            if worst == nil || age > worst!.1 { worst = (key, age) }
+        }
+        return worst
+    }
+
     /// 页面级汇总（页头 badge 用）：展示标的中只要有一个 `.stale` 就诚实降级，
     /// 其次有 `.fresh` 才算「实时」，否则 `.missing`（KTD2：页头是汇总，不是逐标的展示）。
     static func worstFreshness(

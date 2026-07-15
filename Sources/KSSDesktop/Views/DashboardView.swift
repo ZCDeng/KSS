@@ -26,14 +26,25 @@ struct DashboardView: View {
     private let sectionSpacing: CGFloat = 22
     private let maxContent: CGFloat = 1040
 
-    /// 页头 badge：展示标的中的最差新鲜度（KTD2，只要有一个过期就诚实降级，不是"至少一条命中"）。
+    /// 页头 badge：**核心展示集合**（堆叠卡+首行 ETF）的最差新鲜度（R6 R9/KTD6）。
+    /// 全量 harvest 口径曾让任一低频外围标的把刚刷新的页头拖成「已过期」；
+    /// 外围卡（指数一览/板块/推荐现价）自带逐标的口径，不参与页头汇总。
     private var displayedFreshness: RealtimeFreshness {
-        let symbols = RealtimeMerge.harvestSymbols(strip: snapshot.marketStrip)
-        return RealtimeMerge.worstFreshness(
-            symbols: symbols,
+        RealtimeMerge.worstFreshness(
+            symbols: RealtimeMerge.coreDisplaySymbols(strip: snapshot.marketStrip),
             quotes: realtimeQuotes,
             receivedAtBySymbol: realtimeReceivedAtBySymbol
         )
+    }
+
+    /// 诊断 tooltip（R6 U8）：悬停页头徽标可见最陈旧标的与落后秒数，误报排障不用翻日志。
+    private var freshnessDiagnostic: String? {
+        guard let worst = RealtimeMerge.stalestSymbol(
+            symbols: RealtimeMerge.coreDisplaySymbols(strip: snapshot.marketStrip),
+            quotes: realtimeQuotes,
+            receivedAtBySymbol: realtimeReceivedAtBySymbol
+        ) else { return nil }
+        return String(format: "最旧: %@ · %.0fs", worst.symbol, worst.ageSeconds)
     }
 
     var body: some View {
@@ -53,6 +64,7 @@ struct DashboardView: View {
                                 updatedAt: realtimeUpdatedAt,
                                 onRetry: onRetryRealtime
                             )
+                            .help(freshnessDiagnostic ?? "")
                         }
                     }
 
@@ -146,7 +158,9 @@ struct DashboardView: View {
 
     private var picksColumn: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader("今日推荐", caption: "log_mv 反向选出的低市值 Top 5 · 买入 T+1 开盘")
+            SectionHeader("今日推荐",
+                          caption: snapshot.recommendationSubtitle.map { "\($0) · log_mv 反向低市值 Top 5" }
+                              ?? "log_mv 反向选出的低市值 Top 5 · 买入 T+1 开盘")
             TodayPicksList(items: Array(snapshot.recommendations.prefix(5)),
                            quotes: realtimeQuotes,
                            onSelect: onSelectSymbol)
@@ -715,6 +729,8 @@ struct SectorChip: View {
                 Spacer(minLength: 4)
                 gradeBadge
             }
+            // R6 R1：近5日/今日拆两行——行内并排曾把 152pt 网格挤爆致数字断行（+3.5|4%）。
+            // 数字 fixedSize+lineLimit(1) 钉死单行；今日行只在盘中命中实时 quote 时出现。
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text("近5日")
                     .font(KSSFont.themed(10, theme: tokens))
@@ -722,14 +738,19 @@ struct SectorChip: View {
                 Text(theme.past5Ret.map { KSSFormat.percent($0 / 100) } ?? "—")
                     .font(KSSFont.harmonyNumber(18))
                     .foregroundStyle(tokens.signColor(theme.past5Ret ?? 0))
-                if let pct = livePct {
-                    Spacer(minLength: 4)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            if let pct = livePct {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text("今日")
                         .font(KSSFont.themed(10, theme: tokens))
                         .foregroundStyle(tokens.textSecondary)
                     Text(KSSFormat.percent(pct / 100))
                         .font(KSSFont.harmonyNumber(14))
                         .foregroundStyle(tokens.signColor(pct))
+                        .lineLimit(1)
+                        .fixedSize()
                 }
             }
             HStack(spacing: 10) {
@@ -852,6 +873,15 @@ struct MarketStripRow: View {
                     .font(KSSFont.themed(13.5, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
+                // R6 R2：命中实时 quote 时的轻量标识（与堆叠卡「实时」chip 同规格）
+                if isLive {
+                    Text("实时")
+                        .font(KSSFont.themed(9, .bold, theme: theme))
+                        .foregroundStyle(theme.accent)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(theme.accent.opacity(0.12), in: Capsule())
+                }
                 Spacer(minLength: 4)
                 Text(sub)
                     .font(.system(size: 10.5, design: .monospaced))

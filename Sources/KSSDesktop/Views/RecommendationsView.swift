@@ -53,7 +53,7 @@ struct RecommendationsView: View {
             let w = min(geo.size.width - 48, 1080)
             VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .top) {
-                    PageTitle("推荐", subtitle: snapshot.recommendationDate)
+                    PageTitle("推荐", subtitle: snapshot.recommendationSubtitle)
                     Spacer(minLength: 12)
                     RealtimeStatusBadge(
                         freshness: displayedFreshness,

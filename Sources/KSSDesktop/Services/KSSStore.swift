@@ -115,6 +115,9 @@ final class KSSStore: ObservableObject {
     // MARK: Longbridge 实时（U1/U2）—— 页面加载时拉取，失败保持 nil（UI 回退存量 + 标注"非实时"）
     @Published var realtimeQuote: LongbridgeQuote?     // 兼容 canary（上证 / 任一 live）
     @Published var realtimeQuotesBySymbol: [String: LongbridgeQuote] = [:]  // 多标的 map，供 今日看盘 overlay
+    /// R6 R6：watchlist 镜像（真源 ContentView @AppStorage，经 syncWatchlistToDB 同步）——
+    /// 进 refreshRealtimeQuotes 的 priority 采集，使自选列表盘中有实时 quote。
+    @Published var watchlistSymbols: [String] = []
     /// 堆叠卡会话分时（R2-U7 KTD7）：产品码 → 含昨收锚点/单调最大偏离/会话日的结构体，
     /// 供 Y 轴范围计算脱离"当前已加载了多少个 bar"。
     @Published var realtimeSparklinesBySymbol: [String: SparklineSeries] = [:]
@@ -369,6 +372,8 @@ final class KSSStore: ObservableObject {
         } else {
             var priority: [String] = []
             if let sel = selectedSymbol { priority.append(sel) }
+            // 自选列表（R6 R6）：用户主动盯的票，优先级仅次于当前选中
+            priority.append(contentsOf: watchlistSymbols)
             // 今日看盘堆叠卡：优先进预算槽（实盘主视觉）
             priority.append(contentsOf: RealtimeMerge.symbolsFromIndexStacks(snapshot?.marketStrip?.indexStacks))
             priority.append(contentsOf: RealtimeMerge.symbolsFromRecommendations(snapshot?.recommendations ?? []))
@@ -1306,6 +1311,9 @@ final class KSSStore: ObservableObject {
     /// @AppStorage("watchlistSymbols")，这里只是把它镜像进 kss.db 供 cron/bridge 读——
     /// 同原先的 syncWatchlistFile 定位，静默失败不影响 UI（自选已经落地在 AppStorage）。
     func syncWatchlistToDB(_ symbols: [String]) async {
+        // R6 R6：watchlist 真源在 ContentView @AppStorage，store 只留镜像供
+        // refreshRealtimeQuotes 的 priority 采集（每次变更/onAppear 都会走到这里）。
+        watchlistSymbols = symbols
         guard let bridge else { return }
         _ = try? await Task.detached { try bridge.setWatchlist(symbols) }.value
     }

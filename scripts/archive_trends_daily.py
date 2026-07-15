@@ -20,11 +20,16 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# ROOT 仅作**代码根**（bridge/kss 包 import）；数据路径一律走 kss.config.paths
+# （吃 KSS_PROJECT_ROOT/KSS_STATE_ROOT env）——bundle 副本执行时 __file__ 推导的
+# ROOT 落在 .app/Contents/Resources，往里写 = 07-14 PermissionError 实锤（R6 U3）。
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT))
 import kss_app_bridge as kb  # noqa: E402  bridge 的 stdlib 函数（picks 重算 / T+N / 板块切片）
+from kss.config.paths import KSS_DB, MACRO_ROOT, PROJECT_ROOT  # noqa: E402
 
-HSGT_PARQUET = ROOT / "storage" / "macro" / "hsgt_daily.parquet"
+HSGT_PARQUET = MACRO_ROOT / "hsgt_daily.parquet"
 NORTH_HEAT_REF_YI = 60.0  # 北向量级归一化参考（亿元），|净额|≥此值热度封顶
 
 
@@ -68,7 +73,7 @@ def _ensure_tushare_token() -> None:
     """token 不在 env 则从 .env 读（backfill/daily 都能自动拿到，无需手动 export）。"""
     if os.environ.get("TUSHARE_TOKEN"):
         return
-    env = ROOT / ".env"
+    env = PROJECT_ROOT / ".env"
     if not env.exists():
         return
     for line in env.read_text(encoding="utf-8", errors="ignore").splitlines():
@@ -86,8 +91,6 @@ def _etf_history() -> dict[str, dict[str, float]]:
     _ETF_HISTORY = {}
     _ensure_tushare_token()
     try:
-        import sys as _sys
-        _sys.path.insert(0, str(ROOT))
         from kss.data.tushare_client import TushareClient, _fetch_with_retry
         pro = TushareClient().get_pro()
     except Exception as exc:  # noqa: BLE001
@@ -127,7 +130,7 @@ def _sector_for_date(compact_date: str) -> tuple[list[dict[str, Any]], int, floa
     """板块 top 主题（对齐 _pulse_from_dict 的 grade 字段）+ 总数 + 强度归一化。"""
     from kss.storage.etf_radar import read_by_date
 
-    d = read_by_date(compact_date, ROOT / "storage" / "kss.db")
+    d = read_by_date(compact_date, KSS_DB)
     if d is None:
         _log(f"etf_radar 无 {compact_date}（板块段空）")
         return [], 0, None
@@ -259,7 +262,7 @@ def write_trend_day(date: str, force: bool = True) -> dict[str, Any]:
     """写 kss.db trends_days 表。返回写入（或已存在）的 payload。"""
     from kss.storage.trends import day_exists, read_by_date, write_day
 
-    db_path = ROOT / "storage" / "kss.db"
+    db_path = KSS_DB
     if not force and day_exists(date, db_path):
         return read_by_date(date, db_path)
     payload = build_trend_day(date)
@@ -299,32 +302,56 @@ def _latest_trading_date() -> str:
 # 下一次运行回扫重写即自愈。窗口 ≥2 保证「昨天」的 north 今晚补齐；取 3 留余量
 # （容忍一次漏跑 / 长假），write_trend_day 幂等覆盖，重写无副作用。
 ARCHIVE_WINDOW = 3
+# 缺口回补上限（交易日数）：单次运行最多回补这么多缺失日，防长期停更后一次跑爆。
+MAX_BACKFILL = 15
 
 
-def _recent_trading_dates(latest: str, k: int) -> list[str]:
-    """latest（含）往前 k 个交易日，升序 YYYY-MM-DD。
+def _trade_axis_dates(latest: str) -> list[str]:
+    """交易日轴（升序 YYYY-MM-DD，≤ latest）。
 
-    交易日轴用 hsgt 历史（完整到 T-1，北向最稠密）并入 latest（cs_data 锚的当天，
-    hsgt 可能还没有它）。只保留 ≤ latest 的日期。
+    R6 KTD2：轴改锚 **cs_data 面板**的 trade_date 并集（本地文件、无网络）——
+    hsgt 北向 T+1 滞后曾把日历恒压后 1-3 个交易日（07-13 健康跑只归档到 07-10）。
+    cs_data 出现过的 trade_date 即已收盘交易日。面板不可用时退回 hsgt 轴。
     """
-    latest_c = _compact(latest)
-    axis = {latest_c}
+    axis: set[str] = set()
     try:
-        import pandas as pd
-        df = pd.read_parquet(HSGT_PARQUET)
-        axis |= {str(x) for x in df["trade_date"].tolist()}
+        rows_by_symbol = kb._rows_by_symbol()
+        for rows in list(rows_by_symbol.values())[:5]:  # 5 只并集足够覆盖轴（防单票停牌洞）
+            axis |= {str(r.get("trade_date", "")) for r in rows if r.get("trade_date")}
     except Exception as exc:  # noqa: BLE001
-        _log(f"读 hsgt 交易日轴失败，仅归档 latest: {exc}")
-    ordered = [d for d in sorted(axis) if d <= latest_c]
-    tail = ordered[-k:] if len(ordered) >= k else ordered
-    return [_compact_to_dash(d) for d in tail]
+        _log(f"cs_data 面板轴不可用，退回 hsgt: {exc}")
+    if not axis:
+        try:
+            import pandas as pd
+            df = pd.read_parquet(HSGT_PARQUET)
+            axis = {_compact_to_dash(str(x)) for x in df["trade_date"].astype(str).tolist()}
+        except Exception as exc:  # noqa: BLE001
+            _log(f"hsgt 轴亦不可用，仅归档 latest: {exc}")
+    axis.add(latest)
+    return sorted(d for d in axis if len(d) == 10 and d <= latest)
+
+
+def _pending_dates(latest: str) -> list[str]:
+    """候选归档日（升序）：轴上 (已归档缺口) ∪ 尾部 ARCHIVE_WINDOW 回扫（north 自愈）。
+
+    缺口 = 轴尾 MAX_BACKFILL 内 trends_days 尚无行的日期——停更多日后一次跑齐
+    （R6 R4：07-13/07-14 回补即走此路径），幂等覆盖无副作用。
+    """
+    from kss.storage.trends import day_exists
+
+    axis = _trade_axis_dates(latest)
+    if not axis:
+        return [latest]
+    tail_rescan = axis[-ARCHIVE_WINDOW:]
+    gaps = [d for d in axis[-MAX_BACKFILL:] if not day_exists(d, KSS_DB)]
+    return sorted(set(gaps) | set(tail_rescan))
 
 
 def main(argv: list[str]) -> int:
     if len(argv) > 1:
         dates = [argv[1]]  # 显式日期：只归档这一天
     else:
-        dates = _recent_trading_dates(_latest_trading_date(), ARCHIVE_WINDOW)
+        dates = _pending_dates(_latest_trading_date())
     for date in dates:
         payload = write_trend_day(date)
         flags = payload["flags"]

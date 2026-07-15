@@ -280,4 +280,63 @@ final class RealtimeMergeTests: XCTestCase {
         XCTAssertFalse(pts.isEmpty)
         XCTAssertEqual(pts.first, 0)
     }
+
+    // MARK: - R6 U8：页头核心集合口径 + 最陈旧标的诊断
+
+    private func coreStrip() -> MarketStrip {
+        MarketStrip(
+            date: "20260715", northMoney: 1, northDate: nil,
+            etfs: [ETFQuote(code: "563360.SH", name: "A500ETF", close: 1, pct: 0.1)],
+            indices: [IndexQuote(code: "000905.SH", name: "中证500", close: 1, pct: 0)],
+            indexBoard: [IndexQuote(code: "399006.SZ", name: "创业板", close: 1, pct: 0)],
+            limitBoard: nil, turnoverTop: nil, globalIndices: nil,
+            overnightUS: nil,
+            indexStacks: [IndexStackColumn(id: "main", items: [
+                IndexStackItem(code: "000001.SH", name: "上证", close: 1, pct: 0),
+            ])]
+        )
+    }
+
+    private func liveQuote(asof: String) -> LongbridgeQuote {
+        LongbridgeQuote(symbol: nil, lastDone: 1, prevClose: 1, open: 1, high: 1, low: 1,
+                        volume: 1, turnover: 1, tradeStatus: "Normal", sourceAsofTs: asof,
+                        eligibility: nil, routedProvider: nil, manifestStale: nil,
+                        error: nil, hint: nil)
+    }
+
+    func testCoreDisplaySymbolsIsStacksPlusEtfsOnly() {
+        let core = RealtimeMerge.coreDisplaySymbols(strip: coreStrip())
+        XCTAssertEqual(Set(core), ["000001.SH", "563360.SH"])  // 指数一览/主指数行不入核心集合
+    }
+
+    func testHeaderFreshWhenCoreFreshDespiteStalePeripheral() {
+        let now = Date()
+        let freshTs = ISO8601DateFormatter().string(from: now.addingTimeInterval(-10))
+        let staleTs = ISO8601DateFormatter().string(from: now.addingTimeInterval(-3600))
+        let quotes = [
+            "000001.SH": liveQuote(asof: freshTs),
+            "563360.SH": liveQuote(asof: freshTs),
+            "399006.SZ": liveQuote(asof: staleTs),  // 外围陈旧，不该拖垮页头
+        ]
+        let core = RealtimeMerge.coreDisplaySymbols(strip: coreStrip())
+        XCTAssertEqual(RealtimeMerge.worstFreshness(
+            symbols: core, quotes: quotes, receivedAtBySymbol: [:], now: now), .fresh)
+    }
+
+    func testHeaderStaleWhenAnyCoreSymbolStale() {
+        let now = Date()
+        let freshTs = ISO8601DateFormatter().string(from: now.addingTimeInterval(-10))
+        let staleTs = ISO8601DateFormatter().string(from: now.addingTimeInterval(-3600))
+        let quotes = [
+            "000001.SH": liveQuote(asof: staleTs),
+            "563360.SH": liveQuote(asof: freshTs),
+        ]
+        let core = RealtimeMerge.coreDisplaySymbols(strip: coreStrip())
+        XCTAssertEqual(RealtimeMerge.worstFreshness(
+            symbols: core, quotes: quotes, receivedAtBySymbol: [:], now: now), .stale)
+        let worst = RealtimeMerge.stalestSymbol(
+            symbols: core, quotes: quotes, receivedAtBySymbol: [:], now: now)
+        XCTAssertEqual(worst?.symbol, "000001.SH")
+        XCTAssertEqual(worst!.ageSeconds, 3600, accuracy: 5)
+    }
 }

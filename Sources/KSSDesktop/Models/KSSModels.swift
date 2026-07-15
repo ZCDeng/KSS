@@ -6,6 +6,8 @@ struct AppSnapshot: Codable {
     var latestDataDate: String?
     var stockCount: Int
     var recommendationDate: String?
+    /// R6 R5：推荐执行日（数据日的下一交易日，bridge 真值）；日历失败为 nil。
+    var recommendationExecutionDate: String?
     var stocks: [StockSummary]
     var recommendations: [Recommendation]
     var reviews: [DailyReview]
@@ -20,6 +22,16 @@ struct AppSnapshot: Codable {
     var marketStrip: MarketStrip?
     var pythonEnvironment: PythonEnvironment?
     var recentTaskRuns: [TaskRunResult]
+}
+
+extension AppSnapshot {
+    /// 推荐区双日期标注（R6 R5）：「{执行日} 执行 · 基于 {数据日} 收盘数据」。
+    /// 执行日缺失（日历失败）退化为单数据日；两者皆缺为 nil。
+    var recommendationSubtitle: String? {
+        guard let data = recommendationDate, !data.isEmpty else { return nil }
+        guard let exec = recommendationExecutionDate, !exec.isEmpty else { return data }
+        return "\(exec) 执行 · 基于 \(data) 收盘数据"
+    }
 }
 /// 板块热点轮动：单日龙头 persistence.
 struct HotspotLeaderStock: Codable, Hashable, Identifiable {
@@ -1289,6 +1301,8 @@ struct PricePoint: Codable, Identifiable {
     var pctChange: Double?
     var volume: Double?
     var amount: Double?
+    /// R6 R8：当日未收盘实时 bar 标记（仅展示层拼接产生；bridge EOD payload 无此键）。
+    var provisional: Bool?
 }
 
 struct TaskRunResult: Codable, Identifiable, Hashable {

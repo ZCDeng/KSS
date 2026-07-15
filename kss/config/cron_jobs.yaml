@@ -57,9 +57,11 @@ jobs:
     catchup: true
     enabled: true
 
+  # R6 U3：18:10 → 18:40——EOD 数据更新（18:05 起，约 9 分钟）+ 事件尾链完成后再归档，
+  # 否则 cs_data 锚落在上一交易日（07-13 实锤：健康跑只归档到 07-10）。
   - suffix: trends_archive_daily
     wrapper: scripts/archive_trends_daily.sh
-    schedule: {hour: 18, minute: 10, weekdays: [1, 2, 3, 4, 5]}
+    schedule: {hour: 18, minute: 40, weekdays: [1, 2, 3, 4, 5]}
     title: 趋势归档
     category: 数据更新
     catchup: true

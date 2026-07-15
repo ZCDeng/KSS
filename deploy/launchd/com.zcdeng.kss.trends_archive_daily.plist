@@ -13,7 +13,7 @@
 			<key>Hour</key>
 			<integer>18</integer>
 			<key>Minute</key>
-			<integer>10</integer>
+			<integer>40</integer>
 		</dict>
 		<dict>
 			<key>Weekday</key>
@@ -21,7 +21,7 @@
 			<key>Hour</key>
 			<integer>18</integer>
 			<key>Minute</key>
-			<integer>10</integer>
+			<integer>40</integer>
 		</dict>
 		<dict>
 			<key>Weekday</key>
@@ -29,7 +29,7 @@
 			<key>Hour</key>
 			<integer>18</integer>
 			<key>Minute</key>
-			<integer>10</integer>
+			<integer>40</integer>
 		</dict>
 		<dict>
 			<key>Weekday</key>
@@ -37,7 +37,7 @@
 			<key>Hour</key>
 			<integer>18</integer>
 			<key>Minute</key>
-			<integer>10</integer>
+			<integer>40</integer>
 		</dict>
 		<dict>
 			<key>Weekday</key>
@@ -45,7 +45,7 @@
 			<key>Hour</key>
 			<integer>18</integer>
 			<key>Minute</key>
-			<integer>10</integer>
+			<integer>40</integer>
 		</dict>
 	</array>
 	<key>ProgramArguments</key>

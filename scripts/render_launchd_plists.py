@@ -112,6 +112,12 @@ def build_plist(project_root: str, job: CronJob, state_root: str | None = None) 
     ``HOME`` 取运行时 ``Path.home()``，不再硬编码作者本机用户名。
     """
     proj = _require_abs(project_root, "--project-root")
+    # R6 U2 守卫：bundle（.app）内路径只读且随升级替换，写进 plist 必炸——
+    # 任何调用方传进来都直接拒绝（fail loud），不留静默产物。
+    if ".app/Contents" in str(proj):
+        raise RenderError(
+            f"--project-root 指向 app bundle（{proj}），拒绝渲染：launchd plist 必须锚定真实仓库"
+        )
 
     wrapper = (proj / job.wrapper).resolve()
     log_root = proj

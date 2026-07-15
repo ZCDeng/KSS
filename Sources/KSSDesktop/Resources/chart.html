@@ -349,6 +349,23 @@
                                 lastCtx.bbi, lastCtx.bUp, lastCtx.bMid, lastCtx.bLow);
     }
 
+    // R6 R8：日档存在未收盘 bar 时的显式标注（chart 无 tooltip 设施，用固定徽标）。
+    function setProvisionalBadge(show) {
+      let el = document.getElementById("provBadge");
+      if (!show) { if (el) el.style.display = "none"; return; }
+      if (!el) {
+        el = document.createElement("div");
+        el.id = "provBadge";
+        el.textContent = "含今日未收盘 bar（实时）";
+        el.style.cssText = "position:absolute;top:8px;right:12px;z-index:6;font:600 10px -apple-system,sans-serif;"
+          + "padding:2px 8px;border-radius:9px;pointer-events:none;";
+        document.body.appendChild(el);
+      }
+      el.style.color = COLORS.ma5;
+      el.style.background = "rgba(128,128,128,0.15)";
+      el.style.display = "block";
+    }
+
     function setData(payload) {
       if (!chart && !buildChart()) { pending = payload; return; }
       intradayMode = false;
@@ -365,7 +382,12 @@
       if (!chart) return;
       const el = document.getElementById("chart");
       chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
-      const bars = resample(rawBars, currentTF);
+      // R6 R8：provisional（当日未收盘实时 bar）只进日档；周/月/年维持 EOD 口径，
+      // resample 前剔除，避免本周/本月 bar 混入盘中数据。
+      const source = currentTF === "D" ? rawBars : rawBars.filter(p => !p.provisional);
+      const bars = resample(source, currentTF);
+      const hasProvisional = currentTF === "D" && bars.some(p => p.provisional);
+      setProvisionalBadge(hasProvisional);
       document.getElementById("empty").style.display = bars.length ? "none" : "flex";
       if (!bars.length) {
         [candleSeries, volumeSeries, ma5Series, ma20Series, bbiSeries, bollUpper, bollMid, bollLower, macdHist, difSeries, deaSeries, obvSeries].forEach(s => s.setData([]));
@@ -377,6 +399,12 @@
         high: p.high != null ? p.high : p.close,
         low: p.low != null ? p.low : p.close,
         close: p.close,
+        // 未收盘 bar：半透明实体 + 实色描边（空心观感），与已收盘蜡烛区分
+        ...(p.provisional ? {
+          color: (p.close >= (p.open != null ? p.open : p.close))
+            ? COLORS.upFill.replace(/[\d.]+\)$/, "0.35)")
+            : COLORS.downFill.replace(/[\d.]+\)$/, "0.35)"),
+        } : {}),
       }));
       const vols = bars.map(p => ({
         time: p.date,

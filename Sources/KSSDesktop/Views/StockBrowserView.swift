@@ -56,10 +56,27 @@ struct StockBrowserView: View {
             switch sort {
             case .symbol: return ascending ? a.symbol < b.symbol : a.symbol > b.symbol
             case .name: return ascending ? a.name < b.name : a.name > b.name
-            case .pct: return ascending ? (a.pctChange ?? 0) < (b.pctChange ?? 0) : (a.pctChange ?? 0) > (b.pctChange ?? 0)
-            case .close: return ascending ? (a.close ?? 0) < (b.close ?? 0) : (a.close ?? 0) > (b.close ?? 0)
+            // R6 R6：涨跌幅排序与显示同口径——盘中命中实时 quote 用实时 pct
+            case .pct:
+                let pa = liveRow(a)?.pct ?? 0
+                let pb = liveRow(b)?.pct ?? 0
+                return ascending ? pa < pb : pa > pb
+            case .close:
+                let ca = liveRow(a)?.close ?? 0
+                let cb = liveRow(b)?.close ?? 0
+                return ascending ? ca < cb : ca > cb
             }
         }
+    }
+
+    /// 列表行展示口径（R6 R6）：盘中实时价/涨跌合并（与推荐页现价列同模式），
+    /// 无 quote 回退快照日线值。
+    private func liveRow(_ stock: StockSummary) -> (close: Double, pct: Double, isLive: Bool)? {
+        RealtimeMerge.displayPrice(
+            snapshotClose: stock.close,
+            snapshotPct: stock.pctChange,
+            quote: realtimeQuotes[stock.symbol.uppercased()]
+        )
     }
 
     var body: some View {
@@ -133,9 +150,22 @@ struct StockBrowserView: View {
                                             .foregroundStyle(theme.ma5)
                                     }
                                     Spacer()
-                                    Text(KSSFormat.pctPoints(stock.pctChange))
-                                        .font(.system(size: 12.5, weight: .bold, design: .monospaced))
-                                        .foregroundStyle(theme.signColor(stock.pctChange))
+                                    // R6 R6：盘中实时涨跌（小圆点标识）；无 quote 回退日线值
+                                    if let live = liveRow(stock) {
+                                        if live.isLive {
+                                            Circle()
+                                                .fill(theme.accent)
+                                                .frame(width: 5, height: 5)
+                                                .help("实时")
+                                        }
+                                        Text(KSSFormat.pctPoints(live.pct))
+                                            .font(.system(size: 12.5, weight: .bold, design: .monospaced))
+                                            .foregroundStyle(theme.signColor(live.pct))
+                                    } else {
+                                        Text(KSSFormat.pctPoints(stock.pctChange))
+                                            .font(.system(size: 12.5, weight: .bold, design: .monospaced))
+                                            .foregroundStyle(theme.signColor(stock.pctChange))
+                                    }
                                 }
                                 Text("\(stock.symbol) · \(stock.industry)")
                                     .font(.system(size: 11.5, design: .monospaced))
@@ -221,7 +251,12 @@ struct StockBrowserView: View {
         // 放大：铺满整个浏览区（列表+详情，随窗口尺寸动态最大化），而非尺寸受限的 sheet。
         .overlay {
             if showChartFullscreen, let detail {
-                ChartFullscreenView(detail: detail, bridge: bridge) { showChartFullscreen = false }
+                ChartFullscreenView(
+                    detail: detail,
+                    bridge: bridge,
+                    liveQuote: realtimeQuotes[detail.symbol.uppercased()],
+                    tradingHours: tradingHours
+                ) { showChartFullscreen = false }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(theme.canvas)
                     .transition(.opacity)
@@ -256,6 +291,56 @@ struct StockDetailView: View {
 
     private var analysis: StockAnalysis {
         StockAnalysis(points: detail.history, latest: detail.latest)
+    }
+
+    /// R6 R8：图表用日线序列（盘中拼当日未收盘 bar，EOD 库不动）。
+    private var chartPoints: [PricePoint] {
+        Self.appendingProvisionalBar(
+            to: detail.history,
+            quote: liveQuote,
+            isTradingSession: tradingHours?.isTradingSession ?? false,
+            today: Self.shanghaiToday()
+        )
+    }
+
+    /// 上海时区今日（YYYY-MM-DD）。
+    static func shanghaiToday(now: Date = Date()) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        return f.string(from: now)
+    }
+
+    /// R6 KTD3：盘中把当日实时 quote 拼成日 K 末尾的未收盘 bar（纯函数，可单测）。
+    /// 门控矩阵：非交易时段 / quote 非 live / 缺任一 OHLC / sourceAsofTs 日期 ≠ today
+    /// （或缺失）/ 序列末行已是 today —— 任一命中都不拼，原样返回。
+    static func appendingProvisionalBar(
+        to points: [PricePoint],
+        quote: LongbridgeQuote?,
+        isTradingSession: Bool,
+        today: String
+    ) -> [PricePoint] {
+        guard isTradingSession,
+              let quote, quote.isLive,
+              let o = quote.open, let h = quote.high, let l = quote.low,
+              let c = quote.lastDone else { return points }
+        // 跨 session 门控：quote 无 sessionDate 字段，用 sourceAsofTs（上海 ISO）的日期分量
+        guard let asof = quote.sourceAsofTs, asof.hasPrefix(today) else { return points }
+        // 数据晚到 EOD 已含当日行：不重复拼
+        if points.last?.date == today { return points }
+        // 涨跌以昨收为锚；quote.prevClose 缺失时用序列末收盘反推（prevCloseFallback 同式）
+        var pct: Double?
+        if let prev = quote.prevClose, prev > 0 {
+            pct = (c - prev) / prev * 100.0
+        } else if let prev = points.last?.close, prev > 0 {
+            pct = (c - prev) / prev * 100.0
+        }
+        let bar = PricePoint(
+            date: today, open: o, high: h, low: l, close: c,
+            pctChange: pct, volume: quote.volume ?? 0, amount: quote.turnover,
+            provisional: true
+        )
+        return points + [bar]
     }
 
     /// 日线末日期：summary → history 末日（北证等无 summary 时回退）
@@ -315,20 +400,14 @@ struct StockDetailView: View {
                     }
                     Spacer()
                     VStack(alignment: .trailing, spacing: 8) {
+                        // R6 R7：页头只留一个综合新鲜度徽标——「日线截至」与「实时」并列
+                        // 曾造成同屏口径矛盾（07-15 实测），底稿日期收敛到行情区块头唯一一处。
                         RealtimeStatusBadge(
                             freshness: freshness,
                             hours: tradingHours,
                             authFailed: realtimeAuthFailed,
                             updatedAt: realtimeUpdatedAt,
                             onRetry: onRetryRealtime
-                        )
-                        // 日线底稿新鲜度（与实时 badge 语义分离，可同时展示）
-                        DailyFreshnessLabel(
-                            barDate: barLatestDate,
-                            referenceTradeDate: tradingHours?.referenceTradeDate,
-                            compact: false,
-                            isRunning: isRunningTask,
-                            onRequestUpdate: onRequestUpdateCsData
                         )
                         Button(action: onToggleWatchlist) {
                             Label(isWatched ? "取消自选" : "加自选", systemImage: isWatched ? "star.fill" : "star")
@@ -430,7 +509,7 @@ struct StockDetailView: View {
                         MiChartBanner(signal: mi, markerCount: detail.miOverlay?.markers?.count ?? 0)
                     }
                     ChartWebView(
-                        points: detail.history,
+                        points: chartPoints,
                         // R6/KTD7：分钟档无数据时传空数组（保持 intraday 分支 → #empty 空态卡），
                         // 不再传 nil 静默回落日线渲染——那正是「点了没反应」的根源。
                         intradayBars: chartMode != .daily
@@ -736,6 +815,9 @@ struct ChartFullscreenView: View {
     @Environment(\.kssTheme) private var theme
     var detail: StockDetail
     var bridge: BridgeClient? = nil
+    // R6 R8：放大视图与详情页同口径拼当日未收盘 bar
+    var liveQuote: LongbridgeQuote? = nil
+    var tradingHours: TradingHours? = nil
     var onClose: () -> Void
 
     // R4-1：放大图表分钟线接线——与详情页同语义的独立状态（全屏是独立 chart 实例）。
@@ -799,7 +881,12 @@ struct ChartFullscreenView: View {
                 MiChartBanner(signal: mi, markerCount: detail.miOverlay?.markers?.count ?? 0)
             }
             ChartWebView(
-                points: detail.history,
+                points: StockDetailView.appendingProvisionalBar(
+                    to: detail.history,
+                    quote: liveQuote,
+                    isTradingSession: tradingHours?.isTradingSession ?? false,
+                    today: StockDetailView.shanghaiToday()
+                ),
                 intradayBars: chartMode != .daily
                     ? (intradayBars?.isRenderable == true ? (intradayBars?.bars ?? []) : [])
                     : nil,
