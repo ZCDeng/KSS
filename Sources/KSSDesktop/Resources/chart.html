@@ -85,6 +85,7 @@
     <button data-ind="mi" class="on">MI</button>
     <button data-ind="macd" class="on">MACD</button>
     <button data-ind="obv" class="on">OBV</button>
+    <button data-ind="sr" class="on">SR</button>
   </div>
   <div id="empty">暂无行情数据</div>
   <script src="lightweight-charts.standalone.production.js"></script>
@@ -99,7 +100,7 @@
     let currentTheme = "dark";
     let currentTF = "D";
     // 指标可见性（用户随用随隐；跨重采样/主题重建后由 applyIndVisibility 还原）
-    let indState = { ma5: true, ma20: true, bbi: true, boll: true, vol: true, macd: true, obv: true, mi: true };
+    let indState = { ma5: true, ma20: true, bbi: true, boll: true, vol: true, macd: true, obv: true, mi: true, sr: true };
 
     let chart, candleSeries, volumeSeries, ma5Series, ma20Series;
     let bbiSeries, bollUpper, bollMid, bollLower;
@@ -112,6 +113,8 @@
     let lastIndicatorOverlays = [];
     // indicator_id → 专属副带 line series；chart 重建（主题切换）后句柄失效，须随 buildChart 清空重建。
     let indicatorSeriesMap = new Map();
+    // S/R 位主图水平线句柄（plan 2026-07-20-001 U5）；chart 重建后句柄同样失效，须随 buildChart 清空。
+    let srPriceLines = [];
     // U3 日内模式（F008）：分钟 K 线独立渲染路径，时间键用 UNIX 秒（非日线 date）。
     let intradayMode = false;
     let intradayBars = [];
@@ -236,6 +239,7 @@
       if (typeof LightweightCharts === "undefined") return false;
       // 旧 chart 的通用指标 series 句柄随重建失效；清空，随后按 lastIndicatorOverlays 重建。
       indicatorSeriesMap = new Map();
+      srPriceLines = [];  // 旧 candleSeries 的价位线句柄同样失效，不显式 remove（对象已随 chart 销毁）
       const el = document.getElementById("chart");
       chart = LightweightCharts.createChart(el, {
         layout: {
@@ -475,6 +479,7 @@
       // 隐藏日线级指标 series（日内不渲染）。
       [ma5Series, ma20Series, bbiSeries, bollUpper, bollMid, bollLower,
        macdHist, difSeries, deaSeries, obvSeries].forEach(s => { if (s) s.setData([]); });
+      clearSrPriceLines();  // S/R 位仅日线渲染（R9），日内模式下清空
       if (!intradayBars.length) {
         candleSeries.setData([]); volumeSeries.setData([]);
         return;
@@ -722,6 +727,35 @@
       return s;
     }
 
+    // S/R 位主图水平线（plan 2026-07-20-001 U5）：独立于 markers/副带线序列的第三条通道——
+    // 与信号 pack 状态解耦（overlay 自带 status 只反映位计算本身，见 bridge _sr_levels_overlay）。
+    function clearSrPriceLines() {
+      srPriceLines.forEach((h) => { try { candleSeries.removePriceLine(h); } catch (e) { /* ignore */ } });
+      srPriceLines = [];
+    }
+    function renderSrLevels() {
+      clearSrPriceLines();
+      if (!indState.sr || currentTF !== "D" || intradayMode || !candleSeries) return;
+      const ov = (lastIndicatorOverlays || []).find((o) => o && Array.isArray(o.levels) && o.levels.length);
+      if (!ov || (ov.status && ov.status !== "ok")) return;
+      ov.levels.slice(0, 6).forEach((lv) => {
+        const isSupport = lv.kind === "support";
+        const color = isSupport ? COLORS.down : COLORS.up;
+        const lineWidth = (lv.strength || 0) >= 1 ? 2 : 1;
+        try {
+          const handle = candleSeries.createPriceLine({
+            price: lv.price,
+            color,
+            lineWidth,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: (isSupport ? "S " : "R ") + lv.price,
+          });
+          srPriceLines.push(handle);
+        } catch (e) { /* ignore */ }
+      });
+    }
+
     // 通用多指标 overlay（买卖点走 collectMarkers 汇总；每个指标一条专属副带线）。
     function applyIndicatorOverlays(payloads) {
       lastIndicatorOverlays = Array.isArray(payloads) ? payloads : [];
@@ -747,6 +781,7 @@
         try { s.applyOptions({ visible: true }); } catch (e) { /* ignore */ }
       });
       applyAllMarkers();
+      renderSrLevels();
     }
     function applyIndVisibility() {  // 重采样/主题重建后还原可见状态
       Object.keys(indState).forEach(k => {
@@ -760,6 +795,7 @@
           indState[k] = !indState[k];
           btn.classList.toggle("on", indState[k]);
           indSeries(k).forEach(s => { if (s) s.applyOptions({ visible: indState[k] }); });
+          if (k === "sr") renderSrLevels();  // SR 是价位线句柄，不走 series.applyOptions 可见性
         });
       });
     }

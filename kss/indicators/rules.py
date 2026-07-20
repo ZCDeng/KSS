@@ -18,6 +18,7 @@ from kss.indicators.primitives import (
     FAMILY_BOLL_ATR,
     FAMILY_MA_CROSS,
     FAMILY_RSI_THRESHOLD,
+    FAMILY_SR_LEVEL,
     build_features,
 )
 
@@ -42,6 +43,8 @@ def warm_period(spec: IndicatorSpec) -> int:
         longest = int(spec.params["period"])
     elif spec.family == FAMILY_BOLL_ATR:
         longest = max(int(spec.params["period"]), int(spec.params["atr_period"]))
+    elif spec.family == FAMILY_SR_LEVEL:
+        longest = int(spec.params["pivot_window"]) * 4
     else:  # pragma: no cover - IndicatorSpec.__post_init__ 已拦截未知族
         raise ValueError(f"未知基元族: {spec.family!r}")
     return max(longest + 5, 40)
@@ -76,6 +79,32 @@ def _entry_exit_signals(
         stop_level = feat["rolling_high"] - atr_mult * feat["atr"]  # ATR 追踪止损
         exit_ = (close < stop_level) | (close < feat["boll_mid"])  # 止损或回归中轨
         return entry, exit_
+
+    if family == FAMILY_SR_LEVEL:
+        variant = params.get("rule_variant", "bounce")
+        support, resistance = feat["sr_support"], feat["sr_resistance"]
+        close, close_prev = feat["close"], feat["close"].shift(1)
+
+        if variant == "bounce":
+            support_prev, low_prev = support.shift(1), feat["low"].shift(1)
+            entry = (low_prev <= support_prev * 1.01) & (close > close_prev) & support_prev.notna()
+            exit_ = ((close < support * 0.99) & support.notna()) | (
+                (close >= resistance) & resistance.notna()
+            )
+            return entry.fillna(False), exit_.fillna(False)
+
+        if variant == "breakout":
+            resistance_prev = resistance.shift(1)
+            entry = (
+                (close_prev <= resistance_prev) & (close > resistance_prev) & resistance_prev.notna()
+            ).fillna(False)
+            # 突破后 sr_resistance 会切到下一档更高阻力，追踪止损须记住本次突破的原阻力位——
+            # ffill 只回看已发生的突破，无前瞻。
+            broken_level = pd.Series(np.where(entry, resistance_prev, np.nan), index=feat.index).ffill()
+            exit_ = (close < broken_level * 0.99) & broken_level.notna()
+            return entry, exit_.fillna(False)
+
+        raise ValueError(f"未知 sr_level 规则变体: {variant!r}")
 
     raise ValueError(f"未知基元族: {family!r}")  # pragma: no cover
 
@@ -175,6 +204,11 @@ def signal_strength(feat: pd.DataFrame, family: str) -> pd.Series:
         width = (feat["boll_upper"] - feat["boll_lower"]).replace(0, np.nan)
         pos = (feat["close"] - feat["boll_mid"]) / width
         return np.tanh(pos * 2)
+    if family == FAMILY_SR_LEVEL:
+        mid = (feat["sr_support"] + feat["sr_resistance"]) / 2.0
+        width = (feat["sr_resistance"] - feat["sr_support"]).replace(0, np.nan)
+        pos = (feat["close"] - mid) / width
+        return np.tanh(pos.fillna(0) * 2)
     raise ValueError(f"未知基元族: {family!r}")  # pragma: no cover
 
 
@@ -187,6 +221,14 @@ _ACTION_TEMPLATES = {
 
 def rule_sentence(spec: IndicatorSpec) -> str:
     """一句话规则描述（可解释性维度消费）。"""
+    if spec.family == FAMILY_SR_LEVEL:
+        variant = spec.params.get("rule_variant", "bounce")
+        desc = (
+            "回踩支撑确认反弹入场、跌破支撑或触及阻力离场"
+            if variant == "bounce"
+            else "收盘突破阻力入场、回落破位（追踪止损）离场"
+        )
+        return f"支撑阻力·{variant}（{spec.params}）：{desc}"
     desc, label = _ACTION_TEMPLATES[spec.family]
     return f"{label}（{spec.params}）：{desc}"
 

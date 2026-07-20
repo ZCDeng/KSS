@@ -3075,6 +3075,9 @@ def stock_detail(symbol: str) -> dict[str, Any]:
 
     hist_dates = {str(h.get("date") or "") for h in history}
     indicator_signals, indicator_overlays = _indicator_detail_projections(symbol, hist_dates)
+    # S/R 位按需投影（plan 2026-07-20-001 KTD1）：任意浏览标的即算即画，独立于任何信号
+    # pack/门禁状态——不依赖注册表、不依赖固化记录，NO-GO/无 pack 时仍照常出位（AE1）。
+    indicator_overlays = indicator_overlays + [_sr_levels_overlay(history)]
 
     return {
         "symbol": symbol,
@@ -3128,6 +3131,49 @@ def _indicator_detail_projections(
             print(f"indicator pack {entry.id} for {symbol}: {exc}", file=sys.stderr)
             continue
     return signals, overlays
+
+
+def _sr_levels_overlay(history: list[dict[str, Any]]) -> dict[str, Any]:
+    """S/R 位按需投影：从 stock_detail 已加载的 history 直接算位，异常/数据不足降级为
+    status=skipped，不崩 detail（同 mi/indicator pack 的既有 try/except 先例）。
+
+    indicatorId 由本函数注入 camelCase（同 _indicator_detail_projections 对 registry
+    条目的既有处理）——Swift 侧 plain JSONDecoder 不做 snake→camel 自动转换。
+    """
+    def _finalize(overlay: dict[str, Any]) -> dict[str, Any]:
+        overlay["indicatorId"] = "sr_levels"
+        return overlay
+
+    try:
+        import pandas as pd
+
+        from kss.indicators.sr_levels import detect_levels, to_levels_overlay
+    except Exception as exc:  # noqa: BLE001
+        return _finalize({
+            "status": "skipped", "reason": str(exc), "levels": [], "markers": [], "series": [],
+        })
+
+    rows = []
+    for h in history:
+        close = h.get("close")
+        if close is None:
+            continue
+        rows.append({
+            "trade_date": h.get("date"),
+            "open": h.get("open") if h.get("open") is not None else close,
+            "high": h.get("high") if h.get("high") is not None else close,
+            "low": h.get("low") if h.get("low") is not None else close,
+            "close": close,
+        })
+    if not rows:
+        return _finalize(to_levels_overlay([], status="skipped", reason="无行情"))
+    try:
+        levels = detect_levels(pd.DataFrame(rows))
+    except Exception as exc:  # noqa: BLE001
+        return _finalize(to_levels_overlay([], status="skipped", reason=f"计算异常: {exc}"))
+    if not levels:
+        return _finalize(to_levels_overlay([], status="skipped", reason="无行情或样本过短"))
+    return _finalize(to_levels_overlay(levels, status="ok"))
 
 
 # ---------------------------------------------------------------------------

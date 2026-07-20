@@ -15,13 +15,15 @@ from kss.features.technical import TechnicalFactors
 FAMILY_MA_CROSS = "ma_cross"
 FAMILY_RSI_THRESHOLD = "rsi_threshold"
 FAMILY_BOLL_ATR = "boll_atr"
+FAMILY_SR_LEVEL = "sr_level"
 
-FAMILIES: tuple[str, ...] = (FAMILY_MA_CROSS, FAMILY_RSI_THRESHOLD, FAMILY_BOLL_ATR)
+FAMILIES: tuple[str, ...] = (FAMILY_MA_CROSS, FAMILY_RSI_THRESHOLD, FAMILY_BOLL_ATR, FAMILY_SR_LEVEL)
 
 DEFAULT_PARAMS: dict[str, dict[str, Any]] = {
     FAMILY_MA_CROSS: {"fast": 5, "slow": 20, "kind": "sma"},
     FAMILY_RSI_THRESHOLD: {"period": 14, "entry_level": 30.0, "exit_level": 70.0},
     FAMILY_BOLL_ATR: {"period": 20, "atr_period": 14, "atr_mult": 2.0, "atr_window": 10},
+    FAMILY_SR_LEVEL: {"pivot_window": 5, "cluster_atr_mult": 1.0, "rule_variant": "bounce", "multi_timeframe": False},
 }
 
 # 参数网格：供 U2 walk-forward 重估消费，与 mi_walk_forward.DEFAULT_N_GRID 同量级。
@@ -40,6 +42,15 @@ PARAM_GRID: dict[str, list[dict[str, Any]]] = {
         {"period": p, "atr_period": 14, "atr_mult": m, "atr_window": 10}
         for p in (14, 20, 30)
         for m in (1.5, 2.0, 2.5)
+    ],
+    # 2(pivot_window) × 2(cluster_atr_mult) × 2(rule_variant) × 2(multi_timeframe) = 16 组合
+    # （plan 2026-07-20-001 KTD3：与现有三族网格同量级，约束夜间批跑与门禁全网格重算成本）。
+    FAMILY_SR_LEVEL: [
+        {"pivot_window": pw, "cluster_atr_mult": cm, "rule_variant": rv, "multi_timeframe": mtf}
+        for pw in (3, 5)
+        for cm in (0.5, 1.0)
+        for rv in ("bounce", "breakout")
+        for mtf in (False, True)
     ],
 }
 
@@ -105,6 +116,15 @@ def build_features(
         )
         window = int(params["atr_window"])
         out["rolling_high"] = close.rolling(window, min_periods=1).max()
+
+    elif family == FAMILY_SR_LEVEL:
+        from kss.indicators.sr_levels import causal_features
+
+        level_feat = causal_features(out, params)
+        out["sr_support"] = level_feat["nearest_support"]
+        out["sr_resistance"] = level_feat["nearest_resistance"]
+        out["sr_support_strength"] = level_feat["support_strength"]
+        out["sr_resistance_strength"] = level_feat["resistance_strength"]
 
     out["ret"] = out["open"].shift(-2) / out["open"].shift(-1) - 1.0
     return out

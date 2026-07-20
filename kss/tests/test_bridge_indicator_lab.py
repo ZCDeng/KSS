@@ -247,6 +247,63 @@ def test_stock_detail_exposes_generic_indicator_fields(isolated_root: Path) -> N
     assert isinstance(detail["indicatorOverlays"], list)
 
 
+def _sr_wave_csv(path: Path, n_periods: int = 5, bars_per_period: int = 40) -> None:
+    """S/R 位识别用平滑正弦波：每半周期单调，pivot_window=5 默认参数下可靠出位."""
+    n = n_periods * bars_per_period
+    t = np.arange(n)
+    close = 105 + 5 * np.sin(2 * np.pi * t / bars_per_period)
+    df = pd.DataFrame(
+        {
+            "trade_date": pd.bdate_range("2023-01-02", periods=n),
+            "open": close, "high": close, "low": close, "close": close,
+        }
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(path, index=False)
+
+
+def test_stock_detail_sr_levels_overlay_present_and_ok(isolated_root: Path) -> None:
+    """U4：stock_detail 附加 sr_levels overlay，位按需算出、按强度降序。"""
+    _sr_wave_csv(isolated_root / "cs_data_688017.csv")
+    detail = b.stock_detail("688017.SH")
+    sr_overlays = [o for o in detail["indicatorOverlays"] if o.get("indicatorId") == "sr_levels"]
+    assert len(sr_overlays) == 1
+    ov = sr_overlays[0]
+    assert ov["status"] == "ok"
+    assert ov["levels"], "正弦波应识别出至少一个位"
+    strengths = [lv["strength"] for lv in ov["levels"]]
+    assert strengths == sorted(strengths, reverse=True)
+
+
+def test_stock_detail_sr_levels_overlay_independent_of_missing_sr_pack(isolated_root: Path) -> None:
+    """AE1：sr 信号 pack 缺失（未固化/未跑批）时，位投影仍正常产出，不受信号状态牵连。"""
+    _sr_wave_csv(isolated_root / "cs_data_688017.csv")
+    # 未跑 indicator-solidify/批跑，registry 里 sr 条目的 pack 必然缺失。
+    detail = b.stock_detail("688017.SH")
+    signal_ids = {s.get("indicatorId") for s in detail["indicatorSignals"]}
+    assert "sr" not in signal_ids  # 信号侧确实无 pack
+    sr_overlays = [o for o in detail["indicatorOverlays"] if o.get("indicatorId") == "sr_levels"]
+    assert sr_overlays and sr_overlays[0]["status"] == "ok"  # 位侧不受影响
+
+
+def test_stock_detail_sr_levels_overlay_skips_on_short_sample(isolated_root: Path) -> None:
+    n = 10
+    close = np.linspace(100, 105, n)
+    df = pd.DataFrame(
+        {
+            "trade_date": pd.bdate_range("2023-01-02", periods=n),
+            "open": close, "high": close, "low": close, "close": close,
+        }
+    )
+    df.to_csv(isolated_root / "cs_data_688018.csv", index=False)
+    detail = b.stock_detail("688018.SH")
+    sr_overlays = [o for o in detail["indicatorOverlays"] if o.get("indicatorId") == "sr_levels"]
+    assert len(sr_overlays) == 1
+    assert sr_overlays[0]["status"] == "skipped"
+    assert sr_overlays[0]["reason"]
+    assert sr_overlays[0]["levels"] == []
+
+
 def test_solidify_no_symbols_rejected(isolated_root: Path) -> None:
     out = b.dispatch("indicator-solidify", ["ma_cross", "{}", "", ""])
     assert out["error"] == "no_symbols"

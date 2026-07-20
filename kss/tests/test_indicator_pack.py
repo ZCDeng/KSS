@@ -11,7 +11,7 @@ import yaml
 
 from kss.backtest.indicator_walk_forward import WFConfig
 from kss.indicators import pack as ipack
-from kss.indicators.primitives import FAMILY_MA_CROSS
+from kss.indicators.primitives import FAMILY_MA_CROSS, FAMILY_SR_LEVEL
 from kss.indicators.registry import KIND_MI_LEGACY, KIND_PRIMITIVE, RegistryEntry
 
 
@@ -24,6 +24,18 @@ def _ma_entry() -> RegistryEntry:
         params={"fast": 5, "slow": 20, "kind": "sma"},
         rules_path="storage/indicator_rules/ma1.yaml",
         signals_dir="storage/indicator_signals/ma1",
+    )
+
+
+def _sr_entry() -> RegistryEntry:
+    return RegistryEntry(
+        id="sr1",
+        name="支撑阻力示例",
+        kind=KIND_PRIMITIVE,
+        family=FAMILY_SR_LEVEL,
+        params={"pivot_window": 5, "cluster_atr_mult": 1.0, "rule_variant": "bounce", "multi_timeframe": False},
+        rules_path="storage/indicator_rules/sr1.yaml",
+        signals_dir="storage/indicator_signals/sr1",
     )
 
 
@@ -190,6 +202,21 @@ def test_run_entry_pack_short_sample_skips(tmp_path: Path) -> None:
     pack = ipack.run_entry_pack(entry, "688999.SH", root=tmp_path)
     assert pack["status"] == "skipped"
     assert pack["unpinned"] is True
+
+
+def test_run_entry_pack_sr_level_end_to_end(tmp_path: Path) -> None:
+    entry = _sr_entry()
+    _write_fixture_csv(tmp_path / "cs_data_688017.csv")
+    cfg = WFConfig(train_window=120, retrain_freq=40, holdout_bars=40, min_trades=1)
+    p1 = ipack.run_entry_pack(entry, "688017.SH", cfg=cfg, root=tmp_path)
+    assert p1["symbol"] == "688017.SH"
+    assert p1["status"] in ("ok", "skipped", "error")
+    if p1["status"] == "ok":
+        assert p1["indicator_id"] == "sr1"
+        assert p1["family"] == FAMILY_SR_LEVEL
+        if p1["series"]:
+            point = p1["series"][0]
+            assert "sr_support" in point or "sr_resistance" in point
 
 
 def test_run_entry_pack_mi_legacy_matches_direct_call(tmp_path: Path) -> None:

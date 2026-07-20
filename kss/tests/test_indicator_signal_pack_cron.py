@@ -104,3 +104,123 @@ def test_script_main_refreshes_solidified_entries_and_skips_mi(tmp_path: Path, m
     ledger = PredictionLedger(db_path=tmp_path / "storage" / "prediction_ledger" / "ledger.db")
     records = ledger.query()
     assert any(r["strategy"] == "ma1" for r in records)
+
+
+def _load_pack_script(tmp_path: Path, monkeypatch):
+    """按既有 U8 测试惯例动态加载脚本模块，隔离 KSS_STATE_ROOT/账本默认路径。"""
+    import importlib.util
+
+    import kss.backtest.factor_health as factor_health_mod
+    import kss.prediction.ledger as ledger_mod
+
+    monkeypatch.setenv("KSS_STATE_ROOT", str(tmp_path))
+    monkeypatch.setenv("KSS_PROJECT_ROOT", str(Path(__file__).resolve().parents[2]))
+    monkeypatch.setattr(ledger_mod, "DEFAULT_LEDGER_PATH", tmp_path / "storage" / "prediction_ledger" / "ledger.db")
+    monkeypatch.setattr(factor_health_mod, "DEFAULT_HEALTH_DB", tmp_path / "storage" / "factor_health" / "factor_health.db")
+
+    spec = importlib.util.spec_from_file_location(
+        "run_indicator_signal_pack_u3",
+        Path(__file__).resolve().parents[2] / "scripts" / "run_indicator_signal_pack.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    monkeypatch.setattr(sys, "argv", ["run_indicator_signal_pack.py"])
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _write_cs_data(tmp_path: Path, code: str, n: int = 400, seed: int = 11) -> None:
+    import numpy as np
+    import pandas as pd
+
+    rng = np.random.default_rng(seed)
+    close = 80 + np.cumsum(rng.normal(0.15, 0.9, n))
+    df = pd.DataFrame(
+        {
+            "trade_date": pd.bdate_range("2023-01-02", periods=n),
+            "open": close, "high": close + 1, "low": close - 1, "close": close,
+        }
+    )
+    df.to_csv(tmp_path / f"cs_data_{code}.csv", index=False)
+
+
+def _has_pack_row(tmp_path: Path, entry_id: str, symbol: str) -> bool:
+    import sqlite3
+
+    conn = sqlite3.connect(tmp_path / "storage" / "kss.db")
+    row = conn.execute(
+        "SELECT 1 FROM indicator_signal_packs WHERE entry_id=? AND symbol=?", (entry_id, symbol)
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
+def test_symbols_present_ignores_watchlist(tmp_path: Path, monkeypatch) -> None:
+    from kss.indicators.registry import KIND_PRIMITIVE, RegistryEntry, upsert_entry
+    from kss.storage.watchlist import set_watchlist
+
+    monkeypatch.setenv("KSS_STATE_ROOT", str(tmp_path))
+    _write_cs_data(tmp_path, "688017")
+    _write_cs_data(tmp_path, "688322", seed=12)
+    set_watchlist(["688322.SH"], db_path=tmp_path / "storage" / "kss.db")
+    upsert_entry(
+        RegistryEntry(
+            id="ma1", name="均线交叉示例", kind=KIND_PRIMITIVE, family="ma_cross",
+            params={"fast": 5, "slow": 20, "kind": "sma"},
+            symbols=["688017.SH"],
+        ),
+        db_path=tmp_path / "storage" / "kss.db",
+    )
+    mod = _load_pack_script(tmp_path, monkeypatch)
+    assert mod.main() == 0
+    assert _has_pack_row(tmp_path, "ma1", "688017.SH")
+    assert not _has_pack_row(tmp_path, "ma1", "688322.SH")
+
+
+def test_unsolidified_empty_symbols_falls_back_to_watchlist(tmp_path: Path, monkeypatch) -> None:
+    from kss.indicators.registry import KIND_PRIMITIVE, RegistryEntry, upsert_entry
+    from kss.storage.watchlist import set_watchlist
+
+    monkeypatch.setenv("KSS_STATE_ROOT", str(tmp_path))
+    _write_cs_data(tmp_path, "688017")
+    set_watchlist(["688017.SH"], db_path=tmp_path / "storage" / "kss.db")
+    upsert_entry(
+        RegistryEntry(id="sr", name="支撑阻力", kind=KIND_PRIMITIVE, family="sr_level", params={}, symbols=[]),
+        db_path=tmp_path / "storage" / "kss.db",
+    )
+    mod = _load_pack_script(tmp_path, monkeypatch)
+    assert mod.main() == 0
+    assert _has_pack_row(tmp_path, "sr", "688017.SH")
+
+
+def test_solidified_empty_symbols_does_not_fallback(tmp_path: Path, monkeypatch, capsys) -> None:
+    """已固化但 symbols 被清空的条目不外溢到自选股池（不重新拉全池）."""
+    from kss.indicators.registry import KIND_PRIMITIVE, RegistryEntry, upsert_entry
+    from kss.storage.watchlist import set_watchlist
+
+    monkeypatch.setenv("KSS_STATE_ROOT", str(tmp_path))
+    _write_cs_data(tmp_path, "688017")
+    set_watchlist(["688017.SH"], db_path=tmp_path / "storage" / "kss.db")
+    upsert_entry(
+        RegistryEntry(
+            id="sr", name="支撑阻力", kind=KIND_PRIMITIVE, family="sr_level", params={},
+            symbols=[], solidified_at="2026-07-01",
+        ),
+        db_path=tmp_path / "storage" / "kss.db",
+    )
+    mod = _load_pack_script(tmp_path, monkeypatch)
+    assert mod.main() == 0
+    assert not _has_pack_row(tmp_path, "sr", "688017.SH")
+    assert "已固化但标的列表为空" in capsys.readouterr().out
+
+
+def test_empty_symbols_and_empty_watchlist_skips_with_reason(tmp_path: Path, monkeypatch, capsys) -> None:
+    from kss.indicators.registry import KIND_PRIMITIVE, RegistryEntry, upsert_entry
+
+    monkeypatch.setenv("KSS_STATE_ROOT", str(tmp_path))
+    upsert_entry(
+        RegistryEntry(id="sr", name="支撑阻力", kind=KIND_PRIMITIVE, family="sr_level", params={}, symbols=[]),
+        db_path=tmp_path / "storage" / "kss.db",
+    )
+    mod = _load_pack_script(tmp_path, monkeypatch)
+    assert mod.main() == 0
+    assert "自选股池为空" in capsys.readouterr().out

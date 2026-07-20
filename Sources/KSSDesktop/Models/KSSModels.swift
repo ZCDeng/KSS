@@ -1230,6 +1230,17 @@ struct IndicatorOverlay: Codable, Hashable, Identifiable {
     /// 族内主线（ma_fast/rsi/boll_mid 等，字段名随族而变）；解码时取首个非 date 数值字段，
     /// 归一成 {date, value}——chart.html 收到后按同样规则（取首个数值字段）取值，双端一致。
     var series: [IndicatorSeriesPoint]? = nil
+    /// S/R 位（plan 2026-07-20-001 KTD1/KTD4）：主图水平线，独立于 markers/series 通道；
+    /// additive 字段，不 bump BRIDGE_SCHEMA_VERSION——旧载荷缺此字段解码不受影响。
+    var levels: [SRLevel]? = nil
+}
+
+/// 支撑/阻力位（bridge `sr_levels.to_levels_overlay()` 投影）。
+struct SRLevel: Codable, Hashable {
+    var price: Double
+    var kind: String  // "support" | "resistance"
+    var strength: Double
+    var touches: Int
 }
 
 /// 会话开场确定性候选建议（plan 2026-07-12-004 U9）：对齐 bridge `indicator-suggest` 输出.

@@ -10,6 +10,7 @@ from kss.indicators.primitives import (
     FAMILY_BOLL_ATR,
     FAMILY_MA_CROSS,
     FAMILY_RSI_THRESHOLD,
+    FAMILY_SR_LEVEL,
 )
 from kss.indicators.rules import IndicatorSpec, compute_positions, warm_period
 
@@ -125,6 +126,14 @@ def test_boll_atr_entry_on_breakout() -> None:
         (
             FAMILY_BOLL_ATR,
             {"period": 20, "atr_period": 14, "atr_mult": 2.0, "atr_window": 10},
+        ),
+        (
+            FAMILY_SR_LEVEL,
+            {"pivot_window": 3, "cluster_atr_mult": 1.0, "rule_variant": "bounce", "multi_timeframe": False},
+        ),
+        (
+            FAMILY_SR_LEVEL,
+            {"pivot_window": 3, "cluster_atr_mult": 1.0, "rule_variant": "breakout", "multi_timeframe": False},
         ),
     ],
 )

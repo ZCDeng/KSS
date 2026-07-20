@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""日终指标 Signal Pack 批跑：遍历注册表 active + kind=primitive 条目，只刷各自固化时的标的.
+"""日终指标 Signal Pack 批跑：遍历注册表 active + kind=primitive 条目，刷各自固化时的标的.
 
 与 ``run_mi_signal_pack.py`` 平行但不重叠——MI 是 kind=mi_legacy，走自己的既有 cron，
-本脚本明确跳过它。用法::
+本脚本明确跳过它。
+
+零固化回退（plan 2026-07-20-001 KTD2）：条目 ``symbols`` 为空且从未固化
+（``solidified_at`` 为空）时，回退当前自选股池——sr 等装好即 active 的条目首次批跑
+即可产出信号，不必等手动固化。已固化但 symbols 被清空的条目仍按现状跳过，不外溢到
+全自选股池（避免任何未来手工注册/异常清空的条目被静默拉去跑全池）。
+
+用法::
 
     .venv/bin/python scripts/run_indicator_signal_pack.py
     .venv/bin/python scripts/run_indicator_signal_pack.py --asof 2026-07-10
@@ -22,7 +29,8 @@ if str(ROOT) not in sys.path:
 from kss.backtest.indicator_walk_forward import WFConfig
 from kss.indicators import ledger_bridge
 from kss.indicators import pack as ipack
-from kss.indicators.registry import KIND_PRIMITIVE, active_entries
+from kss.indicators.registry import KIND_PRIMITIVE, active_entries, state_root
+from kss.storage.watchlist import load_watchlist
 
 
 def main() -> int:
@@ -39,11 +47,20 @@ def main() -> int:
 
     cfg = WFConfig(train_window=args.train_window, retrain_freq=args.retrain_freq)
     total_ok = total_skip = total_err = 0
+    watchlist_cache: list[str] | None = None
     for entry in entries:
         symbols = entry.symbols or []
         if not symbols:
-            print(f"⏭  {entry.id}: 固化记录无标的，跳过")
-            continue
+            if entry.solidified_at:
+                print(f"⏭  {entry.id}: 已固化但标的列表为空，跳过")
+                continue
+            if watchlist_cache is None:
+                watchlist_cache = load_watchlist(db_path=state_root() / "storage" / "kss.db")
+            if not watchlist_cache:
+                print(f"⏭  {entry.id}: 未固化且自选股池为空，跳过")
+                continue
+            symbols = watchlist_cache
+            print(f"ℹ️  {entry.id}: 未固化，回退自选股池")
         print(f"📦 {entry.id} ({entry.family}) | n={len(symbols)}")
         last_asof: str | None = None
         for sym in symbols:

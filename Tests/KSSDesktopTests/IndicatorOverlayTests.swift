@@ -72,6 +72,42 @@ final class IndicatorOverlayTests: XCTestCase {
         XCTAssertTrue(json.contains("\"value\":12.1") || json.contains("\"value\" : 12.1"), json)
     }
 
+    // MARK: - U5（plan 2026-07-20-001）：S/R 位 overlay
+
+    func testIndicatorOverlayDecodesLevelsField() throws {
+        let json = """
+        {"indicatorId":"sr_levels","status":"ok","reason":"",
+         "levels":[{"price":12.3,"kind":"support","strength":1.42,"touches":3},
+                   {"price":13.5,"kind":"resistance","strength":0.8,"touches":2}],
+         "markers":[],"series":[]}
+        """
+        let ov = try JSONDecoder().decode(IndicatorOverlay.self, from: data(json))
+        XCTAssertEqual(ov.indicatorId, "sr_levels")
+        XCTAssertEqual(ov.levels?.count, 2)
+        XCTAssertEqual(ov.levels?.first?.kind, "support")
+        XCTAssertEqual(ov.levels?.first?.touches, 3)
+    }
+
+    func testIndicatorOverlayDecodesWithoutLevelsFieldStaysNil() throws {
+        // 旧载荷（无 levels 字段的既有指标族）解码不受影响——additive 字段向后兼容。
+        let json = """
+        {"indicatorId":"ma1","status":"ok","reason":"",
+         "markers":[],"series":[{"date":"2026-07-01","ma_fast":12.1,"ma_slow":11.9}]}
+        """
+        let ov = try JSONDecoder().decode(IndicatorOverlay.self, from: data(json))
+        XCTAssertNil(ov.levels)
+    }
+
+    func testEncodeIndicatorOverlaysIncludesLevelsForJSLayer() throws {
+        let overlay = IndicatorOverlay(
+            indicatorId: "sr_levels", status: "ok", reason: "",
+            levels: [SRLevel(price: 12.3, kind: "support", strength: 1.42, touches: 3)]
+        )
+        let json = StockDetailView.encodeIndicatorOverlays([overlay])
+        XCTAssertTrue(json.contains("\"levels\""), json)
+        XCTAssertTrue(json.contains("\"kind\":\"support\"") || json.contains("\"kind\" : \"support\""), json)
+    }
+
     func testEncodeIndicatorOverlaysEmptyOrNilYieldsEmptyArray() {
         XCTAssertEqual(StockDetailView.encodeIndicatorOverlays(nil), "[]")
         XCTAssertEqual(StockDetailView.encodeIndicatorOverlays([]), "[]")

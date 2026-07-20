@@ -16,6 +16,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from kss.indicators.primitives import FAMILY_SR_LEVEL, default_params
 from kss.storage.db import connect, ensure_schema
 
 KIND_PRIMITIVE = "primitive"
@@ -84,8 +85,23 @@ MI_ENTRY = RegistryEntry(
 )
 
 
+# sr 零固化登记（plan 2026-07-20-001 KTD2）：装好即 active，symbols 留空——
+# 日终批跑对 symbols 为空且从未固化（solidified_at 为空）的 primitive 条目回退自选股池，
+# 首次批跑后信号即上图；GO 门禁/固化/退役保留为后续调参手段，不再是上图前置闸。
+SR_ENTRY = RegistryEntry(
+    id="sr",
+    name="支撑阻力",
+    kind=KIND_PRIMITIVE,
+    family=FAMILY_SR_LEVEL,
+    params=default_params(FAMILY_SR_LEVEL),
+    rules_path="storage/indicator_rules/sr.yaml",
+    signals_dir="storage/indicator_signals/sr",
+    status=STATUS_ACTIVE,
+)
+
+
 def _default_entries() -> list[RegistryEntry]:
-    return [MI_ENTRY]
+    return [MI_ENTRY, SR_ENTRY]
 
 
 def _row_to_entry(row: Any) -> RegistryEntry:
@@ -128,6 +144,8 @@ def load_registry(db_path: Path | None = None) -> list[RegistryEntry]:
 
     if "mi" not in seen_ids:
         out.insert(0, MI_ENTRY)
+    if "sr" not in seen_ids:
+        out.append(SR_ENTRY)
     return out
 
 
