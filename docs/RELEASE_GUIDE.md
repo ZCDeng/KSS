@@ -16,7 +16,8 @@ KSS Desktop 是一个 macOS 桌面应用，围绕科创板 + 创业板共 100 �
 
 1. 拷贝 `.app` 到 `/Applications`（或任意位置），双击打开。首次打开如果系统提示"无法验证开发者"，右键点"打开"确认一次即可——应用已过 Apple 公证（notarization），非未签名软件。
 2. 首次启动会自动用 [`uv`](https://docs.astral.sh/uv/) 拉取 Python 运行时依赖（约 1-2 分钟，需联网）。**前提：这台 Mac 已装 `uv`**（`curl -LsSf https://astral.sh/uv/install.sh | sh`）。没装会在首启时给出明确的安装指引并停在那一步，不会崩溃或卡死。
-3. 系统要求：macOS 14 (Sonoma) 及以上。
+3. **资讯雷达「热议」依赖本机 Node.js ≥ 18**（`brew install node`）。应用会把 [yupi-hot-monitor](https://github.com/liyupi/yupi-hot-monitor) 克隆到 Application Support 并 `npm install`/构建（首次约数分钟）；默认监听 **18765**（不占用 3001）。在设置里填 OpenRouter Key 后点「安装/启动 yupi」，或等自检/盘前盘后任务自动 ensure。
+4. 系统要求：macOS 14 (Sonoma) 及以上。
 
 首启完成后应用会自动跑一次**启动自检**（数据目录可写、运行时可用、各凭证是否配置），结果在应用顶部横幅（有失败项时）和"设置"页常驻展示。
 
@@ -31,7 +32,7 @@ KSS Desktop 是一个 macOS 桌面应用，围绕科创板 + 创业板共 100 �
 | 趋势观察 (Trends) | 日历视图，逐日累积的板块/资金/ETF 快照 |
 | 任务 (Runbook) | 手动触发/查看定时任务运行结果 |
 | AI复盘 (Reviews) | 逐股复盘笔记，LLM 辅助生成 |
-| 资讯雷达 (News) | 12 赛道 RSS 聚合 + Top-K 投研改写；可选常驻 [yupi-hot-monitor](https://github.com/liyupi/yupi-hot-monitor)（默认 `http://127.0.0.1:3001`）在盘前/盘后两窗合并多源「热议·」条目（见设置 → 资讯雷达监控词）。无 yupi 时 RSS 照常。 |
+| 资讯雷达 (News) | 12 赛道 RSS + KSS **托管安装** [yupi-hot-monitor](https://github.com/liyupi/yupi-hot-monitor)（默认本机端口 **18765**，数据在 `~/Library/Application Support/KSS/yupi/`）。首启/自检/盘前盘后灌入会 `ensure` 安装并启动；设置 → 资讯雷达 yupi 填 **OpenRouter API Key**、改监控词。yupi 未就绪时 RSS 仍可用。 |
 | AI回测 (Backtests) | 策略回测报告，走 IC 双源仲裁门禁 |
 | 股票池 (Stocks) | 样本池明细 |
 | Seesaw (AI Chat) | 自然语言问数据的 AI 助手（走 BYOK LLM） |
@@ -48,6 +49,7 @@ KSS Desktop 是一个 macOS 桌面应用，围绕科创板 + 创业板共 100 �
 | **Longbridge**（App Key / App Secret / Access Token） | 分时/实时行情采集 | 数据源测试显示未连通；相关后台任务跳过，不影响其余功能 | [长桥开放平台](https://open.longbridgeapp.com) 申请开发者账号 |
 | **Telegram**（Bot Token / Chat ID / API URL 可选） | 后台定时任务（选股、复盘、预警等）的即时推送 | 任务照常运行、结果照常落盘，只是不推送到手机，日志/console 仍有输出 | 通过 [@BotFather](https://t.me/BotFather) 创建 Bot 拿 Token |
 | **LLM key**（BYOK：OpenAI 兼容端点均可，含主/备两组） | Seesaw AI 助手、AI复盘生成、板块复盘点评、资讯情绪判定 | Seesaw 输入区显示"未配置 LLM key"提示卡；相关 LLM 增强内容跳过，基础数据不受影响 | 任意 OpenAI 兼容服务商（OpenAI / DeepSeek / 自建网关等） |
+| **OpenRouter API Key**（资讯雷达 yupi） | 托管 yupi 的 AI 查询扩展/相关性分析；多源「热议·」灌入 | yupi 仍可安装启动，但 AI 分析降级；列表侧 RSS 不受影响 | [openrouter.ai](https://openrouter.ai/settings/keys)；模型默认 `deepseek/deepseek-v3.2`（设置可改 `KSS_YUPI_MODEL`） |
 
 ## 后台任务
 

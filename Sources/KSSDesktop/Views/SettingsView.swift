@@ -51,7 +51,7 @@ struct SettingsView: View {
                     switch tab {
                     case .credentials:
                         SettingsCredentialsSection(results: $dataSourceResults)
-                        SectionHeader("资讯雷达 · yupi 监控词")
+                        SectionHeader("资讯雷达 · yupi（托管安装 + 监控词）")
                         SettingsIntelKeywordsSection()
                     case .operations:
                         SettingsTasksSection()
@@ -414,7 +414,7 @@ enum SettingsDataSource: String, CaseIterable, Identifiable {
 
 // MARK: - 资讯雷达 yupi 词表（plan 2026-07-21-001）
 
-/// 12 赛道监控词：读 bridge 默认∪覆盖，编辑后整表写回（KSS 权威）。
+/// 12 赛道监控词 + KSS 托管 yupi 运行时（安装/启动/OpenRouter）。
 struct SettingsIntelKeywordsSection: View {
     @Environment(\.kssTheme) private var theme
     @EnvironmentObject private var store: KSSStore
@@ -424,13 +424,52 @@ struct SettingsIntelKeywordsSection: View {
     @State private var status: String = ""
     @State private var loading = false
     @State private var saving = false
+    @State private var openrouterKey: String = ""
+    @State private var yupiModel: String = ""
+    @State private var runtimeLine: String = ""
+    @State private var ensuring = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("旁路 yupi 按下列关键词灌入资讯雷达（与 RSS 同列表混排）。改后下次盘前/盘后任务生效；也可点「立即灌入」。")
+            Text("KSS 在本机安装并托管 yupi-hot-monitor（默认端口 18765）。填 OpenRouter Key 后「安装/启动」；监控词灌入资讯雷达与 RSS 同列表混排。")
                 .font(KSSFont.themed(12.5, theme: theme))
                 .foregroundStyle(theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if !runtimeLine.isEmpty {
+                Text(runtimeLine)
+                    .font(KSSFont.themed(12, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                    .textSelection(.enabled)
+            }
+
+            HStack(spacing: 10) {
+                SecureField("OpenRouter API Key（yupi AI）", text: $openrouterKey)
+                    .textFieldStyle(.plain)
+                    .font(KSSFont.themed(14, theme: theme))
+                    .padding(8)
+                    .background(theme.surface.opacity(0.6))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                TextField("模型（默认 deepseek/deepseek-v3.2）", text: $yupiModel)
+                    .textFieldStyle(.plain)
+                    .font(KSSFont.themed(13, theme: theme))
+                    .frame(maxWidth: 220)
+                    .padding(8)
+                    .background(theme.surface.opacity(0.6))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+
+            HStack(spacing: 10) {
+                Button("保存 yupi 凭据") { saveYupiCreds() }
+                    .buttonStyle(.bordered)
+                Button(ensuring ? "安装中…" : "安装/启动 yupi") { Task { await ensureYupi() } }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(ensuring)
+                Button("刷新状态") { Task { await refreshRuntime() } }
+                    .buttonStyle(.bordered)
+            }
+
+            Divider()
 
             if loading {
                 ProgressView().controlSize(.small)
@@ -470,7 +509,54 @@ struct SettingsIntelKeywordsSection: View {
             }
         }
         .kssCard(padding: 14)
-        .task { await load() }
+        .task {
+            openrouterKey = KeychainStore.read("OPENROUTER_API_KEY") ?? ""
+            yupiModel = KeychainStore.read("KSS_YUPI_MODEL") ?? ""
+            await load()
+            await refreshRuntime()
+        }
+    }
+
+    private func saveYupiCreds() {
+        KeychainStore.write("OPENROUTER_API_KEY", openrouterKey)
+        KeychainStore.write("KSS_YUPI_MODEL", yupiModel)
+        BridgeClient.restartSidecarForEnvChange()
+        status = "yupi 凭据已保存"
+        Task { await store.runSelfCheck() }
+    }
+
+    private func refreshRuntime() async {
+        guard let bridge = store.bridge else {
+            runtimeLine = "bridge 未就绪"
+            return
+        }
+        do {
+            let st = try await Task.detached { try bridge.yupiStatus() }.value
+            let health = st.healthOk == true ? "健康" : "未就绪"
+            runtimeLine = "yupi \(health) · \(st.baseUrl ?? "?") · model=\(st.model ?? "?") · node=\(st.node ?? "?") · OpenRouter=\(st.hasOpenrouterKey == true ? "已配" : "未配")"
+        } catch {
+            runtimeLine = "状态读取失败: \(error.localizedDescription)"
+        }
+    }
+
+    private func ensureYupi() async {
+        ensuring = true
+        defer { ensuring = false }
+        guard let bridge = store.bridge else {
+            status = "bridge 未就绪"
+            return
+        }
+        status = "正在安装/启动 yupi（首次需几分钟）…"
+        do {
+            let r = try await Task.detached { try bridge.yupiEnsure(force: false) }.value
+            status = r.ok == true
+                ? "yupi 已就绪 \(r.baseUrl ?? "")"
+                : "yupi 失败: \(r.error ?? "unknown")"
+            await refreshRuntime()
+            await store.runSelfCheck()
+        } catch {
+            status = "yupi ensure 失败: \(error.localizedDescription)"
+        }
     }
 
     private func load() async {

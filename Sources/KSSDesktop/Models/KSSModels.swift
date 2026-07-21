@@ -1743,6 +1743,42 @@ struct IntelKeywordsSetResponse: Codable, Equatable {
     var tracks: [String: [String]]?
 }
 
+/// KSS 托管 yupi 运行时状态（bridge `yupi-status`）。
+struct YupiRuntimeStatus: Codable, Equatable {
+    var baseUrl: String?
+    var port: Int?
+    var model: String?
+    var installed: Bool?
+    var healthOk: Bool?
+    var hasOpenrouterKey: Bool?
+    var node: String?
+    var nodeOk: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case port, model, installed, node
+        case baseUrl = "base_url"
+        case healthOk = "health_ok"
+        case hasOpenrouterKey = "has_openrouter_key"
+        case nodeOk = "node_ok"
+    }
+}
+
+struct YupiEnsureResponse: Codable, Equatable {
+    var ok: Bool?
+    var baseUrl: String?
+    var port: Int?
+    var model: String?
+    var action: String?
+    var error: String?
+    var hasOpenrouterKey: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, port, model, action, error
+        case baseUrl = "base_url"
+        case hasOpenrouterKey = "has_openrouter_key"
+    }
+}
+
 /// Dashboard 资讯摘要条带（U3 轻量数据）。
 struct IntelSummary: Codable, Equatable {
     var updatedTrackCount: Int

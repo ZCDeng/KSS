@@ -2267,6 +2267,20 @@ def _intel_keywords_set(json_payload: str = "") -> dict[str, Any]:
     return {"ok": True, "tracks": tracks}
 
 
+def _yupi_status(_arg: str = "") -> dict[str, Any]:
+    """KSS 托管 yupi 运行时状态。"""
+    from kss.news.yupi_runtime import status as yupi_status
+
+    return yupi_status()
+
+
+def _yupi_ensure(force: str = "") -> dict[str, Any]:
+    """安装/启动 KSS 托管 yupi（force=force 时重装）。"""
+    from kss.news.yupi_runtime import ensure as ensure_yupi
+
+    return ensure_yupi(start=True, force_reinstall=(force == "force"))
+
+
 def _intel_digest(json_payload: str = "") -> dict[str, Any]:
     """资讯雷达单赛道 AI 要点提炼（plan 2026-07-09-001 + 2026-07-10 pool mode）。
 
@@ -3992,6 +4006,56 @@ def _check_duckdb_extension() -> dict[str, Any]:
              "fixHint": None, "fixAction": None}
 
 
+def _check_yupi_runtime() -> dict[str, Any]:
+    """KSS 托管 yupi 是否已安装并健康（产品化自检）。"""
+    try:
+        from kss.news.yupi_runtime import ensure, status as yupi_status
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "item": "yupi",
+            "status": "warn",
+            "detail": f"yupi 运行时模块不可用: {exc}",
+            "fixHint": "检查 kss.news.yupi_runtime",
+            "fixAction": None,
+        }
+    st = yupi_status()
+    if not st.get("node_ok"):
+        return {
+            "item": "yupi",
+            "status": "warn",
+            "detail": f"Node 未就绪: {st.get('node')}",
+            "fixHint": "安装 Node.js ≥ 18（brew install node）后点设置「安装/启动 yupi」",
+            "fixAction": "open_settings",
+        }
+    if st.get("health_ok"):
+        key_note = "OpenRouter 已配" if st.get("has_openrouter_key") else "OpenRouter 未配（AI 分析降级）"
+        return {
+            "item": "yupi",
+            "status": "ok",
+            "detail": f"yupi 健康 {st.get('base_url')} · {key_note} · model={st.get('model')}",
+            "fixHint": None,
+            "fixAction": None,
+        }
+    # 尝试 ensure 一次（首启/任务前）
+    r = ensure(start=True)
+    if r.get("ok") and (r.get("health") or {}).get("ok"):
+        return {
+            "item": "yupi",
+            "status": "ok",
+            "detail": f"yupi 已 ensure 并健康 {r.get('base_url')}",
+            "fixHint": None,
+            "fixAction": None,
+        }
+    err = r.get("error") or (r.get("health") or {}).get("error") or "unknown"
+    return {
+        "item": "yupi",
+        "status": "warn",
+        "detail": f"yupi 未健康: {err}",
+        "fixHint": "设置 → 资讯雷达 yupi：安装/启动；配置 OPENROUTER_API_KEY",
+        "fixAction": "open_settings",
+    }
+
+
 def _self_check() -> dict[str, Any]:
     """应用启动/手动自检（R3/R4）：venv + 数据目录 + 统一库 + duckdb 扩展 + 各凭证。"""
     items = [_check_venv(), _check_storage_writable(), _check_kss_db(), _check_duckdb_extension(),
@@ -3999,6 +4063,7 @@ def _self_check() -> dict[str, Any]:
     for item, label, keys in _CREDENTIAL_CHECKS:
         items.append(_check_credential(item, label, keys))
     items.append(_check_llm_credential())
+    items.append(_check_yupi_runtime())
     return {"items": items, "generatedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 
@@ -4691,6 +4756,7 @@ WRITE_COMMANDS = frozenset({
     "intel-rewrite-run",  # worker 写 pool
     "intel-yupi-ingest",  # yupi 旁路灌入合并缓存
     "intel-keywords-set",  # 写 12 赛道 yupi 监控词用户覆盖
+    "yupi-ensure",  # 安装/启动 KSS 托管 yupi
     "indicator-solidify",  # 固化：注册表 + rules + 初始 pack
     "indicator-retire",    # 退役：注册表 status=retired
 })
@@ -4742,6 +4808,8 @@ COMMANDS = {
     "intel-yupi-ingest": {"desc": "yupi旁路热点灌入合并进资讯雷达缓存(JSON可选force)", "args": ["[force]"]},
     "intel-keywords-get": {"desc": "读12赛道yupi监控词(默认+用户覆盖)", "args": []},
     "intel-keywords-set": {"desc": "写12赛道yupi监控词用户覆盖(JSON_PAYLOAD)", "args": ["JSON_PAYLOAD"]},
+    "yupi-status": {"desc": "KSS托管yupi运行时状态", "args": []},
+    "yupi-ensure": {"desc": "安装并启动KSS托管yupi([force]重装)", "args": ["[force]"]},
     "intel-digest": {"desc": "资讯雷达单赛道AI要点提炼(OpenAI兼容,JSON_PAYLOAD;池优先)", "args": ["JSON_PAYLOAD"]},
     "intel-panorama": {"desc": "资讯雷达12赛道全景热点(独立LLM,JSON_PAYLOAD)", "args": ["JSON_PAYLOAD"]},
     "intel-digest-save": {"desc": "把已生成digest写入沉淀库(STATE_ROOT/storage/notes)", "args": ["JSON_PAYLOAD"]},
@@ -5794,6 +5862,10 @@ def dispatch(command: str, args: list[str]) -> Any:
         return _intel_keywords_get(args[0] if args else "")
     if command == "intel-keywords-set":
         return _intel_keywords_set(args[0] if args else "")
+    if command == "yupi-status":
+        return _yupi_status(args[0] if args else "")
+    if command == "yupi-ensure":
+        return _yupi_ensure(args[0] if args else "")
     if command == "intel-digest":
         return _intel_digest(args[0] if args else "")
     if command == "intel-panorama":

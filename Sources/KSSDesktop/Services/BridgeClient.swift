@@ -212,6 +212,16 @@ struct BridgeClient {
         return try run(["intel-keywords-set", json], as: IntelKeywordsSetResponse.self)
     }
 
+    func yupiStatus() throws -> YupiRuntimeStatus {
+        try run(["yupi-status"], as: YupiRuntimeStatus.self)
+    }
+
+    func yupiEnsure(force: Bool = false) throws -> YupiEnsureResponse {
+        var args = ["yupi-ensure"]
+        if force { args.append("force") }
+        return try run(args, as: YupiEnsureResponse.self)
+    }
+
     /// 资讯雷达单赛道 AI 要点提炼（plan 2026-07-09-001）。
     /// ``force: true`` 跳过缓存直接重新调 LLM；``items`` 已由调用方截断到 25 条。
     func intelDigest(
@@ -381,6 +391,7 @@ struct BridgeClient {
     private static let subprocessOnlyCommands: Set<String> = [
         "run", "import", "perilla-enrichment",
         "intel-radar", "intel-yupi-ingest", "intel-keywords-get", "intel-keywords-set",
+        "yupi-status", "yupi-ensure",
         "intel-digest", "intel-panorama", "intel-digest-save",
         "intel-article", "intel-rewrite", "intel-rewrite-run",
         "cron-catchup", "cron-rerun", "cron-rerun-many", "cron-enable", "cron-disable",

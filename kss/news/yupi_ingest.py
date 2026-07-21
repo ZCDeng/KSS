@@ -276,9 +276,11 @@ def ingest_and_merge(
     data: dict[str, Any] | None = None,
     skip_check: bool = False,
     check_timeout: float = 180.0,
+    ensure_runtime: bool = True,
 ) -> dict[str, Any]:
     """Health → reconcile → optional check → pull → merge → write cache.
 
+    默认先 ``yupi_runtime.ensure(start=True)`` 拉起 KSS 托管实例，再 HTTP 旁路。
     失败时：若有 data/cache 则原样写回 stats.yupi 失败信息；不抛。
     返回最终 payload（可能仅含 yupi_status 失败说明）。
     """
@@ -290,12 +292,30 @@ def ingest_and_merge(
         payload = skeleton()
 
     status: dict[str, Any] = {"ok": False, "skipped": False, "reason": ""}
+    runtime_meta: dict[str, Any] = {}
+    if ensure_runtime and client is None:
+        try:
+            from kss.news.yupi_runtime import ensure as ensure_yupi
+
+            runtime_meta = ensure_yupi(start=True)
+            if runtime_meta.get("base_url"):
+                import os as _os
+
+                _os.environ.setdefault("YUPI_BASE_URL", str(runtime_meta["base_url"]))
+        except Exception as e:  # noqa: BLE001
+            runtime_meta = {"ok": False, "error": f"ensure: {e}"}
+
     cli = client or YupiClient()
 
     try:
         cli.health()
     except YupiError as e:
-        status = {"ok": False, "skipped": True, "reason": f"health: {e}"}
+        status = {
+            "ok": False,
+            "skipped": True,
+            "reason": f"health: {e}",
+            "runtime": runtime_meta,
+        }
         payload = merge_yupi_into_payload(payload, {}, yupi_status=status)
         try:
             write_radar_cache(payload)

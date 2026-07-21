@@ -19,7 +19,16 @@ class YupiError(Exception):
 
 
 def base_url() -> str:
-    return (os.environ.get("YUPI_BASE_URL") or "http://127.0.0.1:3001").rstrip("/")
+    """优先 ``YUPI_BASE_URL``；否则走 KSS 托管运行时默认端口（见 ``yupi_runtime``）。"""
+    explicit = (os.environ.get("YUPI_BASE_URL") or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    try:
+        from kss.news.yupi_runtime import base_url as managed_base_url
+
+        return managed_base_url()
+    except Exception:
+        return "http://127.0.0.1:18765"
 
 
 class YupiClient:

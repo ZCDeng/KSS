@@ -31,6 +31,10 @@ enum KeychainStore {
         "LONGBRIDGE_APP_KEY",
         "LONGBRIDGE_APP_SECRET",
         "LONGBRIDGE_ACCESS_TOKEN",
+        // yupi-hot-monitor（KSS 托管）：OpenRouter Key + 可选模型覆盖
+        "OPENROUTER_API_KEY",
+        "KSS_YUPI_MODEL",
+        "KSS_YUPI_PORT",
     ]
 
     static func read(_ key: String) -> String? {
