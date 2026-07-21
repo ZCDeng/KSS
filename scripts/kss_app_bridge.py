@@ -4007,9 +4007,13 @@ def _check_duckdb_extension() -> dict[str, Any]:
 
 
 def _check_yupi_runtime() -> dict[str, Any]:
-    """KSS 托管 yupi 是否已安装并健康（产品化自检）。"""
+    """KSS 托管 yupi 是否已安装并健康（产品化自检）。
+
+    不在自检里做完整 npm install（避免首启突袭联网）；
+    已安装则 start_background / kickstart 拉起。
+    """
     try:
-        from kss.news.yupi_runtime import ensure, status as yupi_status
+        from kss.news.yupi_runtime import start_background, status as yupi_status
     except Exception as exc:  # noqa: BLE001
         return {
             "item": "yupi",
@@ -4040,13 +4044,21 @@ def _check_yupi_runtime() -> dict[str, Any]:
             "fixHint": None,
             "fixAction": None,
         }
-    # 尝试 ensure 一次（首启/任务前）
-    r = ensure(start=True)
+    if not st.get("installed"):
+        return {
+            "item": "yupi",
+            "status": "warn",
+            "detail": "yupi 未安装（不会在自检里自动 npm install）",
+            "fixHint": "设置 → 资讯雷达 yupi → 安装/启动",
+            "fixAction": "open_settings",
+        }
+    # 已安装未健康：仅拉起，不 install
+    r = start_background(allow_install=False)
     if r.get("ok") and (r.get("health") or {}).get("ok"):
         return {
             "item": "yupi",
             "status": "ok",
-            "detail": f"yupi 已 ensure 并健康 {r.get('base_url')}",
+            "detail": f"yupi 已拉起({r.get('runner')}) {r.get('base_url') or st.get('base_url')}",
             "fixHint": None,
             "fixAction": None,
         }
@@ -4055,7 +4067,7 @@ def _check_yupi_runtime() -> dict[str, Any]:
         "item": "yupi",
         "status": "warn",
         "detail": f"yupi 未健康: {err}",
-        "fixHint": "设置 → 资讯雷达 yupi：安装/启动；配置 OPENROUTER_API_KEY",
+        "fixHint": "设置 → 资讯雷达 yupi：安装/启动；cron-sync 启用 KeepAlive",
         "fixAction": "open_settings",
     }
 

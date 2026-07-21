@@ -35,8 +35,10 @@ _STATE_ROOT = Path(os.environ["KSS_STATE_ROOT"]) if os.environ.get("KSS_STATE_RO
 
 DEFAULT_PORT = 18765
 DEFAULT_REPO = "https://github.com/liyupi/yupi-hot-monitor.git"
-DEFAULT_REF = "master"
+# 产品 pin：2026-04-16 master tip（可用 KSS_YUPI_GIT_REF 覆盖）
+DEFAULT_REF = "cd48b0885bfa8ae9c8043cf78ef6cfd045530bdb"
 DEFAULT_MODEL = "deepseek/deepseek-v3.2"
+YUPI_LAUNCHD_LABEL = "com.zcdeng.kss.yupi_server"
 
 
 def state_root() -> Path:
@@ -218,6 +220,36 @@ def health(url: str | None = None, timeout: float = 3.0) -> dict[str, Any]:
         return {"ok": False, "url": target, "error": str(e)}
 
 
+def _is_git_sha(ref: str) -> bool:
+    r = (ref or "").strip().lower()
+    return len(r) >= 7 and all(c in "0123456789abcdef" for c in r)
+
+
+def _repo_head(git: str, repo: Path) -> str:
+    proc = _run([git, "-C", str(repo), "rev-parse", "HEAD"], timeout=30)
+    return (proc.stdout or "").strip() if proc.returncode == 0 else ""
+
+
+def _checkout_ref(git: str, repo: Path, url: str, ref: str) -> tuple[bool, str]:
+    """Fetch+checkout pinned ref (branch or full/short SHA)."""
+    if _is_git_sha(ref):
+        proc = _run([git, "-C", str(repo), "fetch", "--depth", "1", "origin", ref], timeout=180)
+        if proc.returncode != 0:
+            return False, (proc.stderr or proc.stdout or "fetch sha failed")[:400]
+        proc = _run([git, "-C", str(repo), "checkout", "--force", "FETCH_HEAD"], timeout=60)
+        if proc.returncode != 0:
+            return False, (proc.stderr or proc.stdout or "checkout sha failed")[:400]
+        return True, _repo_head(git, repo)
+
+    proc = _run([git, "-C", str(repo), "fetch", "--depth", "1", "origin", ref], timeout=180)
+    if proc.returncode != 0:
+        return False, (proc.stderr or proc.stdout or "fetch ref failed")[:400]
+    proc = _run([git, "-C", str(repo), "checkout", "--force", "FETCH_HEAD"], timeout=60)
+    if proc.returncode != 0:
+        return False, (proc.stderr or proc.stdout or "checkout ref failed")[:400]
+    return True, _repo_head(git, repo)
+
+
 def _ensure_repo() -> dict[str, Any]:
     home = yupi_home()
     home.mkdir(parents=True, exist_ok=True)
@@ -227,27 +259,63 @@ def _ensure_repo() -> dict[str, Any]:
         return {"ok": False, "step": "git", "error": "未找到 git"}
     url = (os.environ.get("KSS_YUPI_REPO_URL") or DEFAULT_REPO).strip()
     ref = (os.environ.get("KSS_YUPI_GIT_REF") or DEFAULT_REF).strip()
+
     if (repo / ".git").is_dir() and (server_dir() / "package.json").is_file():
-        # shallow update best-effort
-        _run([git, "-C", str(repo), "fetch", "--depth", "1", "origin", ref], timeout=120)
-        _run([git, "-C", str(repo), "checkout", "FETCH_HEAD"], timeout=60)
-        return {"ok": True, "step": "repo", "path": str(repo), "action": "updated"}
+        ok, detail = _checkout_ref(git, repo, url, ref)
+        if not ok:
+            return {"ok": False, "step": "update", "error": detail, "ref": ref}
+        return {
+            "ok": True,
+            "step": "repo",
+            "path": str(repo),
+            "action": "updated",
+            "ref": ref,
+            "head": detail,
+        }
+
     if repo.exists():
         shutil.rmtree(repo)
+
+    # 浅克隆：SHA 用 init+fetch；branch 名可 --branch
+    if _is_git_sha(ref):
+        proc = _run([git, "init", str(repo)], timeout=30)
+        if proc.returncode != 0:
+            return {"ok": False, "step": "init", "error": (proc.stderr or "")[:400]}
+        _run([git, "-C", str(repo), "remote", "add", "origin", url], timeout=30)
+        ok, detail = _checkout_ref(git, repo, url, ref)
+        if not ok or not (server_dir() / "package.json").is_file():
+            return {"ok": False, "step": "clone_sha", "error": detail or "package.json missing", "ref": ref}
+        return {
+            "ok": True,
+            "step": "repo",
+            "path": str(repo),
+            "action": "cloned",
+            "ref": ref,
+            "head": detail,
+        }
+
     proc = _run(
         [git, "clone", "--depth", "1", "--branch", ref, url, str(repo)],
         timeout=300,
     )
     if proc.returncode != 0:
-        # branch may not work for all remotes — try default clone
         proc = _run([git, "clone", "--depth", "1", url, str(repo)], timeout=300)
     if proc.returncode != 0 or not (server_dir() / "package.json").is_file():
         return {
             "ok": False,
             "step": "clone",
             "error": (proc.stderr or proc.stdout or "clone failed")[:500],
+            "ref": ref,
         }
-    return {"ok": True, "step": "repo", "path": str(repo), "action": "cloned"}
+    head = _repo_head(git, repo)
+    return {
+        "ok": True,
+        "step": "repo",
+        "path": str(repo),
+        "action": "cloned",
+        "ref": ref,
+        "head": head,
+    }
 
 
 def _patch_ai_model_env() -> None:
@@ -370,8 +438,12 @@ def install(*, force_reinstall: bool = False) -> dict[str, Any]:
         else:
             return {"ok": False, "steps": steps, "error": b.get("error")}
 
+    git = _which("git")
+    head = _repo_head(git, repo_dir()) if git else ""
+    pin = (os.environ.get("KSS_YUPI_GIT_REF") or DEFAULT_REF).strip()
     (yupi_home() / ".kss_yupi_version").write_text(
-        f"port={port()}\nmodel={resolve_model()}\nbase_url={base_url()}\n",
+        f"port={port()}\nmodel={resolve_model()}\nbase_url={base_url()}\n"
+        f"git_ref={pin}\ngit_head={head}\n",
         encoding="utf-8",
     )
     return {
@@ -381,6 +453,8 @@ def install(*, force_reinstall: bool = False) -> dict[str, Any]:
         "base_url": base_url(),
         "model": resolve_model(),
         "repo": str(repo_dir()),
+        "git_ref": pin,
+        "git_head": head,
         "has_openrouter_key": bool(resolve_openrouter_key()),
     }
 
@@ -400,15 +474,76 @@ def _server_entry() -> tuple[list[str], str] | None:
     return None
 
 
-def start_background(*, allow_install: bool = False) -> dict[str, Any]:
-    """若 health 未通则后台启动 yupi server。
+def _launchctl_yupi_loaded() -> bool:
+    """gui 域是否已加载 yupi KeepAlive job。"""
+    if os.uname().sysname != "Darwin":
+        return False
+    try:
+        uid = os.getuid()
+    except AttributeError:
+        return False
+    proc = _run(["launchctl", "print", f"gui/{uid}/{YUPI_LAUNCHD_LABEL}"], timeout=10)
+    return proc.returncode == 0
 
-    ``allow_install=False``（默认）：仅启动已构建实例，避免热路径阻塞 npm。
-    ``allow_install=True``：缺 entry 时先 install（给 yupi-ensure / 自检用）。
+
+def _launchctl_kickstart_yupi() -> dict[str, Any]:
+    """优先用 launchd 管进程（与 KeepAlive 单归属）。"""
+    if not _launchctl_yupi_loaded():
+        return {"ok": False, "error": "launchd job not loaded", "runner": "launchctl"}
+    try:
+        uid = os.getuid()
+    except AttributeError:
+        return {"ok": False, "error": "no uid", "runner": "launchctl"}
+    _write_env()
+    proc = _run(
+        ["launchctl", "kickstart", "-k", f"gui/{uid}/{YUPI_LAUNCHD_LABEL}"],
+        timeout=45,
+    )
+    if proc.returncode != 0:
+        return {
+            "ok": False,
+            "error": (proc.stderr or proc.stdout or f"kickstart rc={proc.returncode}")[:300],
+            "runner": "launchctl",
+        }
+    for _ in range(40):
+        time.sleep(0.5)
+        h = health()
+        if h.get("ok"):
+            return {
+                "ok": True,
+                "already_running": False,
+                "runner": "launchctl",
+                "health": h,
+                "base_url": base_url(),
+            }
+    return {
+        "ok": False,
+        "error": "kickstart done but health not ready",
+        "runner": "launchctl",
+        "health": health(),
+    }
+
+
+def start_background(*, allow_install: bool = False) -> dict[str, Any]:
+    """若 health 未通则启动 yupi server。
+
+    进程归属优先级：
+    1. 已健康 -> no-op
+    2. launchd KeepAlive job 已加载 -> ``launchctl kickstart``（产品真常驻）
+    3. 否则 Popen detach 兜底（dev / 未 cron-sync）
+
+    ``allow_install=False``（默认）：不 npm install。
+    ``allow_install=True``：缺 entry 时先 install（yupi-ensure）。
     """
     h = health()
     if h.get("ok"):
-        return {"ok": True, "already_running": True, "health": h, "base_url": base_url()}
+        return {
+            "ok": True,
+            "already_running": True,
+            "health": h,
+            "base_url": base_url(),
+            "runner": "already",
+        }
 
     entry = _server_entry()
     if entry is None:
@@ -420,6 +555,14 @@ def start_background(*, allow_install: bool = False) -> dict[str, Any]:
         entry = _server_entry()
     if entry is None:
         return {"ok": False, "error": "no server entry (dist/tsx)"}
+
+    # #2: launchd 为主
+    kicked = _launchctl_kickstart_yupi()
+    if kicked.get("ok"):
+        return kicked
+    # job 已加载但 kick 失败：不双开 Popen（避免抢端口）
+    if kicked.get("error") != "launchd job not loaded":
+        return kicked
 
     argv, kind = entry
     _write_env()  # refresh keys
@@ -433,7 +576,7 @@ def start_background(*, allow_install: bool = False) -> dict[str, Any]:
     if key:
         env["OPENROUTER_API_KEY"] = key
 
-    # detach
+    # detach fallback（无 KeepAlive job 时）
     logf = open(log, "a", encoding="utf-8")  # noqa: SIM115 — kept open for subprocess
     try:
         proc = subprocess.Popen(
@@ -446,9 +589,8 @@ def start_background(*, allow_install: bool = False) -> dict[str, Any]:
         )
     except OSError as e:
         logf.close()
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": str(e), "runner": "popen"}
 
-    # wait health
     for _ in range(40):
         time.sleep(0.5)
         h = health()
@@ -457,7 +599,7 @@ def start_background(*, allow_install: bool = False) -> dict[str, Any]:
                 "ok": True,
                 "already_running": False,
                 "pid": proc.pid,
-                "runner": kind,
+                "runner": f"popen:{kind}",
                 "health": h,
                 "base_url": base_url(),
                 "log": str(log),
@@ -466,7 +608,7 @@ def start_background(*, allow_install: bool = False) -> dict[str, Any]:
         "ok": False,
         "error": "started but health not ready",
         "pid": proc.pid,
-        "runner": kind,
+        "runner": f"popen:{kind}",
         "log": str(log),
         "health": health(),
     }
@@ -531,6 +673,18 @@ def status() -> dict[str, Any]:
         server_dir() / "src" / "index.ts"
     ).is_file()
     key, key_source = resolve_openrouter_key_source()
+    ver_path = yupi_home() / ".kss_yupi_version"
+    git_head = ""
+    git_ref = (os.environ.get("KSS_YUPI_GIT_REF") or DEFAULT_REF).strip()
+    if ver_path.is_file():
+        try:
+            for line in ver_path.read_text(encoding="utf-8").splitlines():
+                if line.startswith("git_head="):
+                    git_head = line.split("=", 1)[1].strip()
+                elif line.startswith("git_ref="):
+                    git_ref = line.split("=", 1)[1].strip() or git_ref
+        except OSError:
+            pass
     return {
         "base_url": base_url(),
         "port": port(),
@@ -541,6 +695,9 @@ def status() -> dict[str, Any]:
         "health": h,
         "has_openrouter_key": bool(key),
         "openrouter_key_source": key_source,
+        "git_ref": git_ref,
+        "git_head": git_head,
+        "launchd_loaded": _launchctl_yupi_loaded(),
         "node": node_ok()[1],
         "node_ok": node_ok()[0],
     }

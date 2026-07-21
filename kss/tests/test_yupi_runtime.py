@@ -70,3 +70,43 @@ def test_status_shape_without_install(tmp_path, monkeypatch):
     assert st["port"] == yr.port()
     assert st["installed"] is False
     assert "health_ok" in st
+
+
+def test_default_git_ref_is_pinned_sha():
+    assert yr._is_git_sha(yr.DEFAULT_REF)
+    assert len(yr.DEFAULT_REF) >= 40
+
+
+def test_start_background_prefers_launchctl(monkeypatch):
+    monkeypatch.setattr(yr, "health", lambda *a, **k: {"ok": False, "error": "down"})
+    monkeypatch.setattr(yr, "_server_entry", lambda: (["/usr/bin/true"], "dist"))
+    monkeypatch.setattr(
+        yr,
+        "_launchctl_kickstart_yupi",
+        lambda: {
+            "ok": True,
+            "runner": "launchctl",
+            "health": {"ok": True},
+            "base_url": "http://127.0.0.1:18765",
+        },
+    )
+    called = {"popen": 0}
+
+    def boom(*a, **k):
+        called["popen"] += 1
+        raise AssertionError("Popen must not run when launchctl succeeds")
+
+    monkeypatch.setattr(yr.subprocess, "Popen", boom)
+    out = yr.start_background(allow_install=False)
+    assert out["ok"] is True
+    assert out["runner"] == "launchctl"
+    assert called["popen"] == 0
+
+
+def test_start_background_no_install_when_missing(monkeypatch, tmp_path):
+    monkeypatch.setenv("KSS_YUPI_HOME", str(tmp_path / "empty"))
+    monkeypatch.setattr(yr, "health", lambda *a, **k: {"ok": False})
+    monkeypatch.setattr(yr, "_server_entry", lambda: None)
+    out = yr.start_background(allow_install=False)
+    assert out["ok"] is False
+    assert "not installed" in (out.get("error") or "")

@@ -202,6 +202,31 @@ def test_ingest_check_fail_keeps_rss(monkeypatch):
     assert out["stats"]["yupi"]["ok"] is False
 
 
+def test_fetch_radar_with_yupi_defaults_skip_check(monkeypatch):
+    """UI force 路径默认 skip_check，避免 check_hotspots 拖到 180s。"""
+    from kss.news import yupi_ingest as yi
+
+    seen = {}
+
+    def fake_fetch():
+        return {
+            "generated_at": "t",
+            "industries": [{"key": "ai", "name": "AI", "items": [], "total": 0}],
+            "stats": {},
+            "recent_days": 7,
+        }
+
+    def fake_ingest(*, data=None, skip_check=False, **kwargs):
+        seen["skip_check"] = skip_check
+        seen["data"] = data
+        return data or {}
+
+    monkeypatch.setattr("kss.news.radar.fetch_radar", fake_fetch)
+    monkeypatch.setattr(yi, "ingest_and_merge", fake_ingest)
+    yi.fetch_radar_with_yupi()
+    assert seen["skip_check"] is True
+
+
 def test_get_radar_force_remerges_yupi_not_rss_only(monkeypatch):
     """UI force → get_radar(force=True) 不得只写纯 RSS 清掉热议（R2/R3）。
 

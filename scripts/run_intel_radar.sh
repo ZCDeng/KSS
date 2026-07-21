@@ -50,7 +50,8 @@ if os.environ.get('KSS_SKIP_YUPI', '0') == '1':
 else:
     try:
         from kss.news.yupi_ingest import ingest_and_merge
-        data = ingest_and_merge(data=data)
+        # 盘前/盘后：允许 check_hotspots（timeout 内）；失败仍 fail-soft
+        data = ingest_and_merge(data=data, skip_check=False, check_timeout=120.0)
         y = (data.get('stats') or {}).get('yupi') or {}
         print(f\"[intel-yupi] ok={y.get('ok')} skipped={y.get('skipped')} reason={y.get('reason', '')!r} items={y.get('items', 0)}\")
     except Exception as e:

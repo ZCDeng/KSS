@@ -16,7 +16,7 @@ KSS Desktop 是一个 macOS 桌面应用，围绕科创板 + 创业板共 100 �
 
 1. 拷贝 `.app` 到 `/Applications`（或任意位置），双击打开。首次打开如果系统提示"无法验证开发者"，右键点"打开"确认一次即可——应用已过 Apple 公证（notarization），非未签名软件。
 2. 首次启动会自动用 [`uv`](https://docs.astral.sh/uv/) 拉取 Python 运行时依赖（约 1-2 分钟，需联网）。**前提：这台 Mac 已装 `uv`**（`curl -LsSf https://astral.sh/uv/install.sh | sh`）。没装会在首启时给出明确的安装指引并停在那一步，不会崩溃或卡死。
-3. **资讯雷达「热议」依赖本机 Node.js ≥ 18**（`brew install node`）。应用会把 [yupi-hot-monitor](https://github.com/liyupi/yupi-hot-monitor) 克隆到 Application Support 并 `npm install`/构建（首次约数分钟）；默认监听 **18765**（不占用 3001）。在设置里填 OpenRouter Key 后点「安装/启动 yupi」，或等自检/盘前盘后任务自动 ensure。
+3. **资讯雷达「热议」依赖本机 Node.js ≥ 18**（`brew install node`）。在设置 → 资讯雷达 yupi 点 **「安装/启动」**（首次会 pin 固定 commit 的上游并 `npm install`，约数分钟）；默认监听 **18765**。自检**不会**静默全量安装，只会在已安装时拉起 KeepAlive。盘前/盘后 cron 会合并热点；UI 强制刷新不跑耗时 `check_hotspots`。
 4. 系统要求：macOS 14 (Sonoma) 及以上。
 
 首启完成后应用会自动跑一次**启动自检**（数据目录可写、运行时可用、各凭证是否配置），结果在应用顶部横幅（有失败项时）和"设置"页常驻展示。

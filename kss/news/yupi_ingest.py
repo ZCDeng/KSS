@@ -361,9 +361,13 @@ def ingest_and_merge(
     return payload
 
 
-def fetch_radar_with_yupi() -> dict[str, Any]:
-    """RSS fetch_radar 后 yupi merge（yupi 失败不影响 RSS 结果）。"""
+def fetch_radar_with_yupi(*, skip_check: bool = True) -> dict[str, Any]:
+    """RSS fetch_radar 后 yupi merge（yupi 失败不影响 RSS 结果）。
+
+    默认 ``skip_check=True``：UI force 热路径不跑 ``check_hotspots``（可至 180s），
+    只合并 yupi DB 已有热点。盘前/盘后 cron 在 shell 里可显式 ``skip_check=False``。
+    """
     from kss.news.radar import fetch_radar
 
     data = fetch_radar()
-    return ingest_and_merge(data=data)
+    return ingest_and_merge(data=data, skip_check=skip_check)
