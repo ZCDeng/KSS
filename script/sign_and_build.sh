@@ -175,20 +175,21 @@ else
   rm -f "$NOTARY_ZIP"
   ditto -c -k --keepParent "$APP_BUNDLE" "$NOTARY_ZIP"
 
-  echo "提交公证（profile=$NOTARY_PROFILE，--wait 会阻塞至 Apple 出结果，通常数分钟）..."
-  if ! NOTARY_OUTPUT="$(xcrun notarytool submit "$NOTARY_ZIP" --keychain-profile "$NOTARY_PROFILE" --wait 2>&1)"; then
+  # 注意：中文全角标点紧贴 $VAR 在 set -u 下可能被解析成「未绑定变量名」——一律用 ${VAR}
+  echo "提交公证 (profile=${NOTARY_PROFILE}, --wait, usually a few minutes)..."
+  if ! NOTARY_OUTPUT="$(xcrun notarytool submit "$NOTARY_ZIP" --keychain-profile "${NOTARY_PROFILE}" --wait 2>&1)"; then
     echo "$NOTARY_OUTPUT" >&2
-    echo "ERROR：公证提交失败。" >&2
-    echo "  确认 Keychain profile 存在：xcrun notarytool store-credentials $NOTARY_PROFILE --apple-id <id> --team-id <TEAMID> --password <app-specific-password>" >&2
-    echo "  或临时跳过：KSS_SKIP_NOTARIZE=1 重跑本脚本。" >&2
+    echo "ERROR: notarize submit failed." >&2
+    echo "  Check Keychain profile: xcrun notarytool store-credentials ${NOTARY_PROFILE} --apple-id <id> --team-id <TEAMID> --password <app-specific-password>" >&2
+    echo "  Or skip: KSS_SKIP_NOTARIZE=1" >&2
     exit 1
   fi
   echo "$NOTARY_OUTPUT"
   if ! echo "$NOTARY_OUTPUT" | grep -q "status: Accepted"; then
     SUBMISSION_ID="$(echo "$NOTARY_OUTPUT" | grep -o 'id: [a-f0-9-]*' | head -1 | cut -d' ' -f2)"
-    echo "ERROR：公证未通过（非 Accepted）。" >&2
+    echo "ERROR: notarize not Accepted." >&2
     if [ -n "$SUBMISSION_ID" ]; then
-      echo "  详细日志：xcrun notarytool log $SUBMISSION_ID --keychain-profile $NOTARY_PROFILE" >&2
+      echo "  Log: xcrun notarytool log ${SUBMISSION_ID} --keychain-profile ${NOTARY_PROFILE}" >&2
     fi
     exit 1
   fi
