@@ -35,9 +35,8 @@ def test_yupi_client_uses_managed_port(monkeypatch):
 
 
 def test_status_shape_without_install(tmp_path, monkeypatch):
+    monkeypatch.setenv("KSS_YUPI_HOME", str(tmp_path / "yupi_empty"))
     monkeypatch.setenv("KSS_STATE_ROOT", str(tmp_path))
-    # re-bind module roots used at call time
-    monkeypatch.setattr(yr, "_STATE_ROOT", tmp_path)
     st = yr.status()
     assert "base_url" in st
     assert st["port"] == yr.port()
