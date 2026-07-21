@@ -192,6 +192,26 @@ struct BridgeClient {
         return try run(args, as: NewsDigestResponse.self)
     }
 
+    /// yupi 旁路灌入合并缓存。
+    func intelYupiIngest(force: Bool = false) throws -> NewsDigestResponse {
+        var args = ["intel-yupi-ingest"]
+        if force { args.append("force") }
+        return try run(args, as: NewsDigestResponse.self)
+    }
+
+    /// 读 12 赛道 yupi 监控词。
+    func intelKeywordsGet() throws -> IntelKeywordsResponse {
+        try run(["intel-keywords-get"], as: IntelKeywordsResponse.self)
+    }
+
+    /// 写用户词表覆盖（整表 tracks 或单赛道）。
+    func intelKeywordsSet(tracks: [String: [String]]) throws -> IntelKeywordsSetResponse {
+        struct Payload: Encodable { let tracks: [String: [String]] }
+        let data = try JSONEncoder().encode(Payload(tracks: tracks))
+        let json = String(data: data, encoding: .utf8) ?? "{}"
+        return try run(["intel-keywords-set", json], as: IntelKeywordsSetResponse.self)
+    }
+
     /// 资讯雷达单赛道 AI 要点提炼（plan 2026-07-09-001）。
     /// ``force: true`` 跳过缓存直接重新调 LLM；``items`` 已由调用方截断到 25 条。
     func intelDigest(
@@ -360,7 +380,8 @@ struct BridgeClient {
     // perilla-enrichment 走外网(Tushare+yFinance)耗时常 >3s，跳过 sidecar 避免超时双跑。
     private static let subprocessOnlyCommands: Set<String> = [
         "run", "import", "perilla-enrichment",
-        "intel-radar", "intel-digest", "intel-panorama", "intel-digest-save",
+        "intel-radar", "intel-yupi-ingest", "intel-keywords-get", "intel-keywords-set",
+        "intel-digest", "intel-panorama", "intel-digest-save",
         "intel-article", "intel-rewrite", "intel-rewrite-run",
         "cron-catchup", "cron-rerun", "cron-rerun-many", "cron-enable", "cron-disable",
     ]

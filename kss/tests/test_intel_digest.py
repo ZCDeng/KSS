@@ -38,6 +38,36 @@ def test_build_prompt_includes_track_name_and_items():
     assert "Source 0" in user_p
     assert "5" in user_p  # 5 条
     assert sys_p  # 非空
+    assert "热议·" in sys_p  # yupi 旁路来源说明
+
+
+def test_build_prompt_includes_yupi_source_mark():
+    """混排含「热议·」条目时 user prompt 带来源标记（plan 2026-07-21-001 R10）。"""
+    from kss.news.digest_ai import _format_items
+
+    items = [
+        {
+            "title": "RSS 海外稿",
+            "url": "https://r.com/1",
+            "time": "07-21 09:00",
+            "source": "OpenAI",
+            "summary": "",
+        },
+        {
+            "title": "国产算力政策",
+            "url": "https://y.com/1",
+            "time": "07-21 10:00",
+            "source": "热议·sogou",
+            "summary": "摘要",
+        },
+    ]
+    formatted = _format_items(items)
+    assert "热议·sogou" in formatted
+    assert "国产算力政策" in formatted
+    sys_p, user_p = build_prompt("AI / 大模型", items)
+    assert "热议·sogou" in user_p
+    assert "国产算力政策" in user_p
+    assert "热议·" in sys_p
 
 
 def test_build_prompt_truncates_to_max_items():

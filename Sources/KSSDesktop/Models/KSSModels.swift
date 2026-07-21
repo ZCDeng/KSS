@@ -1726,6 +1726,23 @@ struct IntelItem: Codable, Equatable, Identifiable {
     var summary: String?
 }
 
+/// 资讯雷达 yupi 监控词（bridge `intel-keywords-get`）。
+struct IntelKeywordsResponse: Codable, Equatable {
+    var tracks: [String: [String]]?
+    var defaults: [String: [String]]?
+    var userOverride: [String: [String]]?
+
+    enum CodingKeys: String, CodingKey {
+        case tracks, defaults
+        case userOverride = "user_override"
+    }
+}
+
+struct IntelKeywordsSetResponse: Codable, Equatable {
+    var ok: Bool?
+    var tracks: [String: [String]]?
+}
+
 /// Dashboard 资讯摘要条带（U3 轻量数据）。
 struct IntelSummary: Codable, Equatable {
     var updatedTrackCount: Int

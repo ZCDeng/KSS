@@ -196,3 +196,13 @@ def get_radar(force: bool = False) -> dict:
     if force:
         return fetch_radar()
     return load_cache() or skeleton()
+
+
+def fetch_radar_then_yupi() -> dict:
+    """RSS 抓取后旁路合并 yupi（失败不影响 RSS 缓存）。
+
+    供 cron / bridge 统一入口；实现见 ``kss.news.yupi_ingest``。
+    """
+    from kss.news.yupi_ingest import fetch_radar_with_yupi
+
+    return fetch_radar_with_yupi()

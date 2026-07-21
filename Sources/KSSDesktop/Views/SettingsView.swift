@@ -51,6 +51,8 @@ struct SettingsView: View {
                     switch tab {
                     case .credentials:
                         SettingsCredentialsSection(results: $dataSourceResults)
+                        SectionHeader("资讯雷达 · yupi 监控词")
+                        SettingsIntelKeywordsSection()
                     case .operations:
                         SettingsTasksSection()
                         SectionHeader("日志")
@@ -406,6 +408,126 @@ enum SettingsDataSource: String, CaseIterable, Identifiable {
             let legacy = !(KeychainStore.read("DEEPSEEK_API_KEY") ?? "").isEmpty
                 || !(KeychainStore.read("OPENAI_API_KEY") ?? "").isEmpty
             return newKeyed || legacy
+        }
+    }
+}
+
+// MARK: - 资讯雷达 yupi 词表（plan 2026-07-21-001）
+
+/// 12 赛道监控词：读 bridge 默认∪覆盖，编辑后整表写回（KSS 权威）。
+struct SettingsIntelKeywordsSection: View {
+    @Environment(\.kssTheme) private var theme
+    @EnvironmentObject private var store: KSSStore
+    @State private var tracks: [String: [String]] = [:]
+    @State private var trackOrder: [String] = []
+    @State private var draft: [String: String] = [:]  // key -> comma-separated words
+    @State private var status: String = ""
+    @State private var loading = false
+    @State private var saving = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("旁路 yupi 按下列关键词灌入资讯雷达（与 RSS 同列表混排）。改后下次盘前/盘后任务生效；也可点「立即灌入」。")
+                .font(KSSFont.themed(12.5, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if loading {
+                ProgressView().controlSize(.small)
+            } else {
+                ForEach(trackOrder, id: \.self) { key in
+                    HStack(alignment: .top, spacing: 10) {
+                        Text(key)
+                            .font(KSSFont.themed(13, .semibold, theme: theme))
+                            .frame(width: 72, alignment: .leading)
+                        TextField("词1, 词2, …", text: Binding(
+                            get: { draft[key] ?? "" },
+                            set: { draft[key] = $0 }
+                        ))
+                        .textFieldStyle(.plain)
+                        .font(KSSFont.themed(14, theme: theme))
+                        .padding(8)
+                        .background(theme.surface.opacity(0.6))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                Button("保存词表") { Task { await save() } }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(saving || loading)
+                Button("立即灌入") { Task { await ingest() } }
+                    .buttonStyle(.bordered)
+                    .disabled(saving || loading)
+                Button("重新加载") { Task { await load() } }
+                    .buttonStyle(.bordered)
+                if !status.isEmpty {
+                    Text(status)
+                        .font(KSSFont.themed(12, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                }
+            }
+        }
+        .kssCard(padding: 14)
+        .task { await load() }
+    }
+
+    private func load() async {
+        loading = true
+        defer { loading = false }
+        guard let bridge = store.bridge else {
+            status = "bridge 未就绪"
+            return
+        }
+        do {
+            let resp = try await Task.detached { try bridge.intelKeywordsGet() }.value
+            let t = resp.tracks ?? [:]
+            tracks = t
+            trackOrder = t.keys.sorted()
+            draft = t.mapValues { $0.joined(separator: ", ") }
+            status = "已加载 \(trackOrder.count) 赛道"
+        } catch {
+            status = "加载失败: \(error.localizedDescription)"
+        }
+    }
+
+    private func save() async {
+        saving = true
+        defer { saving = false }
+        guard let bridge = store.bridge else {
+            status = "bridge 未就绪"
+            return
+        }
+        var out: [String: [String]] = [:]
+        for key in trackOrder {
+            let parts = (draft[key] ?? "")
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            out[key] = parts
+        }
+        do {
+            let resp = try await Task.detached { try bridge.intelKeywordsSet(tracks: out) }.value
+            tracks = resp.tracks ?? out
+            draft = tracks.mapValues { $0.joined(separator: ", ") }
+            status = "已保存"
+        } catch {
+            status = "保存失败: \(error.localizedDescription)"
+        }
+    }
+
+    private func ingest() async {
+        status = "灌入中…"
+        guard let bridge = store.bridge else {
+            status = "bridge 未就绪"
+            return
+        }
+        do {
+            _ = try await Task.detached { try bridge.intelYupiIngest(force: false) }.value
+            status = "灌入完成（yupi 不可用时仅保留 RSS）"
+        } catch {
+            status = "灌入失败: \(error.localizedDescription)"
         }
     }
 }

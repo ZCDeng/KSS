@@ -174,12 +174,21 @@ jobs:
     catchup: true
     enabled: true  # 2026-07-09: 恢复，配合资讯雷达页面 IntelView 修复
 
-  - suffix: intel_radar_refresh
+  # 资讯雷达 RSS + yupi 旁路：盘前/盘后两窗（plan 2026-07-21-001）
+  - suffix: intel_radar_premarket
     wrapper: scripts/run_intel_radar.sh
-    schedule: {hour: 9, minute: 0, weekdays: [1, 2, 3, 4, 5]}
-    title: 资讯雷达刷新
-    category: 盘中快讯
-    catchup: false
+    schedule: {hour: 8, minute: 45, weekdays: [1, 2, 3, 4, 5]}
+    title: 资讯雷达·盘前(RSS+yupi)
+    category: 舆情热点
+    catchup: true
+    enabled: true
+
+  - suffix: intel_radar_postclose
+    wrapper: scripts/run_intel_radar.sh
+    schedule: {hour: 17, minute: 40, weekdays: [1, 2, 3, 4, 5]}
+    title: 资讯雷达·盘后(RSS+yupi)
+    category: 舆情热点
+    catchup: true
     enabled: true
 
   - suffix: morning_divergence_alert

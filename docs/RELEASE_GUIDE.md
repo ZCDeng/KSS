@@ -31,7 +31,7 @@ KSS Desktop 是一个 macOS 桌面应用，围绕科创板 + 创业板共 100 �
 | 趋势观察 (Trends) | 日历视图，逐日累积的板块/资金/ETF 快照 |
 | 任务 (Runbook) | 手动触发/查看定时任务运行结果 |
 | AI复盘 (Reviews) | 逐股复盘笔记，LLM 辅助生成 |
-| 资讯雷达 (News) | 12 赛道 RSS 聚合 + Top-K 投研改写 |
+| 资讯雷达 (News) | 12 赛道 RSS 聚合 + Top-K 投研改写；可选常驻 [yupi-hot-monitor](https://github.com/liyupi/yupi-hot-monitor)（默认 `http://127.0.0.1:3001`）在盘前/盘后两窗合并多源「热议·」条目（见设置 → 资讯雷达监控词）。无 yupi 时 RSS 照常。 |
 | AI回测 (Backtests) | 策略回测报告，走 IC 双源仲裁门禁 |
 | 股票池 (Stocks) | 样本池明细 |
 | Seesaw (AI Chat) | 自然语言问数据的 AI 助手（走 BYOK LLM） |

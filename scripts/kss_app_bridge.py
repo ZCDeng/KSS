@@ -2166,18 +2166,8 @@ def _news_digest(date: str = "", scene: str = "") -> dict[str, Any]:
     return {"available": selected is not None, "selected": selected, "index": index}
 
 
-def _intel_radar(force: str = "") -> dict[str, Any]:
-    """12赛道全球RSS资讯雷达。``force == "force"`` 时实时抓取（≈20-40s），否则读缓存。
-
-    返回格式::
-      {available, generated_at, recent_days, stats, tracks: [{key, name, accent, total, items}]}
-    tracks 对齐 Swift ``IntelTrack``，items 对齐 ``IntelItem``。
-    """
-    from kss.news.radar import get_radar
-
-    do_fetch = (force == "force")
-    data = get_radar(force=do_fetch)
-
+def _intel_radar_payload(data: dict[str, Any]) -> dict[str, Any]:
+    """把 radar/yupi 合并 payload 转成 bridge tracks 形状。"""
     industries = data.get("industries") or []
     tracks = []
     for ind in industries:
@@ -2208,6 +2198,74 @@ def _intel_radar(force: str = "") -> dict[str, Any]:
         "recent_days": data.get("recent_days"),
         "stats": data.get("stats"),
     }
+
+
+def _intel_radar(force: str = "") -> dict[str, Any]:
+    """12赛道全球RSS资讯雷达。``force == "force"`` 时实时抓取（≈20-40s），否则读缓存。
+
+    返回格式::
+      {available, generated_at, recent_days, stats, tracks: [{key, name, accent, total, items}]}
+    tracks 对齐 Swift ``IntelTrack``，items 对齐 ``IntelItem``。
+    """
+    from kss.news.radar import get_radar
+
+    do_fetch = (force == "force")
+    data = get_radar(force=do_fetch)
+    return _intel_radar_payload(data)
+
+
+def _intel_yupi_ingest(force: str = "") -> dict[str, Any]:
+    """旁路 yupi 灌入并合并进资讯雷达缓存（fail-soft）。
+
+    ``force == "force"`` 时先 RSS 全量再 merge；否则基于现有缓存 merge。
+    返回同 intel-radar 形状，stats.yupi 可观测。
+    """
+    from kss.news.radar import fetch_radar, load_cache, skeleton
+    from kss.news.yupi_ingest import ingest_and_merge
+
+    if force == "force":
+        data = fetch_radar()
+    else:
+        data = load_cache() or skeleton()
+    data = ingest_and_merge(data=data)
+    out = _intel_radar_payload(data)
+    out["yupi"] = (data.get("stats") or {}).get("yupi")
+    return out
+
+
+def _intel_keywords_get(_arg: str = "") -> dict[str, Any]:
+    """读 12 赛道 yupi 监控词（默认 ∪ 用户覆盖）。"""
+    from kss.news.track_keywords import load_defaults, load_keywords, load_user_override
+
+    return {
+        "tracks": load_keywords(),
+        "defaults": load_defaults(),
+        "user_override": load_user_override(),
+    }
+
+
+def _intel_keywords_set(json_payload: str = "") -> dict[str, Any]:
+    """写用户词表覆盖。JSON: ``{"tracks": {"ai": ["词"], ...}}`` 或 ``{"track_key","words"}``。"""
+    import json as _json
+
+    from kss.news.track_keywords import save_keywords, set_track_keywords
+
+    raw = (json_payload or "").strip()
+    if not raw:
+        raise ValueError("intel-keywords-set requires JSON payload")
+    try:
+        body = _json.loads(raw)
+    except _json.JSONDecodeError as e:
+        raise ValueError(f"invalid JSON: {e}") from e
+    if not isinstance(body, dict):
+        raise ValueError("payload must be object")
+    if "track_key" in body and "words" in body:
+        tracks = set_track_keywords(str(body["track_key"]), list(body.get("words") or []))
+    elif "tracks" in body:
+        tracks = save_keywords(body["tracks"])
+    else:
+        raise ValueError("payload needs tracks{} or track_key+words")
+    return {"ok": True, "tracks": tracks}
 
 
 def _intel_digest(json_payload: str = "") -> dict[str, Any]:
@@ -4632,6 +4690,8 @@ WRITE_COMMANDS = frozenset({
     "intel-digest-save",  # 写文件到 storage/notes/
     "intel-rewrite",      # 写 rewrite pool
     "intel-rewrite-run",  # worker 写 pool
+    "intel-yupi-ingest",  # yupi 旁路灌入合并缓存
+    "intel-keywords-set",  # 写 12 赛道 yupi 监控词用户覆盖
     "indicator-solidify",  # 固化：注册表 + rules + 初始 pack
     "indicator-retire",    # 退役：注册表 status=retired
 })
@@ -4678,7 +4738,11 @@ COMMANDS = {
     "research-fetch": {"desc": "外部 URL 证据抓取(只读,SSRF 护栏)", "args": ["URL", "[MAX_CHARS]"]},
     "research-bundle": {"desc": "外部证据搜索+抓取 bundle(只读)", "args": ["QUERY", "[LIMIT]", "[MAX_CHARS_PER_SOURCE]"]},
     "news-digest": {"desc": "舆情热点 digest(读 cron 归档,两段式:方向+催化)", "args": ["[DATE]", "[SCENE]"]},
+    "version": {"desc": "sidecar 版本指纹", "args": []},
     "intel-radar": {"desc": "12赛道全球RSS资讯(Investment News)", "args": ["[force]"]},
+    "intel-yupi-ingest": {"desc": "yupi旁路热点灌入合并进资讯雷达缓存(JSON可选force)", "args": ["[force]"]},
+    "intel-keywords-get": {"desc": "读12赛道yupi监控词(默认+用户覆盖)", "args": []},
+    "intel-keywords-set": {"desc": "写12赛道yupi监控词用户覆盖(JSON_PAYLOAD)", "args": ["JSON_PAYLOAD"]},
     "intel-digest": {"desc": "资讯雷达单赛道AI要点提炼(OpenAI兼容,JSON_PAYLOAD;池优先)", "args": ["JSON_PAYLOAD"]},
     "intel-panorama": {"desc": "资讯雷达12赛道全景热点(独立LLM,JSON_PAYLOAD)", "args": ["JSON_PAYLOAD"]},
     "intel-digest-save": {"desc": "把已生成digest写入沉淀库(STATE_ROOT/storage/notes)", "args": ["JSON_PAYLOAD"]},
@@ -5725,6 +5789,12 @@ def dispatch(command: str, args: list[str]) -> Any:
         )
     if command == "intel-radar":
         return _intel_radar(args[0] if args else "")
+    if command == "intel-yupi-ingest":
+        return _intel_yupi_ingest(args[0] if args else "")
+    if command == "intel-keywords-get":
+        return _intel_keywords_get(args[0] if args else "")
+    if command == "intel-keywords-set":
+        return _intel_keywords_set(args[0] if args else "")
     if command == "intel-digest":
         return _intel_digest(args[0] if args else "")
     if command == "intel-panorama":

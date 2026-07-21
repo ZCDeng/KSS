@@ -4,48 +4,48 @@
 <!-- GENERATED — do not edit; edit kss/config/cron_jobs.yaml -->
 <dict>
 	<key>Label</key>
-	<string>com.zcdeng.kss.intel_radar_refresh</string>
+	<string>com.zcdeng.kss.intel_radar_premarket</string>
 	<key>StartCalendarInterval</key>
 	<array>
 		<dict>
 			<key>Weekday</key>
 			<integer>1</integer>
 			<key>Hour</key>
-			<integer>9</integer>
+			<integer>8</integer>
 			<key>Minute</key>
-			<integer>0</integer>
+			<integer>45</integer>
 		</dict>
 		<dict>
 			<key>Weekday</key>
 			<integer>2</integer>
 			<key>Hour</key>
-			<integer>9</integer>
+			<integer>8</integer>
 			<key>Minute</key>
-			<integer>0</integer>
+			<integer>45</integer>
 		</dict>
 		<dict>
 			<key>Weekday</key>
 			<integer>3</integer>
 			<key>Hour</key>
-			<integer>9</integer>
+			<integer>8</integer>
 			<key>Minute</key>
-			<integer>0</integer>
+			<integer>45</integer>
 		</dict>
 		<dict>
 			<key>Weekday</key>
 			<integer>4</integer>
 			<key>Hour</key>
-			<integer>9</integer>
+			<integer>8</integer>
 			<key>Minute</key>
-			<integer>0</integer>
+			<integer>45</integer>
 		</dict>
 		<dict>
 			<key>Weekday</key>
 			<integer>5</integer>
 			<key>Hour</key>
-			<integer>9</integer>
+			<integer>8</integer>
 			<key>Minute</key>
-			<integer>0</integer>
+			<integer>45</integer>
 		</dict>
 	</array>
 	<key>ProgramArguments</key>
@@ -62,9 +62,9 @@
 		<string>/Users/zcdeng</string>
 	</dict>
 	<key>StandardOutPath</key>
-	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/intel_radar_refresh.log</string>
+	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/intel_radar_premarket.log</string>
 	<key>StandardErrorPath</key>
-	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/intel_radar_refresh.log</string>
+	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/intel_radar_premarket.log</string>
 	<key>RunAtLoad</key>
 	<false/>
 	<key>ThrottleInterval</key>
