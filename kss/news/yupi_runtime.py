@@ -44,6 +44,14 @@ def state_root() -> Path:
 
 
 def yupi_home() -> Path:
+    """安装根：优先 ``KSS_YUPI_HOME``，否则 macOS Application Support/KSS/yupi（与 dev/bundle STATE_ROOT 解耦）。"""
+    explicit = (os.environ.get("KSS_YUPI_HOME") or "").strip()
+    if explicit:
+        return Path(explicit)
+    # 产品默认：所有用户同一路径，避免 bridge CLI 与 .app 的 STATE_ROOT 不一致
+    mac = Path.home() / "Library" / "Application Support" / "KSS" / "yupi"
+    if mac.parent.exists() or os.uname().sysname == "Darwin":
+        return mac
     return state_root() / "yupi"
 
 
