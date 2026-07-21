@@ -135,17 +135,23 @@ def build_plist(project_root: str, job: CronJob, state_root: str | None = None) 
 
     program_args = [str(wrapper)] + list(job.args)
 
-    return {
+    pl: dict = {
         "Label": job.label,
-        "StartCalendarInterval": _calendar_interval(job),
         "ProgramArguments": program_args,
         "WorkingDirectory": str(proj),
         "EnvironmentVariables": env,
         "StandardOutPath": str(log_path),
         "StandardErrorPath": str(log_path),
-        "RunAtLoad": False,
         "ThrottleInterval": 60,
     }
+    if getattr(job, "keepalive", False):
+        # 常驻服务：登录即起、退出即拉；不设日历排期。
+        pl["KeepAlive"] = True
+        pl["RunAtLoad"] = True
+    else:
+        pl["StartCalendarInterval"] = _calendar_interval(job)
+        pl["RunAtLoad"] = False
+    return pl
 
 
 def _validate(pl: dict, output: Path) -> None:

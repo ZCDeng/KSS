@@ -80,6 +80,9 @@ class CronJob:
     # 成功后 kickstart 触发，schedule 仅为深夜兜底档。渲染器不消费此字段；
     # bridge cron-list 下发给 UI 展示触发关系（R5）。
     triggered_by: str | None = None
+    # 常驻服务：launchd KeepAlive + RunAtLoad；无 StartCalendarInterval。
+    # schedule 仍保留作清单/UI 元数据（如「应在运行」），渲染器在 keepalive 时忽略 SCI。
+    keepalive: bool = False
 
     @property
     def label(self) -> str:
@@ -100,7 +103,7 @@ _REQUIRED_JOB_KEYS = {
     "catchup",
     "enabled",
 }
-_ALLOWED_JOB_KEYS = _REQUIRED_JOB_KEYS | {"args", "triggered_by"}
+_ALLOWED_JOB_KEYS = _REQUIRED_JOB_KEYS | {"args", "triggered_by", "keepalive"}
 
 
 def _reject_credential_keys(obj: Any, *, where: str) -> None:
@@ -258,6 +261,10 @@ def _build_manifest(data: Any, *, path: Path) -> CronManifest:
         if triggered_by is not None and (not isinstance(triggered_by, str) or not triggered_by):
             raise CronManifestError(f"{suffix}: triggered_by 须为非空字符串或缺省")
 
+        keepalive = raw.get("keepalive", False)
+        if not isinstance(keepalive, bool):
+            raise CronManifestError(f"{suffix}: keepalive 须为 bool，得到 {keepalive!r}")
+
         jobs.append(
             CronJob(
                 suffix=suffix,
@@ -269,6 +276,7 @@ def _build_manifest(data: Any, *, path: Path) -> CronManifest:
                 enabled=bool(raw["enabled"]),
                 args=args,
                 triggered_by=triggered_by,
+                keepalive=keepalive,
             )
         )
 

@@ -5,65 +5,6 @@
 <dict>
 	<key>Label</key>
 	<string>com.zcdeng.kss.yupi_server</string>
-	<key>StartCalendarInterval</key>
-	<array>
-		<dict>
-			<key>Weekday</key>
-			<integer>1</integer>
-			<key>Hour</key>
-			<integer>0</integer>
-			<key>Minute</key>
-			<integer>5</integer>
-		</dict>
-		<dict>
-			<key>Weekday</key>
-			<integer>2</integer>
-			<key>Hour</key>
-			<integer>0</integer>
-			<key>Minute</key>
-			<integer>5</integer>
-		</dict>
-		<dict>
-			<key>Weekday</key>
-			<integer>3</integer>
-			<key>Hour</key>
-			<integer>0</integer>
-			<key>Minute</key>
-			<integer>5</integer>
-		</dict>
-		<dict>
-			<key>Weekday</key>
-			<integer>4</integer>
-			<key>Hour</key>
-			<integer>0</integer>
-			<key>Minute</key>
-			<integer>5</integer>
-		</dict>
-		<dict>
-			<key>Weekday</key>
-			<integer>5</integer>
-			<key>Hour</key>
-			<integer>0</integer>
-			<key>Minute</key>
-			<integer>5</integer>
-		</dict>
-		<dict>
-			<key>Weekday</key>
-			<integer>6</integer>
-			<key>Hour</key>
-			<integer>0</integer>
-			<key>Minute</key>
-			<integer>5</integer>
-		</dict>
-		<dict>
-			<key>Weekday</key>
-			<integer>7</integer>
-			<key>Hour</key>
-			<integer>0</integer>
-			<key>Minute</key>
-			<integer>5</integer>
-		</dict>
-	</array>
 	<key>ProgramArguments</key>
 	<array>
 		<string>/Users/zcdeng/projects/KSS/scripts/run_yupi_server.sh</string>
@@ -81,9 +22,11 @@
 	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/yupi_server.log</string>
 	<key>StandardErrorPath</key>
 	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/yupi_server.log</string>
-	<key>RunAtLoad</key>
-	<false/>
 	<key>ThrottleInterval</key>
 	<integer>60</integer>
+	<key>KeepAlive</key>
+	<true/>
+	<key>RunAtLoad</key>
+	<true/>
 </dict>
 </plist>

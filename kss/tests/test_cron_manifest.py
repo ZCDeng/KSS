@@ -51,11 +51,14 @@ def _doc(jobs: list[dict], order: list[str] | None = None) -> dict:
 # --------------------------------------------------------------------------- #
 # happy：真实清单
 # --------------------------------------------------------------------------- #
-def test_real_manifest_loads_26_jobs() -> None:
+def test_real_manifest_loads_28_jobs() -> None:
     m = load_manifest()  # 默认读 kss/config/cron_jobs.yaml
-    assert len(m.jobs) == 26
+    assert len(m.jobs) == 28
     suffixes = {j.suffix for j in m.jobs}
-    assert len(suffixes) == 26  # 全唯一
+    assert len(suffixes) == 28  # 全唯一
+    # yupi 产品化：KeepAlive 常驻
+    yupi = next(j for j in m.jobs if j.suffix == "yupi_server")
+    assert yupi.keepalive is True
     # 舆情热点两场已注册
     assert {"news_digest_premarket", "news_digest_postclose"} <= suffixes
     # 紫苏叶富化预热已注册（默认停用）
@@ -234,10 +237,15 @@ def _normalize_sci(sci):
 
 @pytest.mark.parametrize("job", load_manifest().jobs, ids=lambda j: j.suffix)
 def test_manifest_schedule_matches_plist(job: cm.CronJob) -> None:
-    """R6 守护：每条清单 schedule 与对应 deploy/launchd plist 的 SCI 等价（拦誊错）。"""
+    """R6 守护：日历任务 SCI 对齐；keepalive 任务则 KeepAlive+RunAtLoad、无 SCI。"""
     plist_path = _DEPLOY / f"{job.label}.plist"
     assert plist_path.is_file(), f"缺 plist：{plist_path}"
     data = plistlib.loads(plist_path.read_bytes())
+    if getattr(job, "keepalive", False):
+        assert data.get("KeepAlive") is True, job.suffix
+        assert data.get("RunAtLoad") is True, job.suffix
+        assert "StartCalendarInterval" not in data, job.suffix
+        return
     expected = _schedule_to_sci(job.schedule)
     actual = data["StartCalendarInterval"]
     assert _normalize_sci(actual) == _normalize_sci(expected), (

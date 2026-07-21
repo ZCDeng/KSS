@@ -49,7 +49,7 @@ KSS Desktop 是一个 macOS 桌面应用，围绕科创板 + 创业板共 100 �
 | **Longbridge**（App Key / App Secret / Access Token） | 分时/实时行情采集 | 数据源测试显示未连通；相关后台任务跳过，不影响其余功能 | [长桥开放平台](https://open.longbridgeapp.com) 申请开发者账号 |
 | **Telegram**（Bot Token / Chat ID / API URL 可选） | 后台定时任务（选股、复盘、预警等）的即时推送 | 任务照常运行、结果照常落盘，只是不推送到手机，日志/console 仍有输出 | 通过 [@BotFather](https://t.me/BotFather) 创建 Bot 拿 Token |
 | **LLM key**（BYOK：OpenAI 兼容端点均可，含主/备两组） | Seesaw AI 助手、AI复盘生成、板块复盘点评、资讯情绪判定 | Seesaw 输入区显示"未配置 LLM key"提示卡；相关 LLM 增强内容跳过，基础数据不受影响 | 任意 OpenAI 兼容服务商（OpenAI / DeepSeek / 自建网关等） |
-| **OpenRouter API Key**（资讯雷达 yupi） | 托管 yupi 的 AI 查询扩展/相关性分析；多源「热议·」灌入 | yupi 仍可安装启动，但 AI 分析降级；列表侧 RSS 不受影响 | [openrouter.ai](https://openrouter.ai/settings/keys)；模型默认 `deepseek/deepseek-v3.2`（设置可改 `KSS_YUPI_MODEL`） |
+| **OpenRouter**（资讯雷达 yupi AI） | 托管 yupi 的查询扩展/相关性；「热议·」灌入 | yupi 仍可 KeepAlive 启动，AI 分析降级；RSS 不受影响 | **优先复用 Seesaw 主/备 LLM**：若 base URL 含 openrouter，自动用其 Key/模型。也可单独配 `OPENROUTER_API_KEY`；默认模型 `deepseek/deepseek-v3.2` |
 
 ## 后台任务
 

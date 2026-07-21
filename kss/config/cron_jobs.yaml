@@ -174,12 +174,13 @@ jobs:
     catchup: true
     enabled: true  # 2026-07-09: 恢复，配合资讯雷达页面 IntelView 修复
 
-  # KSS 托管 yupi-hot-monitor 常驻（产品化：随装随启；端口默认 18765）
+  # KSS 托管 yupi-hot-monitor：launchd KeepAlive 真常驻（端口默认 18765）
   - suffix: yupi_server
     wrapper: scripts/run_yupi_server.sh
-    # 每日 00:05 拉起/重启；ingest/selfcheck 也会 ensure(start=True)
-    schedule: {hour: 0, minute: 5, weekdays: [1, 2, 3, 4, 5, 6, 7]}
-    title: yupi 热点服务(托管)
+    # schedule 仅作清单元数据；keepalive 时渲染为 KeepAlive+RunAtLoad、无 SCI
+    schedule: {hour: 0, minute: 5}
+    keepalive: true
+    title: yupi 热点服务(KeepAlive)
     category: 舆情热点
     catchup: false
     enabled: true

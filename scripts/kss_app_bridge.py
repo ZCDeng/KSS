@@ -4028,7 +4028,11 @@ def _check_yupi_runtime() -> dict[str, Any]:
             "fixAction": "open_settings",
         }
     if st.get("health_ok"):
-        key_note = "OpenRouter 已配" if st.get("has_openrouter_key") else "OpenRouter 未配（AI 分析降级）"
+        if st.get("has_openrouter_key"):
+            src = st.get("openrouter_key_source") or "unknown"
+            key_note = f"OpenRouter 已配({src})"
+        else:
+            key_note = "OpenRouter 未配（AI 分析降级；Seesaw 主 LLM 若为 OpenRouter 会自动复用）"
         return {
             "item": "yupi",
             "status": "ok",

@@ -431,7 +431,7 @@ struct SettingsIntelKeywordsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("KSS 在本机安装并托管 yupi-hot-monitor（默认端口 18765）。填 OpenRouter Key 后「安装/启动」；监控词灌入资讯雷达与 RSS 同列表混排。")
+            Text("KSS 在本机安装并 KeepAlive 托管 yupi（端口 18765）。Seesaw 主/备 LLM 若 base 为 OpenRouter，会自动复用其 Key/模型；也可在此单独填 OpenRouter Key。")
                 .font(KSSFont.themed(12.5, theme: theme))
                 .foregroundStyle(theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -533,7 +533,13 @@ struct SettingsIntelKeywordsSection: View {
         do {
             let st = try await Task.detached { try bridge.yupiStatus() }.value
             let health = st.healthOk == true ? "健康" : "未就绪"
-            runtimeLine = "yupi \(health) · \(st.baseUrl ?? "?") · model=\(st.model ?? "?") · node=\(st.node ?? "?") · OpenRouter=\(st.hasOpenrouterKey == true ? "已配" : "未配")"
+            let keyBit: String
+            if st.hasOpenrouterKey == true {
+                keyBit = "OpenRouter=已配(\(st.openrouterKeySource ?? "?"))"
+            } else {
+                keyBit = "OpenRouter=未配"
+            }
+            runtimeLine = "yupi \(health) · \(st.baseUrl ?? "?") · model=\(st.model ?? "?") · \(keyBit) · node=\(st.node ?? "?")"
         } catch {
             runtimeLine = "状态读取失败: \(error.localizedDescription)"
         }

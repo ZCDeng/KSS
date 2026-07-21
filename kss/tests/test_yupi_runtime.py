@@ -21,9 +21,37 @@ def test_explicit_yupi_base_url(monkeypatch):
 
 def test_resolve_openrouter_from_primary_llm(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("KSS_YUPI_OPENROUTER_KEY", raising=False)
     monkeypatch.setenv("KSS_LLM_PRIMARY_BASE_URL", "https://openrouter.ai/api/v1")
     monkeypatch.setenv("KSS_LLM_PRIMARY_KEY", "sk-or-test")
     assert yr.resolve_openrouter_key() == "sk-or-test"
+    key, src = yr.resolve_openrouter_key_source()
+    assert key == "sk-or-test"
+    assert src == "seesaw_primary"
+
+
+def test_resolve_openrouter_sk_or_prefix_without_base(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("KSS_YUPI_OPENROUTER_KEY", raising=False)
+    monkeypatch.setenv("KSS_LLM_PRIMARY_BASE_URL", "https://api.deepseek.com/v1")
+    monkeypatch.setenv("KSS_LLM_PRIMARY_KEY", "sk-or-v1-seesaw")
+    key, src = yr.resolve_openrouter_key_source()
+    assert key == "sk-or-v1-seesaw"
+    assert src == "seesaw_primary_sk_or"
+
+
+def test_resolve_model_from_seesaw_when_openrouter(monkeypatch):
+    monkeypatch.delenv("KSS_YUPI_MODEL", raising=False)
+    monkeypatch.setenv("KSS_LLM_PRIMARY_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setenv("KSS_LLM_PRIMARY_MODEL", "anthropic/claude-sonnet-4")
+    assert yr.resolve_model() == "anthropic/claude-sonnet-4"
+
+
+def test_explicit_yupi_model_wins(monkeypatch):
+    monkeypatch.setenv("KSS_YUPI_MODEL", "deepseek/deepseek-v3.2")
+    monkeypatch.setenv("KSS_LLM_PRIMARY_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setenv("KSS_LLM_PRIMARY_MODEL", "other/model")
+    assert yr.resolve_model() == "deepseek/deepseek-v3.2"
 
 
 def test_yupi_client_uses_managed_port(monkeypatch):

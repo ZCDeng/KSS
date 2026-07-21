@@ -1751,6 +1751,7 @@ struct YupiRuntimeStatus: Codable, Equatable {
     var installed: Bool?
     var healthOk: Bool?
     var hasOpenrouterKey: Bool?
+    var openrouterKeySource: String?
     var node: String?
     var nodeOk: Bool?
 
@@ -1759,6 +1760,7 @@ struct YupiRuntimeStatus: Codable, Equatable {
         case baseUrl = "base_url"
         case healthOk = "health_ok"
         case hasOpenrouterKey = "has_openrouter_key"
+        case openrouterKeySource = "openrouter_key_source"
         case nodeOk = "node_ok"
     }
 }

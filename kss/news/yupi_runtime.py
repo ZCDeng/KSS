@@ -85,24 +85,80 @@ def base_url() -> str:
     return f"http://127.0.0.1:{port()}"
 
 
-def resolve_openrouter_key() -> str:
-    for k in (
-        "OPENROUTER_API_KEY",
-        "KSS_YUPI_OPENROUTER_KEY",
+def _is_openrouter_base(url: str | None) -> bool:
+    u = (url or "").strip().lower()
+    if not u:
+        return False
+    return "openrouter.ai" in u or "openrouter.com" in u or "/openrouter" in u
+
+
+def resolve_openrouter_key_source() -> tuple[str, str]:
+    """返回 (key, source)。source 便于设置页/自检展示。
+
+    优先级：
+    1. ``OPENROUTER_API_KEY`` / ``KSS_YUPI_OPENROUTER_KEY``（显式 yupi）
+    2. Seesaw 主 LLM 若 base 为 OpenRouter → ``KSS_LLM_PRIMARY_KEY``
+    3. Seesaw 备 LLM 若 base 为 OpenRouter → ``KSS_LLM_FALLBACK_KEY``
+    4. 旧四键 ``OPENAI_*`` 若 base 为 OpenRouter
+    5. 任意候选 key 以 ``sk-or-`` 开头（OpenRouter 形态）
+    """
+    for k, src in (
+        ("OPENROUTER_API_KEY", "openrouter_env"),
+        ("KSS_YUPI_OPENROUTER_KEY", "yupi_openrouter_env"),
     ):
         v = (os.environ.get(k) or "").strip()
         if v:
-            return v
-    # 若主 LLM 走 OpenRouter，复用其 key
-    primary_base = (os.environ.get("KSS_LLM_PRIMARY_BASE_URL") or "").lower()
+            return v, src
+
+    primary_base = os.environ.get("KSS_LLM_PRIMARY_BASE_URL") or ""
     primary_key = (os.environ.get("KSS_LLM_PRIMARY_KEY") or "").strip()
-    if primary_key and "openrouter" in primary_base:
-        return primary_key
-    return ""
+    if primary_key and _is_openrouter_base(primary_base):
+        return primary_key, "seesaw_primary"
+
+    fallback_base = os.environ.get("KSS_LLM_FALLBACK_BASE_URL") or ""
+    fallback_key = (os.environ.get("KSS_LLM_FALLBACK_KEY") or "").strip()
+    if fallback_key and _is_openrouter_base(fallback_base):
+        return fallback_key, "seesaw_fallback"
+
+    openai_base = os.environ.get("OPENAI_BASE_URL") or ""
+    openai_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
+    if openai_key and _is_openrouter_base(openai_base):
+        return openai_key, "openai_base_openrouter"
+
+    for k, src in (
+        ("KSS_LLM_PRIMARY_KEY", "seesaw_primary_sk_or"),
+        ("KSS_LLM_FALLBACK_KEY", "seesaw_fallback_sk_or"),
+        ("OPENAI_API_KEY", "openai_sk_or"),
+    ):
+        v = (os.environ.get(k) or "").strip()
+        if v.startswith("sk-or-"):
+            return v, src
+    return "", "none"
+
+
+def resolve_openrouter_key() -> str:
+    key, _ = resolve_openrouter_key_source()
+    return key
 
 
 def resolve_model() -> str:
-    return (os.environ.get("KSS_YUPI_MODEL") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
+    """优先 ``KSS_YUPI_MODEL``；否则若 Seesaw 主/备是 OpenRouter 则复用其 model。"""
+    explicit = (os.environ.get("KSS_YUPI_MODEL") or "").strip()
+    if explicit:
+        return explicit
+    if _is_openrouter_base(os.environ.get("KSS_LLM_PRIMARY_BASE_URL")):
+        m = (os.environ.get("KSS_LLM_PRIMARY_MODEL") or "").strip()
+        if m:
+            return m
+    if _is_openrouter_base(os.environ.get("KSS_LLM_FALLBACK_BASE_URL")):
+        m = (os.environ.get("KSS_LLM_FALLBACK_MODEL") or "").strip()
+        if m:
+            return m
+    if _is_openrouter_base(os.environ.get("OPENAI_BASE_URL")):
+        m = (os.environ.get("KSS_LLM_MODEL") or "").strip()
+        if m:
+            return m
+    return DEFAULT_MODEL
 
 
 def _which(cmd: str) -> str | None:
@@ -465,7 +521,10 @@ def ensure(*, start: bool = True, force_reinstall: bool = False) -> dict[str, An
 
 def status() -> dict[str, Any]:
     h = health()
-    installed = (server_dir() / "dist" / "index.js").is_file()
+    installed = (server_dir() / "dist" / "index.js").is_file() or (
+        server_dir() / "src" / "index.ts"
+    ).is_file()
+    key, key_source = resolve_openrouter_key_source()
     return {
         "base_url": base_url(),
         "port": port(),
@@ -474,7 +533,8 @@ def status() -> dict[str, Any]:
         "repo": str(repo_dir()) if repo_dir().exists() else None,
         "health_ok": bool(h.get("ok")),
         "health": h,
-        "has_openrouter_key": bool(resolve_openrouter_key()),
+        "has_openrouter_key": bool(key),
+        "openrouter_key_source": key_source,
         "node": node_ok()[1],
         "node_ok": node_ok()[0],
     }
