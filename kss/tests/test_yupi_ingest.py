@@ -200,3 +200,68 @@ def test_ingest_check_fail_keeps_rss(monkeypatch):
     out = ingest_and_merge(client=cli, data=data, skip_check=False)
     assert out["industries"][0]["items"][0]["title"] == "RSS"
     assert out["stats"]["yupi"]["ok"] is False
+
+
+def test_get_radar_force_remerges_yupi_not_rss_only(monkeypatch):
+    """UI force → get_radar(force=True) 不得只写纯 RSS 清掉热议（R2/R3）。
+
+    驱动 shipped ``radar.get_radar(force=True)``：RSS fetch 后仍走 ingest merge。
+    """
+    from kss.news import radar
+
+    rss_only = {
+        "generated_at": "2026-07-21 12:00",
+        "recent_days": 7,
+        "industries": [
+            {
+                "key": "ai",
+                "name": "AI / 大模型",
+                "accent": "#ff5a1f",
+                "total": 1,
+                "items": [
+                    {
+                        "title": "RSS only",
+                        "url": "https://r.com/rss",
+                        "ts": 10,
+                        "source": "OpenAI",
+                        "time": "07-21 10:00",
+                        "summary": "",
+                    }
+                ],
+            }
+        ],
+        "stats": {"industries": 1, "total_sources": 1, "failed_sources": 0},
+    }
+
+    def fake_fetch():
+        return json.loads(json.dumps(rss_only))
+
+    def fake_ingest(*, data=None, client=None, skip_check=False, check_timeout=180.0):
+        payload = data if data is not None else {}
+        industries = payload.get("industries") or []
+        for ind in industries:
+            if ind.get("key") == "ai":
+                yitem = {
+                    "title": "热议保留",
+                    "url": "https://y.com/1",
+                    "ts": 99,
+                    "source": f"{SOURCE_PREFIX}sogou",
+                    "time": "07-21 11:00",
+                    "summary": "",
+                }
+                ind["items"] = merge_track_items(list(ind.get("items") or []), [yitem])
+        payload.setdefault("stats", {})["yupi"] = {"ok": True, "skipped": False, "items": 1}
+        return payload
+
+    # fetch_radar_with_yupi does late import of radar.fetch_radar — patch on radar module.
+    monkeypatch.setattr(radar, "fetch_radar", fake_fetch)
+    monkeypatch.setattr("kss.news.yupi_ingest.ingest_and_merge", fake_ingest)
+
+    out = radar.get_radar(force=True)
+    items = out["industries"][0]["items"]
+    sources = [i.get("source") or "" for i in items]
+    titles = [i.get("title") for i in items]
+    assert any(SOURCE_PREFIX in s for s in sources), sources
+    assert "热议保留" in titles
+    assert "RSS only" in titles
+    assert out["stats"]["yupi"]["ok"] is True

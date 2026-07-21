@@ -2217,17 +2217,16 @@ def _intel_radar(force: str = "") -> dict[str, Any]:
 def _intel_yupi_ingest(force: str = "") -> dict[str, Any]:
     """旁路 yupi 灌入并合并进资讯雷达缓存（fail-soft）。
 
-    ``force == "force"`` 时先 RSS 全量再 merge；否则基于现有缓存 merge。
+    ``force == "force"`` 时先 RSS 全量再 merge（同 get_radar force）；否则基于现有缓存 merge。
     返回同 intel-radar 形状，stats.yupi 可观测。
     """
-    from kss.news.radar import fetch_radar, load_cache, skeleton
+    from kss.news.radar import fetch_radar_then_yupi, load_cache, skeleton
     from kss.news.yupi_ingest import ingest_and_merge
 
     if force == "force":
-        data = fetch_radar()
+        data = fetch_radar_then_yupi()
     else:
-        data = load_cache() or skeleton()
-    data = ingest_and_merge(data=data)
+        data = ingest_and_merge(data=load_cache() or skeleton())
     out = _intel_radar_payload(data)
     out["yupi"] = (data.get("stats") or {}).get("yupi")
     return out

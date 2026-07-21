@@ -192,16 +192,21 @@ def skeleton() -> dict:
 
 
 def get_radar(force: bool = False) -> dict:
-    """返回雷达数据。``force`` 为 True 时重新抓取；否则优先读缓存。"""
+    """返回雷达数据。
+
+    ``force`` 为 True 时重新抓取 RSS **并** fail-soft 合并 yupi 热议，
+    再写回 ``intel_radar_cache``（避免纯 RSS 覆盖清掉「热议·」混排）。
+    否则优先读已合并缓存。
+    """
     if force:
-        return fetch_radar()
+        return fetch_radar_then_yupi()
     return load_cache() or skeleton()
 
 
 def fetch_radar_then_yupi() -> dict:
     """RSS 抓取后旁路合并 yupi（失败不影响 RSS 缓存）。
 
-    供 cron / bridge 统一入口；实现见 ``kss.news.yupi_ingest``。
+    供 cron / bridge / UI force 刷新统一入口；实现见 ``kss.news.yupi_ingest``。
     """
     from kss.news.yupi_ingest import fetch_radar_with_yupi
 
