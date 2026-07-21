@@ -400,14 +400,20 @@ def _server_entry() -> tuple[list[str], str] | None:
     return None
 
 
-def start_background() -> dict[str, Any]:
-    """若 health 未通则后台启动 yupi server。"""
+def start_background(*, allow_install: bool = False) -> dict[str, Any]:
+    """若 health 未通则后台启动 yupi server。
+
+    ``allow_install=False``（默认）：仅启动已构建实例，避免热路径阻塞 npm。
+    ``allow_install=True``：缺 entry 时先 install（给 yupi-ensure / 自检用）。
+    """
     h = health()
     if h.get("ok"):
         return {"ok": True, "already_running": True, "health": h, "base_url": base_url()}
 
     entry = _server_entry()
     if entry is None:
+        if not allow_install:
+            return {"ok": False, "error": "yupi not installed; run yupi-ensure"}
         inst = install()
         if not inst.get("ok"):
             return {"ok": False, "error": "install failed", "install": inst}
@@ -504,7 +510,7 @@ def ensure(*, start: bool = True, force_reinstall: bool = False) -> dict[str, An
             "has_openrouter_key": bool(resolve_openrouter_key()),
         }
 
-    started = start_background()
+    started = start_background(allow_install=True)
     return {
         "ok": bool(started.get("ok")),
         "base_url": base_url(),

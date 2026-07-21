@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone, timedelta
-from typing import Any, Callable
+from datetime import datetime, timezone
+from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 from kss.news.radar import BEIJING, DB_PATH, SOURCES_FILE, load_cache
@@ -294,14 +294,26 @@ def ingest_and_merge(
     status: dict[str, Any] = {"ok": False, "skipped": False, "reason": ""}
     runtime_meta: dict[str, Any] = {}
     if ensure_runtime and client is None:
+        # 热路径（force 刷新 / cron 灌入）禁止完整 npm install：只拉起已安装实例。
+        # 首次安装走 yupi-ensure / 自检 / 设置页「安装/启动」。
         try:
-            from kss.news.yupi_runtime import ensure as ensure_yupi
+            import os as _os
 
-            runtime_meta = ensure_yupi(start=True)
-            if runtime_meta.get("base_url"):
-                import os as _os
+            from kss.news.yupi_runtime import base_url as managed_url
+            from kss.news.yupi_runtime import start_background, status as yupi_status
 
-                _os.environ.setdefault("YUPI_BASE_URL", str(runtime_meta["base_url"]))
+            st = yupi_status()
+            _os.environ.setdefault("YUPI_BASE_URL", managed_url())
+            if st.get("health_ok"):
+                runtime_meta = {"ok": True, "action": "already_healthy", "base_url": managed_url()}
+            elif st.get("installed"):
+                runtime_meta = start_background(allow_install=False)
+            else:
+                runtime_meta = {
+                    "ok": False,
+                    "skipped": True,
+                    "reason": "yupi not installed; run yupi-ensure or Settings install",
+                }
         except Exception as e:  # noqa: BLE001
             runtime_meta = {"ok": False, "error": f"ensure: {e}"}
 

@@ -1,7 +1,7 @@
 """yupi-hot-monitor HTTP 旁路客户端（stdlib urllib，无 Node 依赖）。
 
-默认 ``YUPI_BASE_URL=http://127.0.0.1:3001``。所有方法 fail-soft：网络/HTTP 错误
-返回结构化结果，不抛到调用方（调用方也可捕获 ``YupiError``）。
+默认走 KSS 托管实例 ``http://127.0.0.1:18765``（可用 ``YUPI_BASE_URL`` 覆盖）。
+网络/HTTP 错误 raise ``YupiError``；调用方 fail-soft。
 """
 
 from __future__ import annotations
