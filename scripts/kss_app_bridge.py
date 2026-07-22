@@ -3565,7 +3565,9 @@ def _scheduled_job(
     interval = pl.get("StartCalendarInterval")
     prog = pl.get("ProgramArguments") or []
     script = Path(prog[0]).name if prog else ""
-    schedule = _parse_schedule(interval)
+    is_keepalive = bool(pl.get("KeepAlive"))
+    # KeepAlive 无 SCI → 人读「常驻」而非「未设定」
+    schedule = "常驻 KeepAlive" if is_keepalive else _parse_schedule(interval)
     status = _launchctl_status(label, uid)
     # StandardOutPath 取自 plist —— installed plist 优先（U2 日志改名后随之生效）。
     out_path = pl.get("StandardOutPath")
@@ -3579,7 +3581,38 @@ def _scheduled_job(
     else:
         last_status = "failed"
 
+    last_line = last["line"]
+
+    # 若日志末行是机读 JSON 且带 exit_code，优先用它（比 launchctl last exit 更能反映最近一次业务结果）
+    if last_line and last_line.lstrip().startswith("{"):
+        try:
+            import json as _json  # noqa: PLC0415
+
+            payload = _json.loads(last_line)
+            if isinstance(payload, dict) and "exit_code" in payload:
+                last_status = "success" if int(payload["exit_code"]) == 0 else "failed"
+        except (ValueError, TypeError, json.JSONDecodeError):
+            pass
+
+    # KeepAlive（尤其 yupi）：用 live health / pid 覆盖 last exit，
+    # 避免孤儿占端口时 job 红、服务其实在跑（或相反）的误导。
+    if is_keepalive and suffix == "yupi_server":
+        try:
+            from kss.news.yupi_runtime import health as _yupi_health  # noqa: PLC0415
+
+            yh = _yupi_health(timeout=1.5)
+            if yh.get("ok"):
+                last_status = "success"
+                last_line = f"health ok · {yh.get('url') or 'http://127.0.0.1:18765/api/health'}"
+            elif status["pid"] is not None:
+                last_status = "unknown"
+                last_line = last_line or "进程在跑，health 尚未就绪"
+            # health 不通且无 pid：保留 exit 派生的 failed/unknown
+        except Exception:  # noqa: BLE001 — 状态探测失败不拖垮 cron-list
+            pass
+
     # 漏跑判定：日志 mtime 当作上次实际运行时刻，与最近一次预定触发比较。
+    # KeepAlive 无日历触发，永不记漏跑。
     last_run_dt = None
     if out_path:
         p = Path(out_path)
@@ -3590,7 +3623,13 @@ def _scheduled_job(
     enabled = label not in disabled
     # selfcheck 是补跑看门狗本身，永不算漏跑（否则会把自己列进补跑横幅）。
     is_watchdog = label.endswith(".selfcheck")
-    stale = bool(not is_watchdog and enabled and expected is not None and (last_run_dt is None or last_run_dt < expected))
+    stale = bool(
+        not is_keepalive
+        and not is_watchdog
+        and enabled
+        and expected is not None
+        and (last_run_dt is None or last_run_dt < expected)
+    )
     missed = _missed_cycles(interval, now, last_run_dt) if stale else 0
 
     # 事件驱动链成员（plan 2026-07-14-001 / R5）：schedule 人读文案标明触发关系，
@@ -3615,7 +3654,7 @@ def _scheduled_job(
         "needsInstall": needs_install,
         "lastStatus": last_status,
         "lastRunAt": last["at"],
-        "lastLine": last["line"],
+        "lastLine": last_line,
         "stale": stale,
         "missedCycles": missed,
         "expectedAt": expected.strftime("%Y-%m-%d %H:%M") if expected else None,

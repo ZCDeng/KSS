@@ -116,20 +116,43 @@ class _AutoRoutedProvider:
         start: str | None = None,
         end: str | None = None,
     ) -> FetchResult:
+        from kss.data.intraday_client import FetchResult as _FR  # noqa: PLC0415
+        from kss.data.intraday_client import _short_error  # noqa: PLC0415
+
         prov_name = route_provider(symbol)
         provider = self._lb if prov_name == PROVIDER_LONGBRIDGE else self._em
-        res = provider.fetch_bars(
-            symbol, interval_minutes=interval_minutes, asset_kind=asset_kind, start=start, end=end
-        )
+        try:
+            res = provider.fetch_bars(
+                symbol,
+                interval_minutes=interval_minutes,
+                asset_kind=asset_kind,
+                start=start,
+                end=end,
+            )
+        except Exception as exc:  # noqa: BLE001 — 复合层也保契约
+            res = _FR(
+                rows=[], raw_columns=(), source_asof_ts=None, status_code=None,
+                latency_ms=0.0, error=_short_error(exc),
+            )
         # 覆盖长桥失败 → 降级东财（记 observability）；东财失败即失败。
         if not res.ok and provider is self._lb:
             logger.info(
                 "[auto] longbridge %s failed (%s) → fallback eastmoney",
                 symbol, res.error,
             )
-            res = self._em.fetch_bars(
-                symbol, interval_minutes=interval_minutes, asset_kind=asset_kind, start=start, end=end
-            )
+            try:
+                res = self._em.fetch_bars(
+                    symbol,
+                    interval_minutes=interval_minutes,
+                    asset_kind=asset_kind,
+                    start=start,
+                    end=end,
+                )
+            except Exception as exc:  # noqa: BLE001
+                res = _FR(
+                    rows=[], raw_columns=(), source_asof_ts=None, status_code=None,
+                    latency_ms=0.0, error=_short_error(exc),
+                )
         return res
 
 # ----- retention 硬限（KTD2；影子后由 U8 校准；env 可覆盖） ----- #
@@ -201,7 +224,20 @@ def _fetch_with_retry(
     """
     last: FetchResult | None = None
     for attempt in range(1, max_attempts + 1):
-        result = fetch()
+        try:
+            result = fetch()
+        except Exception as exc:  # noqa: BLE001 — 契约：永不抛，吞为 FetchResult.error
+            from kss.data.intraday_client import FetchResult as _FR  # noqa: PLC0415
+            from kss.data.intraday_client import _short_error  # noqa: PLC0415
+
+            result = _FR(
+                rows=[],
+                raw_columns=(),
+                source_asof_ts=None,
+                status_code=None,
+                latency_ms=0.0,
+                error=_short_error(exc),
+            )
         last = result
         if result.ok:
             return result

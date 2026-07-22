@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -296,6 +297,18 @@ class EastmoneyAkshareProvider:
             notes=("东财1m仅近5交易日（上游限制）", "前向-only：结构上不可进PIT回测"),
         )
 
+    @staticmethod
+    def _em_symbol(symbol: str) -> str:
+        """东财 akshare 要裸码（``688017``）；``688017.SH`` 会生成错误 secid 并触发空 data/TypeError。"""
+        s = (symbol or "").strip().upper()
+        for suf in (".SH", ".SZ", ".BJ", ".SS", ".HK"):
+            if s.endswith(suf):
+                s = s[: -len(suf)]
+                break
+        if s.startswith(("SH", "SZ", "BJ")) and len(s) > 2 and s[2:].isdigit():
+            s = s[2:]
+        return s
+
     def fetch_bars(
         self,
         symbol: str,
@@ -317,11 +330,21 @@ class EastmoneyAkshareProvider:
                 latency_ms=(time.monotonic() - t0) * 1000.0,
                 error=f"unsupported asset_kind={asset_kind!r}",
             )
+        em_symbol = self._em_symbol(symbol)
+        # 每次 fetch 再刷 NO_PROXY，并临时清空代理 env（Clash 常忽略 NO_PROXY）
+        self._bypass_system_proxy()
+        saved_proxy = {
+            k: os.environ.pop(k, None)
+            for k in (
+                "http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY",
+                "ALL_PROXY", "all_proxy",
+            )
+        }
         try:
             import akshare  # noqa: PLC0415
 
             fn = getattr(akshare, fn_name)
-            kwargs: dict[str, Any] = {"symbol": symbol, "period": str(interval_minutes)}
+            kwargs: dict[str, Any] = {"symbol": em_symbol, "period": str(interval_minutes)}
             if start:
                 kwargs["start_date"] = start
             if end:
@@ -330,6 +353,16 @@ class EastmoneyAkshareProvider:
             if asset_kind != "index":
                 kwargs["adjust"] = ""
             df = fn(**kwargs)
+        except TypeError as exc:
+            # akshare 在 data_json["data"] is None 时抛 NoneType not subscriptable
+            return FetchResult(
+                rows=[],
+                raw_columns=(),
+                source_asof_ts=None,
+                status_code=200,
+                latency_ms=(time.monotonic() - t0) * 1000.0,
+                error=f"empty/malformed response: {_short_error(exc)}",
+            )
         except Exception as exc:  # noqa: BLE001 — 数据层不抛
             return FetchResult(
                 rows=[],
@@ -339,6 +372,10 @@ class EastmoneyAkshareProvider:
                 latency_ms=(time.monotonic() - t0) * 1000.0,
                 error=_short_error(exc),
             )
+        finally:
+            for k, v in saved_proxy.items():
+                if v is not None:
+                    os.environ[k] = v
 
         latency_ms = (time.monotonic() - t0) * 1000.0
         if df is None or getattr(df, "empty", True):
@@ -353,9 +390,41 @@ class EastmoneyAkshareProvider:
                 error="empty response",
             )
 
-        raw_columns = tuple(str(c) for c in df.columns)
-        rows = df.to_dict(orient="records")
-        source_asof_ts = _latest_bar_ts(rows)
+        # 空/畸形响应偶发 TypeError: NoneType not subscriptable（akshare 内或 to_dict）
+        try:
+            cols = getattr(df, "columns", None)
+            raw_columns = tuple(str(c) for c in cols) if cols is not None else ()
+            rows = df.to_dict(orient="records")
+            if not isinstance(rows, list):
+                return FetchResult(
+                    rows=[],
+                    raw_columns=raw_columns,
+                    source_asof_ts=None,
+                    status_code=200,
+                    latency_ms=latency_ms,
+                    error="empty response",
+                )
+            # 丢掉 None 行，避免下游 r.get 对 None 再炸
+            rows = [r for r in rows if isinstance(r, dict)]
+            if not rows:
+                return FetchResult(
+                    rows=[],
+                    raw_columns=raw_columns,
+                    source_asof_ts=None,
+                    status_code=200,
+                    latency_ms=latency_ms,
+                    error="empty response",
+                )
+            source_asof_ts = _latest_bar_ts(rows)
+        except Exception as exc:  # noqa: BLE001 — 数据层不抛
+            return FetchResult(
+                rows=[],
+                raw_columns=(),
+                source_asof_ts=None,
+                status_code=None,
+                latency_ms=latency_ms,
+                error=_short_error(exc),
+            )
         return FetchResult(
             rows=rows,
             raw_columns=raw_columns,

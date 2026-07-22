@@ -532,6 +532,59 @@ def _launchctl_yupi_loaded() -> bool:
     return proc.returncode == 0
 
 
+def listeners_on_port(p: int | None = None) -> list[int]:
+    """返回监听 yupi 端口的 PID 列表（lsof；失败空列表）。"""
+    target = int(p if p is not None else port())
+    try:
+        proc = _run(
+            ["lsof", "-nP", f"-iTCP:{target}", "-sTCP:LISTEN", "-t"],
+            timeout=10,
+        )
+    except Exception:
+        return []
+    if proc.returncode not in (0, 1):
+        return []
+    pids: list[int] = []
+    for line in (proc.stdout or "").splitlines():
+        line = line.strip()
+        if line.isdigit():
+            pids.append(int(line))
+    return pids
+
+
+def reclaim_port(*, p: int | None = None, exclude_pids: set[int] | None = None) -> list[int]:
+    """杀掉占用端口的监听进程，供 launchd 前台 job 独占绑定。
+
+    返回已发信号的 PID。先 SIGTERM，仍占用再 SIGKILL。
+    """
+    target = int(p if p is not None else port())
+    exclude = exclude_pids or set()
+    killed: list[int] = []
+    for pid in listeners_on_port(target):
+        if pid in exclude or pid == os.getpid():
+            continue
+        try:
+            os.kill(pid, 15)  # SIGTERM
+            killed.append(pid)
+        except OSError:
+            continue
+    if not killed:
+        return []
+    deadline = time.time() + 3.0
+    while time.time() < deadline and listeners_on_port(target):
+        time.sleep(0.15)
+    for pid in listeners_on_port(target):
+        if pid in exclude or pid == os.getpid():
+            continue
+        try:
+            os.kill(pid, 9)  # SIGKILL
+            if pid not in killed:
+                killed.append(pid)
+        except OSError:
+            pass
+    return killed
+
+
 def _launchctl_kickstart_yupi() -> dict[str, Any]:
     """优先用 launchd 管进程（与 KeepAlive 单归属）。"""
     if not _launchctl_yupi_loaded():
@@ -541,6 +594,8 @@ def _launchctl_kickstart_yupi() -> dict[str, Any]:
     except AttributeError:
         return {"ok": False, "error": "no uid", "runner": "launchctl"}
     _write_env()
+    # 孤儿 node 占端口时 kickstart 会 EADDRINUSE 循环；先清再 kick
+    reclaim_port()
     proc = _run(
         ["launchctl", "kickstart", "-k", f"gui/{uid}/{YUPI_LAUNCHD_LABEL}"],
         timeout=45,
@@ -578,6 +633,8 @@ def start_background(*, allow_install: bool = False) -> dict[str, Any]:
     2. launchd KeepAlive job 已加载 -> ``launchctl kickstart``（产品真常驻）
     3. 否则 Popen detach 兜底（dev / 未 cron-sync）
 
+    一旦 launchd job 已加载，**绝不** Popen（避免孤儿占端口 + KeepAlive 撞 EADDRINUSE）。
+
     ``allow_install=False``（默认）：不 npm install。
     ``allow_install=True``：缺 entry 时先 install（yupi-ensure）。
     """
@@ -602,13 +659,9 @@ def start_background(*, allow_install: bool = False) -> dict[str, Any]:
     if entry is None:
         return {"ok": False, "error": "no server entry (dist/tsx)"}
 
-    # #2: launchd 为主
-    kicked = _launchctl_kickstart_yupi()
-    if kicked.get("ok"):
-        return kicked
-    # job 已加载但 kick 失败：不双开 Popen（避免抢端口）
-    if kicked.get("error") != "launchd job not loaded":
-        return kicked
+    # #2: launchd 为主；已加载则只走 kickstart（成功或失败都不 Popen）
+    if _launchctl_yupi_loaded():
+        return _launchctl_kickstart_yupi()
 
     argv, kind = entry
     _write_env()  # refresh keys
@@ -622,7 +675,8 @@ def start_background(*, allow_install: bool = False) -> dict[str, Any]:
     if key:
         env["OPENROUTER_API_KEY"] = key
 
-    # detach fallback（无 KeepAlive job 时）
+    # detach fallback（仅无 KeepAlive job 时）
+    reclaim_port()
     logf = open(log, "a", encoding="utf-8")  # noqa: SIM115 — kept open for subprocess
     try:
         proc = subprocess.Popen(

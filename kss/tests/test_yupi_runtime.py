@@ -102,6 +102,7 @@ def test_default_git_ref_is_pinned_sha():
 def test_start_background_prefers_launchctl(monkeypatch):
     monkeypatch.setattr(yr, "health", lambda *a, **k: {"ok": False, "error": "down"})
     monkeypatch.setattr(yr, "_server_entry", lambda: (["/usr/bin/true"], "dist"))
+    monkeypatch.setattr(yr, "_launchctl_yupi_loaded", lambda: True)
     monkeypatch.setattr(
         yr,
         "_launchctl_kickstart_yupi",
@@ -123,6 +124,52 @@ def test_start_background_prefers_launchctl(monkeypatch):
     assert out["ok"] is True
     assert out["runner"] == "launchctl"
     assert called["popen"] == 0
+
+
+def test_start_background_never_popen_when_launchd_loaded(monkeypatch):
+    """launchd 已加载时 kick 失败也不走 Popen，避免抢端口。"""
+    monkeypatch.setattr(yr, "health", lambda *a, **k: {"ok": False})
+    monkeypatch.setattr(yr, "_server_entry", lambda: (["/usr/bin/true"], "dist"))
+    monkeypatch.setattr(yr, "_launchctl_yupi_loaded", lambda: True)
+    monkeypatch.setattr(
+        yr,
+        "_launchctl_kickstart_yupi",
+        lambda: {"ok": False, "error": "kick failed", "runner": "launchctl"},
+    )
+    called = {"popen": 0}
+
+    def boom(*a, **k):
+        called["popen"] += 1
+        raise AssertionError("Popen forbidden while launchd loaded")
+
+    monkeypatch.setattr(yr.subprocess, "Popen", boom)
+    out = yr.start_background(allow_install=False)
+    assert out["ok"] is False
+    assert called["popen"] == 0
+    assert out.get("runner") == "launchctl"
+
+
+def test_reclaim_port_skips_self(monkeypatch):
+    monkeypatch.setattr(yr, "listeners_on_port", lambda p=None: [os.getpid(), 999999])
+    killed_sigs: list[tuple[int, int]] = []
+
+    def fake_kill(pid, sig):
+        if pid == 999999:
+            raise OSError("no such process")
+        killed_sigs.append((pid, sig))
+
+    monkeypatch.setattr(yr.os, "kill", fake_kill)
+    monkeypatch.setattr(yr, "listeners_on_port", lambda p=None: [])
+    # first call returns self+fake, reclaim should not kill self
+    calls = {"n": 0}
+
+    def listeners(p=None):
+        calls["n"] += 1
+        return [] if calls["n"] > 1 else [os.getpid()]
+
+    monkeypatch.setattr(yr, "listeners_on_port", listeners)
+    out = yr.reclaim_port()
+    assert out == []
 
 
 def test_start_background_no_install_when_missing(monkeypatch, tmp_path):
