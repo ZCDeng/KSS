@@ -128,6 +128,59 @@ def test_fetch_article_mocked_http_ok():
     assert "content" in got["body"]
 
 
+def test_fetch_article_gzip_forced_body():
+    """bilibili 等站点对未声明 Accept-Encoding 的客户端也强制 gzip：按 magic 解压。"""
+    import gzip as _gzip
+
+    html = (
+        "<html><head><title>G</title></head><body><p>"
+        + "中文正文内容，足够长以通过有效性门槛。" * 10
+        + "</p></body></html>"
+    ).encode("utf-8")
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = _gzip.compress(html)
+    mock_resp.headers.get_content_charset.return_value = "utf-8"
+    mock_resp.headers.get.return_value = "gzip"
+    mock_resp.__enter__ = lambda s: s
+    mock_resp.__exit__ = MagicMock(return_value=False)
+
+    with patch("kss.news.article_fetch.urllib.request.urlopen", return_value=mock_resp):
+        got = fetch_article("https://example.com/gz")
+    assert got["mode"] == "fulltext"
+    assert "中文正文内容" in got["body"]
+    assert "�" not in got["body"]
+
+
+def test_fetch_article_meta_charset_fallback():
+    """声明 charset 错误时按 meta charset 探测（GBK 页面常见）。"""
+    html_text = (
+        '<html><head><meta charset="gbk"><title>G</title></head><body><p>'
+        + "国产资讯页面正文，编码为 GBK，长度足够通过门槛。" * 8
+        + "</p></body></html>"
+    )
+    raw = html_text.encode("gbk")
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = raw
+    mock_resp.headers.get_content_charset.return_value = None  # 头未声明
+    mock_resp.headers.get.return_value = None
+    mock_resp.__enter__ = lambda s: s
+    mock_resp.__exit__ = MagicMock(return_value=False)
+
+    with patch("kss.news.article_fetch.urllib.request.urlopen", return_value=mock_resp):
+        got = fetch_article("https://example.com/gbk")
+    assert got["mode"] == "fulltext"
+    assert "国产资讯" in got["body"]
+
+
+def test_extract_body_mojibake_gate():
+    """替换符占比过高的正文按 empty 处理，不得进入 fulltext/缓存。"""
+    garbage = "�" * 300 + "ok" * 20
+    html = f"<html><body><p>{garbage}</p></body></html>"
+    got = extract_body_from_html(html)
+    assert got["mode"] == "empty"
+    assert "mojibake" in (got["error"] or "")
+
+
 def test_fetch_article_mocked_timeout():
     with patch(
         "kss.news.article_fetch.urllib.request.urlopen",

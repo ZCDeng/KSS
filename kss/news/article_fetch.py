@@ -8,9 +8,11 @@ was loaded when it was not.
 
 from __future__ import annotations
 
+import gzip
 import re
 import urllib.error
 import urllib.request
+import zlib
 from typing import Any
 from urllib.parse import urlparse
 
@@ -41,6 +43,65 @@ def _strip_html(html: str) -> tuple[str, str]:
         title = re.sub(r"\s+", " ", title_match.group(1)).strip() if title_match else ""
         text = re.sub(r"<[^>]+>", " ", html)
         return title, re.sub(r"\s+", " ", text).strip()
+
+
+# 乱码门槛：解码后替换符 U+FFFD 占比超过此值视为不可读，走摘要兜底而非入库
+_MOJIBAKE_RATIO = 0.05
+
+
+def _decompress_body(raw: bytes, content_encoding: str | None) -> bytes:
+    """按 magic bytes / 响应头解压（bilibili 等站点对未声明 Accept-Encoding 的
+    客户端也强制 gzip）。解压失败原样返回，交给下游乱码门槛兜底。"""
+    enc = (content_encoding or "").lower()
+    try:
+        if raw[:2] == b"\x1f\x8b":  # gzip magic，无论头怎么说
+            return gzip.decompress(raw)
+        if "deflate" in enc:
+            try:
+                return zlib.decompress(raw)
+            except zlib.error:
+                return zlib.decompress(raw, -zlib.MAX_WBITS)
+    except Exception:  # noqa: BLE001
+        return raw
+    return raw
+
+
+def _decode_html(raw: bytes, declared_charset: str | None) -> str:
+    """解码字节流：声明 charset → meta charset → charset-normalizer 探测。
+    每步产出替换符占比过高时继续下一步。"""
+
+    def _ratio(s: str) -> float:
+        return s.count("�") / max(1, len(s))
+
+    candidates: list[str] = []
+    if declared_charset:
+        candidates.append(declared_charset)
+    m = re.search(rb"charset=[\"']?([\w-]+)", raw[:2048], flags=re.I)
+    if m:
+        candidates.append(m.group(1).decode("ascii", errors="ignore"))
+    candidates.append("utf-8")
+
+    best = ""
+    for cs in candidates:
+        try:
+            text = raw.decode(cs, errors="replace")
+        except (LookupError, ValueError):
+            continue
+        if _ratio(text) <= _MOJIBAKE_RATIO:
+            return text
+        if not best or _ratio(text) < _ratio(best):
+            best = text
+    try:
+        from charset_normalizer import from_bytes  # type: ignore
+
+        guessed = from_bytes(raw).best()
+        if guessed is not None:
+            text = str(guessed)
+            if not best or _ratio(text) < _ratio(best):
+                best = text
+    except Exception:  # noqa: BLE001
+        pass
+    return best
 
 
 def _extract_markdown(html: str, *, max_chars: int = _MAX_BODY_CHARS) -> str | None:
@@ -96,6 +157,15 @@ def extract_body_from_html(html: str, *, max_chars: int = _MAX_BODY_CHARS) -> di
             "error": "body too short" if char_count else "empty body",
             "char_count": char_count,
         }
+    # 乱码门槛：不可读正文按 empty 处理 → 上游走摘要兜底，且不会入正文缓存
+    if text.count("�") / max(1, char_count) > _MOJIBAKE_RATIO:
+        return {
+            "body": "",
+            "title": title,
+            "mode": "empty",
+            "error": "undecodable body (mojibake)",
+            "char_count": 0,
+        }
     body_md = _extract_markdown(html or "", max_chars=max_chars)
     return {
         "body": text,
@@ -144,8 +214,8 @@ def fetch_article(
             raw = resp.read(_MAX_RESPONSE_BYTES + 1)
             if len(raw) > _MAX_RESPONSE_BYTES:
                 raw = raw[:_MAX_RESPONSE_BYTES]
-            charset = resp.headers.get_content_charset() or "utf-8"
-            html = raw.decode(charset, errors="replace")
+            raw = _decompress_body(raw, resp.headers.get("Content-Encoding"))
+            html = _decode_html(raw, resp.headers.get_content_charset())
         result = extract_body_from_html(html, max_chars=max_chars)
         result["url"] = safe
         return result
