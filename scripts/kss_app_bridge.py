@@ -4115,6 +4115,95 @@ def _check_yupi_runtime() -> dict[str, Any]:
     }
 
 
+def _cs_max_trade_date(path: Path) -> str | None:
+    """cs_data_*.csv 的 max(trade_date)（YYYY-MM-DD，字典序即时间序）；缺文件/坏文件 → None。"""
+    if not path.exists():
+        return None
+    try:
+        import csv as _csv  # noqa: PLC0415
+
+        best: str | None = None
+        with path.open(newline="", encoding="utf-8") as fh:
+            for row in _csv.DictReader(fh):
+                td = (row.get("trade_date") or "").strip()
+                if td and (best is None or td > best):
+                    best = td
+        return best
+    except Exception:  # noqa: BLE001 — 坏 CSV 与缺文件同罪：都算陈旧
+        return None
+
+
+def _cs_data_freshness() -> dict[str, Any]:
+    """自选 cs_data 日线新鲜度：max(trade_date) 落后应有日线日 >1 个交易日 → stale。
+
+    背景：并行会话 git restore 旧 stash 曾静默冲掉根目录 cs_data_*.csv（自选价格
+    停留数月，多小时无人发现）。update_cs_data 的 gap WARNING 只进 cron log——
+    这里把同类信号抬进 selfcheck（App 横幅）+ 看门狗（Telegram）。
+
+    允许落后恰好 1 个交易日：8:30 日更 cron 与登录自检的时序窗口内属正常。
+    停牌不豁免（自选以科创/创业活跃票为主，长期停牌极罕见；误报可人工确认）。
+    """
+    try:
+        from kss.storage.watchlist import load_watchlist  # noqa: PLC0415
+
+        symbols = load_watchlist(db_path=STATE_ROOT / "storage" / "kss.db")
+    except Exception as exc:  # noqa: BLE001 — 无库/无表不是数据事故，跳过不告警
+        return {"ok": True, "skipped": True, "reason": f"watchlist_unavailable: {exc}",
+                "checked": 0, "stale": []}
+    if not symbols:
+        return {"ok": True, "skipped": True, "reason": "empty_watchlist",
+                "checked": 0, "stale": []}
+
+    reference = _reference_trade_date()  # YYYY-MM-DD 应有日线日
+    threshold_compact = _prev_trade_day(reference.replace("-", ""))
+    threshold = f"{threshold_compact[:4]}-{threshold_compact[4:6]}-{threshold_compact[6:8]}"
+    stale: list[dict[str, Any]] = []
+    for symbol in symbols:
+        code = symbol.split(".")[0]
+        max_date = _cs_max_trade_date(STATE_ROOT / f"cs_data_{code}.csv")
+        if max_date is None:
+            stale.append({"symbol": symbol, "maxDate": None, "reason": "missing"})
+        elif max_date < threshold:
+            stale.append({"symbol": symbol, "maxDate": max_date, "reason": "stale"})
+    return {"ok": not stale, "skipped": False, "reference": reference,
+            "threshold": threshold, "checked": len(symbols), "stale": stale}
+
+
+def _check_cs_data_freshness() -> dict[str, Any]:
+    """自检项包装：stale → fail（fail 才弹 App 横幅——数据被冲掉属可行动事故，非配置缺失）。"""
+    r = _cs_data_freshness()
+    if r["ok"]:
+        detail = ("自选为空/库不可用，跳过" if r.get("skipped")
+                  else f"{r['checked']} 只自选日线均不落后 {r['reference']} 超 1 个交易日")
+        return {"item": "cs_data", "status": "ok", "detail": detail,
+                "fixHint": None, "fixAction": None}
+    sample = ", ".join(
+        f"{s['symbol']}@{s['maxDate'] or '缺文件'}" for s in r["stale"][:6]
+    )
+    return {
+        "item": "cs_data",
+        "status": "fail",
+        "detail": f"{len(r['stale'])}/{r['checked']} 只自选日线陈旧(应有 {r['reference']}): {sample}",
+        "fixHint": "任务页重跑「更新日线数据」(update-cs-data)；警惕 git restore/stash 冲掉根目录 cs_data_*.csv",
+        "fixAction": None,
+    }
+
+
+def _cs_freshness_cmd(notify: bool) -> dict[str, Any]:
+    """cs-freshness 命令：看门狗数据线。notify 且陈旧时推 Telegram（复用 send_to_channels）。"""
+    r = _cs_data_freshness()
+    r["notified"] = False
+    if notify and not r["ok"]:
+        lines = [f"应有日线日 {r['reference']}，{len(r['stale'])}/{r['checked']} 只自选 cs_data 落后 >1 个交易日:"]
+        lines += [f"- {s['symbol']}: {s['maxDate'] or '文件缺失'}" for s in r["stale"][:20]]
+        lines.append("处理: App 任务页重跑「更新日线数据」；若被 git restore/stash 冲掉需重新增量拉取。")
+        from kss.notifications.manager import send_to_channels  # noqa: PLC0415
+
+        results = send_to_channels("\n".join(lines), "telegram", title="KSS 自检: 自选日线陈旧")
+        r["notified"] = bool(results.get("telegram"))
+    return r
+
+
 def _self_check() -> dict[str, Any]:
     """应用启动/手动自检（R3/R4）：venv + 数据目录 + 统一库 + duckdb 扩展 + 各凭证。"""
     items = [_check_venv(), _check_storage_writable(), _check_kss_db(), _check_duckdb_extension(),
@@ -4123,6 +4212,7 @@ def _self_check() -> dict[str, Any]:
         items.append(_check_credential(item, label, keys))
     items.append(_check_llm_credential())
     items.append(_check_yupi_runtime())
+    items.append(_check_cs_data_freshness())
     return {"items": items, "generatedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 
@@ -4819,6 +4909,7 @@ WRITE_COMMANDS = frozenset({
     "yupi-ensure",  # 安装/启动 KSS 托管 yupi
     "indicator-solidify",  # 固化：注册表 + rules + 初始 pack
     "indicator-retire",    # 退役：注册表 status=retired
+    "cs-freshness",  # notify 时外发 Telegram（消息即副作用；不带 notify 纯只读）
 })
 
 # ---------------------------------------------------------------------------
@@ -4902,6 +4993,7 @@ COMMANDS = {
         "args": ["NAME", "[LINES]", "[GREP]"],
     },
     "self-check": {"desc": "应用启动/手动自检(运行时/数据目录/各凭证)", "args": []},
+    "cs-freshness": {"desc": "自选 cs_data 日线新鲜度检查([notify]陈旧时推Telegram)", "args": ["[notify]"]},
     "sql-query": {
         "desc": (
             "只读分析 SQL(DuckDB 引擎；仅 SELECT/WITH/SUMMARIZE/DESCRIBE，行上限200，5s超时)。"
@@ -5757,6 +5849,21 @@ def _is_trade_day(yyyymmdd: str) -> bool:
         return False
 
 
+def _prev_trade_day(yyyymmdd: str) -> str:
+    """yyyymmdd 之前最近的交易日（不含自身；最多回看 20 个自然日，兜底返回原值）。"""
+    from datetime import datetime, timedelta  # noqa: PLC0415
+
+    try:
+        d0 = datetime.strptime(yyyymmdd, "%Y%m%d")
+    except ValueError:
+        return yyyymmdd
+    for i in range(1, 21):
+        cand = (d0 - timedelta(days=i)).strftime("%Y%m%d")
+        if _is_trade_day(cand):
+            return cand
+    return yyyymmdd
+
+
 def _persist_page_pull(symbol: str, provider: str, interval_minutes: int,
                        asset_kind: str, rows: list[dict[str, Any]]) -> None:
     """R5 落盘反转（U8）：简单 INSERT observation，用 sentinel 值绕过 PIT 约束。
@@ -5990,6 +6097,8 @@ def dispatch(command: str, args: list[str]) -> Any:
         return _log_tail(args[0], lines, grep)
     if command == "self-check":
         return _self_check()
+    if command == "cs-freshness":
+        return _cs_freshness_cmd(bool(args and args[0] == "notify"))
     if command == "version":
         # 返回 sidecar 代码版本指纹，供 Swift 端校验陈旧进程。
         return {"version": _sidecar_version_fingerprint()}
