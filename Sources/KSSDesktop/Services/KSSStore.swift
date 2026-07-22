@@ -81,11 +81,13 @@ final class KSSStore: ObservableObject {
     // MARK: 资讯雷达 reader workbench（plan 2026-07-10-001）
     @Published var selectedIntelItemID: String?
     @Published var intelArticleByID: [String: IntelArticleResponse] = [:]
-    /// kind → itemId → response（investment / chinese）
+    /// kind → itemId → response（investment / translation；chinese 数据保留无入口）
     @Published var intelRewriteByKind: [String: [String: IntelRewriteResponse]] = [:]
     @Published var isLoadingIntelDetail = false
     private var intelDetailTask: Task<Void, Never>?
     private var intelRewriteRunTask: Task<Void, Never>?
+    /// 会话内已预热赛道（plan 2026-07-22-001 U5：切赛道触发一次 track 级 Top-K）
+    private var prewarmedIntelTracks: Set<String> = []
 
     /// 兼容旧调用：投研改写 map
     var intelRewriteByID: [String: IntelRewriteResponse] {
@@ -587,6 +589,16 @@ final class KSSStore: ObservableObject {
         }
     }
 
+    /// 切到某赛道时后台预热该赛道 Top-K 投研稿（会话内每赛道一次，fire-and-forget）。
+    func prewarmIntelTrack(_ trackKey: String) {
+        guard let bridge, !trackKey.isEmpty else { return }
+        guard !prewarmedIntelTracks.contains(trackKey) else { return }
+        prewarmedIntelTracks.insert(trackKey)
+        Task.detached {
+            _ = try? bridge.intelRewriteRun(trackKey: trackKey)
+        }
+    }
+
     /// Select list item and load body + rewrite into detail panel.
     func selectIntelItem(_ item: IntelItem?, trackKey: String, trackName: String) {
         intelDetailTask?.cancel()
@@ -602,7 +614,8 @@ final class KSSStore: ObservableObject {
             defer { self.isLoadingIntelDetail = false }
             guard let bridge = self.bridge else { return }
 
-            // 并行：正文 + 中文改写 + 投研改写（缓存命中快）
+            // 并行：正文（读穿缓存）+ 投研改写（点开自动，claim/TTL 防重入）。
+            // 中文改写自动生成已移除（plan 2026-07-22-001 KTD5）：点开只烧投研一路。
             async let articleTask: IntelArticleResponse? = {
                 if let url = item.url, !url.isEmpty {
                     return try? await Task.detached {
@@ -610,14 +623,6 @@ final class KSSStore: ObservableObject {
                     }.value
                 }
                 return nil
-            }()
-            async let chineseTask: IntelRewriteResponse? = {
-                try? await Task.detached {
-                    try bridge.intelRewrite(
-                        trackKey: trackKey, trackName: trackName, item: item,
-                        force: false, kind: "chinese"
-                    )
-                }.value
             }()
             async let investTask: IntelRewriteResponse? = {
                 try? await Task.detached {
@@ -628,24 +633,23 @@ final class KSSStore: ObservableObject {
                 }.value
             }()
 
-            let (article, chinese, invest) = await (articleTask, chineseTask, investTask)
+            let (article, invest) = await (articleTask, investTask)
             if let article {
                 self.intelArticleByID[item.id] = article
-            } else if let body = chinese?.bodyText ?? invest?.bodyText, !body.isEmpty {
+            } else if let body = invest?.bodyText, !body.isEmpty {
                 self.intelArticleByID[item.id] = IntelArticleResponse(
                     body: body, title: item.title,
-                    mode: chinese?.bodyMode ?? invest?.bodyMode ?? "summary",
+                    mode: invest?.bodyMode ?? "summary",
                     error: nil,
-                    charCount: chinese?.bodyCharCount ?? invest?.bodyCharCount,
+                    charCount: invest?.bodyCharCount,
                     url: item.url
                 )
             }
-            if let chinese { self.setRewrite(chinese, itemID: item.id, kind: "chinese") }
             if let invest { self.setRewrite(invest, itemID: item.id, kind: "investment") }
         }
     }
 
-    /// On-demand rewrite for selected item. kind: investment | chinese
+    /// On-demand rewrite for selected item. kind: investment | translation
     func requestIntelRewrite(
         item: IntelItem,
         trackKey: String,

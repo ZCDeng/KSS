@@ -1,8 +1,9 @@
-"""资讯雷达改写：投研向 (investment) + qmreader 风中文改写 (chinese).
+"""资讯雷达改写：投研向 (investment) + qmreader 风中文改写 (chinese) + 忠实译文 (translation).
 
 kind:
 - investment: 事件/影响/标的线索/待验证
-- chinese: 全文流畅中文改写（对齐 qmreader 语言/结构规范，不绑定「乔木」人设）
+- chinese: 全文流畅中文改写（对齐 qmreader 语言/结构规范，不绑定「乔木」人设；已无 UI 入口）
+- translation: 保留 markdown 结构的忠实中文翻译（原文 Tab 按需，plan 2026-07-22-001 U3）
 """
 
 from __future__ import annotations
@@ -37,9 +38,11 @@ logger = logging.getLogger(__name__)
 # 与中文改写对齐到 90s；max_retries=0 避免串行叠超时。
 _TIMEOUT_INVESTMENT = 90.0
 _TIMEOUT_CHINESE = 90.0  # 长文改写
+_TIMEOUT_TRANSLATION = 90.0
 _MAX_RETRIES = 0
 _MAX_INPUT_CHARS = 12_000
 _MAX_INPUT_CHARS_CHINESE = 16_000
+_MAX_INPUT_CHARS_TRANSLATION = 16_000
 
 _INVESTMENT_SYSTEM = """你是「资讯雷达」投研向改写助手。任务：把用户提供的一篇资讯压成可读的投研草稿。
 
@@ -117,6 +120,26 @@ URL：{url}
 
 请输出中文改写（Markdown 正文，无一级标题）。"""
 
+_TRANSLATION_SYSTEM = """你是专业中文译者。任务：把外文文章忠实翻译成简体中文。
+
+硬性要求：
+1. 逐段忠实翻译，不增删信息，不演绎，不总结，不加译者注。
+2. 保留原文 Markdown 结构：## 小标题、- 列表、空行分段一一对应；标题也要翻译。
+3. 数字、日期、百分比、金额原样保留；公司/产品/人名用通用中文译名，无通用译名保留原文。
+4. 全程中文标点；语句通顺但不改变原意。
+5. 只输出译文 Markdown，不要前后缀说明。
+"""
+
+_TRANSLATION_USER = """来源：{source}
+时间：{time}
+标题：{title}
+URL：{url}
+
+原文（Markdown）：
+{body}
+
+请输出忠实中文译文（Markdown，结构与原文对应）。"""
+
 
 def _model_name() -> str:
     import os
@@ -130,6 +153,8 @@ def _normalize_kind(kind: str | None) -> str:
         return "chinese"
     if k in ("invest", "投研", "投研改写"):
         return "investment"
+    if k in ("translate", "译文", "翻译"):
+        return "translation"
     if k not in VALID_KINDS:
         return "investment"
     return k
@@ -144,8 +169,22 @@ def build_rewrite_prompt(
     kind: str = "investment",
 ) -> tuple[str, str]:
     kind = _normalize_kind(kind)
-    max_chars = _MAX_INPUT_CHARS_CHINESE if kind == "chinese" else _MAX_INPUT_CHARS
+    if kind == "translation":
+        max_chars = _MAX_INPUT_CHARS_TRANSLATION
+    elif kind == "chinese":
+        max_chars = _MAX_INPUT_CHARS_CHINESE
+    else:
+        max_chars = _MAX_INPUT_CHARS
     body_clipped = (body or "")[:max_chars]
+    if kind == "translation":
+        user = _TRANSLATION_USER.format(
+            source=item.get("source") or "—",
+            time=item.get("time") or "—",
+            title=item.get("title") or "",
+            url=item.get("url") or "",
+            body=body_clipped or "（无正文）",
+        )
+        return _TRANSLATION_SYSTEM, user
     if kind == "chinese":
         user = _CHINESE_USER.format(
             source=item.get("source") or "—",
@@ -232,11 +271,18 @@ def run_rewrite(
         body_err = None
         char_count = len(body or "")
     elif fetch_body:
-        got = body_or_summary(
-            url=item.get("url") or "",
-            summary=item.get("summary") or "",
-        )
-        body = got.get("body") or ""
+        if kind == "translation":
+            # 译文吃结构化正文：读穿缓存拿 body_md（原文 Tab 已看过 → 大概率命中）
+            from kss.storage.article_cache import get_or_fetch
+
+            got = get_or_fetch(item.get("url") or "", item.get("summary") or "")
+            body = got.get("body_md") or got.get("body") or ""
+        else:
+            got = body_or_summary(
+                url=item.get("url") or "",
+                summary=item.get("summary") or "",
+            )
+            body = got.get("body") or ""
         body_mode = got.get("mode") or "empty"
         body_err = got.get("error")
         char_count = int(got.get("char_count") or len(body))
@@ -265,7 +311,12 @@ def run_rewrite(
     system, user = build_rewrite_prompt(
         track_key, track_name, item, body, body_mode, kind=kind
     )
-    timeout = _TIMEOUT_CHINESE if kind == "chinese" else _TIMEOUT_INVESTMENT
+    if kind == "translation":
+        timeout = _TIMEOUT_TRANSLATION
+    elif kind == "chinese":
+        timeout = _TIMEOUT_CHINESE
+    else:
+        timeout = _TIMEOUT_INVESTMENT
     try:
         client = LLMClient(model=_model_name(), timeout=timeout, max_retries=_MAX_RETRIES)
         text = client.complete(system=system, user=user)

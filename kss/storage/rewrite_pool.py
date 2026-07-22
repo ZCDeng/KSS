@@ -51,8 +51,9 @@ def item_id_for(item: dict[str, Any]) -> str:
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
 
 
-# kind: investment (投研改写, legacy bare file) | chinese (qmreader 风中文改写)
-VALID_KINDS = frozenset({"investment", "chinese"})
+# kind: investment (投研改写, legacy bare file) | chinese (qmreader 风中文改写, 已无 UI 入口)
+#       | translation (忠实译文, 保留 markdown 结构; plan 2026-07-22-001 U3)
+VALID_KINDS = frozenset({"investment", "chinese", "translation"})
 
 
 def _normalize_kind(kind: str | None) -> str:

@@ -1,7 +1,9 @@
 """Best-effort article body fetch for 资讯雷达 reader (plan 2026-07-10-001 U1).
 
-stdlib-first HTML strip; no heavy readability dependency. Returns honest mode
-flags so UI never pretends full text was loaded when it was not.
+正文提取双层（plan 2026-07-22-001 U1）：trafilatura 主提取产出 markdown-lite
+（## 小标题 / - 列表 / 空行分段，喂 Swift parseReadingBlocks），失败或过短回退
+stdlib strip 平文本。Returns honest mode flags so UI never pretends full text
+was loaded when it was not.
 """
 
 from __future__ import annotations
@@ -41,6 +43,30 @@ def _strip_html(html: str) -> tuple[str, str]:
         return title, re.sub(r"\s+", " ", text).strip()
 
 
+def _extract_markdown(html: str, *, max_chars: int = _MAX_BODY_CHARS) -> str | None:
+    """trafilatura 主内容提取，输出 markdown-lite；不可用/失败/过短返回 None。"""
+    if not html:
+        return None
+    try:
+        import trafilatura  # type: ignore
+
+        md = trafilatura.extract(
+            html,
+            output_format="markdown",
+            include_comments=False,
+            include_links=False,
+            include_tables=True,
+        )
+    except Exception:  # noqa: BLE001 — 提取失败一律走 strip 回退
+        return None
+    md = (md or "").strip()
+    if len(md) < _MIN_USEFUL_CHARS:
+        return None
+    if len(md) > max_chars:
+        md = md[:max_chars]
+    return md
+
+
 def _validate_http_url(url: str) -> str:
     raw = (url or "").strip()
     if not raw:
@@ -54,7 +80,10 @@ def _validate_http_url(url: str) -> str:
 
 
 def extract_body_from_html(html: str, *, max_chars: int = _MAX_BODY_CHARS) -> dict[str, Any]:
-    """Parse HTML string into body payload (no network). Used by tests + fetch."""
+    """Parse HTML string into body payload (no network). Used by tests + fetch.
+
+    body_md（结构化 markdown-lite）提取成功时随 payload 返回；body 恒为平文本兼容旧调用方。
+    """
     title, text = _strip_html(html or "")
     if len(text) > max_chars:
         text = text[:max_chars]
@@ -67,8 +96,11 @@ def extract_body_from_html(html: str, *, max_chars: int = _MAX_BODY_CHARS) -> di
             "error": "body too short" if char_count else "empty body",
             "char_count": char_count,
         }
+    body_md = _extract_markdown(html or "", max_chars=max_chars)
     return {
         "body": text,
+        "body_md": body_md,
+        "extractor": "trafilatura" if body_md else "strip",
         "title": title,
         "mode": "fulltext",
         "error": None,

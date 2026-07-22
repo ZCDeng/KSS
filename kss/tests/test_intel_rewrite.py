@@ -154,6 +154,69 @@ def test_run_chinese_rewrite_separate_file(tmp_path, monkeypatch):
     assert read_draft(iid, "investment") is None
 
 
+def test_build_translation_prompt():
+    """U3 plan 2026-07-22-001: 忠实译文 prompt，保结构不演绎。"""
+    sys_p, user_p = build_rewrite_prompt(
+        "ai", "AI", _item(), "## Head\n\nBody para", "fulltext", kind="translation"
+    )
+    assert "忠实" in sys_p
+    assert "不增删" in sys_p
+    assert "Markdown" in sys_p
+    assert "事件" not in sys_p  # not investment schema
+    assert "## Head" in user_p
+
+
+def test_run_translation_rewrite(tmp_path, monkeypatch):
+    """译文走 article_cache 结构化正文，独立稿种落库，二次命中缓存。"""
+    monkeypatch.setenv("KSS_STATE_ROOT", str(tmp_path))
+    (tmp_path / "storage").mkdir(exist_ok=True)
+    mock_client = MagicMock()
+    mock_client.complete.return_value = "## 标题\n\n第一段译文。\n\n- 列表项一"
+    with patch("kss.news.rewrite.LLMClient", return_value=mock_client):
+        with patch(
+            "kss.storage.article_cache.get_or_fetch",
+            return_value={
+                "body": "flat text " * 20,
+                "body_md": "## Head\n\nPara one.\n\n- item",
+                "mode": "fulltext",
+                "char_count": 200,
+                "error": None,
+            },
+        ):
+            r = run_rewrite("ai", "AI", _item(8), force=True, kind="translation")
+    assert r["status"] == "ready"
+    assert r["kind"] == "translation"
+    assert r["text"].startswith("## ")
+    assert r["sections"] == {}
+    # 译文输入吃的是 body_md（结构化）
+    assert "## Head" in r["body_text"]
+
+    # 二次请求命中缓存不再调 LLM
+    with patch("kss.news.rewrite.LLMClient") as m2:
+        r2 = run_rewrite("ai", "AI", _item(8), force=False, kind="translation")
+    assert r2.get("from_cache") is True
+    m2.assert_not_called()
+
+
+def test_translation_kind_normalization_and_pool_isolation(tmp_path, monkeypatch):
+    """kind 归一化不误伤 translation；digest 池默认 kind=investment 不含译文。"""
+    monkeypatch.setenv("KSS_STATE_ROOT", str(tmp_path))
+    from kss.news.rewrite import _normalize_kind
+    from kss.storage.rewrite_pool import list_drafts, write_draft as _wd
+
+    assert _normalize_kind("translation") == "translation"
+    assert _normalize_kind("译文") == "translation"
+    assert _normalize_kind("bogus") == "investment"
+
+    day = beijing_day()
+    _wd({"item_id": "t1", "kind": "translation", "track_key": "ai", "day": day,
+         "status": "ready", "text": "译文"})
+    _wd({"item_id": "t1", "kind": "investment", "track_key": "ai", "day": day,
+         "status": "ready", "text": "## 事件\nx"})
+    default_pool = list_drafts(track_key="ai", day=day, status="ready")
+    assert all(d.get("kind") == "investment" for d in default_pool)
+
+
 def test_aggregate_pool(tmp_path, monkeypatch):
     monkeypatch.setenv("KSS_STATE_ROOT", str(tmp_path))
     day = beijing_day()

@@ -384,6 +384,25 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         ) STRICT;
         """,
     ),
+    (
+        2,
+        """
+        -- ---------------------------------------------------------------
+        -- 资讯雷达正文缓存（plan 2026-07-22-001 U2）：读穿缓存，结构化 markdown-lite 正文
+        -- ---------------------------------------------------------------
+        CREATE TABLE IF NOT EXISTS intel_article_items (
+            item_key     TEXT NOT NULL PRIMARY KEY,
+            url          TEXT NOT NULL,
+            title        TEXT,
+            mode         TEXT NOT NULL,
+            body         TEXT,
+            body_md      TEXT,
+            char_count   INTEGER,
+            extractor    TEXT,
+            fetched_at   TEXT
+        ) STRICT;
+        """,
+    ),
 )
 
 

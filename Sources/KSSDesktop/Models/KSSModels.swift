@@ -278,10 +278,15 @@ struct IntelArticleResponse: Codable {
     var error: String?
     var charCount: Int?
     var url: String?
+    /// 结构化正文（markdown-lite：## 小标题 / - 列表 / 空行分段；plan 2026-07-22-001）
+    var bodyMd: String? = nil
+    var extractor: String? = nil
+    var cached: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
-        case body, title, mode, error, url
+        case body, title, mode, error, url, extractor, cached
         case charCount = "char_count"
+        case bodyMd = "body_md"
     }
 }
 
@@ -316,9 +321,9 @@ struct IntelRewriteResponse: Codable {
 }
 
 /// 详情阅读 Tab（qmreader 风；首 Tab / 默认 = 投研改写）。
+/// 中文改写独立 Tab 已下线（plan 2026-07-22-001 R10）：译文并入原文 Tab 按需生成。
 enum IntelReaderTab: String, CaseIterable, Identifiable {
     case investment
-    case chinese
     case original
 
     var id: String { rawValue }
@@ -326,7 +331,6 @@ enum IntelReaderTab: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .investment: return "投研改写"
-        case .chinese: return "中文改写"
         case .original: return "原文"
         }
     }
@@ -335,7 +339,6 @@ enum IntelReaderTab: String, CaseIterable, Identifiable {
     var rewriteKind: String? {
         switch self {
         case .original: return nil
-        case .chinese: return "chinese"
         case .investment: return "investment"
         }
     }

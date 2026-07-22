@@ -32,9 +32,11 @@ def run_top_k_rewrites(
     wall_sec: float | None = None,
     max_llm_calls: int | None = None,
     radar: dict[str, Any] | None = None,
+    track_key: str | None = None,
 ) -> dict[str, Any]:
     """Rewrite up to K ready drafts per track for today.
 
+    track_key 给定时只处理该赛道（打开赛道预热，plan 2026-07-22-001 U4）。
     Never raises for single-item failures. Returns summary counts.
     """
     k = TOP_K if k is None else k
@@ -46,10 +48,15 @@ def run_top_k_rewrites(
 
     # radar.py cache uses `industries`; bridge maps to tracks for Swift.
     tracks = data.get("industries") or data.get("tracks") or []
+    if track_key:
+        tracks = [
+            tr for tr in tracks if (tr.get("key") or tr.get("id") or "") == track_key
+        ]
 
     summary = {
         "day": day,
         "k": k,
+        "track_key": track_key,
         "tracks": 0,
         "attempted": 0,
         "ready_new": 0,

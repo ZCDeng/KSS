@@ -2400,10 +2400,10 @@ def _intel_digest_save(json_payload: str = "") -> dict[str, Any]:
 
 
 def _intel_article(json_payload: str = "") -> dict[str, Any]:
-    """Best-effort article body fetch (plan 2026-07-10-001 U4)."""
+    """Article body via kss.db 读穿缓存（plan 2026-07-22-001 U2）。"""
     import json as _json
 
-    from kss.news.article_fetch import body_or_summary, fetch_article
+    from kss.storage.article_cache import get_or_fetch
 
     if not json_payload:
         return {"mode": "empty", "body": "", "error": "empty payload", "error_type": "client"}
@@ -2414,9 +2414,8 @@ def _intel_article(json_payload: str = "") -> dict[str, Any]:
 
     url = str(obj.get("url") or "")
     summary = str(obj.get("summary") or "")
-    if summary or not url:
-        return body_or_summary(url=url, summary=summary)
-    return fetch_article(url)
+    force = bool(obj.get("force") or False)
+    return get_or_fetch(url, summary, force=force)
 
 
 def _intel_rewrite(json_payload: str = "") -> dict[str, Any]:
@@ -2452,23 +2451,28 @@ def _intel_rewrite(json_payload: str = "") -> dict[str, Any]:
 
 
 def _intel_rewrite_run(json_payload: str = "") -> dict[str, Any]:
-    """Kick Top-K rewrite worker (U4). Optional JSON ``{k?, force?}``."""
+    """Kick Top-K rewrite worker. Optional JSON ``{k?, force?, track_key?}``.
+
+    track_key 给定时只预热该赛道（plan 2026-07-22-001 U4）。
+    """
     import json as _json
 
     from kss.news.rewrite_worker import run_top_k_rewrites
 
     k = None
     force = False
+    track_key = None
     if json_payload:
         try:
             obj = _json.loads(json_payload)
             if obj.get("k") is not None:
                 k = int(obj["k"])
             force = bool(obj.get("force") or False)
+            track_key = str(obj.get("track_key") or "") or None
         except Exception as exc:
             return {"error": f"invalid JSON: {exc}", "error_type": "client"}
     try:
-        return run_top_k_rewrites(k=k, force=force)
+        return run_top_k_rewrites(k=k, force=force, track_key=track_key)
     except Exception as exc:  # noqa: BLE001
         return {"error": f"worker failed: {exc}", "error_type": "server"}
 
@@ -4807,6 +4811,7 @@ WRITE_COMMANDS = frozenset({
     "cron-edit-schedule",  # 排期编辑（U6）：写 overlay + 渲染 + bootout/bootstrap
     "watchlist-set",  # 自选列表整表替换（U15）：写 kss.db watchlist 表
     "intel-digest-save",  # 写文件到 storage/notes/
+    "intel-article",      # 读穿正文缓存（写 kss.db intel_article_items）
     "intel-rewrite",      # 写 rewrite pool
     "intel-rewrite-run",  # worker 写 pool
     "intel-yupi-ingest",  # yupi 旁路灌入合并缓存

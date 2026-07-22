@@ -69,3 +69,24 @@ def test_count_ready_filters_track_day(tmp_path, monkeypatch):
     )
     assert count_ready("ai", day) == 1
     assert count_ready("tech", day) == 1
+
+
+def test_translation_kind_roundtrip(tmp_path, monkeypatch):
+    """U3 plan 2026-07-22-001: translation 是合法稿种，与 investment 互不干扰。"""
+    monkeypatch.setenv("KSS_STATE_ROOT", str(tmp_path))
+    day = beijing_day()
+    write_draft(
+        {
+            "item_id": "tr1",
+            "kind": "translation",
+            "track_key": "ai",
+            "day": day,
+            "status": "ready",
+            "text": "## 标题\n\n译文段落",
+        }
+    )
+    got = read_draft("tr1", "translation")
+    assert got is not None
+    assert got["kind"] == "translation"
+    assert read_draft("tr1") is None  # 默认 investment 不串稿种
+    assert count_ready("ai", day) == 0  # digest 池（investment）不受译文影响

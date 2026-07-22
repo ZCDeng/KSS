@@ -290,7 +290,7 @@ struct BridgeClient {
         return try run(["intel-article", json], as: IntelArticleResponse.self)
     }
 
-    /// 单篇改写（on-demand）。kind: investment | chinese
+    /// 单篇改写（on-demand）。kind: investment | translation（chinese 保留后端，无 UI 入口）
     func intelRewrite(
         trackKey: String,
         trackName: String,
@@ -314,12 +314,16 @@ struct BridgeClient {
     }
 
     /// 踢 Top-K rewrite worker（不阻塞雷达列表语义，调用方 fire-and-forget）。
-    func intelRewriteRun(k: Int? = nil, force: Bool = false) throws -> IntelRewriteRunResponse {
+    /// trackKey 给定时只预热该赛道（plan 2026-07-22-001 U4/U5）。
+    func intelRewriteRun(
+        k: Int? = nil, force: Bool = false, trackKey: String? = nil
+    ) throws -> IntelRewriteRunResponse {
         struct Payload: Encodable {
             let k: Int?
             let force: Bool
+            let track_key: String?
         }
-        let data = try JSONEncoder().encode(Payload(k: k, force: force))
+        let data = try JSONEncoder().encode(Payload(k: k, force: force, track_key: trackKey))
         let json = String(data: data, encoding: .utf8) ?? "{}"
         return try run(["intel-rewrite-run", json], as: IntelRewriteRunResponse.self)
     }

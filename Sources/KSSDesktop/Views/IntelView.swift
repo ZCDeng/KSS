@@ -13,6 +13,8 @@ struct IntelView: View {
     @State private var panoramaExpanded = false
     /// 当前赛道「今日要点」默认折叠，给下方列表/正文腾高
     @State private var digestExpanded = false
+    /// 原文 Tab 内译文开关（外文文章按需，plan 2026-07-22-001 R11）
+    @State private var showTranslation = false
 
     private var digest: NewsDigestResponse? { store.intelDigest }
     private var tracks: [IntelTrack] { digest?.tracks ?? [] }
@@ -95,10 +97,14 @@ struct IntelView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(theme.canvas)
-        .onAppear { Task { await store.loadIntel() } }
+        .onAppear {
+            Task { await store.loadIntel() }
+            store.prewarmIntelTrack(activeTrack)
+        }
         .onChange(of: activeTrack) { _, _ in
             digestExpanded = false  // 切赛道收起要点，优先阅读区
             store.selectIntelItem(nil, trackKey: activeTrack, trackName: currentTrack?.name ?? "")
+            store.prewarmIntelTrack(activeTrack)  // 该赛道头部条目后台预热（U5）
             // 切赛道时尝试拉要点（池优先）
             if let cur = currentTrack, let items = cur.items, !items.isEmpty {
                 Task { await store.summarizeIntelTrack(cur.key, name: cur.name, items: items) }
@@ -554,7 +560,7 @@ struct IntelView: View {
                 Text("选择左侧一条资讯开始阅读")
                     .font(KSSFont.themed(14, .medium, theme: theme))
                     .foregroundStyle(theme.textSecondary)
-                Text("投研改写 · 中文改写 · 原文")
+                Text("投研改写 · 原文 · 译文")
                     .font(KSSFont.themed(12.2, theme: theme))
                     .foregroundStyle(theme.textSecondary.opacity(0.65))
             }
@@ -583,22 +589,56 @@ struct IntelView: View {
                 generateLabel: "生成投研改写",
                 emptyHint: "尚未生成投研改写。后台 Top-K 或点下方按钮生成。"
             )
-        case .chinese:
-            rewritePanel(
-                item: item, track: track, kind: "chinese",
-                title: "中文改写",
-                generateLabel: "生成中文改写",
-                emptyHint: "这篇文章还没有中文改写。可一键生成流畅中文稿（qmreader 风格）。"
-            )
         case .original:
-            originalBodyPanel(item: item)
+            originalBodyPanel(item: item, track: track)
         }
     }
 
+    /// 原文正文视图（结构化优先；投研生成中兜底同样复用）。
     @ViewBuilder
-    private func originalBodyPanel(item: IntelItem) -> some View {
+    private func articleBodyView(item: IntelItem) -> some View {
+        let article = store.intelArticleByID[item.id]
+        if let md = article?.bodyMd, !md.isEmpty {
+            structuredReadingBody(md)
+        } else if let body = article?.body, !body.isEmpty {
+            Text(body)
+                .font(KSSFont.themed(16.5, theme: theme))
+                .foregroundStyle(theme.textBody)
+                .lineSpacing(16.5 * 0.88)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        } else if let sum = item.summary, !sum.isEmpty {
+            Text(sum)
+                .font(KSSFont.themed(16.5, theme: theme))
+                .foregroundStyle(theme.textBody)
+                .lineSpacing(16.5 * 0.88)
+            Text("全文抓取失败或未完成，以上为 RSS 摘要")
+                .font(KSSFont.themed(12, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+        } else {
+            Text("暂无正文，可尝试外链打开")
+                .font(KSSFont.themed(14, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+        }
+    }
+
+    /// 外文判定：正文 CJK 占比 < 30% 显示「译成中文」（plan 2026-07-22-001 KTD6）。
+    private func isForeignArticle(_ item: IntelItem) -> Bool {
+        let article = store.intelArticleByID[item.id]
+        let text = article?.bodyMd ?? article?.body ?? item.summary ?? ""
+        let sample = String(text.prefix(1200))
+        guard !sample.isEmpty else { return false }
+        let letters = sample.unicodeScalars.filter { CharacterSet.letters.contains($0) }
+        guard letters.count >= 40 else { return false }
+        let cjk = letters.filter { (0x4E00...0x9FFF).contains($0.value) }.count
+        return Double(cjk) / Double(letters.count) < 0.3
+    }
+
+    @ViewBuilder
+    private func originalBodyPanel(item: IntelItem, track: IntelTrack) -> some View {
         let article = store.intelArticleByID[item.id]
         let bodyMode = article?.mode ?? "summary"
+        let translation = store.rewrite(for: item.id, kind: "translation")
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Text("原文")
@@ -608,26 +648,65 @@ struct IntelView: View {
                     .foregroundStyle(theme.textSecondary)
                     .padding(.horizontal, 7).padding(.vertical, 3)
                     .background(theme.surfaceContainer, in: Capsule())
+                Spacer()
+                translationControls(item: item, track: track, translation: translation)
             }
-            Group {
-                if let body = article?.body, !body.isEmpty {
-                    Text(body)
-                        .font(KSSFont.themed(16.5, theme: theme))
-                        .foregroundStyle(theme.textBody)
-                        .lineSpacing(16.5 * 0.88)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else if let sum = item.summary, !sum.isEmpty {
-                    Text(sum)
-                        .font(KSSFont.themed(16.5, theme: theme))
-                        .foregroundStyle(theme.textBody)
-                        .lineSpacing(16.5 * 0.88)
-                    Text("全文抓取失败或未完成，以上为 RSS 摘要")
-                        .font(KSSFont.themed(12, theme: theme))
+            if let err = translation?.error, translation?.status == "failed" {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(KSSFont.themed(11, theme: theme))
+                    Text("译文生成失败：\(err)").font(KSSFont.themed(12, theme: theme)).lineLimit(2)
+                }
+                .foregroundStyle(theme.down)
+            }
+            if showTranslation, translation?.status == "ready",
+               let t = translation?.text, !t.isEmpty {
+                structuredReadingBody(t)
+            } else {
+                articleBodyView(item: item)
+            }
+        }
+        .onChange(of: item.id) { _, _ in showTranslation = false }
+    }
+
+    /// 译文开关：外文文章按需生成；就绪后原/译切换（R11）。
+    @ViewBuilder
+    private func translationControls(
+        item: IntelItem, track: IntelTrack, translation: IntelRewriteResponse?
+    ) -> some View {
+        if isForeignArticle(item) {
+            switch translation?.status {
+            case "ready":
+                KSSSegmentedControl(
+                    options: [(false, "原文"), (true, "译文")],
+                    selection: $showTranslation
+                )
+            case "generating":
+                HStack(spacing: 6) {
+                    ProgressView().scaleEffect(0.6)
+                    Text("译文生成中…")
+                        .font(KSSFont.themed(11.5, theme: theme))
                         .foregroundStyle(theme.textSecondary)
-                } else {
-                    Text("暂无正文，可尝试外链打开")
-                        .font(KSSFont.themed(14, theme: theme))
-                        .foregroundStyle(theme.textSecondary)
+                }
+            default:
+                if store.hasLLMCredentials {
+                    Button {
+                        Task {
+                            await store.requestIntelRewrite(
+                                item: item, trackKey: track.key, trackName: track.name,
+                                force: translation?.status == "failed", kind: "translation"
+                            )
+                            showTranslation = true
+                        }
+                    } label: {
+                        Label(
+                            translation?.status == "failed" ? "重试译文" : "译成中文",
+                            systemImage: "character.book.closed"
+                        )
+                        .font(KSSFont.themed(12, .semibold, theme: theme))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(theme.accent)
                 }
             }
         }
@@ -652,15 +731,12 @@ struct IntelView: View {
     ) -> some View {
         let rw = store.rewrite(for: item.id, kind: kind)
         let status = rw?.status ?? "none"
-        let isChinese = kind == "chinese"
 
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
                 Text(title)
                     .font(KSSFont.themed(13, .bold, theme: theme))
-                    .foregroundStyle(isChinese
-                        ? Color(red: 0.48, green: 0.39, blue: 0.18) // qmreader amber-ish
-                        : theme.accent)
+                    .foregroundStyle(theme.accent)
                 Text(statusLabel(status))
                     .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                     .foregroundStyle(theme.textSecondary)
@@ -683,20 +759,19 @@ struct IntelView: View {
             }
 
             if status == "generating" || (store.isLoadingIntelDetail && rw == nil) {
+                // AE1（plan 2026-07-22-001）：生成中先读结构化原文，就绪后本分支自动换为投研稿
                 HStack(spacing: 8) {
                     ProgressView().scaleEffect(0.85)
-                    Text(isChinese ? "正在生成中文改写…" : "正在生成投研改写…")
+                    Text("正在生成投研改写，先读原文…")
                         .font(KSSFont.themed(13, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                 }
-                .padding(.vertical, 24)
+                .padding(.vertical, 8)
+                Divider().overlay(theme.hairline)
+                articleBodyView(item: item)
             } else if status == "ready", let text = rw?.text, !text.isEmpty {
-                // 投研 / 中文改写统一：分节 + 圆点列表 + 阅读体，不用裸 markdown
-                if isChinese {
-                    structuredReadingBody(text)
-                } else {
-                    investmentStructuredBody(text: text, sections: rw?.sections)
-                }
+                // 分节 + 圆点列表 + 阅读体，不用裸 markdown
+                investmentStructuredBody(text: text, sections: rw?.sections)
                 if let model = rw?.model {
                     Text(model)
                         .font(.system(size: 10.5, design: .monospaced))
@@ -1230,7 +1305,6 @@ struct IntelView: View {
     /// qmreader `.entry-card`：左文案 + 右 58px 缩略，padding 11–12、圆角 10、gap 10。
     private func newsRow(_ item: IntelItem, track: IntelTrack) -> some View {
         let isOn = store.selectedIntelItemID == item.id
-        let zhReady = store.rewrite(for: item.id, kind: "chinese")?.status == "ready"
         let invStatus = store.rewrite(for: item.id, kind: "investment")?.status
         return Button {
             store.selectIntelItem(item, trackKey: track.key, trackName: track.name)
@@ -1257,13 +1331,6 @@ struct IntelView: View {
                             Text(time)
                                 .font(.system(size: 11, design: .monospaced))
                                 .foregroundStyle(theme.textSecondary.opacity(0.85))
-                        }
-                        if zhReady {
-                            Text("中文")
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundStyle(Color(red: 0.48, green: 0.39, blue: 0.18))
-                                .padding(.horizontal, 5).padding(.vertical, 1)
-                                .background(Color(red: 0.48, green: 0.39, blue: 0.18).opacity(0.12), in: Capsule())
                         }
                         if invStatus == "ready" {
                             Text("投研")

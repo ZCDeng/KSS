@@ -60,6 +60,62 @@ def test_worker_caps_ready_at_k(tmp_path, monkeypatch):
     assert calls["n"] == 6
 
 
+def test_worker_track_key_filter(tmp_path, monkeypatch):
+    """U4 plan 2026-07-22-001: track_key 给定时只预热该赛道。"""
+    monkeypatch.setenv("KSS_STATE_ROOT", str(tmp_path))
+    seen_tracks: set[str] = set()
+
+    def fake_rewrite(track_key, track_name, item, **kwargs):
+        seen_tracks.add(track_key)
+        from kss.storage.rewrite_pool import beijing_day, item_id_for, write_draft
+
+        iid = item_id_for(item)
+        write_draft(
+            {
+                "item_id": iid, "track_key": track_key, "day": beijing_day(),
+                "status": "ready", "text": "## 事件\nx",
+                "sections": {"事件": "x", "影响": "", "标的线索": "", "待验证": ""},
+            }
+        )
+        return {"status": "ready", "item_id": iid}
+
+    with patch("kss.news.rewrite_worker.run_rewrite", side_effect=fake_rewrite):
+        s = run_top_k_rewrites(k=2, radar=_radar(10), track_key="tech")
+
+    assert seen_tracks == {"tech"}
+    assert s["track_key"] == "tech"
+    assert s["tracks"] == 1
+    assert count_ready("tech") == 2
+    assert count_ready("ai") == 0
+
+
+def test_worker_track_key_already_full_zero_llm(tmp_path, monkeypatch):
+    """R2: 该赛道当日已有 K 条 ready → 零 LLM 调用。"""
+    monkeypatch.setenv("KSS_STATE_ROOT", str(tmp_path))
+    day = beijing_day()
+    for i in range(2):
+        write_draft(
+            {
+                "item_id": f"full{i}", "track_key": "tech", "day": day,
+                "status": "ready", "text": "## 事件\nx",
+                "sections": {"事件": "x", "影响": "", "标的线索": "", "待验证": ""},
+            }
+        )
+    with patch("kss.news.rewrite_worker.run_rewrite") as mocked:
+        s = run_top_k_rewrites(k=2, radar=_radar(10), track_key="tech")
+    mocked.assert_not_called()
+    assert s["llm_calls"] == 0
+
+
+def test_worker_unknown_track_key_noop(tmp_path, monkeypatch):
+    monkeypatch.setenv("KSS_STATE_ROOT", str(tmp_path))
+    with patch("kss.news.rewrite_worker.run_rewrite") as mocked:
+        s = run_top_k_rewrites(k=2, radar=_radar(5), track_key="nonexistent")
+    mocked.assert_not_called()
+    assert s["tracks"] == 0
+    assert s["attempted"] == 0
+
+
 def test_worker_skips_when_already_ready(tmp_path, monkeypatch):
     monkeypatch.setenv("KSS_STATE_ROOT", str(tmp_path))
     day = beijing_day()

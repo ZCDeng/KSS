@@ -31,6 +31,58 @@ def test_extract_body_fulltext_from_html():
     assert got["error"] is None
 
 
+def test_extract_body_structured_markdown():
+    """U1 plan 2026-07-22-001: 结构化提取产出 ## 小标题 / 列表 / 空行分段。"""
+    import pytest
+
+    pytest.importorskip("trafilatura")
+    paras = (
+        "<h2>Section One</h2>"
+        + "".join(
+            f"<p>Paragraph {i} carries enough real sentence content to satisfy "
+            f"extraction thresholds without being boilerplate filler text.</p>"
+            for i in range(1, 4)
+        )
+        + "<h2>Section Two</h2><ul><li>First bullet point item</li>"
+        + "<li>Second bullet point item</li></ul>"
+        + "<p>Closing paragraph with more meaningful content to round out the article body.</p>"
+    )
+    html = (
+        "<html><head><title>Structured</title></head><body>"
+        "<nav>Home | About | Subscribe now</nav>"
+        f"<article>{paras}</article>"
+        "<footer>Related articles: one two three</footer>"
+        "</body></html>"
+    )
+    got = extract_body_from_html(html)
+    assert got["mode"] == "fulltext"
+    if got["extractor"] == "trafilatura":
+        md = got["body_md"]
+        assert md
+        assert "Section One" in md
+        assert "\n" in md  # 保留换行分块，不再压平
+    else:
+        # trafilatura 对该 fixture 判定失败时回退 strip：body_md 为空但主链路不破
+        assert got["body_md"] is None
+
+
+def test_extract_body_fallback_when_trafilatura_short(monkeypatch):
+    """结构化产出过短 → 回退 strip，extractor 标记 fallback。"""
+    from kss.news import article_fetch as af
+
+    monkeypatch.setattr(af, "_extract_markdown", lambda html, **kw: None)
+    html = (
+        "<html><body><p>"
+        + "plain fallback content repeated enough times to pass threshold. " * 3
+        + "</p></body></html>"
+    )
+    got = af.extract_body_from_html(html)
+    assert got["mode"] == "fulltext"
+    assert got["extractor"] == "strip"
+    assert got["body_md"] is None
+    assert "plain fallback" in got["body"]
+
+
 def test_extract_body_empty_when_too_short():
     html = "<html><body><p>hi</p></body></html>"
     got = extract_body_from_html(html)
