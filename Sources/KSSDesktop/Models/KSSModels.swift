@@ -166,12 +166,42 @@ struct RadarStats: Codable {
     var industries: Int?
     var totalSources: Int?
     var failedSources: Int?
+    /// yupi 旁路灌入结果（bridge `stats.yupi`）；旧缓存无此字段。
+    var yupi: RadarYupiStats?
 
     enum CodingKeys: String, CodingKey {
-        case industries
+        case industries, yupi
         case totalSources = "total_sources"
         case failedSources = "failed_sources"
     }
+}
+
+/// 资讯雷达 stats.yupi：热议灌入是否成功 + 条数。
+struct RadarYupiStats: Codable, Equatable {
+    var ok: Bool?
+    var skipped: Bool?
+    var reason: String?
+    var items: Int?
+    var error: String?
+
+    /// 顶栏/状态行短文案。
+    var badgeText: String {
+        if ok == true {
+            let n = items ?? 0
+            return n > 0 ? "热议 \(n)" : "热议 0"
+        }
+        if skipped == true {
+            let r = (reason ?? error ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if r.contains("not installed") { return "热议未装" }
+            if r.lowercased().contains("health") { return "热议离线" }
+            return r.isEmpty ? "热议跳过" : "热议跳过"
+        }
+        if let r = reason, !r.isEmpty { return "热议失败" }
+        if let e = error, !e.isEmpty { return "热议失败" }
+        return "热议—"
+    }
+
+    var isHealthy: Bool { ok == true }
 }
 
 /// 舆情热点：可选档案条目（日期 + 场景），newest first。
@@ -1724,6 +1754,11 @@ struct IntelItem: Codable, Equatable, Identifiable {
     var time: String?
     var source: String?
     var summary: String?
+
+    /// yupi 灌入条目 source 前缀为「热议·」（见 yupi_ingest.SOURCE_PREFIX）。
+    var isYupiHot: Bool {
+        (source ?? "").hasPrefix("热议")
+    }
 }
 
 /// 资讯雷达 yupi 监控词（bridge `intel-keywords-get`）。

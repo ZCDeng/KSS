@@ -31,10 +31,11 @@ struct IntelView: View {
             // ---- 顶栏 ----
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
-                    PageTitle("资讯雷达", subtitle: "12 赛道 · 列表阅读 + 投研改写")
+                    PageTitle("资讯雷达", subtitle: "12 赛道 · RSS + 热议混排 + 投研改写")
                     Spacer()
                     bulkDigestButton
                     if hasData {
+                        yupiStatusBadge
                         let totalSources = digest?.stats?.totalSources ?? 108
                         StatusBadge(icon: "antenna.radiowaves.left.and.right",
                                     text: "\(totalSources) 源", tint: theme.accent)
@@ -110,10 +111,10 @@ struct IntelView: View {
     private var loadingState: some View {
         VStack(spacing: 14) {
             ProgressView().scaleEffect(1.2)
-            Text("正在抓取 12 赛道 RSS 资讯…")
+            Text("正在抓取 RSS + 合并热议…")
                 .font(KSSFont.themed(13.5, .medium, theme: theme))
                 .foregroundStyle(theme.textSecondary)
-            Text("约 20–40 秒，108 个公开源并发获取")
+            Text("约 20–40 秒 · RSS 公开源并发；yupi 已装则旁路灌入")
                 .font(.system(size: 11.5, design: .monospaced))
                 .foregroundStyle(theme.textSecondary.opacity(0.5))
         }
@@ -125,9 +126,18 @@ struct IntelView: View {
 
     private var statsRefreshRow: some View {
         HStack(spacing: 10) {
-            Text(statLine)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(theme.textSecondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(statLine)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary)
+                if let hint = yupiDetailHint, !hint.isEmpty {
+                    Text(hint)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(theme.textSecondary.opacity(0.75))
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                }
+            }
             Spacer()
             Button(action: {
                 store.errorMessage = nil
@@ -154,12 +164,63 @@ struct IntelView: View {
     private var statLine: String {
         guard hasData else {
             let total = digest?.stats?.totalSources ?? 108
-            return "\(tracks.count) 赛道 · \(total) 个公开源 · 点刷新拉取"
+            return "\(tracks.count) 赛道 · \(total) 个公开源 · 点刷新拉取（含热议）"
         }
         let totalItems = tracks.reduce(0) { $0 + ($1.items?.count ?? 0) }
+        let yupiN = yupiItemCount
         let days = digest?.recentDays ?? 7
         let updated = digest?.generatedAt ?? "—"
-        return "\(tracks.count) 赛道 / \(totalItems) 条资讯 · 近 \(days) 天 · 更新于 \(updated)"
+        let yupiPart = yupiN > 0 ? " · 热议 \(yupiN)" : ""
+        return "\(tracks.count) 赛道 / \(totalItems) 条\(yupiPart) · 近 \(days) 天 · 更新于 \(updated)"
+    }
+
+    /// 列表内「热议·」条数（缓存字段缺失时的兜底计数）。
+    private var yupiItemCount: Int {
+        if let n = digest?.stats?.yupi?.items, n > 0 { return n }
+        return tracks.reduce(0) { acc, t in
+            acc + (t.items ?? []).filter(\.isYupiHot).count
+        }
+    }
+
+    private var yupiStatusBadge: some View {
+        let y = digest?.stats?.yupi
+        let count = yupiItemCount
+        let text: String
+        let tint: Color
+        let icon: String
+        if let y, y.isHealthy {
+            text = count > 0 ? "热议 \(count)" : "热议 0"
+            tint = theme.accent
+            icon = "flame.fill"
+        } else if count > 0 {
+            // 旧缓存无 stats.yupi，但列表已有热议条目
+            text = "热议 \(count)"
+            tint = theme.accent
+            icon = "flame.fill"
+        } else if let y {
+            text = y.badgeText
+            tint = theme.ma5
+            icon = "exclamationmark.triangle.fill"
+        } else {
+            text = "热议—"
+            tint = theme.textSecondary
+            icon = "flame"
+        }
+        return StatusBadge(icon: icon, text: text, tint: tint)
+            .help(yupiDetailHint ?? "yupi 热点旁路状态")
+    }
+
+    /// 热议失败/跳过时的一行原因（成功时 nil）。
+    private var yupiDetailHint: String? {
+        guard let y = digest?.stats?.yupi else {
+            return yupiItemCount > 0 ? nil : "尚无热议元数据 · 点刷新或设置页安装 yupi"
+        }
+        if y.isHealthy { return nil }
+        let raw = (y.reason ?? y.error ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if raw.isEmpty { return "热议未并入 · 检查设置→yupi 服务" }
+        // 截断过长 health 错误
+        if raw.count > 96 { return String(raw.prefix(96)) + "…" }
+        return raw
     }
 
     // MARK: - 12 赛道全景热点（pill 上方）
@@ -1177,9 +1238,16 @@ struct IntelView: View {
         } label: {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 0) {
-                    // top meta: source · time
+                    // top meta: source · time · 热议 chip
                     HStack(spacing: 6) {
                         sourceFavicon(item: item, size: 13)
+                        if item.isYupiHot {
+                            Text("热议")
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundStyle(theme.accent)
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(theme.accent.opacity(0.12), in: Capsule())
+                        }
                         if let source = item.source, !source.isEmpty {
                             Text(source)
                                 .font(KSSFont.themed(11.3, .medium, theme: theme))
@@ -1259,7 +1327,7 @@ struct IntelView: View {
             Text("暂无资讯雷达数据")
                 .font(KSSFont.themed(15, .semibold, theme: theme))
                 .foregroundStyle(theme.textSecondary)
-            Text("点击上方「刷新」拉取 12 赛道 RSS 资讯（约 20–40 秒）")
+            Text("点击上方「刷新」拉取 RSS + 热议（约 20–40 秒；yupi 需在设置页先安装）")
                 .font(KSSFont.themed(12.5, theme: theme))
                 .foregroundStyle(theme.textSecondary.opacity(0.6))
             Button(action: {
