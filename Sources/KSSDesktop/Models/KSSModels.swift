@@ -1754,6 +1754,9 @@ struct YupiRuntimeStatus: Codable, Equatable {
     var openrouterKeySource: String?
     var node: String?
     var nodeOk: Bool?
+    var gitRef: String?
+    var gitHead: String?
+    var launchdLoaded: Bool?
 
     enum CodingKeys: String, CodingKey {
         case port, model, installed, node
@@ -1762,6 +1765,9 @@ struct YupiRuntimeStatus: Codable, Equatable {
         case hasOpenrouterKey = "has_openrouter_key"
         case openrouterKeySource = "openrouter_key_source"
         case nodeOk = "node_ok"
+        case gitRef = "git_ref"
+        case gitHead = "git_head"
+        case launchdLoaded = "launchd_loaded"
     }
 }
 
@@ -1773,12 +1779,19 @@ struct YupiEnsureResponse: Codable, Equatable {
     var action: String?
     var error: String?
     var hasOpenrouterKey: Bool?
+    /// 嵌套 install 失败时 bridge 可能带回
+    var install: YupiInstallSlice?
 
     enum CodingKeys: String, CodingKey {
-        case ok, port, model, action, error
+        case ok, port, model, action, error, install
         case baseUrl = "base_url"
         case hasOpenrouterKey = "has_openrouter_key"
     }
+}
+
+struct YupiInstallSlice: Codable, Equatable {
+    var ok: Bool?
+    var error: String?
 }
 
 /// Dashboard 资讯摘要条带（U3 轻量数据）。

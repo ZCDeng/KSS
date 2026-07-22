@@ -412,48 +412,102 @@ enum SettingsDataSource: String, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - 资讯雷达 yupi 词表（plan 2026-07-21-001）
+// MARK: - 资讯雷达 yupi 词表（plan 2026-07-21-001 + UX 清单）
+
+/// 运行时检查清单的一行（绿/黄/红 + 文案）。
+private struct YupiStatusRow: Identifiable {
+    enum Level { case ok, warn, fail, info }
+    let id: String
+    let label: String
+    let level: Level
+    let detail: String
+}
 
 /// 12 赛道监控词 + KSS 托管 yupi 运行时（安装/启动/OpenRouter）。
+/// 状态清单与操作反馈分栏，避免与词表 status 互相覆盖。
 struct SettingsIntelKeywordsSection: View {
     @Environment(\.kssTheme) private var theme
     @EnvironmentObject private var store: KSSStore
     @State private var tracks: [String: [String]] = [:]
     @State private var trackOrder: [String] = []
     @State private var draft: [String: String] = [:]  // key -> comma-separated words
-    @State private var status: String = ""
+    @State private var keywordNote: String = ""       // 仅词表区
+    @State private var actionBanner: String = ""      // 仅安装/启动/凭据操作
+    @State private var actionIsError: Bool = false
     @State private var loading = false
     @State private var saving = false
     @State private var openrouterKey: String = ""
     @State private var yupiModel: String = ""
-    @State private var runtimeLine: String = ""
     @State private var ensuring = false
+    @State private var runtime: YupiRuntimeStatus?
+    @State private var nextStep: String = ""
+    @State private var primaryActionTitle: String = "安装并启动"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("KSS 在本机安装并 KeepAlive 托管 yupi（端口 18765）。Seesaw 主/备 LLM 若 base 为 OpenRouter，会自动复用其 Key/模型；也可在此单独填 OpenRouter Key。")
+            Text("KSS 在本机托管 yupi（端口 18765，KeepAlive）。状态按行列出；Seesaw 主/备若 base 为 OpenRouter 会自动复用 Key/模型。")
                 .font(KSSFont.themed(12.5, theme: theme))
                 .foregroundStyle(theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if !runtimeLine.isEmpty {
-                Text(runtimeLine)
-                    .font(KSSFont.themed(12, theme: theme))
-                    .foregroundStyle(theme.textSecondary)
+            // ---- 状态清单（A）----
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(statusRows) { row in
+                    HStack(alignment: .top, spacing: 8) {
+                        Circle()
+                            .fill(dotColor(row.level))
+                            .frame(width: 8, height: 8)
+                            .padding(.top, 4)
+                        Text(row.label)
+                            .font(KSSFont.themed(12, .semibold, theme: theme))
+                            .frame(width: 72, alignment: .leading)
+                        Text(row.detail)
+                            .font(KSSFont.themed(12, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(theme.surface.opacity(0.45))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            if !nextStep.isEmpty {
+                Text("下一步：\(nextStep)")
+                    .font(KSSFont.themed(12.5, .semibold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // ---- 操作反馈条（C）----
+            if ensuring {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("安装/启动中（首次 2–5 分钟，请勿关闭设置页）…")
+                        .font(KSSFont.themed(12.5, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                }
+            } else if !actionBanner.isEmpty {
+                Text(actionBanner)
+                    .font(KSSFont.themed(12.5, theme: theme))
+                    .foregroundStyle(actionIsError ? theme.up : theme.textSecondary)
                     .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             HStack(spacing: 10) {
-                SecureField("OpenRouter API Key（yupi AI）", text: $openrouterKey)
+                SecureField("OpenRouter API Key（可选，优先于 Seesaw 复用）", text: $openrouterKey)
                     .textFieldStyle(.plain)
                     .font(KSSFont.themed(14, theme: theme))
                     .padding(8)
                     .background(theme.surface.opacity(0.6))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
-                TextField("模型（默认 deepseek/deepseek-v3.2）", text: $yupiModel)
+                TextField("模型覆盖（空=默认/复用 Seesaw）", text: $yupiModel)
                     .textFieldStyle(.plain)
                     .font(KSSFont.themed(13, theme: theme))
-                    .frame(maxWidth: 220)
+                    .frame(maxWidth: 240)
                     .padding(8)
                     .background(theme.surface.opacity(0.6))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -462,14 +516,19 @@ struct SettingsIntelKeywordsSection: View {
             HStack(spacing: 10) {
                 Button("保存 yupi 凭据") { saveYupiCreds() }
                     .buttonStyle(.bordered)
-                Button(ensuring ? "安装中…" : "安装/启动 yupi") { Task { await ensureYupi() } }
+                    .disabled(ensuring)
+                Button(ensuring ? "处理中…" : primaryActionTitle) { Task { await ensureYupi() } }
                     .buttonStyle(.borderedProminent)
                     .disabled(ensuring)
                 Button("刷新状态") { Task { await refreshRuntime() } }
                     .buttonStyle(.bordered)
+                    .disabled(ensuring)
             }
 
             Divider()
+
+            Text("赛道监控词（灌入热议用）")
+                .font(KSSFont.themed(12, .semibold, theme: theme))
 
             if loading {
                 ProgressView().controlSize(.small)
@@ -493,16 +552,17 @@ struct SettingsIntelKeywordsSection: View {
             }
 
             HStack(spacing: 10) {
-                Button("保存词表") { Task { await save() } }
+                Button("保存词表") { Task { await saveKeywords() } }
                     .buttonStyle(.borderedProminent)
-                    .disabled(saving || loading)
+                    .disabled(saving || loading || ensuring)
                 Button("立即灌入") { Task { await ingest() } }
                     .buttonStyle(.bordered)
-                    .disabled(saving || loading)
-                Button("重新加载") { Task { await load() } }
+                    .disabled(saving || loading || ensuring)
+                Button("重新加载") { Task { await loadKeywords() } }
                     .buttonStyle(.bordered)
-                if !status.isEmpty {
-                    Text(status)
+                    .disabled(ensuring)
+                if !keywordNote.isEmpty {
+                    Text(keywordNote)
                         .font(KSSFont.themed(12, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                 }
@@ -512,64 +572,183 @@ struct SettingsIntelKeywordsSection: View {
         .task {
             openrouterKey = KeychainStore.read("OPENROUTER_API_KEY") ?? ""
             yupiModel = KeychainStore.read("KSS_YUPI_MODEL") ?? ""
-            await load()
+            await loadKeywords()
             await refreshRuntime()
         }
     }
+
+    // MARK: - 状态派生
+
+    private var statusRows: [YupiStatusRow] {
+        guard let st = runtime else {
+            return [
+                YupiStatusRow(id: "svc", label: "服务", level: .info, detail: "尚未读取状态，点「刷新状态」"),
+            ]
+        }
+        var rows: [YupiStatusRow] = []
+
+        // 服务
+        if st.healthOk == true {
+            rows.append(YupiStatusRow(
+                id: "svc", label: "服务", level: .ok,
+                detail: "运行中  \(st.baseUrl ?? "http://127.0.0.1:18765")"
+            ))
+        } else if st.installed == true {
+            rows.append(YupiStatusRow(
+                id: "svc", label: "服务", level: .warn,
+                detail: "已安装但未响应  \(st.baseUrl ?? "") — 点「\(primaryActionTitle)」"
+            ))
+        } else {
+            rows.append(YupiStatusRow(
+                id: "svc", label: "服务", level: .fail,
+                detail: "未安装 — 点「安装并启动」（首次 2–5 分钟）"
+            ))
+        }
+
+        // Node
+        if st.nodeOk == true {
+            rows.append(YupiStatusRow(id: "node", label: "Node", level: .ok, detail: st.node ?? "可用"))
+        } else if st.healthOk == true {
+            rows.append(YupiStatusRow(
+                id: "node", label: "Node", level: .warn,
+                detail: "探测失败但服务已在跑（多为 App PATH 窄）。本机可能已装 Node，安装流程会再查 brew 路径。"
+            ))
+        } else {
+            rows.append(YupiStatusRow(
+                id: "node", label: "Node", level: .fail,
+                detail: st.node ?? "未找到 node/npm。请 brew install node 后重启 App"
+            ))
+        }
+
+        // OpenRouter
+        if st.hasOpenrouterKey == true {
+            let src = st.openrouterKeySource ?? "?"
+            rows.append(YupiStatusRow(
+                id: "or", label: "OpenRouter", level: .ok,
+                detail: "已配（\(src)）· model=\(st.model ?? "?")"
+            ))
+        } else {
+            rows.append(YupiStatusRow(
+                id: "or", label: "OpenRouter", level: .warn,
+                detail: "未配置 — 服务仍可运行，热议 AI 分析会降级。可在此填 Key，或把 Seesaw 主 LLM base 设为 OpenRouter 以自动复用"
+            ))
+        }
+
+        // 安装 / pin
+        if st.installed == true {
+            let pin = st.gitHead?.prefix(8) ?? st.gitRef?.prefix(8) ?? "?"
+            rows.append(YupiStatusRow(id: "inst", label: "安装", level: .ok, detail: "已安装  pin \(pin)"))
+        } else {
+            rows.append(YupiStatusRow(id: "inst", label: "安装", level: .fail, detail: "未安装到 Application Support"))
+        }
+
+        // KeepAlive
+        if st.launchdLoaded == true {
+            rows.append(YupiStatusRow(id: "ka", label: "KeepAlive", level: .ok, detail: "launchd 已加载 com.zcdeng.kss.yupi_server"))
+        } else {
+            rows.append(YupiStatusRow(
+                id: "ka", label: "KeepAlive", level: .warn,
+                detail: "launchd 未加载 — 设置→任务 同步 cron，或安装后仍可用临时进程"
+            ))
+        }
+        return rows
+    }
+
+    private func dotColor(_ level: YupiStatusRow.Level) -> Color {
+        switch level {
+        case .ok: return Color.green.opacity(0.85)
+        case .warn: return Color.orange.opacity(0.9)
+        case .fail: return theme.up
+        case .info: return theme.textSecondary.opacity(0.5)
+        }
+    }
+
+    private func applyRuntime(_ st: YupiRuntimeStatus) {
+        runtime = st
+        // 主按钮语义（D）
+        if st.healthOk == true {
+            primaryActionTitle = "重启 yupi"
+            nextStep = st.hasOpenrouterKey == true
+                ? "服务正常。可改监控词后点「立即灌入」。"
+                : "服务在跑但 OpenRouter 未配 — 热议 AI 会降级；填 Key 并保存，或配置 Seesaw 主 LLM 为 OpenRouter。"
+        } else if st.installed == true {
+            primaryActionTitle = "启动 yupi"
+            nextStep = "已安装未运行 — 点「启动 yupi」。若反复失败，检查端口 18765 是否被占用。"
+        } else {
+            primaryActionTitle = "安装并启动"
+            nextStep = st.nodeOk == true
+                ? "点「安装并启动」（首次需联网 npm，约 2–5 分钟）。"
+                : "先安装 Node.js ≥ 18（brew install node），重启 App 后再点「安装并启动」。"
+        }
+    }
+
+    // MARK: - 操作
 
     private func saveYupiCreds() {
         KeychainStore.write("OPENROUTER_API_KEY", openrouterKey)
         KeychainStore.write("KSS_YUPI_MODEL", yupiModel)
         BridgeClient.restartSidecarForEnvChange()
-        status = "yupi 凭据已保存"
-        Task { await store.runSelfCheck() }
+        actionIsError = false
+        actionBanner = "凭据已保存到 Keychain，并已重启 bridge 以注入环境。"
+        Task {
+            await store.runSelfCheck()
+            await refreshRuntime()
+        }
     }
 
     private func refreshRuntime() async {
         guard let bridge = store.bridge else {
-            runtimeLine = "bridge 未就绪"
+            runtime = nil
+            nextStep = "bridge 未就绪，无法读 yupi 状态。"
             return
         }
         do {
             let st = try await Task.detached { try bridge.yupiStatus() }.value
-            let health = st.healthOk == true ? "健康" : "未就绪"
-            let keyBit: String
-            if st.hasOpenrouterKey == true {
-                keyBit = "OpenRouter=已配(\(st.openrouterKeySource ?? "?"))"
-            } else {
-                keyBit = "OpenRouter=未配"
-            }
-            runtimeLine = "yupi \(health) · \(st.baseUrl ?? "?") · model=\(st.model ?? "?") · \(keyBit) · node=\(st.node ?? "?")"
+            applyRuntime(st)
         } catch {
-            runtimeLine = "状态读取失败: \(error.localizedDescription)"
+            runtime = nil
+            nextStep = "状态读取失败：\(error.localizedDescription)"
         }
     }
 
     private func ensureYupi() async {
         ensuring = true
+        actionIsError = false
+        actionBanner = ""
         defer { ensuring = false }
         guard let bridge = store.bridge else {
-            status = "bridge 未就绪"
+            actionIsError = true
+            actionBanner = "bridge 未就绪，无法安装/启动。"
             return
         }
-        status = "正在安装/启动 yupi（首次需几分钟）…"
+        let title = primaryActionTitle
+        actionBanner = "正在\(title)… 首次安装需联网下载依赖，请稍候。"
         do {
             let r = try await Task.detached { try bridge.yupiEnsure(force: false) }.value
-            status = r.ok == true
-                ? "yupi 已就绪 \(r.baseUrl ?? "")"
-                : "yupi 失败: \(r.error ?? "unknown")"
+            if r.ok == true {
+                actionIsError = false
+                actionBanner = "成功：\(title) 完成。\(r.baseUrl.map { " 地址 \($0)" } ?? "")"
+            } else {
+                actionIsError = true
+                let detail = r.error
+                    ?? r.install?.error
+                    ?? "unknown"
+                actionBanner = "失败：\(detail)"
+            }
             await refreshRuntime()
             await store.runSelfCheck()
         } catch {
-            status = "yupi ensure 失败: \(error.localizedDescription)"
+            actionIsError = true
+            actionBanner = "失败：\(error.localizedDescription)"
+            await refreshRuntime()
         }
     }
 
-    private func load() async {
+    private func loadKeywords() async {
         loading = true
         defer { loading = false }
         guard let bridge = store.bridge else {
-            status = "bridge 未就绪"
+            keywordNote = "bridge 未就绪"
             return
         }
         do {
@@ -578,17 +757,17 @@ struct SettingsIntelKeywordsSection: View {
             tracks = t
             trackOrder = t.keys.sorted()
             draft = t.mapValues { $0.joined(separator: ", ") }
-            status = "已加载 \(trackOrder.count) 赛道"
+            keywordNote = "已加载 \(trackOrder.count) 赛道词表"
         } catch {
-            status = "加载失败: \(error.localizedDescription)"
+            keywordNote = "词表加载失败: \(error.localizedDescription)"
         }
     }
 
-    private func save() async {
+    private func saveKeywords() async {
         saving = true
         defer { saving = false }
         guard let bridge = store.bridge else {
-            status = "bridge 未就绪"
+            keywordNote = "bridge 未就绪"
             return
         }
         var out: [String: [String]] = [:]
@@ -603,23 +782,24 @@ struct SettingsIntelKeywordsSection: View {
             let resp = try await Task.detached { try bridge.intelKeywordsSet(tracks: out) }.value
             tracks = resp.tracks ?? out
             draft = tracks.mapValues { $0.joined(separator: ", ") }
-            status = "已保存"
+            keywordNote = "词表已保存"
         } catch {
-            status = "保存失败: \(error.localizedDescription)"
+            keywordNote = "词表保存失败: \(error.localizedDescription)"
         }
     }
 
     private func ingest() async {
-        status = "灌入中…"
+        keywordNote = "灌入中…"
         guard let bridge = store.bridge else {
-            status = "bridge 未就绪"
+            keywordNote = "bridge 未就绪"
             return
         }
         do {
             _ = try await Task.detached { try bridge.intelYupiIngest(force: false) }.value
-            status = "灌入完成（yupi 不可用时仅保留 RSS）"
+            keywordNote = "灌入完成（yupi 不可用时仅保留 RSS）"
+            await refreshRuntime()
         } catch {
-            status = "灌入失败: \(error.localizedDescription)"
+            keywordNote = "灌入失败: \(error.localizedDescription)"
         }
     }
 }

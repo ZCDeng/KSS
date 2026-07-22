@@ -164,7 +164,20 @@ def resolve_model() -> str:
 
 
 def _which(cmd: str) -> str | None:
-    return shutil.which(cmd)
+    # 先 PATH，再常见前缀（与 node_ok 一致，避免 GUI PATH 过窄）
+    found = shutil.which(cmd)
+    if found:
+        return found
+    home = Path.home()
+    for d in (
+        Path("/opt/homebrew/bin"),
+        Path("/usr/local/bin"),
+        home / ".local" / "bin",
+    ):
+        p = d / cmd
+        if p.is_file() and os.access(p, os.X_OK):
+            return str(p)
+    return None
 
 
 def _run(
@@ -185,23 +198,56 @@ def _run(
     )
 
 
-def node_ok() -> tuple[bool, str]:
+def _resolve_node_binaries() -> tuple[str | None, str | None]:
+    """PATH + 常见安装前缀（GUI App 子进程 PATH 往往只有 /usr/bin）。"""
     node = _which("node")
     npm = _which("npm")
+    home = Path.home()
+    candidates = [
+        Path("/opt/homebrew/bin"),
+        Path("/usr/local/bin"),
+        home / ".local" / "bin",
+        home / ".nvm" / "current" / "bin",
+    ]
+    # nvm 默认 versions 目录取最新 v*
+    nvm_versions = home / ".nvm" / "versions" / "node"
+    if nvm_versions.is_dir():
+        try:
+            vers = sorted(nvm_versions.iterdir(), reverse=True)
+            for v in vers[:3]:
+                candidates.append(v / "bin")
+        except OSError:
+            pass
+    for d in candidates:
+        if node is None:
+            p = d / "node"
+            if p.is_file() and os.access(p, os.X_OK):
+                node = str(p)
+        if npm is None:
+            p = d / "npm"
+            if p.is_file() and os.access(p, os.X_OK):
+                npm = str(p)
+        if node and npm:
+            break
+    return node, npm
+
+
+def node_ok() -> tuple[bool, str]:
+    node, npm = _resolve_node_binaries()
     if not node or not npm:
-        return False, "未找到 node/npm（需 Node.js ≥ 18，建议 brew install node）"
+        return False, "未找到 node/npm（需 Node.js ≥ 18；brew install node 后重启 App）"
     try:
         proc = _run([node, "-v"], timeout=10)
         ver = (proc.stdout or "").strip()
     except Exception as e:
         return False, f"node 不可用: {e}"
-    # parse v18+
     try:
         major = int(ver.lstrip("v").split(".")[0])
     except ValueError:
         major = 0
     if major < 18:
         return False, f"Node {ver} 过旧，需要 ≥ 18"
+    # 供后续 install/start 使用（ensure 子进程仍走 which；此处把目录塞进 PATH 提示）
     return True, f"{ver} @ {node}"
 
 

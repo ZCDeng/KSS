@@ -14,6 +14,28 @@ def test_default_port_and_base_url(monkeypatch):
     assert yr.base_url() == "http://127.0.0.1:18765"
 
 
+def test_node_ok_finds_homebrew_path(monkeypatch, tmp_path):
+    """GUI PATH 无 node 时，仍能从固定前缀解析。"""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    node = bin_dir / "node"
+    npm = bin_dir / "npm"
+    node.write_text("#!/bin/sh\necho v20.0.0\n")
+    npm.write_text("#!/bin/sh\necho npm\n")
+    node.chmod(0o755)
+    npm.chmod(0o755)
+
+    monkeypatch.setattr(yr.shutil, "which", lambda cmd: None)
+    monkeypatch.setattr(
+        yr,
+        "_resolve_node_binaries",
+        lambda: (str(node), str(npm)),
+    )
+    ok, detail = yr.node_ok()
+    assert ok is True
+    assert "v20" in detail
+
+
 def test_explicit_yupi_base_url(monkeypatch):
     monkeypatch.setenv("YUPI_BASE_URL", "http://127.0.0.1:9999/")
     assert yr.base_url() == "http://127.0.0.1:9999"
