@@ -411,22 +411,25 @@ struct SidebarAccountRow: View {
 
     var body: some View {
         if collapsed {
+            // Menu + borderlessButton 在 macOS 上常忽略 label 内 frame，
+            // 导致 kmark 按固有尺寸撑破 64pt 栏——先定框再裁圆，并锁住 Menu 控件本身。
             Menu {
                 accountMenuItems
             } label: {
-                avatar
-                    .frame(width: 36, height: 36)
+                avatar(size: 36)
                     .background(isHovering ? hoverTint : Color.clear, in: Circle())
             }
             .menuStyle(.borderlessButton)
+            .buttonStyle(.plain)
+            .frame(width: 36, height: 36)
             .frame(maxWidth: .infinity)
+            .fixedSize(horizontal: false, vertical: true)
             .help("账户与更多")
             .onHover { isHovering = $0 }
         } else {
             HStack(spacing: 0) {
                 HStack(spacing: 0) {
-                    avatar
-                        .frame(width: 40, height: 40)
+                    avatar(size: 40)
                     VStack(alignment: .leading, spacing: 1) {
                         Text("KSS")
                             .font(KSSFont.themed(15, .bold, chirpWeight: .bold, theme: theme))
@@ -471,16 +474,21 @@ struct SidebarAccountRow: View {
         }
     }
 
-    @ViewBuilder private var avatar: some View {
+    /// 先 `frame` 再 `clipShape(Circle())`，避免未定框裁圆 + Menu label 撑破布局。
+    @ViewBuilder private func avatar(size: CGFloat) -> some View {
         if let img = bundledImage("kmark") ?? bundledImage("logo") {
             Image(nsImage: img)
                 .resizable()
-                .scaledToFit()
+                .scaledToFill()
+                .frame(width: size, height: size)
                 .clipShape(Circle())
+                .contentShape(Circle())
+                .clipped()
         } else {
             Image(systemName: "person.crop.circle.fill")
                 .resizable()
                 .scaledToFit()
+                .frame(width: size, height: size)
                 .foregroundStyle(theme.textPrimary)
         }
     }
