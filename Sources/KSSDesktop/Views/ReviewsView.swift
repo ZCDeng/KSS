@@ -34,6 +34,9 @@ struct ReviewsView: View {
     @State private var selectedHotspotRotationDate: String?
     @State private var ascending = false
     @State private var range: DateRange = .all
+    @State private var hoveredListID: String?
+
+    private var isXcom: Bool { XcomListChrome.isXcom(theme.system) }
 
     private var visibleReviews: [DailyReview] {
         var items = reviews
@@ -54,18 +57,14 @@ struct ReviewsView: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
-                KSSSegmentedControl(options: ReviewMode.allCases.map { ($0, $0.rawValue) }, selection: $mode, stretch: true)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 10)
-                    .padding(.bottom, 6)
-
+                modeTabBar
                 switch mode {
                 case .stock: stockList
                 case .sector: sectorList
                 case .hotspotRotation: hotspotRotationList
                 }
             }
-            .frame(width: 300)
+            .frame(width: XcomListChrome.listColumnWidth(theme.system))
 
             Divider().overlay(theme.hairline)
 
@@ -95,6 +94,34 @@ struct ReviewsView: View {
         .onChange(of: selectedHotspotRotationDate) { _, date in
             if let date { onSelectSectorRotationDate(date) }
         }
+    }
+
+    @ViewBuilder
+    private var modeTabBar: some View {
+        if isXcom {
+            XcomUnderlineTabBar(
+                options: ReviewMode.allCases.map { ($0, $0.rawValue) },
+                selection: $mode,
+                stretch: true
+            )
+        } else {
+            KSSSegmentedControl(
+                options: ReviewMode.allCases.map { ($0, $0.rawValue) },
+                selection: $mode,
+                stretch: true
+            )
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 6)
+        }
+    }
+
+    private func listRowFill(isOn: Bool, id: String) -> Color {
+        XcomListChrome.listSelectionFill(
+            isOn: isOn,
+            isHovered: isXcom && hoveredListID == id,
+            theme: theme
+        )
     }
 
     // MARK: 左栏
@@ -137,7 +164,12 @@ struct ReviewsView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .listRowBackground(isOn ? theme.accent.opacity(0.16) : Color.clear)
+                .listRowBackground(listRowFill(isOn: isOn, id: review.id))
+                .listRowSeparator(isXcom ? .visible : .automatic)
+                .onHover { hovering in
+                    guard isXcom else { return }
+                    hoveredListID = hovering ? review.id : (hoveredListID == review.id ? nil : hoveredListID)
+                }
             }
             .scrollContentBackground(.hidden)
             .background(theme.canvas)
@@ -153,7 +185,12 @@ struct ReviewsView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .listRowBackground(isOn ? theme.accent.opacity(0.16) : Color.clear)
+            .listRowBackground(listRowFill(isOn: isOn, id: pulse.id))
+            .listRowSeparator(isXcom ? .visible : .automatic)
+            .onHover { hovering in
+                guard isXcom else { return }
+                hoveredListID = hovering ? pulse.id : (hoveredListID == pulse.id ? nil : hoveredListID)
+            }
         }
         .scrollContentBackground(.hidden)
         .background(theme.canvas)
@@ -168,7 +205,12 @@ struct ReviewsView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .listRowBackground(isOn ? theme.accent.opacity(0.16) : Color.clear)
+            .listRowBackground(listRowFill(isOn: isOn, id: item.id))
+            .listRowSeparator(isXcom ? .visible : .automatic)
+            .onHover { hovering in
+                guard isXcom else { return }
+                hoveredListID = hovering ? item.id : (hoveredListID == item.id ? nil : hoveredListID)
+            }
         }
         .scrollContentBackground(.hidden)
         .background(theme.canvas)
@@ -204,16 +246,34 @@ struct ReviewsView: View {
     private func stockDetail(_ review: DailyReview) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
-                PageTitle(review.title)
-                Spacer()
-                Button { onOpenExternally(review.path) } label: {
-                    Image(systemName: "doc.text")
+                if isXcom {
+                    Text(review.title)
+                        .font(KSSFont.themed(XcomListChrome.detailTitlePointSize(theme.system), .bold, theme: theme))
+                        .foregroundStyle(theme.textPrimary)
+                        .textSelection(.enabled)
+                } else {
+                    PageTitle(review.title)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .tint(theme.accent)
-                .help("用 MarkEdit 打开当前报告")
-                .padding(.trailing, 6)
+                Spacer()
+                if isXcom {
+                    Button { onOpenExternally(review.path) } label: {
+                        Image(systemName: "arrow.up.right.square")
+                            .font(KSSFont.themed(14, .semibold, theme: theme))
+                            .foregroundStyle(theme.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .help("用 MarkEdit 打开当前报告")
+                    .padding(.trailing, 6)
+                } else {
+                    Button { onOpenExternally(review.path) } label: {
+                        Image(systemName: "doc.text")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(theme.accent)
+                    .help("用 MarkEdit 打开当前报告")
+                    .padding(.trailing, 6)
+                }
                 StatusBadge(icon: "calendar", text: review.date, tint: theme.accent)
             }
             if !review.focusSymbols.isEmpty {
@@ -304,7 +364,13 @@ struct SectorReviewPanel: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .firstTextBaseline) {
-                    PageTitle("板块复盘")
+                    if XcomListChrome.isXcom(theme.system) {
+                        Text("板块复盘")
+                            .font(KSSFont.themed(XcomListChrome.detailTitlePointSize(theme.system), .bold, theme: theme))
+                            .foregroundStyle(theme.textPrimary)
+                    } else {
+                        PageTitle("板块复盘")
+                    }
                     Spacer()
                     StatusBadge(icon: "calendar", text: dateLabel, tint: theme.accent)
                 }
@@ -614,7 +680,13 @@ struct HotspotRotationPanel: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .firstTextBaseline) {
-                    PageTitle("妖板情绪")
+                    if XcomListChrome.isXcom(theme.system) {
+                        Text("妖板情绪")
+                            .font(KSSFont.themed(XcomListChrome.detailTitlePointSize(theme.system), .bold, theme: theme))
+                            .foregroundStyle(theme.textPrimary)
+                    } else {
+                        PageTitle("妖板情绪")
+                    }
                     Spacer()
                     StatusBadge(icon: "calendar", text: dateLabel, tint: theme.accent)
                 }
@@ -644,11 +716,19 @@ struct HotspotRotationPanel: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    KSSSegmentedControl(
-                        options: BoardKind.allCases.map { ($0, "\($0.rawValue) \(boards(for: $0).count)") },
-                        selection: $boardKind,
-                        stretch: true
-                    )
+                    if XcomListChrome.isXcom(theme.system) {
+                        XcomUnderlineTabBar(
+                            options: BoardKind.allCases.map { ($0, "\($0.rawValue) \(boards(for: $0).count)") },
+                            selection: $boardKind,
+                            stretch: true
+                        )
+                    } else {
+                        KSSSegmentedControl(
+                            options: BoardKind.allCases.map { ($0, "\($0.rawValue) \(boards(for: $0).count)") },
+                            selection: $boardKind,
+                            stretch: true
+                        )
+                    }
 
                     HotspotBoardTable(boards: boards(for: boardKind))
                 }
