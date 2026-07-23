@@ -10,6 +10,8 @@ struct SidebarView: View {
     var onToggleCollapse: () -> Void
     /// 把 dragged 拖到 target 之前，由 ContentView 持久化。
     var onReorder: (_ dragged: WorkspaceSection, _ target: WorkspaceSection) -> Void
+    /// 导航角标映射（自检 / 推荐等）；无信号时为空。
+    var badges: [WorkspaceSection: SidebarNavBadge] = [:]
 
     @State private var dragging: WorkspaceSection?
     /// xcom 模式 hover 反馈：展开态与折叠态共用同一份状态。
@@ -22,30 +24,31 @@ struct SidebarView: View {
                 .padding(.top, 12)
                 .padding(.bottom, 8)
 
-            if collapsed {
-                collapsedNav
-            } else {
-                expandedNav
+            Group {
+                if collapsed {
+                    collapsedNav
+                } else {
+                    expandedNav
+                }
             }
-            seesawCTA
-                .padding(.horizontal, collapsed ? 8 : 8)
-                .padding(.top, 8)
-                // 展开态 navRow 的 hover 胶囊高度 ≈ 14×2(vertical padding)+22(内容行高) ≈ 50pt；
-                // Seesaw 不能贴着页脚——用固定下边距兜底，比 Spacer(minLength:) 更可靠：导航区
-                // ScrollView 本身是贪婪撑满剩余空间的 flexible view，跟 Spacer 抢空间时经常把
-                // Spacer 挤到 0，固定 padding 不受这个抢占影响。
-                .padding(.bottom, 52)
-            Spacer(minLength: 0)
+            .frame(maxHeight: .infinity)
 
-            SidebarFooter(collapsed: collapsed, isArchitectureSelected: selection == .architecture) {
-                selection = .architecture
-            }
-            .padding(.horizontal, collapsed ? 8 : 12)
+            seesawCTA
+                .padding(.horizontal, collapsed ? 8 : 12)
+                .padding(.top, 14)
+                .padding(.bottom, 12)
+
+            SidebarAccountRow(
+                collapsed: collapsed,
+                isArchitectureSelected: selection == .architecture,
+                onSelectArchitecture: { selection = .architecture },
+                onToggleCollapse: onToggleCollapse
+            )
+            .padding(.horizontal, collapsed ? 8 : 8)
             .padding(.bottom, 10)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.canvas)   // 实色暖纸底，覆盖窗口 vibrancy
-        // 展开/折叠切换时视图树整体替换，SwiftUI 不保证旧视图的 onHover(false) 会触发，显式清空避免残留高亮。
+        .background(theme.canvas)
         .onChange(of: collapsed) { _, _ in hoveredSection = nil }
     }
 
@@ -57,14 +60,11 @@ struct SidebarView: View {
         sections.filter { !WorkspaceSection.pinned.contains($0) }
     }
 
-    /// xcom 模式下 hover 中性灰胶囊/圆形反馈色：取自 `theme.textPrimary`（对应 ThemeCatalog 的 `ink`），
-    /// 不进 ThemeCatalog 单独开字段，dark/light 按 R2 的目标透明度取值。
+    /// xcom hover：ink 叠加；light 略提到 0.08 贴近手感。
     private var hoverTint: Color {
-        theme.textPrimary.opacity(theme.appearance == .dark ? 0.10 : 0.06)
+        theme.textPrimary.opacity(theme.appearance == .dark ? 0.10 : 0.08)
     }
 
-    /// 展开态：图标 + 文字，选中态铺 clay、图标统一 clay。
-    /// 总览（pinned）固定悉顶（ScrollView 外）；其余可拖拽重排（ScrollView 内）。
     private var expandedNav: some View {
         VStack(spacing: 0) {
             if let pinned = pinnedSection {
@@ -73,7 +73,7 @@ struct SidebarView: View {
                     .padding(.top, 4)
             }
             ScrollView {
-                VStack(spacing: 3) {
+                VStack(spacing: 5) {
                     ForEach(reorderableSections) { section in
                         navRow(section)
                             .opacity(dragging == section ? 0.4 : 1)
@@ -93,47 +93,52 @@ struct SidebarView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.top, 3)
+                .padding(.bottom, 4)
             }
         }
     }
 
-    /// 选中态渲染分两支：经典模式沿用背景色块（hover 胶囊铺满整行，与选中色块共用同一层背景）；
-    /// xcom 模式不铺选中背景，改用图标填充+加粗 label 表达选中(x.com「选中项图标填充变化」规范)，
-    /// hover 胶囊改为只包住图标+文字本身（x.com 实际观感是内容自适应宽度，不是整行通栏）——
-    /// 因此 hover 胶囊单独拆一层背景，Spacer 挪到胶囊外面，整行仍靠外层 contentShape 保持可点击。
-    /// 字重差异：Chirp 字重分桶只有 Regular/Medium/Bold/Heavy 四档(见 Theme.swift weightSuffix)，
-    /// 之前 semibold/medium 只隔一档、肉眼难辨，改用 regular/heavy 拉满四档差距。
-    /// 图标差异：`.symbolVariant(.fill)` 对没有 filled 变体的符号(如 dashboard 的
-    /// gauge.with.dots.needle.50percent)是静默 no-op，选中态会看起来和未选中一样——额外叠一层
-    /// `.fontWeight` 兜底，SF Symbol 的粗细渲染走独立轴，不依赖 filled 变体是否存在。
     private func navRow(_ section: WorkspaceSection) -> some View {
         let isOn = selection == section
         let isXcom = theme.system == .xcom
         let isHovered = isXcom && hoveredSection == section && dragging != section
+        let badge = badges[section]
 
         let icon = Image(systemName: section.symbol)
             .symbolVariant(isXcom && isOn ? .fill : .none)
-            .font(KSSFont.themed(isXcom ? 16 : 15, .semibold, chirpWeight: isOn ? .heavy : .regular, theme: theme))
+            .font(KSSFont.themed(isXcom ? 20 : 15, .semibold, chirpWeight: isOn ? .heavy : .regular, theme: theme))
             .fontWeight(isXcom ? (isOn ? .heavy : .regular) : nil)
-            .frame(width: isXcom ? 24 : 22)
+            .frame(width: isXcom ? 26 : 22)
             .foregroundStyle(isXcom
-                ? (isOn ? theme.accent : theme.textSecondary)
+                ? theme.textPrimary
                 : (isOn ? theme.onAccent : theme.accent))
+            .overlay(alignment: .topTrailing) {
+                if let badge {
+                    SidebarBadgeView(badge: badge, theme: theme)
+                        .offset(x: 6, y: -6)
+                }
+            }
+
         let label = Text(section.displayName)
-            .font(KSSFont.themed(isXcom ? 16 : 15, isXcom && isOn ? .bold : .semibold, chirpWeight: isOn ? .heavy : .regular, theme: theme))
+            .font(KSSFont.themed(
+                isXcom ? 18 : 15,
+                isXcom ? (isOn ? .bold : .regular) : (isOn ? .semibold : .semibold),
+                chirpWeight: isOn ? .heavy : .regular,
+                theme: theme
+            ))
             .foregroundStyle(isXcom
-                ? (isOn ? theme.textPrimary : theme.textBody)
+                ? theme.textPrimary
                 : (isOn ? theme.onAccent : theme.textBody))
 
         return Button { selection = section } label: {
             if isXcom {
                 HStack(spacing: 0) {
-                    HStack(spacing: 18) {
+                    HStack(spacing: 20) {
                         icon
                         label
                     }
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 14)
+                    .padding(.vertical, 12)
                     .background(isHovered ? hoverTint : Color.clear, in: RoundedRectangle(cornerRadius: theme.chipRadius))
                     Spacer(minLength: 0)
                 }
@@ -156,8 +161,6 @@ struct SidebarView: View {
         }
     }
 
-    /// 折叠态：仅图标导航，跟随同一顺序（无拖拽——折叠态本来就不支持拖拽重排）。
-    /// 总览（pinned）固定悉顶（ScrollView 外）；其余项在 ScrollView 内。选中态视觉分支同 `navRow`。
     private var collapsedNav: some View {
         VStack(spacing: 0) {
             if let pinned = pinnedSection {
@@ -179,15 +182,23 @@ struct SidebarView: View {
         let isOn = selection == section
         let isXcom = theme.system == .xcom
         let isHovered = isXcom && hoveredSection == section
+        let badge = badges[section]
+        let hit: CGFloat = isXcom ? 50 : 38
         return Button { selection = section } label: {
             Image(systemName: section.symbol)
                 .symbolVariant(isXcom && isOn ? .fill : .none)
-                .font(KSSFont.themed(isXcom ? 18 : 17, .semibold, chirpWeight: isOn ? .heavy : .regular, theme: theme))
+                .font(KSSFont.themed(isXcom ? 20 : 17, .semibold, chirpWeight: isOn ? .heavy : .regular, theme: theme))
                 .fontWeight(isXcom ? (isOn ? .heavy : .regular) : nil)
-                .frame(width: 46, height: isXcom ? 44 : 38)
+                .frame(width: isXcom ? 50 : 46, height: hit)
                 .foregroundStyle(isXcom
-                    ? (isOn ? theme.accent : theme.textSecondary)
+                    ? theme.textPrimary
                     : (isOn ? theme.onAccent : theme.accent))
+                .overlay(alignment: .topTrailing) {
+                    if let badge {
+                        SidebarBadgeView(badge: badge, theme: theme, compact: true)
+                            .offset(x: -4, y: 4)
+                    }
+                }
                 .background(
                     isHovered ? hoverTint : ((!isXcom && isOn) ? theme.accent : Color.clear),
                     in: isXcom ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: KSSTheme.shapeS))
@@ -200,36 +211,33 @@ struct SidebarView: View {
         }
     }
 
-    /// Seesaw 是全应用唯一的 AI 入口，比照 x.com 侧边栏的「Post」按钮做成常驻强调色大按钮，
-    /// 不再是工具栏里跟其他图标同款的小按钮——展开态图标+文字居中，折叠态收成圆形图标按钮。
-    /// 点击行为跟其余导航项一致：直接切主内容区，不弹窗、不开新窗口。
-    /// 文字/图标固定用字面白色（仅 xcom）复刻 x.com「Post」按钮的观感；其余 8 套经典主题的
-    /// accent 不少是浅色（如 #E48A6E、#D0BCFF、#F0B90B），`onAccent` 在那些主题里特意配了深色
-    /// 前景保证对比度——固定白色会在这些主题下拉低可读性，所以经典主题继续吃 `theme.onAccent`。
+    /// Seesaw：xcom 展开对标 Paper Post（ink 底 + 对比前景、≥52 高、约 90% 宽、纯文字）；
+    /// dark 用浅 ink 底 + 近黑字；经典仍 accent/onAccent。
     private var seesawCTA: some View {
         let isXcom = theme.system == .xcom
+        let isDark = theme.appearance == .dark
+        // light：ink 黑底 + 白字；dark：浅 ink 底 + 近黑字；经典：accent/onAccent
+        let fillColor: Color = isXcom ? theme.textPrimary : theme.accent
+        let postForeground: Color = {
+            if !isXcom { return theme.onAccent }
+            return isDark ? Color.black.opacity(0.92) : Color.white
+        }()
+
         return Button { selection = .aiChat } label: {
             if collapsed {
                 Image(systemName: WorkspaceSection.aiChat.symbol)
                     .font(KSSFont.themed(19, .semibold, chirpWeight: .semibold, theme: theme))
-                    .foregroundStyle(isXcom ? .white : theme.onAccent)
+                    .foregroundStyle(postForeground)
                     .frame(width: 50, height: 50)
-                    .background(theme.accent, in: Circle())
+                    .background(fillColor, in: Circle())
             } else {
-                // Capsule() 的圆角半径 = min(width, height)/2，是从高度算出来的——之前
-                // 15pt 字号 + 11pt 竖向 padding 撑出来的高度太矮，胶囊弧度看着比 x.com
-                // 的「Post」按钮扁很多。加高 + 加大字号，弧度跟着高度自动变圆，不用
-                // 单独覆盖 cornerRadius。
-                HStack(spacing: 8) {
-                    Image(systemName: WorkspaceSection.aiChat.symbol)
-                        .font(KSSFont.themed(17, .semibold, chirpWeight: .semibold, theme: theme))
-                    Text(WorkspaceSection.aiChat.displayName)
-                        .font(KSSFont.themed(17, .bold, chirpWeight: .bold, theme: theme))
-                }
-                .foregroundStyle(isXcom ? .white : theme.onAccent)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(theme.accent, in: Capsule())
+                Text(WorkspaceSection.aiChat.displayName)
+                    .font(KSSFont.themed(17, .bold, chirpWeight: .bold, theme: theme))
+                    .foregroundStyle(postForeground)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 52)
+                    .background(fillColor, in: Capsule())
+                    .padding(.horizontal, isXcom ? 8 : 0)
             }
         }
         .buttonStyle(.plain)
@@ -237,7 +245,34 @@ struct SidebarView: View {
     }
 }
 
-/// 拖拽重排落点：drop 到某行 = 把被拖项移到该行之前。
+// MARK: - Badge chrome
+
+private struct SidebarBadgeView: View {
+    let badge: SidebarNavBadge
+    let theme: KSSThemeTokens
+    var compact: Bool = false
+
+    var body: some View {
+        switch badge {
+        case .dot:
+            Circle()
+                .fill(theme.accent)
+                .frame(width: compact ? 7 : 8, height: compact ? 7 : 8)
+        case .count(let n):
+            let text = n > 99 ? "99+" : "\(max(0, n))"
+            Text(text)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 5)
+                .frame(minWidth: 18, minHeight: 18)
+                .background(theme.accent, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.white, lineWidth: 1))
+        }
+    }
+}
+
+// MARK: - Drag reorder
+
 private struct SectionDropDelegate: DropDelegate {
     let target: WorkspaceSection
     @Binding var dragging: WorkspaceSection?
@@ -258,19 +293,31 @@ private struct SectionDropDelegate: DropDelegate {
     }
 }
 
-/// 边栏顶部：KSSDeck 锁定式标志 + 折叠/展开按钮。折叠态只留 K 标。
+// MARK: - Header
+
+/// 边栏顶部：xcom 展开只留 kmark（热区约 50）；经典保留 wordmark + 折叠钮。
 struct AppHeader: View {
     @Environment(\.kssTheme) private var theme
     var collapsed: Bool
     var onToggleCollapse: () -> Void
 
     var body: some View {
+        let isXcom = theme.system == .xcom
         if collapsed {
             VStack(spacing: 10) {
-                toggleButton
-                kmark.frame(width: 30, height: 30)
+                if !isXcom {
+                    toggleButton
+                }
+                kmarkButton
             }
             .frame(maxWidth: .infinity)
+        } else if isXcom {
+            HStack {
+                kmarkButton
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 6)
         } else {
             HStack(alignment: .center, spacing: 6) {
                 kmark.frame(height: 26)
@@ -285,6 +332,14 @@ struct AppHeader: View {
 
     private var toggleButton: some View {
         ToggleButton(theme: theme, action: onToggleCollapse, collapsed: collapsed)
+    }
+
+    private var kmarkButton: some View {
+        let isXcom = theme.system == .xcom
+        return kmark
+            .frame(width: isXcom ? 30 : 26, height: isXcom ? 30 : 26)
+            .frame(width: isXcom ? 50 : 30, height: isXcom ? 50 : 30)
+            .contentShape(Circle())
     }
 
     @ViewBuilder private var wordmark: some View {
@@ -315,7 +370,6 @@ struct AppHeader: View {
     }
 }
 
-/// 页头折叠/展开按钮：xcom 模式下补圆形 hover 反馈,与 U4 折叠态图标的圆形 hover 惯例一致。
 private struct ToggleButton: View {
     let theme: KSSThemeTokens
     let action: () -> Void
@@ -330,7 +384,7 @@ private struct ToggleButton: View {
                 .foregroundStyle(theme.textSecondary)
                 .frame(width: 26, height: 26)
                 .background(
-                    isXcom && isHovering ? theme.textPrimary.opacity(theme.appearance == .dark ? 0.10 : 0.06) : Color.clear,
+                    isXcom && isHovering ? theme.textPrimary.opacity(theme.appearance == .dark ? 0.10 : 0.08) : Color.clear,
                     in: Circle()
                 )
         }
@@ -340,93 +394,94 @@ private struct ToggleButton: View {
     }
 }
 
-/// 边栏底部：架构入口（图标，plan 2026-07-12-005 U2）与 GitHub 跳转并排。
-/// 展开态左右并排；折叠态纵排（两者都仅图标，都保持可达）。xcom 模式下补胶囊/圆形 hover 反馈。
-struct SidebarFooter: View {
+// MARK: - Account footer
+
+/// 账户级底栏：kmark + 标题 + ⋯ 菜单（架构 / GitHub / 折叠）。
+struct SidebarAccountRow: View {
     @Environment(\.kssTheme) private var theme
     var collapsed: Bool
     var isArchitectureSelected: Bool
     var onSelectArchitecture: () -> Void
+    var onToggleCollapse: () -> Void
+    @State private var isHovering = false
+
+    private var hoverTint: Color {
+        theme.textPrimary.opacity(theme.appearance == .dark ? 0.10 : 0.08)
+    }
 
     var body: some View {
         if collapsed {
-            VStack(spacing: 6) {
-                ArchitectureFooterButton(isSelected: isArchitectureSelected, action: onSelectArchitecture)
-                GitHubFooterLink()
+            Menu {
+                accountMenuItems
+            } label: {
+                avatar
+                    .frame(width: 36, height: 36)
+                    .background(isHovering ? hoverTint : Color.clear, in: Circle())
             }
+            .menuStyle(.borderlessButton)
+            .frame(maxWidth: .infinity)
+            .help("账户与更多")
+            .onHover { isHovering = $0 }
         } else {
-            HStack(spacing: 6) {
-                ArchitectureFooterButton(isSelected: isArchitectureSelected, action: onSelectArchitecture)
-                GitHubFooterLink()
+            HStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    avatar
+                        .frame(width: 40, height: 40)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("KSS")
+                            .font(KSSFont.themed(15, .bold, chirpWeight: .bold, theme: theme))
+                            .foregroundStyle(theme.textPrimary)
+                            .lineLimit(1)
+                        Text("本地工作台")
+                            .font(KSSFont.themed(13, .regular, chirpWeight: .regular, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                            .lineLimit(1)
+                    }
+                    .padding(.leading, 12)
+                    Spacer(minLength: 4)
+                    Menu {
+                        accountMenuItems
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(KSSFont.themed(15, .semibold, chirpWeight: .medium, theme: theme))
+                            .foregroundStyle(theme.textPrimary)
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
+                    }
+                    .menuStyle(.borderlessButton)
+                }
+                .padding(12)
+                .background(isHovering ? hoverTint : Color.clear, in: RoundedRectangle(cornerRadius: theme.chipRadius))
+                Spacer(minLength: 0)
             }
-        }
-    }
-}
-
-/// 架构入口图标按钮：仅图标，悬停有 `.help()` 说明；选中态用 accent 着色。
-private struct ArchitectureFooterButton: View {
-    @Environment(\.kssTheme) private var theme
-    var isSelected: Bool
-    var action: () -> Void
-    @State private var isHovering = false
-
-    var body: some View {
-        let isXcom = theme.system == .xcom
-        let hoverTint = theme.textPrimary.opacity(theme.appearance == .dark ? 0.10 : 0.06)
-        Button(action: action) {
-            Image(systemName: WorkspaceSection.architecture.symbol)
-                .font(KSSFont.themed(14, .semibold, chirpWeight: .medium, theme: theme))
-                .foregroundStyle(isSelected ? theme.accent : theme.textSecondary)
-                .frame(width: 28, height: 28)
-                .background(
-                    isXcom && isHovering ? hoverTint : Color.clear,
-                    in: Circle()
-                )
-        }
-        .buttonStyle(.plain)
-        .help(WorkspaceSection.architecture.displayName)
-        .onHover { isHovering = $0 }
-    }
-}
-
-/// GitHub 跳转：仅官方 Octocat 图标，折叠/展开两态尺寸与「架构」图标一致（14pt / 28×28），
-/// 不再附带文字 wordmark——图标语义用 .help() 提示，不占用工具栏/边栏额外宽度（R7）。
-private struct GitHubFooterLink: View {
-    @Environment(\.kssTheme) private var theme
-    @State private var isHovering = false
-
-    var body: some View {
-        if let url = URL(string: "https://github.com/ZCDeng/KSS") {
-            let isXcom = theme.system == .xcom
-            let hoverTint = theme.textPrimary.opacity(theme.appearance == .dark ? 0.10 : 0.06)
-            Link(destination: url) {
-                octocatIcon
-                    .frame(width: 28, height: 28)
-                    .background(
-                        isXcom && isHovering ? hoverTint : Color.clear,
-                        in: Circle()
-                    )
-            }
-            .buttonStyle(.plain)
-            .help("GitHub · ZCDeng/KSS")
             .onHover { isHovering = $0 }
         }
     }
 
-    /// 官方 Octocat 单色资产（template rendering，自动跟随主题着色，KTD6）；
-    /// bundle 里缺资产时退回代码符号，不阻塞渲染。
-    @ViewBuilder private var octocatIcon: some View {
-        if let img = bundledImage("octocat") {
+    @ViewBuilder private var accountMenuItems: some View {
+        Button(WorkspaceSection.architecture.displayName) {
+            onSelectArchitecture()
+        }
+        if let url = URL(string: "https://github.com/ZCDeng/KSS") {
+            Link("GitHub · ZCDeng/KSS", destination: url)
+        }
+        Divider()
+        Button(collapsed ? "展开边栏" : "折叠边栏") {
+            onToggleCollapse()
+        }
+    }
+
+    @ViewBuilder private var avatar: some View {
+        if let img = bundledImage("kmark") ?? bundledImage("logo") {
             Image(nsImage: img)
                 .resizable()
-                .renderingMode(.template)
                 .scaledToFit()
-                .frame(width: 14, height: 14)
-                .foregroundStyle(theme.accent)
+                .clipShape(Circle())
         } else {
-            Image(systemName: "chevron.left.forwardslash.chevron.right")
-                .font(KSSFont.themed(14, .semibold, chirpWeight: .medium, theme: theme))
-                .foregroundStyle(theme.accent)
+            Image(systemName: "person.crop.circle.fill")
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(theme.textPrimary)
         }
     }
 
@@ -435,3 +490,4 @@ private struct GitHubFooterLink: View {
         return NSImage(contentsOf: url)
     }
 }
+

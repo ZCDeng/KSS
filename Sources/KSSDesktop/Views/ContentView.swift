@@ -57,7 +57,10 @@ struct ContentView: View {
                     withAnimation(.easeInOut(duration: 0.18)) {
                         reorderSections(dragged, before: target)
                     }
-                }
+                },
+                badges: SidebarBadgeMapping.badges(
+                    selfCheckFailCount: store.selfCheckItems.filter(\.isFail).count
+                )
             )
             .frame(width: sidebarCollapsed ? 64 : 272)
             .frame(maxHeight: .infinity)
