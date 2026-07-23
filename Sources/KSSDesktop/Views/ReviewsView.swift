@@ -244,18 +244,20 @@ struct ReviewsView: View {
     }
 
     private func stockDetail(_ review: DailyReview) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                if isXcom {
-                    Text(review.title)
-                        .font(KSSFont.themed(XcomListChrome.detailTitlePointSize(theme.system), .bold, theme: theme))
-                        .foregroundStyle(theme.textPrimary)
-                        .textSelection(.enabled)
-                } else {
-                    PageTitle(review.title)
-                }
-                Spacer()
-                if isXcom {
+        VStack(alignment: .leading, spacing: isXcom ? 12 : 10) {
+            if isXcom {
+                // 线程头：标题 + meta 一行（日期 · 个股复盘），外链图标
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(review.title)
+                            .font(KSSFont.themed(XcomListChrome.detailTitlePointSize(theme.system), .bold, theme: theme))
+                            .foregroundStyle(theme.textPrimary)
+                            .textSelection(.enabled)
+                        Text("\(review.date) · 个股复盘")
+                            .font(KSSFont.themed(13, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                    Spacer(minLength: 8)
                     Button { onOpenExternally(review.path) } label: {
                         Image(systemName: "arrow.up.right.square")
                             .font(KSSFont.themed(14, .semibold, theme: theme))
@@ -263,8 +265,24 @@ struct ReviewsView: View {
                     }
                     .buttonStyle(.plain)
                     .help("用 MarkEdit 打开当前报告")
-                    .padding(.trailing, 6)
-                } else {
+                }
+                if !review.focusSymbols.isEmpty {
+                    // 关注标的：任务区同款胶囊，横向 wrap
+                    FlowLayout(spacing: 6) {
+                        ForEach(review.focusSymbols, id: \.self) { sym in
+                            Text(sym)
+                                .font(KSSFont.themed(11.5, .semibold, theme: theme))
+                                .foregroundStyle(theme.textSecondary)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 1.5)
+                                .background(theme.textSecondary.opacity(0.12), in: Capsule())
+                        }
+                    }
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline) {
+                    PageTitle(review.title)
+                    Spacer()
                     Button { onOpenExternally(review.path) } label: {
                         Image(systemName: "doc.text")
                     }
@@ -273,29 +291,38 @@ struct ReviewsView: View {
                     .tint(theme.accent)
                     .help("用 MarkEdit 打开当前报告")
                     .padding(.trailing, 6)
+                    StatusBadge(icon: "calendar", text: review.date, tint: theme.accent)
                 }
-                StatusBadge(icon: "calendar", text: review.date, tint: theme.accent)
+                if !review.focusSymbols.isEmpty {
+                    Text("关注 " + review.focusSymbols.joined(separator: "  "))
+                        .font(.system(size: 12.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(2)
+                }
             }
-            if !review.focusSymbols.isEmpty {
-                Text("关注 " + review.focusSymbols.joined(separator: "  "))
-                    .font(.system(size: 12.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(theme.textSecondary)
-                    .lineLimit(2)
-            }
+
             if isLoadingDetail && selectedPath == review.path {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if detail?.path == review.path, let detail {
-                MarkdownWebView(text: detail.text)
-                    .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
-                    .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
+                markdownBody(detail.text)
             } else {
-                MarkdownWebView(text: review.excerpt)
-                    .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
-                    .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
+                markdownBody(review.excerpt)
             }
         }
-        .padding(16)
+        .padding(isXcom ? 20 : 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+
+    /// xcom：无圆角描边卡，正文直接铺在 canvas 上（thread 阅读感）。
+    @ViewBuilder
+    private func markdownBody(_ text: String) -> some View {
+        if isXcom {
+            MarkdownWebView(text: text)
+        } else {
+            MarkdownWebView(text: text)
+                .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
+                .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
+        }
     }
 
     private func placeholder(_ text: String) -> some View {

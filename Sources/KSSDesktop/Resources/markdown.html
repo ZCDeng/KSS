@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="zh" data-reader="classic">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -37,6 +37,7 @@
   h4 { font-size: 15.5px; margin: 16px 0 6px; color: var(--body); }
   p { margin: 10px 0; }
   a { color: var(--clay); text-decoration: none; }
+  a:hover { text-decoration: underline; }
   strong { color: var(--ink); font-weight: 700; }
   ul, ol { padding-left: 22px; margin: 10px 0; }
   li { margin: 4px 0; }
@@ -61,6 +62,98 @@
   tr:nth-child(even) td { background: var(--zebra); }
   td:not(:first-child) { font-family: var(--mono); }
   #empty { color: var(--muted); padding: 24px 0; }
+
+  /* ========== xcom thread 阅读皮（data-reader=xcom）========== */
+  html[data-reader="xcom"] body {
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.52;
+    padding: 0 16px 24px;
+  }
+  html[data-reader="xcom"] #md { max-width: 600px; margin: 0 auto; }
+  html[data-reader="xcom"] h1,
+  html[data-reader="xcom"] h2,
+  html[data-reader="xcom"] h3,
+  html[data-reader="xcom"] h4 {
+    font-family: var(--sans);
+    font-weight: 700;
+    line-height: 1.3;
+    color: var(--ink);
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+  /* 壳层已有标题时，文内首个 h1 降为线程副标题体量 */
+  html[data-reader="xcom"] h1 { font-size: 20px; margin: 12px 0 10px; }
+  html[data-reader="xcom"] h1.doc-title-dup { font-size: 17px; margin: 4px 0 12px; color: var(--muted); font-weight: 700; }
+  html[data-reader="xcom"] h2 { font-size: 17px; margin: 22px 0 8px; }
+  html[data-reader="xcom"] h3 { font-size: 15px; margin: 16px 0 6px; }
+  html[data-reader="xcom"] h4 { font-size: 15px; margin: 14px 0 6px; color: var(--muted); font-weight: 700; }
+  html[data-reader="xcom"] p { margin: 10px 0; color: var(--ink); }
+  html[data-reader="xcom"] a { color: var(--clay); }
+  html[data-reader="xcom"] strong { color: var(--ink); font-weight: 700; }
+  html[data-reader="xcom"] ul,
+  html[data-reader="xcom"] ol { padding-left: 1.25em; margin: 10px 0; }
+  html[data-reader="xcom"] li { margin: 6px 0; }
+  html[data-reader="xcom"] li::marker { color: var(--muted); }
+  html[data-reader="xcom"] hr {
+    border: none; border-top: 1px solid var(--line);
+    margin: 16px 0;
+  }
+  html[data-reader="xcom"] blockquote {
+    margin: 12px 0;
+    padding: 4px 0 4px 12px;
+    color: var(--muted);
+    border-left: 2px solid var(--line);
+    background: transparent;
+    border-radius: 0;
+  }
+  html[data-reader="xcom"] code {
+    font-size: 13px;
+    color: var(--ink);
+    background: var(--code);
+    border-radius: 6px;
+    padding: 1px 5px;
+  }
+  html[data-reader="xcom"] pre {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px 14px;
+    background: var(--code);
+  }
+  html[data-reader="xcom"] pre code { color: var(--ink); }
+  /* 表格：无竖线，仅行底 hairline */
+  html[data-reader="xcom"] table {
+    font-size: 13px;
+    margin: 12px 0;
+    border-collapse: collapse;
+    width: 100%;
+  }
+  html[data-reader="xcom"] th,
+  html[data-reader="xcom"] td {
+    border: none;
+    border-bottom: 1px solid var(--line);
+    padding: 10px 8px;
+    text-align: left;
+    vertical-align: top;
+  }
+  html[data-reader="xcom"] th {
+    background: transparent;
+    color: var(--muted);
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: 12px;
+  }
+  html[data-reader="xcom"] tr:nth-child(even) td { background: transparent; }
+  html[data-reader="xcom"] td:not(:first-child) {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+  }
+  html[data-reader="xcom"] #empty {
+    color: var(--muted);
+    font-size: 15px;
+    padding: 32px 0;
+  }
 </style>
 </head>
 <body>
@@ -69,6 +162,14 @@
   <script>
   (function () {
     let pending = null;
+    let readerMode = "classic";
+
+    function polishXcomDom(host) {
+      // 壳层已有标题：文内首个 h1 降级为次要标题，避免双标题墙
+      const first = host.querySelector("h1");
+      if (first) first.classList.add("doc-title-dup");
+    }
+
     function render(text) {
       const host = document.getElementById("md");
       if (!text) { host.innerHTML = '<div id="empty">暂无内容</div>'; return; }
@@ -76,11 +177,13 @@
       try {
         marked.setOptions({ gfm: true, breaks: false });
         host.innerHTML = marked.parse(text);
+        if (readerMode === "xcom") polishXcomDom(host);
       } catch (e) {
         host.textContent = text;
       }
     }
-    // 主题 API：覆盖 CSS 变量；不重解析 Markdown。
+
+    // 主题 API：覆盖 CSS 变量 + 切换 classic / xcom 阅读皮；不重解析 Markdown。
     window.kssSetTheme = function (payload) {
       try {
         const p = typeof payload === "string" ? JSON.parse(payload) : payload;
@@ -93,17 +196,27 @@
           r.setProperty("--serif", p.typography.serif);
           r.setProperty("--sans", p.typography.sans);
           r.setProperty("--mono", p.typography.mono);
-          // xcom 中文级联字体加载核实（不影响渲染，仅供调试排查用）。
           if (p.typography.sans && p.typography.sans.includes("HarmonyOS Sans SC") && document.fonts) {
             document.fonts.ready.then(() => {
               console.log("[KSS] HarmonyOS Sans SC loaded:", document.fonts.check('16px "HarmonyOS Sans SC"'));
             });
           }
         }
+        // id 来自 KSSWebThemePayload（designSystem rawValue）
+        const next = (p && p.id === "xcom") ? "xcom" : "classic";
+        const prev = readerMode;
+        readerMode = next;
+        document.documentElement.setAttribute("data-reader", next);
+        // 切到 xcom 时给已渲染 DOM 补 class；切回 classic 时去掉
+        const host = document.getElementById("md");
+        if (host) {
+          if (next === "xcom") polishXcomDom(host);
+          else host.querySelectorAll("h1.doc-title-dup").forEach(el => el.classList.remove("doc-title-dup"));
+        }
+        if (prev !== next) { /* skin 变了，字阶靠 CSS，无需重 parse */ }
       } catch (e) { /* 主题失败不应破坏正文渲染 */ }
     };
 
-    // 数据 API：只更新正文。
     window.kssSetMarkdown = function (text) { render(text); };
 
     document.addEventListener("DOMContentLoaded", function () {
