@@ -234,19 +234,34 @@ struct SidebarView: View {
 
         return Button { selection = .aiChat } label: {
             if collapsed {
-                Image(systemName: WorkspaceSection.aiChat.symbol)
-                    .font(KSSFont.themed(19, .semibold, chirpWeight: .semibold, theme: theme))
-                    .foregroundStyle(postForeground)
-                    .frame(width: 50, height: 50)
-                    .background(fillColor, in: Circle())
+                // 折叠态：自定义 Seesaw filled 图标 + 圆形主按钮
+                SidebarSectionIcon(
+                    section: .aiChat,
+                    filled: true,
+                    pointSize: 22,
+                    frameWidth: 50,
+                    theme: theme
+                )
+                .foregroundStyle(postForeground)
+                .frame(width: 50, height: 50)
+                .background(fillColor, in: Circle())
             } else {
-                Text(WorkspaceSection.aiChat.displayName)
-                    .font(KSSFont.themed(17, .bold, chirpWeight: .bold, theme: theme))
-                    .foregroundStyle(postForeground)
-                    .frame(maxWidth: .infinity)
-                    .frame(minHeight: 52)
-                    .background(fillColor, in: Capsule())
-                    .padding(.horizontal, isXcom ? 8 : 0)
+                // 展开态：图标 + 文字，贴近 Post 主按钮（仍保持 ≥52 高）
+                HStack(spacing: 8) {
+                    SidebarSectionIcon(
+                        section: .aiChat,
+                        filled: true,
+                        pointSize: 18,
+                        theme: theme
+                    )
+                    Text(WorkspaceSection.aiChat.displayName)
+                        .font(KSSFont.themed(17, .bold, chirpWeight: .bold, theme: theme))
+                }
+                .foregroundStyle(postForeground)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: 52)
+                .background(fillColor, in: Capsule())
+                .padding(.horizontal, isXcom ? 8 : 0)
             }
         }
         .buttonStyle(.plain)
