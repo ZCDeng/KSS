@@ -7,6 +7,29 @@ final class KSSStore: ObservableObject {
     @Published var selectedSection: WorkspaceSection = .dashboard
     /// 设置页深链目标 tab（R2-U4 KTD3）：进设置页时消费一次即清空，默认落密钥 tab。
     @Published var settingsTargetTab: SettingsTab?
+    /// xcom 设置左栏分类深链（plan 2026-07-23-003）：优先于 tab；消费一次即清空。
+    @Published var settingsTargetCategory: SettingsCategory?
+
+    /// 打开设置并落到具体分类（同时投影经典 tab，调用点统一走这里）。
+    func openSettings(category: SettingsCategory) {
+        settingsTargetCategory = category
+        settingsTargetTab = category.tab
+        selectedSection = .settings
+    }
+
+    /// 仅有旧 tab 深链时，供设置页解析默认 Category。
+    func consumeSettingsDestination() -> SettingsCategory? {
+        if let cat = settingsTargetCategory {
+            settingsTargetCategory = nil
+            settingsTargetTab = nil
+            return cat
+        }
+        if let tab = settingsTargetTab {
+            settingsTargetTab = nil
+            return tab.defaultCategory
+        }
+        return nil
+    }
     @Published var selectedSymbol: String?
     @Published var selectedReportPath: String?
     @Published var reportDetail: ReportDetail?

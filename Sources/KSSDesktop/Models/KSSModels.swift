@@ -1577,17 +1577,77 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     static let dataSources: SettingsTab = .credentials
     static let scheduledTasks: SettingsTab = .operations
     static let logs: SettingsTab = .operations
+
+    /// 经典两 Tab 深链时的默认 Category（xcom master-detail 落点）。
+    var defaultCategory: SettingsCategory {
+        switch self {
+        case .credentials: return .selfCheck
+        case .operations: return .tasks
+        }
+    }
 }
 
+/// xcom 设置左栏分类原子（plan 2026-07-23-003）。顺序即 `allCases` 展示序。
+enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
+    case selfCheck
+    case tushare
+    case longbridge
+    case telegram
+    case llm
+    case yupi
+    case tasks
+    case logs
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .selfCheck: return "自检"
+        case .tushare: return "Tushare"
+        case .longbridge: return "Longbridge"
+        case .telegram: return "Telegram"
+        case .llm: return "Seesaw LLM"
+        case .yupi: return "资讯雷达"
+        case .tasks: return "任务"
+        case .logs: return "日志"
+        }
+    }
+
+    /// 投影到经典两 Tab。
+    var tab: SettingsTab {
+        switch self {
+        case .selfCheck, .tushare, .longbridge, .telegram, .llm, .yupi:
+            return .credentials
+        case .tasks, .logs:
+            return .operations
+        }
+    }
+}
+
+// SettingsCategory ↔ SettingsDataSource 映射见 SettingsView（SettingsDataSource 定义在该文件）。
+
 enum SettingsTabRouting {
-    /// 自检 fail 项 → 目标 tab：凭证/数据源类落凭证 tab；任务健康类落任务与日志 tab；
-    /// 无法归类兜底凭证 tab。
+    /// 自检 fail 项 → 目标 tab（经典壳）：凭证/数据源类落凭证 tab；任务类落 operations。
     static func targetTab(forSelfCheckItem item: String) -> SettingsTab {
+        targetCategory(forSelfCheckItem: item).tab
+    }
+
+    /// 自检项 → xcom 左栏 Category（细粒度深链）。
+    static func targetCategory(forSelfCheckItem item: String) -> SettingsCategory {
         switch item {
-        case "tushare", "longbridge", "telegram", "llm", "intraday_secrets":
-            return .credentials
+        case "tushare":
+            return .tushare
+        case "longbridge", "intraday_secrets":
+            return .longbridge
+        case "telegram":
+            return .telegram
+        case "llm", "openrouter", "yupi":
+            // openrouter/yupi 自检文案若出现，落到对应能力面
+            return item == "yupi" || item == "openrouter" ? .yupi : .llm
+        case "scheduled", "cron", "launchd", "jobs":
+            return .tasks
         default:
-            return .credentials
+            return .selfCheck
         }
     }
 
@@ -1599,6 +1659,27 @@ enum SettingsTabRouting {
     /// 任务与日志 tab 状态点——任一任务 needsInstall / stale / failed。
     static func scheduledTasksNeedsBadge(jobs: [ScheduledJob]) -> Bool {
         jobs.contains { $0.health == .needsInstall || $0.health == .stale || $0.health == .failed }
+    }
+
+    /// 左栏单分类是否需要角标（xcom nav）。
+    /// `sourceRaw` 为 `SettingsDataSource.rawValue`（tushare/longbridge/telegram/llm）。
+    static func categoryNeedsBadge(
+        _ category: SettingsCategory,
+        isSourceConfigured: (String) -> Bool,
+        testOK: (String) -> Bool?,
+        jobs: [ScheduledJob]
+    ) -> Bool {
+        switch category {
+        case .selfCheck, .yupi, .logs:
+            return false
+        case .tushare, .longbridge, .telegram, .llm:
+            let raw = category.rawValue
+            if !isSourceConfigured(raw) { return true }
+            if let ok = testOK(raw), !ok { return true }
+            return false
+        case .tasks:
+            return scheduledTasksNeedsBadge(jobs: jobs)
+        }
     }
 }
 

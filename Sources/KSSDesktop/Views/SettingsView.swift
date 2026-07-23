@@ -1,12 +1,18 @@
 import SwiftUI
 
 /// 统一"设置"工作区页面（plan 2026-07-12-005 / U1；R2-U4 Tab 化；R4 合并为两 tab）：
-/// 「凭证与数据源」（按源合一卡：凭证字段 + 连通性测试同卡）与「任务与日志」（两者同源）。
+/// 经典：「凭证与数据源」|「任务与日志」长滚动。
+/// xcom（plan 2026-07-23-003）：左分类 + 右详情 master-detail。
 struct SettingsView: View {
     @Environment(\.kssTheme) private var theme
     @EnvironmentObject private var store: KSSStore
     @State private var tab: SettingsTab = .credentials
+    @State private var selectedCategory: SettingsCategory = .selfCheck
     @State private var dataSourceResults: [String: DataSourceTestResult] = [:]
+    @State private var dirtySources: Set<String> = []
+    @State private var hoveredCategory: SettingsCategory?
+
+    private var isXcom: Bool { theme.system == .xcom }
 
     private static let tabOptions: [(key: SettingsTab, label: String)] =
         SettingsTab.allCases.map { ($0, $0.label) }
@@ -35,12 +41,33 @@ struct SettingsView: View {
     }
 
     var body: some View {
+        Group {
+            if isXcom {
+                xcomSettingsShell
+            } else {
+                classicSettingsShell
+            }
+        }
+        .background(theme.canvas)
+        .onAppear(perform: consumeDeepLink)
+    }
+
+    private func consumeDeepLink() {
+        if let cat = store.consumeSettingsDestination() {
+            selectedCategory = cat
+            tab = cat.tab
+        }
+    }
+
+    // MARK: - Classic shell（两 Tab 长滚动，零回归）
+
+    private var classicSettingsShell: some View {
         GeometryReader { geo in
             let w = min(geo.size.width - 48, 1080)
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     PageTitle("设置", subtitle: "数据源与凭证 / 任务与日志的唯一入口")
-                    SelfCheckStatusStrip()
+                    SelfCheckStatusStrip(onJump: nil)
 
                     KSSSegmentedControl(
                         options: Self.tabOptions,
@@ -50,7 +77,11 @@ struct SettingsView: View {
 
                     switch tab {
                     case .credentials:
-                        SettingsCredentialsSection(results: $dataSourceResults)
+                        SettingsCredentialsSection(
+                            results: $dataSourceResults,
+                            dirtySources: $dirtySources,
+                            focusSource: nil
+                        )
                         SectionHeader("资讯雷达 · yupi（托管安装 + 监控词）")
                         SettingsIntelKeywordsSection()
                     case .operations:
@@ -66,13 +97,145 @@ struct SettingsView: View {
             .scrollContentBackground(.hidden)
             .background(theme.canvas)
         }
-        .background(theme.canvas)
-        .onAppear {
-            if let target = store.settingsTargetTab {
-                tab = target
-                store.settingsTargetTab = nil
+    }
+
+    // MARK: - xcom shell（左分类 | 右详情）
+
+    private var xcomSettingsShell: some View {
+        HStack(spacing: 0) {
+            xcomCategoryNav
+                .frame(width: 240)
+            Divider().overlay(theme.hairline)
+            xcomDetailPane
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var xcomCategoryNav: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("设置")
+                .font(KSSFont.themed(20, .bold, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+                .padding(.horizontal, 16)
+                .padding(.top, 20)
+                .padding(.bottom, 12)
+
+            Text("App v\(BridgeClient.appVersion)")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(theme.textSecondary)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(SettingsCategory.allCases) { cat in
+                        xcomNavRow(cat)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 16)
             }
         }
+        .background(theme.canvas)
+    }
+
+    private func xcomNavRow(_ cat: SettingsCategory) -> some View {
+        let isOn = selectedCategory == cat
+        let isHovered = hoveredCategory == cat
+        let needsBadge = SettingsTabRouting.categoryNeedsBadge(
+            cat,
+            isSourceConfigured: { raw in
+                SettingsDataSource(rawValue: raw)?.isConfigured ?? true
+            },
+            testOK: { raw in dataSourceResults[raw]?.ok },
+            jobs: store.scheduledJobs
+        )
+        let isDirty = cat.dataSource.map { dirtySources.contains($0.rawValue) } ?? false
+        let hoverOpacity = theme.appearance == .dark ? 0.10 : 0.07
+
+        return Button {
+            withAnimation(.easeOut(duration: 0.12)) {
+                selectedCategory = cat
+                tab = cat.tab
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Text(cat.label)
+                    .font(KSSFont.themed(15, isOn ? .bold : .regular, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if isDirty {
+                    Text("·")
+                        .font(KSSFont.themed(18, .bold, theme: theme))
+                        .foregroundStyle(theme.accent)
+                        .help("有未保存更改")
+                } else if needsBadge {
+                    Circle()
+                        .fill(theme.ma5)
+                        .frame(width: 7, height: 7)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 999, style: .continuous)
+                    .fill(
+                        isOn
+                            ? theme.textPrimary.opacity(theme.appearance == .dark ? 0.14 : 0.08)
+                            : (isHovered ? theme.textPrimary.opacity(hoverOpacity) : Color.clear)
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+        .onHover { hovering in
+            hoveredCategory = hovering ? cat : (hoveredCategory == cat ? nil : hoveredCategory)
+        }
+    }
+
+    @ViewBuilder
+    private var xcomDetailPane: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(selectedCategory.label)
+                    .font(KSSFont.themed(22, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+
+                switch selectedCategory {
+                case .selfCheck:
+                    SelfCheckStatusStrip(onJump: { cat in
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            selectedCategory = cat
+                            tab = cat.tab
+                        }
+                    })
+                case .tushare, .longbridge, .telegram, .llm:
+                    // 固定 id：四源共享同一份 @State，切换分类不丢未保存编辑（plan KTD3）。
+                    SettingsCredentialsSection(
+                        results: $dataSourceResults,
+                        dirtySources: $dirtySources,
+                        focusSource: selectedCategory.dataSource
+                    )
+                    .id("settings-credentials-shared")
+                case .yupi:
+                    SettingsIntelKeywordsSection()
+                case .tasks:
+                    SettingsTasksSection()
+                case .logs:
+                    SettingsLogsSection()
+                }
+            }
+            .frame(maxWidth: 720, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 28)
+            .padding(.vertical, 24)
+        }
+        .scrollContentBackground(.hidden)
+        .background(theme.canvas)
     }
 }
 
@@ -92,12 +255,14 @@ private struct SettingsPlaceholderCard: View {
 
 /// 凭证与数据源（R4 合并）：按源合一卡——每张卡 = 该源的凭证字段 + 连通性测试 + 独立保存。
 /// Keychain 读写与「保存后全杀重启 sidecar」语义承袭原密钥分区。
-/// 字号规格（R4 修订，阅读优先）：卡标题 15 bold / 字段标签 13 semibold / 输入 14 /
-/// 说明 12.5；输入框透明底+描边（kssInput，去背景割裂）。
+/// `focusSource != nil`（xcom）：只渲染该源详情；`nil`（经典）：四源同屏。
 struct SettingsCredentialsSection: View {
     @Environment(\.kssTheme) private var theme
     @EnvironmentObject private var store: KSSStore
     @Binding var results: [String: DataSourceTestResult]
+    @Binding var dirtySources: Set<String>
+    /// xcom 单源详情；经典传 nil 渲染全部。
+    var focusSource: SettingsDataSource?
     @State private var testing: Set<String> = []
 
     @State private var tushareToken = ""
@@ -123,28 +288,55 @@ struct SettingsCredentialsSection: View {
     /// 已保存反馈按卡显示（source.rawValue）。任一字段编辑即清除对应卡的反馈。
     @State private var savedSources: Set<String> = []
 
+    private var isXcomFlat: Bool { focusSource != nil }
+
+    private var visibleSources: [SettingsDataSource] {
+        if let focusSource { return [focusSource] }
+        return SettingsDataSource.allCases
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("凭据存入 macOS Keychain，不写入磁盘明文。留空保存表示删除该项；保存后自动重启后台服务生效。")
                 .font(KSSFont.themed(12.5, theme: theme))
                 .foregroundStyle(theme.textSecondary)
 
+            ForEach(visibleSources) { source in
+                sourceDetail(source)
+            }
+
+            if focusSource == nil {
+                HStack {
+                    Spacer()
+                    Text("App v\(BridgeClient.appVersion) · Python 层 v\(BridgeClient.scriptsVersionOnDisk())")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(theme.textSecondary)
+                }
+            }
+        }
+        .onAppear(perform: load)
+    }
+
+    @ViewBuilder
+    private func sourceDetail(_ source: SettingsDataSource) -> some View {
+        switch source {
+        case .tushare:
             sourceCard(.tushare, note: "日线/财务/日历数据主源。") {
                 field("Tushare Token", text: $tushareToken, secure: true, source: .tushare)
             }
-
+        case .longbridge:
             sourceCard(.longbridge, note: "ChinaConnect LV1 实时行情与分钟 K 线（陆股通池，北交所不覆盖）。") {
                 field("App Key", text: $longbridgeAppKey, secure: true, source: .longbridge)
                 field("App Secret", text: $longbridgeAppSecret, secure: true, source: .longbridge)
                 field("Access Token", text: $longbridgeAccessToken, secure: true, source: .longbridge)
             }
-
+        case .telegram:
             sourceCard(.telegram, note: "复盘/告警推送通道（可选自建中继）。") {
                 field("Bot Token", text: $telegramBotToken, secure: true, source: .telegram)
                 field("Chat ID", text: $telegramChatId, secure: false, source: .telegram)
                 field("API URL（自建中继，可选）", text: $telegramApiUrl, secure: false, source: .telegram)
             }
-
+        case .llm:
             sourceCard(.llm, note: "Seesaw 的 OpenAI 兼容端点：主用失败自动降级备用；两组全空时退回下方兼容旧配置。") {
                 subHead("主用")
                 field("API Key", text: $llmPrimaryKey, secure: true, source: .llm)
@@ -169,17 +361,14 @@ struct SettingsCredentialsSection: View {
                             .foregroundStyle(theme.textSecondary)
                     }
                 }
-                .onChange(of: appLive) { _, _ in savedSources.remove(SettingsDataSource.llm.rawValue) }
-            }
-
-            HStack {
-                Spacer()
-                Text("App v\(BridgeClient.appVersion) · Python 层 v\(BridgeClient.scriptsVersionOnDisk())")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(theme.textSecondary)
+                .onChange(of: appLive) { _, _ in markDirty(.llm) }
             }
         }
-        .onAppear(perform: load)
+    }
+
+    private func markDirty(_ source: SettingsDataSource) {
+        dirtySources.insert(source.rawValue)
+        savedSources.remove(source.rawValue)
     }
 
     // MARK: 卡片骨架
@@ -236,7 +425,7 @@ struct SettingsCredentialsSection: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .kssCard(padding: 16)
+        .modifier(SettingsSourceChromeModifier(flat: isXcomFlat, theme: theme))
     }
 
     @ViewBuilder
@@ -261,7 +450,7 @@ struct SettingsCredentialsSection: View {
                 }
             }
             .kssInput()
-            .onChange(of: text.wrappedValue) { _, _ in savedSources.remove(source.rawValue) }
+            .onChange(of: text.wrappedValue) { _, _ in markDirty(source) }
         }
     }
 
@@ -364,6 +553,7 @@ struct SettingsCredentialsSection: View {
         BridgeClient.restartSidecarForEnvChange()
         store.refreshLLMCredentialsStatus()
         Task { await store.runSelfCheck() }
+        dirtySources.remove(source.rawValue)
         savedSources.insert(source.rawValue)
     }
 
@@ -408,6 +598,27 @@ enum SettingsDataSource: String, CaseIterable, Identifiable {
             let legacy = !(KeychainStore.read("DEEPSEEK_API_KEY") ?? "").isEmpty
                 || !(KeychainStore.read("OPENAI_API_KEY") ?? "").isEmpty
             return newKeyed || legacy
+        }
+    }
+
+    var settingsCategory: SettingsCategory {
+        switch self {
+        case .tushare: return .tushare
+        case .longbridge: return .longbridge
+        case .telegram: return .telegram
+        case .llm: return .llm
+        }
+    }
+}
+
+extension SettingsCategory {
+    var dataSource: SettingsDataSource? {
+        switch self {
+        case .tushare: return .tushare
+        case .longbridge: return .longbridge
+        case .telegram: return .telegram
+        case .llm: return .llm
+        default: return nil
         }
     }
 }
@@ -942,14 +1153,17 @@ struct SettingsLogsSection: View {
 
 // MARK: - 自检状态 header strip（U8）
 
-/// 设置页顶部：自检结果摘要 + 手动重跑入口。位于四分区之上（不属于任一分区）。
+/// 设置页自检摘要 + 手动重跑。xcom 详情内可点行跳转分类（`onJump`）。
 struct SelfCheckStatusStrip: View {
     @Environment(\.kssTheme) private var theme
     @EnvironmentObject private var store: KSSStore
+    /// nil = 经典折叠详情；非 nil = xcom 默认可点跳转。
+    var onJump: ((SettingsCategory) -> Void)?
     @State private var expanded = false
 
     private var failCount: Int { store.selfCheckItems.filter(\.isFail).count }
     private var warnCount: Int { store.selfCheckItems.filter(\.isWarn).count }
+    private var alwaysExpanded: Bool { onJump != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -965,7 +1179,7 @@ struct SelfCheckStatusStrip: View {
                         .foregroundStyle(theme.textSecondary)
                 }
                 Spacer()
-                if !store.selfCheckItems.isEmpty {
+                if !alwaysExpanded, !store.selfCheckItems.isEmpty {
                     Button(expanded ? "收起" : "详情") { expanded.toggle() }
                         .buttonStyle(.borderless)
                         .controlSize(.small)
@@ -983,10 +1197,15 @@ struct SelfCheckStatusStrip: View {
                 .controlSize(.small)
                 .disabled(store.isRunningSelfCheck)
             }
-            if expanded {
+            if alwaysExpanded || expanded {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(store.selfCheckItems) { item in
                         selfCheckItemRow(item)
+                    }
+                    if store.selfCheckItems.isEmpty {
+                        Text("尚未跑过自检，点右上角重新自检。")
+                            .font(KSSFont.themed(12.5, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
                     }
                 }
             }
@@ -994,6 +1213,9 @@ struct SelfCheckStatusStrip: View {
         .padding(.horizontal, 14).padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+        .onAppear {
+            if alwaysExpanded { expanded = true }
+        }
     }
 
     private var statusIcon: String {
@@ -1018,7 +1240,8 @@ struct SelfCheckStatusStrip: View {
     }
 
     private func selfCheckItemRow(_ item: SelfCheckItem) -> some View {
-        HStack(spacing: 8) {
+        let cat = SettingsTabRouting.targetCategory(forSelfCheckItem: item.item)
+        let row = HStack(spacing: 8) {
             Image(systemName: item.isOK ? "checkmark.circle.fill" : (item.isFail ? "xmark.octagon.fill" : "exclamationmark.triangle.fill"))
                 .font(KSSFont.themed(11.5, theme: theme))
                 .foregroundStyle(item.isOK ? theme.accent : (item.isFail ? theme.up : theme.ma5))
@@ -1034,6 +1257,40 @@ struct SelfCheckStatusStrip: View {
                     .font(KSSFont.themed(11, theme: theme))
                     .foregroundStyle(theme.accent)
             }
+            if onJump != nil, !item.isOK, cat != .selfCheck {
+                Image(systemName: "chevron.right")
+                    .font(KSSFont.themed(10, .semibold, theme: theme))
+                    .foregroundStyle(theme.textSecondary.opacity(0.7))
+            }
+        }
+        .contentShape(Rectangle())
+
+        if let onJump, !item.isOK {
+            return AnyView(
+                Button { onJump(cat) } label: { row }
+                    .buttonStyle(.plain)
+                    .help("前往 \(cat.label)")
+            )
+        }
+        return AnyView(row)
+    }
+}
+
+// MARK: - 凭证卡 chrome（经典 kssCard / xcom flat hairline）
+
+private struct SettingsSourceChromeModifier: ViewModifier {
+    var flat: Bool
+    var theme: KSSThemeTokens
+
+    func body(content: Content) -> some View {
+        if flat {
+            content
+                .padding(.vertical, 4)
+                .overlay(alignment: .bottom) {
+                    Rectangle().fill(theme.hairline).frame(height: 1)
+                }
+        } else {
+            content.kssCard(padding: 16)
         }
     }
 }
