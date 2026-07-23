@@ -104,20 +104,24 @@ struct SidebarView: View {
         let isHovered = isXcom && hoveredSection == section && dragging != section
         let badge = badges[section]
 
-        let icon = Image(systemName: section.symbol)
-            .symbolVariant(isXcom && isOn ? .fill : .none)
-            .font(KSSFont.themed(isXcom ? 20 : 15, .semibold, chirpWeight: isOn ? .heavy : .regular, theme: theme))
-            .fontWeight(isXcom ? (isOn ? .heavy : .regular) : nil)
-            .frame(width: isXcom ? 26 : 22)
-            .foregroundStyle(isXcom
-                ? theme.textPrimary
-                : (isOn ? theme.onAccent : theme.accent))
-            .overlay(alignment: .topTrailing) {
-                if let badge {
-                    SidebarBadgeView(badge: badge, theme: theme)
-                        .offset(x: 6, y: -6)
-                }
+        let icon = SidebarSectionIcon(
+            section: section,
+            filled: isOn,
+            pointSize: isXcom ? 22 : 16,
+            frameWidth: isXcom ? 26 : 22,
+            fontWeight: isXcom ? (isOn ? .heavy : .regular) : .semibold,
+            chirpWeight: isOn ? .heavy : .regular,
+            theme: theme
+        )
+        .foregroundStyle(isXcom
+            ? theme.textPrimary
+            : (isOn ? theme.onAccent : theme.accent))
+        .overlay(alignment: .topTrailing) {
+            if let badge {
+                SidebarBadgeView(badge: badge, theme: theme)
+                    .offset(x: 6, y: -6)
             }
+        }
 
         let label = Text(section.displayName)
             .font(KSSFont.themed(
@@ -185,24 +189,29 @@ struct SidebarView: View {
         let badge = badges[section]
         let hit: CGFloat = isXcom ? 50 : 38
         return Button { selection = section } label: {
-            Image(systemName: section.symbol)
-                .symbolVariant(isXcom && isOn ? .fill : .none)
-                .font(KSSFont.themed(isXcom ? 20 : 17, .semibold, chirpWeight: isOn ? .heavy : .regular, theme: theme))
-                .fontWeight(isXcom ? (isOn ? .heavy : .regular) : nil)
-                .frame(width: isXcom ? 50 : 46, height: hit)
-                .foregroundStyle(isXcom
-                    ? theme.textPrimary
-                    : (isOn ? theme.onAccent : theme.accent))
-                .overlay(alignment: .topTrailing) {
-                    if let badge {
-                        SidebarBadgeView(badge: badge, theme: theme, compact: true)
-                            .offset(x: -4, y: 4)
-                    }
+            SidebarSectionIcon(
+                section: section,
+                filled: isOn,
+                pointSize: isXcom ? 22 : 18,
+                frameWidth: isXcom ? 50 : 46,
+                fontWeight: isXcom ? (isOn ? .heavy : .regular) : .semibold,
+                chirpWeight: isOn ? .heavy : .regular,
+                theme: theme
+            )
+            .frame(width: isXcom ? 50 : 46, height: hit)
+            .foregroundStyle(isXcom
+                ? theme.textPrimary
+                : (isOn ? theme.onAccent : theme.accent))
+            .overlay(alignment: .topTrailing) {
+                if let badge {
+                    SidebarBadgeView(badge: badge, theme: theme, compact: true)
+                        .offset(x: -4, y: 4)
                 }
-                .background(
-                    isHovered ? hoverTint : ((!isXcom && isOn) ? theme.accent : Color.clear),
-                    in: isXcom ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: KSSTheme.shapeS))
-                )
+            }
+            .background(
+                isHovered ? hoverTint : ((!isXcom && isOn) ? theme.accent : Color.clear),
+                in: isXcom ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: KSSTheme.shapeS))
+            )
         }
         .buttonStyle(.plain)
         .help(section.displayName)
