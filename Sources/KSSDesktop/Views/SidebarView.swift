@@ -220,12 +220,12 @@ struct SidebarView: View {
         }
     }
 
-    /// Seesaw：xcom 展开对标 Paper Post（ink 底 + 对比前景、≥52 高、约 90% 宽、纯文字）；
+    /// Seesaw：xcom 展开对标 Paper Post（ink 底 + 对比前景、≥52 高、约 90% 宽）；
     /// dark 用浅 ink 底 + 近黑字；经典仍 accent/onAccent。
+    /// 折叠态走 `SeesawCollapsedCTA`（outline + 跷跷板/呼吸动效）——侧栏唯一 AI 入口的在场提示。
     private var seesawCTA: some View {
         let isXcom = theme.system == .xcom
         let isDark = theme.appearance == .dark
-        // light：ink 黑底 + 白字；dark：浅 ink 底 + 近黑字；经典：accent/onAccent
         let fillColor: Color = isXcom ? theme.textPrimary : theme.accent
         let postForeground: Color = {
             if !isXcom { return theme.onAccent }
@@ -234,19 +234,12 @@ struct SidebarView: View {
 
         return Button { selection = .aiChat } label: {
             if collapsed {
-                // 折叠态：outline 放大适配 50 圆底（视觉留白约 12–14pt 边距）
-                SidebarSectionIcon(
-                    section: .aiChat,
-                    filled: false,
-                    pointSize: 28,
-                    frameWidth: 50,
+                SeesawCollapsedCTA(
+                    fillColor: fillColor,
+                    foreground: postForeground,
                     theme: theme
                 )
-                .foregroundStyle(postForeground)
-                .frame(width: 50, height: 50)
-                .background(fillColor, in: Circle())
             } else {
-                // 展开态：filled + 文字
                 HStack(spacing: 8) {
                     SidebarSectionIcon(
                         section: .aiChat,
@@ -266,6 +259,75 @@ struct SidebarView: View {
         }
         .buttonStyle(.plain)
         .help(WorkspaceSection.aiChat.displayName)
+    }
+}
+
+// MARK: - Seesaw 折叠态 CTA（AI 在场动效）
+
+/// 折叠边栏里的 Seesaw 圆钮：outline 图标 + 连续「跷跷板」轻摇 + 外圈呼吸脉冲。
+/// 用 `TimelineView` 驱动，不依赖状态机跳变；尊重「减少动态效果」。
+private struct SeesawCollapsedCTA: View {
+    let fillColor: Color
+    let foreground: Color
+    let theme: KSSThemeTokens
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private let size: CGFloat = 50
+    private let iconPoint: CGFloat = 28
+
+    var body: some View {
+        if reduceMotion {
+            staticMark
+        } else {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
+                let t = context.date.timeIntervalSinceReferenceDate
+                // 跷跷板：~1.7s 半周期，±11°；相位独立于呼吸
+                let rock = sin(t * (2 * .pi / 1.7)) * 11
+                // 呼吸环：~2.4s 一圈，scale 1→1.22（64pt 折叠栏内不顶破）
+                let phase = (t.truncatingRemainder(dividingBy: 2.4)) / 2.4
+                let ringScale = 1.0 + 0.22 * phase
+                let ringOpacity = 0.5 * (1.0 - phase)
+                // 圆钮本体微幅呼吸（1.0↔1.04）
+                let bodyPulse = 1.0 + 0.03 * sin(t * (2 * .pi / 2.4))
+
+                ZStack {
+                    Circle()
+                        .stroke(fillColor.opacity(0.55), lineWidth: 1.5)
+                        .frame(width: size, height: size)
+                        .scaleEffect(ringScale)
+                        .opacity(ringOpacity)
+
+                    Circle()
+                        .fill(fillColor)
+                        .frame(width: size, height: size)
+                        .scaleEffect(bodyPulse)
+
+                    SidebarSectionIcon(
+                        section: .aiChat,
+                        filled: false,
+                        pointSize: iconPoint,
+                        frameWidth: size,
+                        theme: theme
+                    )
+                    .foregroundStyle(foreground)
+                    .rotationEffect(.degrees(rock))
+                }
+                .frame(width: size, height: size)
+            }
+        }
+    }
+
+    private var staticMark: some View {
+        SidebarSectionIcon(
+            section: .aiChat,
+            filled: false,
+            pointSize: iconPoint,
+            frameWidth: size,
+            theme: theme
+        )
+        .foregroundStyle(foreground)
+        .frame(width: size, height: size)
+        .background(fillColor, in: Circle())
     }
 }
 
