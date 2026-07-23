@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 
 /// U2 资讯雷达独立页面 —— list|detail 阅读工作台（plan 2026-07-10-001 Layout A）。
+/// xcom timeline chrome：plan 2026-07-23-002（`IntelXcomChrome` 策略分支）。
 /// 数据由 bridge `intel-radar` 命令提供（12 赛道 108 公开 RSS 源）。
 struct IntelView: View {
     @Environment(\.kssTheme) private var theme
@@ -15,7 +16,10 @@ struct IntelView: View {
     @State private var digestExpanded = false
     /// 原文 Tab 内译文开关（外文文章按需，plan 2026-07-22-001 R11）
     @State private var showTranslation = false
+    /// xcom 列表行 hover（item id）
+    @State private var hoveredIntelItemID: String?
 
+    private var isXcom: Bool { IntelXcomChrome.isXcom(theme.system) }
     private var digest: NewsDigestResponse? { store.intelDigest }
     private var tracks: [IntelTrack] { digest?.tracks ?? [] }
     private var hasData: Bool { digest?.available ?? false }
@@ -30,40 +34,12 @@ struct IntelView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // ---- 顶栏 ----
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .firstTextBaseline) {
-                    PageTitle("资讯雷达", subtitle: "12 赛道 · RSS + 热议混排 + 投研改写")
-                    Spacer()
-                    bulkDigestButton
-                    if hasData {
-                        yupiStatusBadge
-                        let totalSources = digest?.stats?.totalSources ?? 108
-                        StatusBadge(icon: "antenna.radiowaves.left.and.right",
-                                    text: "\(totalSources) 源", tint: theme.accent)
-                    }
-                }
-                if shouldShowBulkSummary { bulkSummaryView }
-                statsRefreshRow
-                if let err = store.errorMessage {
-                    HStack(spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill").font(KSSFont.themed(12, theme: theme))
-                        Text(err).font(KSSFont.themed(12.5, theme: theme)).lineLimit(4)
-                    }
-                    .foregroundStyle(theme.down)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(theme.down.opacity(0.1), in: RoundedRectangle(cornerRadius: theme.chipRadius))
-                }
-                // 12 赛道 pill 上方：全景热点
-                if hasData || store.intelPanorama != nil || store.intelPanoramaLoading {
-                    panoramaBar
-                }
-                if !tracks.isEmpty { trackPills }
+            // ---- 顶栏：xcom 瘦 chrome / 经典 PageTitle 墙 ----
+            if IntelXcomChrome.usesSlimHeader(theme.system) {
+                xcomChromeHeader
+            } else {
+                classicChromeHeader
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 12)
 
             Divider().overlay(theme.hairline)
 
@@ -78,9 +54,9 @@ struct IntelView: View {
                         // 全宽今日要点（当前赛道）
                         if !(cur.items ?? []).isEmpty {
                             digestCardView(track: cur, items: cur.items ?? [])
-                                .padding(.horizontal, 16)
-                                .padding(.top, 12)
-                                .padding(.bottom, 8)
+                                .padding(.horizontal, isXcom ? 0 : 16)
+                                .padding(.top, isXcom ? 0 : 12)
+                                .padding(.bottom, isXcom ? 0 : 8)
                         }
                         Divider().overlay(theme.hairline)
                         HStack(spacing: 0) {
@@ -109,6 +85,167 @@ struct IntelView: View {
             if let cur = currentTrack, let items = cur.items, !items.isEmpty {
                 Task { await store.summarizeIntelTrack(cur.key, name: cur.name, items: items) }
             }
+        }
+    }
+
+    // MARK: - Chrome headers（xcom slim vs classic wall）
+
+    /// 经典：PageTitle + 徽章 + 统计 + 全景 + 凹槽赛道。
+    private var classicChromeHeader: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                PageTitle("资讯雷达", subtitle: "12 赛道 · RSS + 热议混排 + 投研改写")
+                Spacer()
+                bulkDigestButton
+                if hasData {
+                    yupiStatusBadge
+                    let totalSources = digest?.stats?.totalSources ?? 108
+                    StatusBadge(icon: "antenna.radiowaves.left.and.right",
+                                text: "\(totalSources) 源", tint: theme.accent)
+                }
+            }
+            if shouldShowBulkSummary { bulkSummaryView }
+            statsRefreshRow
+            intelErrorBanner
+            // 12 赛道 pill 上方：全景热点（经典保留）
+            if hasData || store.intelPanorama != nil || store.intelPanoramaLoading {
+                panoramaBar
+            }
+            if !tracks.isEmpty { trackPills }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 18)
+        .padding(.bottom, 12)
+    }
+
+    /// xcom：无大标题墙；赛道 underline + 工具图标；muted 统计一行。
+    private var xcomChromeHeader: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if shouldShowBulkSummary {
+                bulkSummaryView
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, 6)
+            }
+            intelErrorBanner
+                .padding(.horizontal, 16)
+                .padding(.top, shouldShowBulkSummary ? 0 : 8)
+            if !tracks.isEmpty {
+                HStack(spacing: 0) {
+                    trackPills
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    xcomHeaderTools
+                        .padding(.trailing, 8)
+                }
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(theme.hairline)
+                        .frame(height: 1)
+                }
+            }
+            xcomMutedStatsLine
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+        }
+    }
+
+    @ViewBuilder
+    private var intelErrorBanner: some View {
+        if let err = store.errorMessage {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill").font(KSSFont.themed(12, theme: theme))
+                Text(err).font(KSSFont.themed(12.5, theme: theme)).lineLimit(4)
+            }
+            .foregroundStyle(theme.down)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(theme.down.opacity(0.1), in: RoundedRectangle(cornerRadius: theme.chipRadius))
+        }
+    }
+
+    private var xcomMutedStatsLine: some View {
+        HStack(spacing: 8) {
+            Text(statLine)
+                .font(KSSFont.themed(12.5, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+                .lineLimit(1)
+            if let hint = yupiDetailHint, !hint.isEmpty {
+                Text("·")
+                    .foregroundStyle(theme.textSecondary.opacity(0.4))
+                Text(hint)
+                    .font(KSSFont.themed(12, theme: theme))
+                    .foregroundStyle(theme.textSecondary.opacity(0.75))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            if hasData {
+                yupiStatusBadge
+            }
+        }
+    }
+
+    /// 刷新 / 一键提炼 / 重试 — 紧凑图标，贴赛道行右侧。
+    private var xcomHeaderTools: some View {
+        HStack(spacing: 2) {
+            let bulk = store.bulkDigest
+            if bulk.failedCount > 0 && !bulk.running {
+                Button {
+                    Task { await store.retryFailedBulkDigests() }
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(KSSFont.themed(14, .semibold, theme: theme))
+                        .foregroundStyle(theme.ma5)
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("重试 \(bulk.failedCount) 个失败赛道")
+            } else if bulk.running {
+                ProgressView().scaleEffect(0.65)
+                    .frame(width: 36, height: 36)
+                Button {
+                    store.cancelBulkDigest()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(KSSFont.themed(12, .bold, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                        .frame(width: 28, height: 36)
+                }
+                .buttonStyle(.plain)
+                .help("取消提炼")
+            } else if hasData && store.hasLLMCredentials {
+                Button {
+                    Task { await store.summarizeAllIntelTracks() }
+                } label: {
+                    Image(systemName: "sparkles")
+                        .font(KSSFont.themed(14, .semibold, theme: theme))
+                        .foregroundStyle(theme.accent)
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(store.isLoadingIntel)
+                .help("一键提炼全部要点")
+            }
+            Button {
+                store.errorMessage = nil
+                Task { await store.refreshIntelRadar() }
+            } label: {
+                Group {
+                    if store.isLoadingIntel {
+                        ProgressView().scaleEffect(0.65)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(KSSFont.themed(14, .semibold, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                }
+                .frame(width: 36, height: 36)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(store.isLoadingIntel)
+            .help(store.isLoadingIntel ? "抓取中…" : "刷新资讯雷达")
         }
     }
 
@@ -405,10 +542,20 @@ struct IntelView: View {
     }
 
     // MARK: - 赛道 Pills
-    // 分段控件共用样式（凹槽 + 浮起块）在 Support/Components.swift（KSSSegmentedGroove /
-    // kssSegmentedItemStyle），赛道行有色点+计数角标，不套简单文字标签的 KSSSegmentedControl。
+    // 经典：凹槽 + 浮起块（Components KSSSegmentedGroove）。
+    // xcom：underline 横滑 Tab（plan 2026-07-23-002）。
 
     private var trackPills: some View {
+        Group {
+            if IntelXcomChrome.usesUnderlineTabs(theme.system) {
+                xcomUnderlineTrackPills
+            } else {
+                classicSegmentedTrackPills
+            }
+        }
+    }
+
+    private var classicSegmentedTrackPills: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             KSSSegmentedGroove {
                 HStack(spacing: 4) {
@@ -416,7 +563,7 @@ struct IntelView: View {
                         Button(action: {
                             withAnimation(.easeInOut(duration: 0.15)) { activeTrack = track.key }
                         }) {
-                            trackPillLabel(track)
+                            trackPillLabel(track, underlineStyle: false)
                         }
                         .buttonStyle(.plain)
                     }
@@ -425,42 +572,78 @@ struct IntelView: View {
         }
     }
 
-    private func trackPillLabel(_ track: IntelTrack) -> some View {
+    private var xcomUnderlineTrackPills: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 0) {
+                ForEach(tracks, id: \.key) { track in
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.15)) { activeTrack = track.key }
+                    }) {
+                        trackPillLabel(track, underlineStyle: true)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.leading, 8)
+        }
+    }
+
+    private func trackPillLabel(_ track: IntelTrack, underlineStyle: Bool) -> some View {
         let isActive = track.key == activeTrack
         let pillColor = parseHexColor(track.accent) ?? theme.accent
-        return HStack(spacing: 5) {
-            Circle().fill(pillColor).frame(width: 7, height: 7)
-            Text(track.name)
-                .font(KSSFont.themed(12, isActive ? .semibold : .medium, theme: theme))
-            Text("\(track.items?.count ?? 0)")
-                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                .foregroundStyle(isActive ? theme.textSecondary : theme.textSecondary.opacity(0.6))
+        let showDot = IntelXcomChrome.showTrackColorDot(theme.system)
+        return VStack(spacing: 0) {
+            HStack(spacing: 5) {
+                if showDot {
+                    Circle().fill(pillColor).frame(width: 7, height: 7)
+                }
+                Text(track.name)
+                    .font(KSSFont.themed(
+                        underlineStyle ? 15 : 12,
+                        isActive ? (underlineStyle ? .bold : .semibold) : .medium,
+                        theme: theme
+                    ))
+                Text("\(track.items?.count ?? 0)")
+                    .font(.system(size: underlineStyle ? 12 : 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(isActive ? theme.textSecondary : theme.textSecondary.opacity(0.6))
+            }
+            .foregroundStyle(isActive ? theme.textPrimary : theme.textSecondary)
+            .padding(.horizontal, underlineStyle ? 16 : 10)
+            .padding(.vertical, underlineStyle ? 14 : 6)
+            if underlineStyle {
+                Capsule()
+                    .fill(isActive ? theme.accent : Color.clear)
+                    .frame(height: 4)
+                    .padding(.horizontal, 8)
+            }
         }
-        .foregroundStyle(isActive ? theme.textPrimary : theme.textSecondary)
-        .padding(.horizontal, 10).padding(.vertical, 6)
-        .kssSegmentedItemStyle(isActive: isActive, theme: theme)
+        .modifier(IntelTrackPillChromeModifier(isActive: isActive, underlineStyle: underlineStyle, theme: theme))
         .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 
-    // MARK: - 新闻列表（qmreader entry-card 节奏：卡间距 8、圆角 10、右缩略/favicon）
+    // MARK: - 新闻列表（经典 entry-card / xcom timeline cell）
 
     private func trackListColumn(_ cur: IntelTrack) -> some View {
         let items = cur.items ?? []
+        let rowSpacing = IntelXcomChrome.listRowSpacing(theme.system)
+        let contentPad = IntelXcomChrome.listContentPadding(theme.system)
         return VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                let pillColor = parseHexColor(cur.accent) ?? theme.accent
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(pillColor).frame(width: 3, height: 14)
-                Text(cur.name)
-                    .font(KSSFont.themed(13, .semibold, theme: theme))
-                    .foregroundStyle(theme.textPrimary)
-                Spacer()
-                Text("\(items.count)")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(theme.textSecondary.opacity(0.85))
+            if !isXcom {
+                HStack(spacing: 8) {
+                    let pillColor = parseHexColor(cur.accent) ?? theme.accent
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(pillColor).frame(width: 3, height: 14)
+                    Text(cur.name)
+                        .font(KSSFont.themed(13, .semibold, theme: theme))
+                        .foregroundStyle(theme.textPrimary)
+                    Spacer()
+                    Text("\(items.count)")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(theme.textSecondary.opacity(0.85))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
 
             if items.isEmpty {
                 Text("近 \(digest?.recentDays ?? 7) 天该赛道暂无更新")
@@ -469,14 +652,13 @@ struct IntelView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(.top, 40)
             } else {
-                // qmreader `.entry-list { padding: 8px }` + card gap
                 ScrollView {
-                    LazyVStack(spacing: 8) {
+                    LazyVStack(spacing: rowSpacing) {
                         ForEach(items) { item in
                             newsRow(item, track: cur)
                         }
                     }
-                    .padding(8)
+                    .padding(contentPad)
                 }
             }
         }
@@ -490,7 +672,11 @@ struct IntelView: View {
                 // header sticky-ish top
                 VStack(alignment: .leading, spacing: 0) {
                     Text(item.title)
-                        .font(KSSFont.themed(22, .bold, theme: theme))
+                        .font(KSSFont.themed(
+                            IntelXcomChrome.detailTitlePointSize(theme.system),
+                            .bold,
+                            theme: theme
+                        ))
                         .foregroundStyle(theme.textPrimary)
                         .lineSpacing(4)
                         .fixedSize(horizontal: false, vertical: true)
@@ -511,21 +697,26 @@ struct IntelView: View {
                         }
                         if let urlString = item.url, let url = URL(string: urlString) {
                             Link(destination: url) {
-                                Label("外链打开", systemImage: "arrow.up.right.square")
-                                    .font(KSSFont.themed(12, .semibold, theme: theme))
+                                if isXcom {
+                                    Image(systemName: "arrow.up.right.square")
+                                        .font(KSSFont.themed(14, .semibold, theme: theme))
+                                } else {
+                                    Label("外链打开", systemImage: "arrow.up.right.square")
+                                        .font(KSSFont.themed(12, .semibold, theme: theme))
+                                }
                             }
                             .foregroundStyle(theme.accent)
+                            .help("外链打开")
                         }
                     }
                     .foregroundStyle(theme.textSecondary)
                     .padding(.bottom, 14)
 
-                    // qmreader .reader-tabs
                     readerTabBar
                         .padding(.bottom, 4)
                 }
-                .padding(.horizontal, 36)
-                .padding(.top, 28)
+                .padding(.horizontal, isXcom ? 28 : 36)
+                .padding(.top, isXcom ? 20 : 28)
                 .frame(maxWidth: 780, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .center)
 
@@ -537,7 +728,7 @@ struct IntelView: View {
                             .frame(maxWidth: 720, alignment: .leading)
                     }
                     .frame(maxWidth: 780, alignment: .leading)
-                    .padding(.horizontal, 36)
+                    .padding(.horizontal, isXcom ? 28 : 36)
                     .padding(.vertical, 24)
                     .frame(maxWidth: .infinity, alignment: .center)
                 }
@@ -548,35 +739,90 @@ struct IntelView: View {
                 readerTab = .investment
             }
         } else {
-            VStack(spacing: 16) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(theme.surfaceContainer)
-                        .frame(width: 64, height: 64)
-                    Image(systemName: "doc.text.magnifyingglass")
-                        .font(KSSFont.themed(28, .medium, theme: theme))
-                        .foregroundStyle(theme.textSecondary.opacity(0.55))
-                }
-                Text("选择左侧一条资讯开始阅读")
-                    .font(KSSFont.themed(14, .medium, theme: theme))
-                    .foregroundStyle(theme.textSecondary)
-                Text("投研改写 · 原文 · 译文")
-                    .font(KSSFont.themed(12.2, theme: theme))
-                    .foregroundStyle(theme.textSecondary.opacity(0.65))
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(theme.canvas)
+            detailEmptyState
         }
     }
 
-    // MARK: - Reader tabs（qmreader .reader-tabs）
+    /// 无选中：提示 + xcom 下挂全景模块。
+    private var detailEmptyState: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                VStack(spacing: 16) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 20)
+                            .fill(theme.surfaceContainer)
+                            .frame(width: 64, height: 64)
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(KSSFont.themed(28, .medium, theme: theme))
+                            .foregroundStyle(theme.textSecondary.opacity(0.55))
+                    }
+                    Text("选择左侧一条资讯开始阅读")
+                        .font(KSSFont.themed(14, .medium, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                    Text("投研改写 · 原文 · 译文")
+                        .font(KSSFont.themed(12.2, theme: theme))
+                        .foregroundStyle(theme.textSecondary.opacity(0.65))
+                }
+                .padding(.top, 48)
+
+                if IntelXcomChrome.demotesPanoramaToEmptyDetail(theme.system),
+                   hasData || store.intelPanorama != nil || store.intelPanoramaLoading {
+                    panoramaBar
+                        .padding(.horizontal, 28)
+                        .frame(maxWidth: 520)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.bottom, 40)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(theme.canvas)
+    }
+
+    // MARK: - Reader tabs（经典 segmented / xcom underline）
 
     private var readerTabBar: some View {
-        KSSSegmentedControl(
-            options: IntelReaderTab.allCases.map { ($0, $0.label) },
-            selection: $readerTab,
-            stretch: true
-        )
+        Group {
+            if IntelXcomChrome.usesUnderlineTabs(theme.system) {
+                xcomUnderlineReaderTabs
+            } else {
+                KSSSegmentedControl(
+                    options: IntelReaderTab.allCases.map { ($0, $0.label) },
+                    selection: $readerTab,
+                    stretch: true
+                )
+            }
+        }
+    }
+
+    private var xcomUnderlineReaderTabs: some View {
+        HStack(spacing: 0) {
+            ForEach(IntelReaderTab.allCases) { tab in
+                let isActive = readerTab == tab
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) { readerTab = tab }
+                } label: {
+                    VStack(spacing: 0) {
+                        Text(tab.label)
+                            .font(KSSFont.themed(15, isActive ? .bold : .medium, theme: theme))
+                            .foregroundStyle(isActive ? theme.textPrimary : theme.textSecondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                        Capsule()
+                            .fill(isActive ? theme.accent : Color.clear)
+                            .frame(height: 4)
+                            .padding(.horizontal, 12)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(isActive ? .isSelected : [])
+            }
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(theme.hairline).frame(height: 1)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder
@@ -1245,13 +1491,31 @@ struct IntelView: View {
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, digestExpanded ? 12 : 8)
+        .padding(.horizontal, isXcom ? 16 : 12)
+        .padding(.vertical, digestExpanded ? 12 : (isXcom ? 10 : 8))
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(theme.accentSoft, in: RoundedRectangle(cornerRadius: theme.cardRadius))
+        .background(
+            Group {
+                if IntelXcomChrome.usesCollapsedDigestChrome(theme.system) {
+                    Rectangle().fill(theme.canvas)
+                } else {
+                    RoundedRectangle(cornerRadius: theme.cardRadius)
+                        .fill(theme.accentSoft)
+                }
+            }
+        )
         .overlay(
-            RoundedRectangle(cornerRadius: theme.cardRadius)
-                .strokeBorder(theme.accent.opacity(0.35), lineWidth: 1)
+            Group {
+                if IntelXcomChrome.usesCollapsedDigestChrome(theme.system) {
+                    Rectangle()
+                        .fill(theme.hairline)
+                        .frame(height: 1)
+                        .frame(maxHeight: .infinity, alignment: .bottom)
+                } else {
+                    RoundedRectangle(cornerRadius: theme.cardRadius)
+                        .strokeBorder(theme.accent.opacity(0.35), lineWidth: 1)
+                }
+            }
         )
     }
 
@@ -1302,89 +1566,211 @@ struct IntelView: View {
         }
     }
 
-    /// qmreader `.entry-card`：左文案 + 右 58px 缩略，padding 11–12、圆角 10、gap 10。
+    /// 列表行：经典 entry-card；xcom timeline cell（plan 2026-07-23-002）。
     private func newsRow(_ item: IntelItem, track: IntelTrack) -> some View {
         let isOn = store.selectedIntelItemID == item.id
+        let isHovered = hoveredIntelItemID == item.id
         let invStatus = store.rewrite(for: item.id, kind: "investment")?.status
+        let chrome = IntelXcomChrome.selectionChrome(theme.system)
+        let timeline = IntelXcomChrome.usesTimelineList(theme.system)
+        let hoverOpacity = IntelXcomChrome.hoverOverlayOpacity(
+            appearance: theme.appearance,
+            isXcom: timeline
+        )
         return Button {
             store.selectIntelItem(item, trackKey: track.key, trackName: track.name)
             readerTab = .investment
         } label: {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 0) {
-                    // top meta: source · time · 热议 chip
-                    HStack(spacing: 6) {
-                        sourceFavicon(item: item, size: 13)
-                        if item.isYupiHot {
-                            Text("热议")
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundStyle(theme.accent)
-                                .padding(.horizontal, 5).padding(.vertical, 1)
-                                .background(theme.accent.opacity(0.12), in: Capsule())
-                        }
-                        if let source = item.source, !source.isEmpty {
-                            Text(source)
-                                .font(KSSFont.themed(11.3, .medium, theme: theme))
-                                .lineLimit(1)
-                        }
-                        if let time = item.time, !time.isEmpty {
-                            Text(time)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(theme.textSecondary.opacity(0.85))
-                        }
-                        if invStatus == "ready" {
-                            Text("投研")
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundStyle(theme.accent)
-                                .padding(.horizontal, 5).padding(.vertical, 1)
-                                .background(theme.accent.opacity(0.1), in: Capsule())
-                        } else if invStatus == "generating" {
-                            ProgressView().scaleEffect(0.55)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .foregroundStyle(theme.textSecondary)
-                    .padding(.bottom, 6)
-
-                    Text(item.title)
-                        .font(KSSFont.themed(13.5, isOn ? .semibold : .medium, theme: theme))
-                        .foregroundStyle(isOn ? theme.textPrimary : theme.textBody)
-                        .lineLimit(2)
-                        .lineSpacing(2)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    if let sum = item.summary, !sum.isEmpty {
-                        Text(sum)
-                            .font(KSSFont.themed(12.2, theme: theme))
-                            .foregroundStyle(theme.textSecondary.opacity(0.92))
-                            .lineLimit(2)
-                            .lineSpacing(2)
-                            .padding(.top, 5)
-                            .multilineTextAlignment(.leading)
-                    }
+            Group {
+                if chrome == .timelineFill || timeline {
+                    timelineNewsRowLabel(
+                        item: item,
+                        isOn: isOn,
+                        isHovered: isHovered,
+                        invStatus: invStatus,
+                        hoverOpacity: hoverOpacity
+                    )
+                } else {
+                    entryCardNewsRowLabel(
+                        item: item,
+                        isOn: isOn,
+                        invStatus: invStatus
+                    )
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                // entry-thumb 58×58
-                sourceFavicon(item: item, size: 58)
-                    .shadow(color: Color.black.opacity(0.06), radius: 2, x: 0, y: 1)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 11)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(isOn ? theme.surface : Color.clear)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(isOn ? theme.outlineVariant : Color.clear, lineWidth: 1)
-            )
-            .shadow(color: isOn ? Color.black.opacity(0.055) : .clear, radius: 4, x: 0, y: 2)
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            guard timeline else { return }
+            hoveredIntelItemID = hovering ? item.id : (hoveredIntelItemID == item.id ? nil : hoveredIntelItemID)
+        }
+    }
+
+    /// xcom：左 40 圆标 + meta/标题/摘要；浅底选中 + 左 accent 条；无阴影。
+    private func timelineNewsRowLabel(
+        item: IntelItem,
+        isOn: Bool,
+        isHovered: Bool,
+        invStatus: String?,
+        hoverOpacity: Double
+    ) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            sourceFavicon(item: item, size: 40)
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 4) {
+                    if item.isYupiHot {
+                        Text("热议")
+                            .font(KSSFont.themed(12, .bold, theme: theme))
+                            .foregroundStyle(theme.accent)
+                    }
+                    if let source = item.source, !source.isEmpty {
+                        Text(source)
+                            .font(KSSFont.themed(13, .medium, theme: theme))
+                            .lineLimit(1)
+                    }
+                    if let time = item.time, !time.isEmpty {
+                        Text("·")
+                            .foregroundStyle(theme.textSecondary.opacity(0.45))
+                        Text(time)
+                            .font(KSSFont.themed(13, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                    if invStatus == "ready" {
+                        Text("·")
+                            .foregroundStyle(theme.textSecondary.opacity(0.45))
+                        Text("投研")
+                            .font(KSSFont.themed(12, .semibold, theme: theme))
+                            .foregroundStyle(theme.accent)
+                    } else if invStatus == "generating" {
+                        ProgressView().scaleEffect(0.5)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(theme.textSecondary)
+                .padding(.bottom, 4)
+
+                Text(item.title)
+                    .font(KSSFont.themed(15, isOn ? .semibold : .medium, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                    .lineLimit(2)
+                    .lineSpacing(2)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let sum = item.summary, !sum.isEmpty {
+                    Text(sum)
+                        .font(KSSFont.themed(13, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
+                        .padding(.top, 4)
+                        .multilineTextAlignment(.leading)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .background(
+            Rectangle()
+                .fill(
+                    isOn
+                        ? theme.surfaceContainer
+                        : (isHovered ? theme.textPrimary.opacity(hoverOpacity) : Color.clear)
+                )
+        )
+        .overlay(alignment: .leading) {
+            if isOn {
+                Rectangle()
+                    .fill(theme.accent)
+                    .frame(width: 3)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(theme.hairline)
+                .frame(height: 1)
+        }
+    }
+
+    /// 经典 qmreader entry-card：圆角 10、选中阴影、右 58 缩略。
+    private func entryCardNewsRowLabel(
+        item: IntelItem,
+        isOn: Bool,
+        invStatus: String?
+    ) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 6) {
+                    sourceFavicon(item: item, size: 13)
+                    if item.isYupiHot {
+                        Text("热议")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundStyle(theme.accent)
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(theme.accent.opacity(0.12), in: Capsule())
+                    }
+                    if let source = item.source, !source.isEmpty {
+                        Text(source)
+                            .font(KSSFont.themed(11.3, .medium, theme: theme))
+                            .lineLimit(1)
+                    }
+                    if let time = item.time, !time.isEmpty {
+                        Text(time)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(theme.textSecondary.opacity(0.85))
+                    }
+                    if invStatus == "ready" {
+                        Text("投研")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundStyle(theme.accent)
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(theme.accent.opacity(0.1), in: Capsule())
+                    } else if invStatus == "generating" {
+                        ProgressView().scaleEffect(0.55)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(theme.textSecondary)
+                .padding(.bottom, 6)
+
+                Text(item.title)
+                    .font(KSSFont.themed(13.5, isOn ? .semibold : .medium, theme: theme))
+                    .foregroundStyle(isOn ? theme.textPrimary : theme.textBody)
+                    .lineLimit(2)
+                    .lineSpacing(2)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let sum = item.summary, !sum.isEmpty {
+                    Text(sum)
+                        .font(KSSFont.themed(12.2, theme: theme))
+                        .foregroundStyle(theme.textSecondary.opacity(0.92))
+                        .lineLimit(2)
+                        .lineSpacing(2)
+                        .padding(.top, 5)
+                        .multilineTextAlignment(.leading)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            sourceFavicon(item: item, size: 58)
+                .shadow(color: Color.black.opacity(0.06), radius: 2, x: 0, y: 1)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(isOn ? theme.surface : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(isOn ? theme.outlineVariant : Color.clear, lineWidth: 1)
+        )
+        .shadow(color: isOn ? Color.black.opacity(0.055) : .clear, radius: 4, x: 0, y: 2)
     }
 
     // MARK: - 空态
@@ -1412,6 +1798,22 @@ struct IntelView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 48)
+    }
+}
+
+// MARK: - Track pill chrome (classic groove item vs xcom plain)
+
+private struct IntelTrackPillChromeModifier: ViewModifier {
+    let isActive: Bool
+    let underlineStyle: Bool
+    let theme: KSSThemeTokens
+
+    func body(content: Content) -> some View {
+        if underlineStyle {
+            content
+        } else {
+            content.kssSegmentedItemStyle(isActive: isActive, theme: theme)
+        }
     }
 }
 
