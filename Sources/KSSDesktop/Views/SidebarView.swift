@@ -295,7 +295,8 @@ private struct SectionDropDelegate: DropDelegate {
 
 // MARK: - Header
 
-/// 边栏顶部：xcom 展开只留 kmark（热区约 50）；经典保留 wordmark + 折叠钮。
+/// 边栏顶部：品牌 kmark 仅作标识（不当头像）。
+/// 折叠/展开主入口在底栏 `SidebarAccountRow` 的显式按钮，避免 xcom 顶栏塞工具钮。
 struct AppHeader: View {
     @Environment(\.kssTheme) private var theme
     var collapsed: Bool
@@ -304,17 +305,15 @@ struct AppHeader: View {
     var body: some View {
         let isXcom = theme.system == .xcom
         if collapsed {
-            VStack(spacing: 10) {
-                if !isXcom {
-                    toggleButton
-                }
-                kmarkButton
-            }
-            .frame(maxWidth: .infinity)
+            // 折叠态：只留品牌 K；展开入口在底栏（sidebar.leading 大钮）
+            kmarkButton
+                .frame(maxWidth: .infinity)
         } else if isXcom {
-            HStack {
+            HStack(alignment: .center, spacing: 6) {
                 kmarkButton
                 Spacer(minLength: 0)
+                // xcom 展开：顶栏次要折叠入口（主入口仍是底栏 ⋯）
+                ToggleButton(theme: theme, action: onToggleCollapse, collapsed: collapsed, size: 28)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 6)
@@ -323,15 +322,11 @@ struct AppHeader: View {
                 kmark.frame(height: 26)
                 wordmark.frame(height: 20)
                 Spacer(minLength: 0)
-                toggleButton
+                ToggleButton(theme: theme, action: onToggleCollapse, collapsed: collapsed, size: 26)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 6)
         }
-    }
-
-    private var toggleButton: some View {
-        ToggleButton(theme: theme, action: onToggleCollapse, collapsed: collapsed)
     }
 
     private var kmarkButton: some View {
@@ -370,33 +365,37 @@ struct AppHeader: View {
     }
 }
 
+/// 折叠/展开边栏：普通 `Button`（非 Menu），圆形 hover；折叠态用更大 hit。
 private struct ToggleButton: View {
     let theme: KSSThemeTokens
     let action: () -> Void
     let collapsed: Bool
+    var size: CGFloat = 26
     @State private var isHovering = false
 
     var body: some View {
-        let isXcom = theme.system == .xcom
         Button(action: action) {
             Image(systemName: "sidebar.leading")
-                .font(KSSFont.themed(13, .semibold, chirpWeight: .medium, theme: theme))
+                .font(KSSFont.themed(size >= 36 ? 17 : 13, .semibold, chirpWeight: .medium, theme: theme))
                 .foregroundStyle(theme.textSecondary)
-                .frame(width: 26, height: 26)
+                .frame(width: size, height: size)
                 .background(
-                    isXcom && isHovering ? theme.textPrimary.opacity(theme.appearance == .dark ? 0.10 : 0.08) : Color.clear,
+                    isHovering ? theme.textPrimary.opacity(theme.appearance == .dark ? 0.10 : 0.08) : Color.clear,
                     in: Circle()
                 )
         }
         .buttonStyle(.plain)
         .help(collapsed ? "展开边栏" : "折叠边栏")
+        .accessibilityLabel(collapsed ? "展开边栏" : "折叠边栏")
         .onHover { isHovering = $0 }
     }
 }
 
 // MARK: - Account footer
 
-/// 账户级底栏：kmark + 标题 + ⋯ 菜单（架构 / GitHub / 折叠）。
+/// 底栏：SF Symbol 用户头像 + 明确折叠/展开入口。
+/// - 折叠：上 = 展开大钮（sidebar.leading），下 = 用户 Menu（架构 / GitHub，不含折叠）
+/// - 展开：用户行 + ⋯（架构 / GitHub / 折叠边栏）
 struct SidebarAccountRow: View {
     @Environment(\.kssTheme) private var theme
     var collapsed: Bool
@@ -404,6 +403,7 @@ struct SidebarAccountRow: View {
     var onSelectArchitecture: () -> Void
     var onToggleCollapse: () -> Void
     @State private var isHovering = false
+    @State private var moreHovering = false
 
     private var hoverTint: Color {
         theme.textPrimary.opacity(theme.appearance == .dark ? 0.10 : 0.08)
@@ -411,25 +411,33 @@ struct SidebarAccountRow: View {
 
     var body: some View {
         if collapsed {
-            // Menu + borderlessButton 在 macOS 上常忽略 label 内 frame，
-            // 导致 kmark 按固有尺寸撑破 64pt 栏——先定框再裁圆，并锁住 Menu 控件本身。
-            Menu {
-                accountMenuItems
-            } label: {
-                avatar(size: 36)
-                    .background(isHovering ? hoverTint : Color.clear, in: Circle())
+            VStack(spacing: 8) {
+                // 主入口：展开边栏（Button，不用 Menu，避免系统蓝箭头与尺寸失控）
+                ToggleButton(theme: theme, action: onToggleCollapse, collapsed: true, size: 40)
+                    .frame(maxWidth: .infinity)
+
+                // 次入口：更多（架构 / GitHub）— label 仅用 SF Symbol，禁止 kmark 位图
+                Menu {
+                    moreMenuItems
+                } label: {
+                    userAvatar(size: 32)
+                        .foregroundStyle(theme.textSecondary)
+                        .frame(width: 40, height: 40)
+                        .background(moreHovering ? hoverTint : Color.clear, in: Circle())
+                }
+                .menuStyle(.borderlessButton)
+                .buttonStyle(.plain)
+                .frame(width: 40, height: 40)
+                .frame(maxWidth: .infinity)
+                .help("更多 · 架构 / GitHub")
+                .onHover { moreHovering = $0 }
             }
-            .menuStyle(.borderlessButton)
-            .buttonStyle(.plain)
-            .frame(width: 36, height: 36)
             .frame(maxWidth: .infinity)
-            .fixedSize(horizontal: false, vertical: true)
-            .help("账户与更多")
-            .onHover { isHovering = $0 }
         } else {
             HStack(spacing: 0) {
                 HStack(spacing: 0) {
-                    avatar(size: 40)
+                    userAvatar(size: 40)
+                        .foregroundStyle(theme.textSecondary)
                     VStack(alignment: .leading, spacing: 1) {
                         Text("KSS")
                             .font(KSSFont.themed(15, .bold, chirpWeight: .bold, theme: theme))
@@ -443,7 +451,9 @@ struct SidebarAccountRow: View {
                     .padding(.leading, 12)
                     Spacer(minLength: 4)
                     Menu {
-                        accountMenuItems
+                        moreMenuItems
+                        Divider()
+                        Button("折叠边栏") { onToggleCollapse() }
                     } label: {
                         Image(systemName: "ellipsis")
                             .font(KSSFont.themed(15, .semibold, chirpWeight: .medium, theme: theme))
@@ -452,6 +462,7 @@ struct SidebarAccountRow: View {
                             .contentShape(Rectangle())
                     }
                     .menuStyle(.borderlessButton)
+                    .help("更多 · 架构 / GitHub / 折叠")
                 }
                 .padding(12)
                 .background(isHovering ? hoverTint : Color.clear, in: RoundedRectangle(cornerRadius: theme.chipRadius))
@@ -461,41 +472,23 @@ struct SidebarAccountRow: View {
         }
     }
 
-    @ViewBuilder private var accountMenuItems: some View {
+    /// 仅架构 + GitHub；折叠/展开不进此菜单（折叠态由独立 Button 负责）。
+    @ViewBuilder private var moreMenuItems: some View {
         Button(WorkspaceSection.architecture.displayName) {
             onSelectArchitecture()
         }
         if let url = URL(string: "https://github.com/ZCDeng/KSS") {
             Link("GitHub · ZCDeng/KSS", destination: url)
         }
-        Divider()
-        Button(collapsed ? "展开边栏" : "折叠边栏") {
-            onToggleCollapse()
-        }
     }
 
-    /// 先 `frame` 再 `clipShape(Circle())`，避免未定框裁圆 + Menu label 撑破布局。
-    @ViewBuilder private func avatar(size: CGFloat) -> some View {
-        if let img = bundledImage("kmark") ?? bundledImage("logo") {
-            Image(nsImage: img)
-                .resizable()
-                .scaledToFill()
-                .frame(width: size, height: size)
-                .clipShape(Circle())
-                .contentShape(Circle())
-                .clipped()
-        } else {
-            Image(systemName: "person.crop.circle.fill")
-                .resizable()
-                .scaledToFit()
-                .frame(width: size, height: size)
-                .foregroundStyle(theme.textPrimary)
-        }
-    }
-
-    private func bundledImage(_ name: String) -> NSImage? {
-        guard let url = Bundle.module.url(forResource: name, withExtension: "png") else { return nil }
-        return NSImage(contentsOf: url)
+    /// 固定 SF Symbol 用户头像，永不加载 kmark/logo 位图。
+    private func userAvatar(size: CGFloat) -> some View {
+        Image(systemName: "person.crop.circle.fill")
+            .resizable()
+            .scaledToFit()
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
     }
 }
 
