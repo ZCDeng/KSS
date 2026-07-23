@@ -234,11 +234,11 @@ struct SidebarView: View {
 
         return Button { selection = .aiChat } label: {
             if collapsed {
-                // 折叠态：自定义 Seesaw filled 图标 + 圆形主按钮
+                // 折叠态：outline 放大适配 50 圆底（视觉留白约 12–14pt 边距）
                 SidebarSectionIcon(
                     section: .aiChat,
-                    filled: true,
-                    pointSize: 22,
+                    filled: false,
+                    pointSize: 28,
                     frameWidth: 50,
                     theme: theme
                 )
@@ -246,7 +246,7 @@ struct SidebarView: View {
                 .frame(width: 50, height: 50)
                 .background(fillColor, in: Circle())
             } else {
-                // 展开态：图标 + 文字，贴近 Post 主按钮（仍保持 ≥52 高）
+                // 展开态：filled + 文字
                 HStack(spacing: 8) {
                     SidebarSectionIcon(
                         section: .aiChat,
