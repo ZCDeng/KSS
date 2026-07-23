@@ -1,12 +1,18 @@
 import SwiftUI
 
 /// 统一"设置"工作区页面（plan 2026-07-12-005 / U1；R2-U4 Tab 化；R4 合并为两 tab）：
-/// 「凭证与数据源」（按源合一卡：凭证字段 + 连通性测试同卡）与「任务与日志」（两者同源）。
+/// 经典：「凭证与数据源」|「任务与日志」长滚动。
+/// xcom（plan 2026-07-23-003）：左分类 + 右详情 master-detail。
 struct SettingsView: View {
     @Environment(\.kssTheme) private var theme
     @EnvironmentObject private var store: KSSStore
     @State private var tab: SettingsTab = .credentials
+    @State private var selectedCategory: SettingsCategory = .selfCheck
     @State private var dataSourceResults: [String: DataSourceTestResult] = [:]
+    @State private var dirtySources: Set<String> = []
+    @State private var hoveredCategory: SettingsCategory?
+
+    private var isXcom: Bool { theme.system == .xcom }
 
     private static let tabOptions: [(key: SettingsTab, label: String)] =
         SettingsTab.allCases.map { ($0, $0.label) }
@@ -35,12 +41,33 @@ struct SettingsView: View {
     }
 
     var body: some View {
+        Group {
+            if isXcom {
+                xcomSettingsShell
+            } else {
+                classicSettingsShell
+            }
+        }
+        .background(theme.canvas)
+        .onAppear(perform: consumeDeepLink)
+    }
+
+    private func consumeDeepLink() {
+        if let cat = store.consumeSettingsDestination() {
+            selectedCategory = cat
+            tab = cat.tab
+        }
+    }
+
+    // MARK: - Classic shell（两 Tab 长滚动，零回归）
+
+    private var classicSettingsShell: some View {
         GeometryReader { geo in
             let w = min(geo.size.width - 48, 1080)
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     PageTitle("设置", subtitle: "数据源与凭证 / 任务与日志的唯一入口")
-                    SelfCheckStatusStrip()
+                    SelfCheckStatusStrip(onJump: nil)
 
                     KSSSegmentedControl(
                         options: Self.tabOptions,
@@ -50,7 +77,11 @@ struct SettingsView: View {
 
                     switch tab {
                     case .credentials:
-                        SettingsCredentialsSection(results: $dataSourceResults)
+                        SettingsCredentialsSection(
+                            results: $dataSourceResults,
+                            dirtySources: $dirtySources,
+                            focusSource: nil
+                        )
                         SectionHeader("资讯雷达 · yupi（托管安装 + 监控词）")
                         SettingsIntelKeywordsSection()
                     case .operations:
@@ -66,13 +97,146 @@ struct SettingsView: View {
             .scrollContentBackground(.hidden)
             .background(theme.canvas)
         }
-        .background(theme.canvas)
-        .onAppear {
-            if let target = store.settingsTargetTab {
-                tab = target
-                store.settingsTargetTab = nil
+    }
+
+    // MARK: - xcom shell（左分类 | 右详情）
+
+    private var xcomSettingsShell: some View {
+        HStack(spacing: 0) {
+            xcomCategoryNav
+                .frame(width: 240)
+            Divider().overlay(theme.hairline)
+            xcomDetailPane
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var xcomCategoryNav: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("设置")
+                .font(KSSFont.themed(20, .bold, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+                .padding(.horizontal, 16)
+                .padding(.top, 20)
+                .padding(.bottom, 12)
+
+            Text("App v\(BridgeClient.appVersion)")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(theme.textSecondary)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(SettingsCategory.allCases) { cat in
+                        xcomNavRow(cat)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 16)
             }
         }
+        .background(theme.canvas)
+    }
+
+    private func xcomNavRow(_ cat: SettingsCategory) -> some View {
+        let isOn = selectedCategory == cat
+        let isHovered = hoveredCategory == cat
+        let needsBadge = SettingsTabRouting.categoryNeedsBadge(
+            cat,
+            isSourceConfigured: { raw in
+                SettingsDataSource(rawValue: raw)?.isConfigured ?? true
+            },
+            testOK: { raw in dataSourceResults[raw]?.ok },
+            jobs: store.scheduledJobs
+        )
+        let isDirty = cat.dataSource.map { dirtySources.contains($0.rawValue) } ?? false
+        let hoverOpacity = theme.appearance == .dark ? 0.10 : 0.07
+
+        return Button {
+            withAnimation(.easeOut(duration: 0.12)) {
+                selectedCategory = cat
+                tab = cat.tab
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Text(cat.label)
+                    .font(KSSFont.themed(15, isOn ? .bold : .regular, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if isDirty {
+                    Text("·")
+                        .font(KSSFont.themed(18, .bold, theme: theme))
+                        .foregroundStyle(theme.accent)
+                        .help("有未保存更改")
+                } else if needsBadge {
+                    Circle()
+                        .fill(theme.ma5)
+                        .frame(width: 7, height: 7)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 999, style: .continuous)
+                    .fill(
+                        isOn
+                            ? theme.textPrimary.opacity(theme.appearance == .dark ? 0.14 : 0.08)
+                            : (isHovered ? theme.textPrimary.opacity(hoverOpacity) : Color.clear)
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+        .onHover { hovering in
+            hoveredCategory = hovering ? cat : (hoveredCategory == cat ? nil : hoveredCategory)
+        }
+    }
+
+    @ViewBuilder
+    private var xcomDetailPane: some View {
+        ScrollView {
+            // 间距/标题与「任务」区同令牌（SettingsFormStyle）
+            VStack(alignment: .leading, spacing: SettingsFormStyle.blockSpacing) {
+                Text(selectedCategory.label)
+                    .font(KSSFont.themed(SettingsFormStyle.pageTitle, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+
+                switch selectedCategory {
+                case .selfCheck:
+                    SelfCheckStatusStrip(onJump: { cat in
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            selectedCategory = cat
+                            tab = cat.tab
+                        }
+                    })
+                case .tushare, .longbridge, .telegram, .llm:
+                    // 固定 id：四源共享同一份 @State，切换分类不丢未保存编辑（plan KTD3）。
+                    SettingsCredentialsSection(
+                        results: $dataSourceResults,
+                        dirtySources: $dirtySources,
+                        focusSource: selectedCategory.dataSource
+                    )
+                    .id("settings-credentials-shared")
+                case .yupi:
+                    SettingsIntelKeywordsSection()
+                case .tasks:
+                    SettingsTasksSection()
+                case .logs:
+                    SettingsLogsSection()
+                }
+            }
+            .frame(maxWidth: 720, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, SettingsFormStyle.detailHPadding)
+            .padding(.vertical, SettingsFormStyle.detailVPadding)
+        }
+        .scrollContentBackground(.hidden)
+        .background(theme.canvas)
     }
 }
 
@@ -92,12 +256,14 @@ private struct SettingsPlaceholderCard: View {
 
 /// 凭证与数据源（R4 合并）：按源合一卡——每张卡 = 该源的凭证字段 + 连通性测试 + 独立保存。
 /// Keychain 读写与「保存后全杀重启 sidecar」语义承袭原密钥分区。
-/// 字号规格（R4 修订，阅读优先）：卡标题 15 bold / 字段标签 13 semibold / 输入 14 /
-/// 说明 12.5；输入框透明底+描边（kssInput，去背景割裂）。
+/// `focusSource != nil`（xcom）：只渲染该源详情；`nil`（经典）：四源同屏。
 struct SettingsCredentialsSection: View {
     @Environment(\.kssTheme) private var theme
     @EnvironmentObject private var store: KSSStore
     @Binding var results: [String: DataSourceTestResult]
+    @Binding var dirtySources: Set<String>
+    /// xcom 单源详情；经典传 nil 渲染全部。
+    var focusSource: SettingsDataSource?
     @State private var testing: Set<String> = []
 
     @State private var tushareToken = ""
@@ -123,28 +289,59 @@ struct SettingsCredentialsSection: View {
     /// 已保存反馈按卡显示（source.rawValue）。任一字段编辑即清除对应卡的反馈。
     @State private var savedSources: Set<String> = []
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("凭据存入 macOS Keychain，不写入磁盘明文。留空保存表示删除该项；保存后自动重启后台服务生效。")
-                .font(KSSFont.themed(12.5, theme: theme))
-                .foregroundStyle(theme.textSecondary)
+    private var isXcomFlat: Bool { focusSource != nil }
 
+    private var visibleSources: [SettingsDataSource] {
+        if let focusSource { return [focusSource] }
+        return SettingsDataSource.allCases
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: isXcomFlat ? SettingsFormStyle.blockSpacing : 14) {
+            if isXcomFlat {
+                SettingsHintText(text: "凭据存入 macOS Keychain，不写入磁盘明文。留空保存表示删除该项；保存后自动重启后台服务生效。")
+            } else {
+                Text("凭据存入 macOS Keychain，不写入磁盘明文。留空保存表示删除该项；保存后自动重启后台服务生效。")
+                    .font(KSSFont.themed(12.5, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+            }
+
+            ForEach(visibleSources) { source in
+                sourceDetail(source)
+            }
+
+            if focusSource == nil {
+                HStack {
+                    Spacer()
+                    Text("App v\(BridgeClient.appVersion) · Python 层 v\(BridgeClient.scriptsVersionOnDisk())")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(theme.textSecondary)
+                }
+            }
+        }
+        .onAppear(perform: load)
+    }
+
+    @ViewBuilder
+    private func sourceDetail(_ source: SettingsDataSource) -> some View {
+        switch source {
+        case .tushare:
             sourceCard(.tushare, note: "日线/财务/日历数据主源。") {
                 field("Tushare Token", text: $tushareToken, secure: true, source: .tushare)
             }
-
+        case .longbridge:
             sourceCard(.longbridge, note: "ChinaConnect LV1 实时行情与分钟 K 线（陆股通池，北交所不覆盖）。") {
                 field("App Key", text: $longbridgeAppKey, secure: true, source: .longbridge)
                 field("App Secret", text: $longbridgeAppSecret, secure: true, source: .longbridge)
                 field("Access Token", text: $longbridgeAccessToken, secure: true, source: .longbridge)
             }
-
+        case .telegram:
             sourceCard(.telegram, note: "复盘/告警推送通道（可选自建中继）。") {
                 field("Bot Token", text: $telegramBotToken, secure: true, source: .telegram)
                 field("Chat ID", text: $telegramChatId, secure: false, source: .telegram)
                 field("API URL（自建中继，可选）", text: $telegramApiUrl, secure: false, source: .telegram)
             }
-
+        case .llm:
             sourceCard(.llm, note: "Seesaw 的 OpenAI 兼容端点：主用失败自动降级备用；两组全空时退回下方兼容旧配置。") {
                 subHead("主用")
                 field("API Key", text: $llmPrimaryKey, secure: true, source: .llm)
@@ -160,26 +357,31 @@ struct SettingsCredentialsSection: View {
                 field("OpenAI Base URL（可选）", text: $openaiBaseUrl, secure: false, source: .llm)
                 field("模型 ID（KSS_LLM_MODEL，可选）", text: $llmModel, secure: false, source: .llm)
                 Toggle(isOn: $appLive) {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: isXcomFlat ? SettingsFormStyle.titleMetaSpacing : 2) {
                         Text("允许 AI 执行写操作（live）")
-                            .font(KSSFont.themed(13, .semibold, theme: theme))
+                            .font(KSSFont.themed(
+                                isXcomFlat ? SettingsFormStyle.itemTitle : 13,
+                                isXcomFlat ? .bold : .semibold,
+                                theme: theme
+                            ))
                             .foregroundStyle(theme.textPrimary)
                         Text("关：写操作弹窗确认后仍被拒（只读安全）。开：本人逐次确认后真执行。")
-                            .font(KSSFont.themed(12.5, theme: theme))
+                            .font(KSSFont.themed(
+                                isXcomFlat ? SettingsFormStyle.meta : 12.5,
+                                theme: theme
+                            ))
                             .foregroundStyle(theme.textSecondary)
                     }
                 }
-                .onChange(of: appLive) { _, _ in savedSources.remove(SettingsDataSource.llm.rawValue) }
-            }
-
-            HStack {
-                Spacer()
-                Text("App v\(BridgeClient.appVersion) · Python 层 v\(BridgeClient.scriptsVersionOnDisk())")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(theme.textSecondary)
+                .tint(theme.accent)
+                .onChange(of: appLive) { _, _ in markDirty(.llm) }
             }
         }
-        .onAppear(perform: load)
+    }
+
+    private func markDirty(_ source: SettingsDataSource) {
+        dirtySources.insert(source.rawValue)
+        savedSources.remove(source.rawValue)
     }
 
     // MARK: 卡片骨架
@@ -188,47 +390,71 @@ struct SettingsCredentialsSection: View {
     private func sourceCard<Content: View>(
         _ source: SettingsDataSource, note: String, @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
+        let titleSize: CGFloat = isXcomFlat ? SettingsFormStyle.itemTitle : 16
+        let noteSize: CGFloat = isXcomFlat ? SettingsFormStyle.bodyHint : 12.5
+        VStack(alignment: .leading, spacing: isXcomFlat ? SettingsFormStyle.cardInnerSpacing : 12) {
+            HStack(spacing: isXcomFlat ? SettingsFormStyle.rowHSpacing : 10) {
                 Circle()
                     .fill(source.isConfigured ? theme.accent : theme.textSecondary.opacity(0.4))
                     .frame(width: 8, height: 8)
                 Text(source.displayName)
-                    // R5：对齐「任务与日志」任务项标题的视觉字号——任务标题是 CJK
-                    // （14.5 bold 经 HarmonyOS 级联，字面大）；源名多为拉丁字，需 16 才光学等大
-                    .font(KSSFont.themed(16, .bold, theme: theme))
+                    // xcom：与任务行标题 14.5 bold 对齐；经典拉丁源名仍 16 光学对齐 CJK
+                    .font(KSSFont.themed(titleSize, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
-                Text(source.isConfigured ? "已配置" : "未配置")
-                    .font(KSSFont.themed(11.5, .semibold, theme: theme))
-                    .foregroundStyle(theme.textSecondary)
-                    .padding(.horizontal, 7).padding(.vertical, 1.5)
-                    .background(theme.textSecondary.opacity(0.12), in: Capsule())
+                if isXcomFlat {
+                    SettingsStatusCapsule(
+                        text: source.isConfigured ? "已配置" : "未配置",
+                        tint: source.isConfigured ? theme.accent : theme.textSecondary
+                    )
+                } else {
+                    Text(source.isConfigured ? "已配置" : "未配置")
+                        .font(KSSFont.themed(11.5, .semibold, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                        .padding(.horizontal, 7).padding(.vertical, 1.5)
+                        .background(theme.textSecondary.opacity(0.12), in: Capsule())
+                }
                 Spacer()
-                if savedSources.contains(source.rawValue) {
+                if dirtySources.contains(source.rawValue) {
+                    SettingsStatusCapsule(text: "未保存", tint: theme.ma5)
+                } else if savedSources.contains(source.rawValue) {
                     Label("已保存", systemImage: "checkmark.seal.fill")
-                        .font(KSSFont.themed(12, .semibold, theme: theme))
-                        .foregroundStyle(theme.up)
+                        .font(KSSFont.themed(SettingsFormStyle.actionLabel, .semibold, theme: theme))
+                        .foregroundStyle(theme.accent)
                 }
-                Button {
-                    Task { await runTest(source) }
-                } label: {
-                    if testing.contains(source.rawValue) {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Text("测试").font(KSSFont.themed(12.5, .semibold, theme: theme))
+                if isXcomFlat {
+                    SettingsBorderedAction(
+                        title: "测试",
+                        systemImage: "antenna.radiowaves.left.and.right",
+                        busy: testing.contains(source.rawValue),
+                        action: { Task { await runTest(source) } }
+                    )
+                    SettingsBorderedAction(
+                        title: "保存",
+                        systemImage: "square.and.arrow.down",
+                        action: { save(source) }
+                    )
+                } else {
+                    Button {
+                        Task { await runTest(source) }
+                    } label: {
+                        if testing.contains(source.rawValue) {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text("测试").font(KSSFont.themed(12.5, .semibold, theme: theme))
+                        }
                     }
+                    .buttonStyle(.bordered)
+                    .disabled(testing.contains(source.rawValue))
+                    Button {
+                        save(source)
+                    } label: {
+                        Text("保存").font(KSSFont.themed(12.5, .semibold, theme: theme))
+                    }
+                    .buttonStyle(.bordered)
                 }
-                .buttonStyle(.bordered)
-                .disabled(testing.contains(source.rawValue))
-                Button {
-                    save(source)
-                } label: {
-                    Text("保存").font(KSSFont.themed(12.5, .semibold, theme: theme))
-                }
-                .buttonStyle(.bordered)
             }
             Text(note)
-                .font(KSSFont.themed(12.5, theme: theme))
+                .font(KSSFont.themed(noteSize, theme: theme))
                 .foregroundStyle(theme.textSecondary)
             content()
             if let result = results[source.rawValue] {
@@ -236,22 +462,31 @@ struct SettingsCredentialsSection: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .kssCard(padding: 16)
+        // xcom 与任务行一致用 kssCard，不再 flat hairline
+        .modifier(SettingsSourceChromeModifier(flat: false, theme: theme, compact: isXcomFlat))
     }
 
     @ViewBuilder
     private func subHead(_ title: String) -> some View {
         Text(title)
-            .font(KSSFont.themed(13, .semibold, theme: theme))
-            .foregroundStyle(theme.textPrimary)
+            .font(KSSFont.themed(
+                isXcomFlat ? SettingsFormStyle.sectionHeader : 13,
+                isXcomFlat ? .bold : .semibold,
+                theme: theme
+            ))
+            .foregroundStyle(isXcomFlat ? theme.textSecondary : theme.textPrimary)
             .padding(.top, 2)
     }
 
     @ViewBuilder
     private func field(_ label: String, text: Binding<String>, secure: Bool, source: SettingsDataSource) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: isXcomFlat ? SettingsFormStyle.titleMetaSpacing : 5) {
             Text(label)
-                .font(KSSFont.themed(13, .semibold, theme: theme))
+                .font(KSSFont.themed(
+                    isXcomFlat ? SettingsFormStyle.fieldLabel : 13,
+                    isXcomFlat ? .bold : .semibold,
+                    theme: theme
+                ))
                 .foregroundStyle(theme.textSecondary)
             Group {
                 if secure {
@@ -261,7 +496,7 @@ struct SettingsCredentialsSection: View {
                 }
             }
             .kssInput()
-            .onChange(of: text.wrappedValue) { _, _ in savedSources.remove(source.rawValue) }
+            .onChange(of: text.wrappedValue) { _, _ in markDirty(source) }
         }
     }
 
@@ -364,6 +599,7 @@ struct SettingsCredentialsSection: View {
         BridgeClient.restartSidecarForEnvChange()
         store.refreshLLMCredentialsStatus()
         Task { await store.runSelfCheck() }
+        dirtySources.remove(source.rawValue)
         savedSources.insert(source.rawValue)
     }
 
@@ -410,6 +646,27 @@ enum SettingsDataSource: String, CaseIterable, Identifiable {
             return newKeyed || legacy
         }
     }
+
+    var settingsCategory: SettingsCategory {
+        switch self {
+        case .tushare: return .tushare
+        case .longbridge: return .longbridge
+        case .telegram: return .telegram
+        case .llm: return .llm
+        }
+    }
+}
+
+extension SettingsCategory {
+    var dataSource: SettingsDataSource? {
+        switch self {
+        case .tushare: return .tushare
+        case .longbridge: return .longbridge
+        case .telegram: return .telegram
+        case .llm: return .llm
+        default: return nil
+        }
+    }
 }
 
 // MARK: - 资讯雷达 yupi 词表（plan 2026-07-21-001 + UX 清单）
@@ -443,132 +700,150 @@ struct SettingsIntelKeywordsSection: View {
     @State private var nextStep: String = ""
     @State private var primaryActionTitle: String = "安装并启动"
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("KSS 在本机托管 yupi（端口 18765，KeepAlive）。状态按行列出；Seesaw 主/备若 base 为 OpenRouter 会自动复用 Key/模型。")
-                .font(KSSFont.themed(12.5, theme: theme))
-                .foregroundStyle(theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+    private var useTasksStyle: Bool { SettingsFormStyle.usesTasksStandard(theme.system) }
 
-            // ---- 状态清单（A）----
-            VStack(alignment: .leading, spacing: 6) {
+    var body: some View {
+        VStack(alignment: .leading, spacing: useTasksStyle ? SettingsFormStyle.blockSpacing : 12) {
+            SettingsHintText(text: "KSS 在本机托管 yupi（端口 18765，KeepAlive）。状态按行列出；Seesaw 主/备若 base 为 OpenRouter 会自动复用 Key/模型。")
+
+            // ---- 状态清单（对齐任务健康汇总卡）----
+            VStack(alignment: .leading, spacing: useTasksStyle ? SettingsFormStyle.groupSpacing : 6) {
                 ForEach(statusRows) { row in
-                    HStack(alignment: .top, spacing: 8) {
+                    HStack(alignment: .top, spacing: useTasksStyle ? SettingsFormStyle.rowHSpacing : 8) {
                         Circle()
                             .fill(dotColor(row.level))
                             .frame(width: 8, height: 8)
-                            .padding(.top, 4)
+                            .padding(.top, useTasksStyle ? 6 : 4)
                         Text(row.label)
-                            .font(KSSFont.themed(12, .semibold, theme: theme))
+                            .font(KSSFont.themed(
+                                useTasksStyle ? SettingsFormStyle.sectionHeader : 12,
+                                .bold,
+                                theme: theme
+                            ))
+                            .foregroundStyle(theme.textSecondary)
                             .frame(width: 72, alignment: .leading)
                         Text(row.detail)
-                            .font(KSSFont.themed(12, theme: theme))
+                            .font(KSSFont.themed(
+                                useTasksStyle ? SettingsFormStyle.meta : 12,
+                                theme: theme
+                            ))
                             .foregroundStyle(theme.textSecondary)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
-            .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(theme.surface.opacity(0.45))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .kssCard(padding: useTasksStyle ? SettingsFormStyle.cardPadding : 10)
 
             if !nextStep.isEmpty {
                 Text("下一步：\(nextStep)")
-                    .font(KSSFont.themed(12.5, .semibold, theme: theme))
+                    .font(KSSFont.themed(
+                        useTasksStyle ? SettingsFormStyle.sectionHeader : 12.5,
+                        .bold,
+                        theme: theme
+                    ))
                     .foregroundStyle(theme.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            // ---- 操作反馈条（C）----
             if ensuring {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("安装/启动中（首次 2–5 分钟，请勿关闭设置页）…")
-                        .font(KSSFont.themed(12.5, theme: theme))
-                        .foregroundStyle(theme.textSecondary)
-                }
+                SettingsInfoBanner(
+                    text: "安装/启动中（首次 2–5 分钟，请勿关闭设置页）…",
+                    systemImage: "arrow.triangle.2.circlepath"
+                )
             } else if !actionBanner.isEmpty {
-                Text(actionBanner)
-                    .font(KSSFont.themed(12.5, theme: theme))
-                    .foregroundStyle(actionIsError ? theme.up : theme.textSecondary)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+                SettingsInfoBanner(text: actionBanner, isError: actionIsError)
             }
 
-            HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: useTasksStyle ? SettingsFormStyle.groupSpacing : 10) {
                 SecureField("OpenRouter API Key（可选，优先于 Seesaw 复用）", text: $openrouterKey)
-                    .textFieldStyle(.plain)
-                    .font(KSSFont.themed(14, theme: theme))
-                    .padding(8)
-                    .background(theme.surface.opacity(0.6))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .kssInput()
                 TextField("模型覆盖（空=默认/复用 Seesaw）", text: $yupiModel)
-                    .textFieldStyle(.plain)
-                    .font(KSSFont.themed(13, theme: theme))
-                    .frame(maxWidth: 240)
-                    .padding(8)
-                    .background(theme.surface.opacity(0.6))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .kssInput()
             }
+            .kssCard(padding: useTasksStyle ? SettingsFormStyle.cardPadding : 10)
 
             HStack(spacing: 10) {
-                Button("保存 yupi 凭据") { saveYupiCreds() }
-                    .buttonStyle(.bordered)
-                    .disabled(ensuring)
-                Button(ensuring ? "处理中…" : primaryActionTitle) { Task { await ensureYupi() } }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(ensuring)
-                Button("刷新状态") { Task { await refreshRuntime() } }
-                    .buttonStyle(.bordered)
-                    .disabled(ensuring)
+                SettingsBorderedAction(
+                    title: "保存 yupi 凭据",
+                    systemImage: "square.and.arrow.down",
+                    disabled: ensuring,
+                    action: { saveYupiCreds() }
+                )
+                SettingsPrimaryAction(
+                    title: ensuring ? "处理中…" : primaryActionTitle,
+                    systemImage: "play.circle.fill",
+                    busy: ensuring,
+                    action: { Task { await ensureYupi() } }
+                )
+                SettingsBorderedAction(
+                    title: "刷新状态",
+                    systemImage: "arrow.clockwise",
+                    disabled: ensuring,
+                    action: { Task { await refreshRuntime() } }
+                )
             }
 
-            Divider()
-
-            Text("赛道监控词（灌入热议用）")
-                .font(KSSFont.themed(12, .semibold, theme: theme))
+            // 分类头对齐任务 categoryBlock
+            HStack {
+                Text("赛道监控词")
+                    .font(KSSFont.themed(SettingsFormStyle.sectionHeader, .bold, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                Text("灌入热议")
+                    .font(KSSFont.themed(10.5, .bold, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                    .padding(.horizontal, 6).padding(.vertical, 1)
+                    .background(theme.textSecondary.opacity(0.12), in: Capsule())
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .kssCard(.filled, padding: 8)
 
             if loading {
                 ProgressView().controlSize(.small)
             } else {
                 ForEach(trackOrder, id: \.self) { key in
-                    HStack(alignment: .top, spacing: 10) {
+                    HStack(alignment: .center, spacing: SettingsFormStyle.rowHSpacing) {
                         Text(key)
-                            .font(KSSFont.themed(13, .semibold, theme: theme))
+                            .font(KSSFont.themed(SettingsFormStyle.itemTitle, .bold, theme: theme))
+                            .foregroundStyle(theme.textPrimary)
                             .frame(width: 72, alignment: .leading)
                         TextField("词1, 词2, …", text: Binding(
                             get: { draft[key] ?? "" },
                             set: { draft[key] = $0 }
                         ))
-                        .textFieldStyle(.plain)
-                        .font(KSSFont.themed(14, theme: theme))
-                        .padding(8)
-                        .background(theme.surface.opacity(0.6))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .kssInput()
                     }
+                    .kssCard(padding: 11)
                 }
             }
 
             HStack(spacing: 10) {
-                Button("保存词表") { Task { await saveKeywords() } }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(saving || loading || ensuring)
-                Button("立即灌入") { Task { await ingest() } }
-                    .buttonStyle(.bordered)
-                    .disabled(saving || loading || ensuring)
-                Button("重新加载") { Task { await loadKeywords() } }
-                    .buttonStyle(.bordered)
-                    .disabled(ensuring)
-                if !keywordNote.isEmpty {
-                    Text(keywordNote)
-                        .font(KSSFont.themed(12, theme: theme))
-                        .foregroundStyle(theme.textSecondary)
-                }
+                SettingsPrimaryAction(
+                    title: "保存词表",
+                    systemImage: "square.and.arrow.down",
+                    busy: saving,
+                    disabled: loading || ensuring,
+                    action: { Task { await saveKeywords() } }
+                )
+                SettingsBorderedAction(
+                    title: "立即灌入",
+                    systemImage: "arrow.down.circle",
+                    disabled: saving || loading || ensuring,
+                    action: { Task { await ingest() } }
+                )
+                SettingsBorderedAction(
+                    title: "重新加载",
+                    systemImage: "arrow.clockwise",
+                    disabled: ensuring,
+                    action: { Task { await loadKeywords() } }
+                )
+            }
+            if !keywordNote.isEmpty {
+                SettingsHintText(text: keywordNote)
             }
         }
-        .kssCard(padding: 14)
         .task {
             openrouterKey = KeychainStore.read("OPENROUTER_API_KEY") ?? ""
             yupiModel = KeychainStore.read("KSS_YUPI_MODEL") ?? ""
@@ -850,9 +1125,11 @@ struct SettingsLogsSection: View {
         files.sorted { $0.mtime > $1.mtime }
     }
 
+    private var useTasksStyle: Bool { SettingsFormStyle.usesTasksStandard(theme.system) }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
+        VStack(alignment: .leading, spacing: useTasksStyle ? SettingsFormStyle.blockSpacing : 10) {
+            HStack(spacing: useTasksStyle ? SettingsFormStyle.rowHSpacing : 8) {
                 Picker("文件", selection: $selected) {
                     Text("选择日志文件").tag(LogFileEntry?.none)
                     ForEach(sortedFiles) { f in
@@ -862,13 +1139,12 @@ struct SettingsLogsSection: View {
                 .frame(maxWidth: 360)
                 .onChange(of: selected) { _, _ in Task { await loadTail() } }
 
-                Button {
-                    Task { await loadList() }
-                } label: {
-                    if loadingList { ProgressView().controlSize(.small) }
-                    else { Image(systemName: "arrow.clockwise") }
-                }
-                .buttonStyle(.bordered)
+                SettingsBorderedAction(
+                    title: "刷新",
+                    systemImage: "arrow.clockwise",
+                    busy: loadingList,
+                    action: { Task { await loadList() } }
+                )
 
                 Spacer()
 
@@ -876,15 +1152,22 @@ struct SettingsLogsSection: View {
                     .kssInput()
                     .frame(maxWidth: 220)
                     .onSubmit { Task { await loadTail() } }
-                Button("搜索") { Task { await loadTail() } }
-                    .buttonStyle(.bordered)
-                    .disabled(selected == nil)
+                SettingsBorderedAction(
+                    title: "搜索",
+                    systemImage: "magnifyingglass",
+                    disabled: selected == nil,
+                    action: { Task { await loadTail() } }
+                )
             }
+            .kssCard(padding: useTasksStyle ? SettingsFormStyle.cardPadding : 10)
 
             if selected != nil {
                 HStack {
                     Text("共 \(totalMatched) 行匹配 · 显示末尾 \(tailLines.count) 行")
-                        .font(KSSFont.themed(11, theme: theme))
+                        .font(KSSFont.themed(
+                            useTasksStyle ? SettingsFormStyle.meta : 11,
+                            theme: theme
+                        ))
                         .foregroundStyle(theme.textSecondary)
                     Spacer()
                     if loadingTail { ProgressView().controlSize(.small) }
@@ -893,28 +1176,27 @@ struct SettingsLogsSection: View {
                     VStack(alignment: .leading, spacing: 2) {
                         ForEach(Array(tailLines.enumerated()), id: \.offset) { _, line in
                             Text(line)
-                                .font(.system(size: 11, design: .monospaced))
+                                .font(.system(size: SettingsFormStyle.monoMeta, design: .monospaced))
                                 .foregroundStyle(theme.textPrimary)
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         if tailLines.isEmpty && !loadingTail {
-                            Text("无匹配内容")
-                                .font(KSSFont.themed(12, theme: theme))
-                                .foregroundStyle(theme.textSecondary)
+                            SettingsHintText(text: "无匹配内容", empty: true)
                         }
                     }
-                    .padding(10)
+                    .padding(SettingsFormStyle.cardPadding)
                 }
                 .frame(height: 320)
-                .background(theme.canvas, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
-                .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeS).stroke(theme.hairline))
+                .kssCard(padding: 0)
+                .overlay(
+                    RoundedRectangle(cornerRadius: KSSTheme.shapeM)
+                        .strokeBorder(theme.hairline, lineWidth: 1)
+                )
             } else {
-                Text("选择左上角的日志文件查看内容")
-                    .font(KSSFont.themed(12, theme: theme))
-                    .foregroundStyle(theme.textSecondary)
+                SettingsHintText(text: "选择上方日志文件查看内容", empty: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .kssCard(padding: 14)
+                    .kssCard(padding: SettingsFormStyle.cardPadding)
             }
         }
         .task { await loadList() }
@@ -942,58 +1224,89 @@ struct SettingsLogsSection: View {
 
 // MARK: - 自检状态 header strip（U8）
 
-/// 设置页顶部：自检结果摘要 + 手动重跑入口。位于四分区之上（不属于任一分区）。
+/// 设置页自检摘要 + 手动重跑。xcom 详情内可点行跳转分类（`onJump`），样式对齐任务健康卡。
 struct SelfCheckStatusStrip: View {
     @Environment(\.kssTheme) private var theme
     @EnvironmentObject private var store: KSSStore
+    /// nil = 经典折叠详情；非 nil = xcom 默认可点跳转。
+    var onJump: ((SettingsCategory) -> Void)?
     @State private var expanded = false
 
     private var failCount: Int { store.selfCheckItems.filter(\.isFail).count }
     private var warnCount: Int { store.selfCheckItems.filter(\.isWarn).count }
+    private var alwaysExpanded: Bool { onJump != nil }
+    private var useTasksStyle: Bool { alwaysExpanded || SettingsFormStyle.usesTasksStandard(theme.system) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: useTasksStyle ? SettingsFormStyle.blockSpacing : 8) {
+            // 汇总条 ≈ 任务 healthSummary 卡
+            HStack(spacing: useTasksStyle ? SettingsFormStyle.rowHSpacing : 10) {
                 Image(systemName: statusIcon)
+                    .font(useTasksStyle ? KSSFont.themed(16, .semibold, theme: theme) : .body)
                     .foregroundStyle(statusTint)
+                    .frame(width: useTasksStyle ? 22 : nil)
                 Text(summaryText)
-                    .font(KSSFont.themed(13, .semibold, theme: theme))
+                    .font(KSSFont.themed(
+                        useTasksStyle ? SettingsFormStyle.itemTitle : 13,
+                        useTasksStyle ? .bold : .semibold,
+                        theme: theme
+                    ))
                     .foregroundStyle(theme.textPrimary)
                 if let at = store.selfCheckGeneratedAt {
                     Text("· \(at)")
-                        .font(KSSFont.themed(11, theme: theme))
+                        .font(KSSFont.themed(
+                            useTasksStyle ? SettingsFormStyle.metaSmall : 11,
+                            theme: theme
+                        ))
                         .foregroundStyle(theme.textSecondary)
                 }
                 Spacer()
-                if !store.selfCheckItems.isEmpty {
+                if !alwaysExpanded, !store.selfCheckItems.isEmpty {
                     Button(expanded ? "收起" : "详情") { expanded.toggle() }
                         .buttonStyle(.borderless)
                         .controlSize(.small)
                 }
-                Button {
-                    Task { await store.runSelfCheck() }
-                } label: {
-                    if store.isRunningSelfCheck {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("重新自检", systemImage: "arrow.clockwise")
+                if useTasksStyle {
+                    SettingsBorderedAction(
+                        title: "重新自检",
+                        systemImage: "arrow.clockwise",
+                        busy: store.isRunningSelfCheck,
+                        action: { Task { await store.runSelfCheck() } }
+                    )
+                } else {
+                    Button {
+                        Task { await store.runSelfCheck() }
+                    } label: {
+                        if store.isRunningSelfCheck {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Label("重新自检", systemImage: "arrow.clockwise")
+                        }
                     }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(store.isRunningSelfCheck)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(store.isRunningSelfCheck)
             }
-            if expanded {
-                VStack(alignment: .leading, spacing: 6) {
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .modifier(SelfCheckChromeModifier(useTasksStyle: useTasksStyle))
+
+            if alwaysExpanded || expanded {
+                VStack(alignment: .leading, spacing: useTasksStyle ? SettingsFormStyle.groupSpacing : 6) {
                     ForEach(store.selfCheckItems) { item in
                         selfCheckItemRow(item)
+                    }
+                    if store.selfCheckItems.isEmpty {
+                        SettingsHintText(text: "尚未跑过自检，点右上角重新自检。", empty: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .kssCard(padding: SettingsFormStyle.cardPadding)
                     }
                 }
             }
         }
-        .padding(.horizontal, 14).padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+        .onAppear {
+            if alwaysExpanded { expanded = true }
+        }
     }
 
     private var statusIcon: String {
@@ -1018,22 +1331,104 @@ struct SelfCheckStatusStrip: View {
     }
 
     private func selfCheckItemRow(_ item: SelfCheckItem) -> some View {
-        HStack(spacing: 8) {
+        let cat = SettingsTabRouting.targetCategory(forSelfCheckItem: item.item)
+        let useTasks = useTasksStyle
+        let row = HStack(spacing: useTasks ? SettingsFormStyle.rowHSpacing : 8) {
             Image(systemName: item.isOK ? "checkmark.circle.fill" : (item.isFail ? "xmark.octagon.fill" : "exclamationmark.triangle.fill"))
-                .font(KSSFont.themed(11.5, theme: theme))
+                .font(KSSFont.themed(useTasks ? 16 : 11.5, .semibold, theme: theme))
                 .foregroundStyle(item.isOK ? theme.accent : (item.isFail ? theme.up : theme.ma5))
-            Text(item.displayName)
-                .font(KSSFont.themed(12, .semibold, theme: theme))
-                .foregroundStyle(theme.textPrimary)
-            Text(item.detail)
-                .font(KSSFont.themed(11.5, theme: theme))
-                .foregroundStyle(theme.textSecondary)
+                .frame(width: useTasks ? 22 : nil)
+            VStack(alignment: .leading, spacing: useTasks ? SettingsFormStyle.titleMetaSpacing : 0) {
+                Text(item.displayName)
+                    .font(KSSFont.themed(
+                        useTasks ? SettingsFormStyle.itemTitle : 12,
+                        useTasks ? .bold : .semibold,
+                        theme: theme
+                    ))
+                    .foregroundStyle(theme.textPrimary)
+                Text(item.detail)
+                    .font(KSSFont.themed(
+                        useTasks ? SettingsFormStyle.meta : 11.5,
+                        theme: theme
+                    ))
+                    .foregroundStyle(theme.textSecondary)
+                    .lineLimit(2)
+            }
             Spacer()
             if let hint = item.fixHint, !item.isOK {
                 Text(hint)
-                    .font(KSSFont.themed(11, theme: theme))
+                    .font(KSSFont.themed(useTasks ? SettingsFormStyle.metaSmall : 11, .semibold, theme: theme))
                     .foregroundStyle(theme.accent)
+                    .lineLimit(1)
             }
+            if onJump != nil, !item.isOK, cat != .selfCheck {
+                Image(systemName: "chevron.right")
+                    .font(KSSFont.themed(10, .semibold, theme: theme))
+                    .foregroundStyle(theme.textSecondary.opacity(0.7))
+            }
+        }
+        .contentShape(Rectangle())
+        .modifier(SelfCheckRowChromeModifier(useTasksStyle: useTasks))
+
+        if let onJump, !item.isOK {
+            return AnyView(
+                Button { onJump(cat) } label: { row }
+                    .buttonStyle(.plain)
+                    .help("前往 \(cat.label)")
+            )
+        }
+        return AnyView(row)
+    }
+}
+
+private struct SelfCheckChromeModifier: ViewModifier {
+    @Environment(\.kssTheme) private var theme
+    var useTasksStyle: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if useTasksStyle {
+            content.kssCard(padding: SettingsFormStyle.cardPadding)
+        } else {
+            content
+                .padding(.horizontal, 14).padding(.vertical, 10)
+                .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+        }
+    }
+}
+
+private struct SelfCheckRowChromeModifier: ViewModifier {
+    @Environment(\.kssTheme) private var theme
+    var useTasksStyle: Bool
+
+    func body(content: Content) -> some View {
+        if useTasksStyle {
+            content
+                .padding(11)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .kssCard(padding: 11)
+        } else {
+            content
+        }
+    }
+}
+
+// MARK: - 凭证卡 chrome（统一 kssCard；xcom compact 对齐任务行 padding 12）
+
+private struct SettingsSourceChromeModifier: ViewModifier {
+    var flat: Bool
+    var theme: KSSThemeTokens
+    var compact: Bool = false
+
+    func body(content: Content) -> some View {
+        if flat {
+            content
+                .padding(.vertical, 4)
+                .overlay(alignment: .bottom) {
+                    Rectangle().fill(theme.hairline).frame(height: 1)
+                }
+        } else {
+            content.kssCard(padding: compact ? SettingsFormStyle.cardPadding : 16)
         }
     }
 }

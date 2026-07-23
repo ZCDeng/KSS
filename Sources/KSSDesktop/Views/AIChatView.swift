@@ -80,9 +80,8 @@ struct AIChatView: View {
                 // 未配置任何 LLM key 时 Seesaw 完全用不了——明确指引而非让用户输入后才报错（U9/R12）。
                 if store.isCredentialConfigured("llm") == false {
                     MissingCredentialCard(sourceDisplayName: "LLM key") {
-                        // R3：AIChat 入口落密钥 tab。
-                        store.settingsTargetTab = .keys
-                        store.selectedSection = .settings
+                        // R3：AIChat 入口落到 Seesaw LLM 分类（经典投影 credentials tab）。
+                        store.openSettings(category: .llm)
                     }
                     .frame(width: width)
                     .padding(.bottom, 18)

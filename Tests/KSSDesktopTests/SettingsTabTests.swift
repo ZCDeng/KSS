@@ -64,9 +64,62 @@ final class SettingsTabTests: XCTestCase {
     }
 
     func testUnrecognizedItemFallsBackToKeys() {
-        XCTAssertEqual(SettingsTabRouting.targetTab(forSelfCheckItem: "venv"), .keys)
-        XCTAssertEqual(SettingsTabRouting.targetTab(forSelfCheckItem: "storage"), .keys)
-        XCTAssertEqual(SettingsTabRouting.targetTab(forSelfCheckItem: "something_new"), .keys)
+        // 未知项落 selfCheck，投影到 credentials tab（与 .keys 别名同 tab）
+        XCTAssertEqual(SettingsTabRouting.targetTab(forSelfCheckItem: "venv"), .credentials)
+        XCTAssertEqual(SettingsTabRouting.targetTab(forSelfCheckItem: "storage"), .credentials)
+        XCTAssertEqual(SettingsTabRouting.targetTab(forSelfCheckItem: "something_new"), .credentials)
+    }
+
+    // MARK: - SettingsCategory 深链（plan 2026-07-23-003）
+
+    func testCredentialItemsRouteToMatchingCategory() {
+        XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "tushare"), .tushare)
+        XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "longbridge"), .longbridge)
+        XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "intraday_secrets"), .longbridge)
+        XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "telegram"), .telegram)
+        XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "llm"), .llm)
+        XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "yupi"), .yupi)
+        XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "openrouter"), .yupi)
+    }
+
+    func testUnknownSelfCheckFallsBackToSelfCheckCategory() {
+        XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "venv"), .selfCheck)
+        XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "storage"), .selfCheck)
+    }
+
+    func testCategoryProjectsToClassicTab() {
+        XCTAssertEqual(SettingsCategory.tushare.tab, .credentials)
+        XCTAssertEqual(SettingsCategory.yupi.tab, .credentials)
+        XCTAssertEqual(SettingsCategory.tasks.tab, .operations)
+        XCTAssertEqual(SettingsCategory.logs.tab, .operations)
+        XCTAssertEqual(SettingsCategory.selfCheck.tab, .credentials)
+    }
+
+    func testTabDefaultCategory() {
+        XCTAssertEqual(SettingsTab.credentials.defaultCategory, .selfCheck)
+        XCTAssertEqual(SettingsTab.operations.defaultCategory, .tasks)
+    }
+
+    func testCategoryOrderIsStable() {
+        XCTAssertEqual(
+            SettingsCategory.allCases.map(\.rawValue),
+            ["selfCheck", "tushare", "longbridge", "telegram", "llm", "yupi", "tasks", "logs"]
+        )
+    }
+
+    func testCategoryBadgeForUnconfiguredSource() {
+        XCTAssertTrue(SettingsTabRouting.categoryNeedsBadge(
+            .tushare,
+            isSourceConfigured: { $0 == "tushare" ? false : true },
+            testOK: { _ in nil },
+            jobs: []
+        ))
+        XCTAssertFalse(SettingsTabRouting.categoryNeedsBadge(
+            .tushare,
+            isSourceConfigured: { _ in true },
+            testOK: { _ in true },
+            jobs: []
+        ))
     }
 
     // MARK: - SettingsTab 枚举完整性（R4：合并为 2 tab，旧名经由别名归并）

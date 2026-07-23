@@ -134,8 +134,7 @@ struct ContentView: View {
                     isBusy: store.isRunningSelfCheck || store.isReinitializingRuntime,
                     onDismiss: { store.dismissSelfCheckBanner() },
                     onOpenSettings: { item in
-                        store.settingsTargetTab = SettingsTabRouting.targetTab(forSelfCheckItem: item)
-                        store.selectedSection = .settings
+                        store.openSettings(category: SettingsTabRouting.targetCategory(forSelfCheckItem: item))
                     },
                     onReinitRuntime: { Task { await store.reinitializeRuntime() } }
                 )
@@ -235,7 +234,7 @@ struct ContentView: View {
                     onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } },
                     onOpenSection: { section in
                         // 唯一调用点是缺 Tushare 凭证卡（R3：Dashboard 入口落密钥 tab）。
-                        if section == .settings { store.settingsTargetTab = .keys }
+                        if section == .settings { store.openSettings(category: .selfCheck) }
                         store.selectedSection = section
                     },
                     tushareConfigured: store.isCredentialConfigured("tushare"),
