@@ -122,33 +122,54 @@
     background: var(--code);
   }
   html[data-reader="xcom"] pre code { color: var(--ink); }
-  /* 表格：无竖线，仅行底 hairline */
-  html[data-reader="xcom"] table {
-    font-size: 13px;
+  /* P1 表格：无竖线、仅行底 hairline、横向可滚 */
+  html[data-reader="xcom"] .md-table-scroll {
+    overflow-x: auto;
     margin: 12px 0;
+    -webkit-overflow-scrolling: touch;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+  html[data-reader="xcom"] .md-table-scroll table {
+    font-size: 13px;
+    margin: 0;
     border-collapse: collapse;
     width: 100%;
+    min-width: max(100%, 420px);
   }
   html[data-reader="xcom"] th,
   html[data-reader="xcom"] td {
     border: none;
     border-bottom: 1px solid var(--line);
-    padding: 10px 8px;
+    padding: 10px 10px;
     text-align: left;
     vertical-align: top;
   }
-  html[data-reader="xcom"] th {
-    background: transparent;
+  html[data-reader="xcom"] thead th {
+    background: var(--bg);
     color: var(--muted);
     font-family: var(--sans);
     font-weight: 700;
     font-size: 12px;
+    position: sticky;
+    top: 0;
+    z-index: 1;
   }
+  html[data-reader="xcom"] tbody tr:last-child td { border-bottom: none; }
   html[data-reader="xcom"] tr:nth-child(even) td { background: transparent; }
-  html[data-reader="xcom"] td:not(:first-child) {
+  html[data-reader="xcom"] td:not(:first-child),
+  html[data-reader="xcom"] th:not(:first-child) {
     font-family: var(--mono);
     font-variant-numeric: tabular-nums;
+    text-align: right;
   }
+  html[data-reader="xcom"] th:first-child,
+  html[data-reader="xcom"] td:first-child {
+    text-align: left;
+    font-family: var(--sans);
+  }
+  /* P3：壳层已有标题时隐藏文内首 h1 */
+  html[data-reader="xcom"] h1.doc-title-dup { display: none; }
   html[data-reader="xcom"] #empty {
     color: var(--muted);
     font-size: 15px;
@@ -165,9 +186,31 @@
     let readerMode = "classic";
 
     function polishXcomDom(host) {
-      // 壳层已有标题：文内首个 h1 降级为次要标题，避免双标题墙
-      const first = host.querySelector("h1");
-      if (first) first.classList.add("doc-title-dup");
+      // P3：去掉文首连续空节点后的首个 h1（壳层已显示标题）
+      let node = host.firstChild;
+      while (node && (
+        node.nodeType === Node.TEXT_NODE && !String(node.textContent || "").trim() ||
+        node.nodeType === Node.ELEMENT_NODE && (node.tagName === "BR" || (node.tagName === "P" && !String(node.textContent || "").trim()))
+      )) {
+        const next = node.nextSibling;
+        host.removeChild(node);
+        node = next;
+      }
+      const firstEl = host.firstElementChild;
+      if (firstEl && firstEl.tagName === "H1") {
+        firstEl.classList.add("doc-title-dup");
+      }
+
+      // P1：表格外包横向滚动容器
+      host.querySelectorAll("table").forEach(function (table) {
+        if (table.parentElement && table.parentElement.classList.contains("md-table-scroll")) return;
+        const wrap = document.createElement("div");
+        wrap.className = "md-table-scroll";
+        if (table.parentNode) {
+          table.parentNode.insertBefore(wrap, table);
+          wrap.appendChild(table);
+        }
+      });
     }
 
     function render(text) {

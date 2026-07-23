@@ -387,62 +387,77 @@ struct SectorReviewPanel: View {
     @Environment(\.kssTheme) private var theme
     var pulse: SectorPulse
 
+    private var isXcom: Bool { XcomListChrome.isXcom(theme.system) }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .firstTextBaseline) {
-                    if XcomListChrome.isXcom(theme.system) {
+            VStack(alignment: .leading, spacing: isXcom ? SettingsFormStyle.blockSpacing : 14) {
+                if isXcom {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text("板块复盘")
-                            .font(KSSFont.themed(XcomListChrome.detailTitlePointSize(theme.system), .bold, theme: theme))
+                            .font(KSSFont.themed(SettingsFormStyle.pageTitle, .bold, theme: theme))
                             .foregroundStyle(theme.textPrimary)
-                    } else {
-                        PageTitle("板块复盘")
+                        Text("\(dateLabel) · 资金与分级")
+                            .font(KSSFont.themed(13, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
                     }
-                    Spacer()
-                    StatusBadge(icon: "calendar", text: dateLabel, tint: theme.accent)
+                } else {
+                    HStack(alignment: .firstTextBaseline) {
+                        PageTitle("板块复盘")
+                        Spacer()
+                        StatusBadge(icon: "calendar", text: dateLabel, tint: theme.accent)
+                    }
                 }
                 if let regime = regimeLine {
                     Text(regime)
-                        .font(KSSFont.themed(12.5, .medium, theme: theme))
-                        .foregroundStyle(theme.textBody)
+                        .font(KSSFont.themed(
+                            isXcom ? SettingsFormStyle.bodyHint : 12.5,
+                            isXcom ? .regular : .medium,
+                            theme: theme
+                        ))
+                        .foregroundStyle(isXcom ? theme.textSecondary : theme.textBody)
                 }
 
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 152), spacing: 12)], spacing: 12) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 152), spacing: isXcom ? 10 : 12)], spacing: isXcom ? 10 : 12) {
                     ForEach(pulse.themes) { SectorChip(theme: $0) }
                 }
 
                 SectorReviewTable(themes: pulse.themes)
 
-                // 投顾点评：概念轮动 / 七大主题 / 加减仓建议 等文字，附在表格下方
                 if let commentary = pulse.commentary, !commentary.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 8) {
-                            RoundedRectangle(cornerRadius: 2).fill(theme.accent).frame(width: 4, height: 16)
-                            Text("投顾点评")
-                                .font(KSSFont.themed(16, .semibold, theme: theme, design: .serif))
-                                .foregroundStyle(theme.textPrimary)
-                        }
+                    VStack(alignment: .leading, spacing: isXcom ? SettingsFormStyle.groupSpacing : 8) {
+                        Text("投顾点评")
+                            .font(KSSFont.themed(
+                                isXcom ? SettingsFormStyle.sectionHeader : 16,
+                                .bold,
+                                theme: theme
+                            ))
+                            .foregroundStyle(isXcom ? theme.textSecondary : theme.textPrimary)
                         CommentaryView(markdown: commentary)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .kssCard(padding: 16)
+                            .kssCard(padding: isXcom ? SettingsFormStyle.cardPadding : 16)
                     }
                 }
 
                 if !pulse.note.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: isXcom ? SettingsFormStyle.titleMetaSpacing : 4) {
                         Text("一年回测语义")
-                            .font(KSSFont.themed(11, .bold, theme: theme))
+                            .font(KSSFont.themed(
+                                isXcom ? SettingsFormStyle.sectionHeader : 11,
+                                .bold,
+                                theme: theme
+                            ))
                             .foregroundStyle(theme.textSecondary)
                         Text(pulse.note)
-                            .font(KSSFont.themed(12, theme: theme))
-                            .foregroundStyle(theme.textBody)
+                            .font(KSSFont.themed(isXcom ? SettingsFormStyle.bodyHint : 12, theme: theme))
+                            .foregroundStyle(isXcom ? theme.textSecondary : theme.textBody)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .kssCard(padding: 14)
+                    .kssCard(padding: isXcom ? SettingsFormStyle.cardPadding : 14)
                 }
             }
-            .padding(16)
+            .padding(isXcom ? 20 : 16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(theme.canvas)
@@ -487,19 +502,25 @@ struct CommentaryView: View {
         return out
     }
 
+    private var isXcom: Bool { XcomListChrome.isXcom(theme.system) }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
+        VStack(alignment: .leading, spacing: isXcom ? 10 : 11) {
             ForEach(blocks) { block in
                 if block.isHeader {
                     Text(block.text)
-                        .font(KSSFont.themed(14, .bold, theme: theme))
-                        .foregroundStyle(theme.accent)
+                        .font(KSSFont.themed(
+                            isXcom ? SettingsFormStyle.itemTitle : 14,
+                            .bold,
+                            theme: theme
+                        ))
+                        .foregroundStyle(isXcom ? theme.textPrimary : theme.accent)
                         .padding(.top, 2)
                 } else {
                     Text(attributed(block.text))
-                        .font(KSSFont.themed(13, theme: theme))
-                        .foregroundStyle(theme.textBody)
-                        .lineSpacing(3)
+                        .font(KSSFont.themed(isXcom ? 15 : 13, theme: theme))
+                        .foregroundStyle(isXcom ? theme.textPrimary : theme.textBody)
+                        .lineSpacing(isXcom ? 4 : 3)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -548,6 +569,8 @@ struct SectorReviewTable: View {
         }
     }
 
+    private var isXcom: Bool { XcomListChrome.isXcom(theme.system) }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -559,9 +582,19 @@ struct SectorReviewTable: View {
                 }
             }
         }
-        .background(theme.surfaceRaised)
-        .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
-        .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
+        // P1 xcom：无圆角填色卡，仅 hairline 行表
+        .background(isXcom ? theme.canvas : theme.surfaceRaised)
+        .clipShape(RoundedRectangle(cornerRadius: isXcom ? 0 : theme.cardRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: isXcom ? 0 : theme.cardRadius)
+                .stroke(isXcom ? Color.clear : theme.hairline)
+        )
+        .overlay(alignment: .top) {
+            if isXcom { Rectangle().fill(theme.hairline).frame(height: 1) }
+        }
+        .overlay(alignment: .bottom) {
+            if isXcom { Rectangle().fill(theme.hairline).frame(height: 1) }
+        }
     }
 
     private var header: some View {
@@ -581,16 +614,16 @@ struct SectorReviewTable: View {
             Spacer(minLength: 8)
             Text("分级").frame(width: 84, alignment: .trailing)
         }
-        .font(KSSFont.themed(10.5, .medium, theme: theme))
+        .font(KSSFont.themed(isXcom ? 12 : 10.5, isXcom ? .bold : .medium, theme: theme))
         .foregroundStyle(theme.textSecondary)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
+        .padding(.horizontal, isXcom ? 10 : 14)
+        .padding(.vertical, isXcom ? 10 : 9)
     }
 
     private func row(_ t: SectorTheme) -> some View {
         HStack(spacing: 10) {
             Text(t.name)
-                .font(KSSFont.themed(13.5, .bold, theme: theme))
+                .font(KSSFont.themed(isXcom ? 13 : 13.5, .bold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
                 .frame(width: 96, alignment: .leading)
             num(t.past5Ret.map { KSSFormat.percent($0 / 100) }, tint: theme.signColor(t.past5Ret ?? 0))
@@ -703,47 +736,55 @@ struct HotspotRotationPanel: View {
     }
     @State private var boardKind: BoardKind = .industry
 
+    private var isXcom: Bool { XcomListChrome.isXcom(theme.system) }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .firstTextBaseline) {
-                    if XcomListChrome.isXcom(theme.system) {
+            VStack(alignment: .leading, spacing: isXcom ? SettingsFormStyle.blockSpacing : 14) {
+                if isXcom {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text("妖板情绪")
-                            .font(KSSFont.themed(XcomListChrome.detailTitlePointSize(theme.system), .bold, theme: theme))
+                            .font(KSSFont.themed(SettingsFormStyle.pageTitle, .bold, theme: theme))
                             .foregroundStyle(theme.textPrimary)
-                    } else {
-                        PageTitle("妖板情绪")
+                        Text("\(dateLabel) · 热点轮动")
+                            .font(KSSFont.themed(13, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
                     }
-                    Spacer()
-                    StatusBadge(icon: "calendar", text: dateLabel, tint: theme.accent)
+                } else {
+                    HStack(alignment: .firstTextBaseline) {
+                        PageTitle("妖板情绪")
+                        Spacer()
+                        StatusBadge(icon: "calendar", text: dateLabel, tint: theme.accent)
+                    }
                 }
 
-                HStack(spacing: 12) {
+                HStack(spacing: isXcom ? 10 : 12) {
                     classificationTile("主线", snap.crossSourceSignals.mainline.count, theme.up)
                     classificationTile("妖板", snap.crossSourceSignals.demonBoard.count, theme.accent)
                     classificationTile("退潮", snap.crossSourceSignals.oldHotspotFading.count, theme.textSecondary)
                     classificationTile("卫星", snap.crossSourceSignals.satellite.count, theme.textBody)
                 }
 
-                HStack(spacing: 10) {
+                FlowLayout(spacing: 6) {
                     coverageBadge("龙头映射", snap.leaderCoverage)
                     coverageBadge("历史覆盖", snap.historyCoverage)
                 }
 
                 if !snap.leaderBoards.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 8) {
-                            RoundedRectangle(cornerRadius: 2).fill(theme.accent).frame(width: 4, height: 16)
-                            Text("妖王榜")
-                                .font(KSSFont.themed(16, .semibold, theme: theme, design: .serif))
-                                .foregroundStyle(theme.textPrimary)
-                        }
+                    VStack(alignment: .leading, spacing: isXcom ? SettingsFormStyle.groupSpacing : 8) {
+                        Text("妖王榜")
+                            .font(KSSFont.themed(
+                                isXcom ? SettingsFormStyle.sectionHeader : 16,
+                                .bold,
+                                theme: theme
+                            ))
+                            .foregroundStyle(isXcom ? theme.textSecondary : theme.textPrimary)
                         HotspotLeaderTable(boards: snap.leaderBoards)
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 8) {
-                    if XcomListChrome.isXcom(theme.system) {
+                VStack(alignment: .leading, spacing: isXcom ? SettingsFormStyle.groupSpacing : 8) {
+                    if isXcom {
                         XcomUnderlineTabBar(
                             options: BoardKind.allCases.map { ($0, "\($0.rawValue) \(boards(for: $0).count)") },
                             selection: $boardKind,
@@ -760,7 +801,7 @@ struct HotspotRotationPanel: View {
                     HotspotBoardTable(boards: boards(for: boardKind))
                 }
             }
-            .padding(16)
+            .padding(isXcom ? 20 : 16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(theme.canvas)
@@ -780,26 +821,33 @@ struct HotspotRotationPanel: View {
     }
 
     private func classificationTile(_ title: String, _ count: Int, _ tint: Color) -> some View {
-        VStack(spacing: 4) {
+        VStack(spacing: isXcom ? 3 : 4) {
             Text(title)
-                .font(KSSFont.themed(11, .bold, theme: theme))
+                .font(KSSFont.themed(isXcom ? SettingsFormStyle.meta : 11, .bold, theme: theme))
                 .foregroundStyle(tint)
             Text("\(count)")
-                .font(KSSFont.harmonyNumber(20))
+                .font(KSSFont.harmonyNumber(isXcom ? 18 : 20))
                 .foregroundStyle(theme.textPrimary)
         }
         .frame(maxWidth: .infinity)
-        .kssCard(padding: 10)
+        .kssCard(padding: isXcom ? SettingsFormStyle.cardPadding : 10)
     }
 
     private func coverageBadge(_ name: String, _ value: Double) -> some View {
         Text("\(name) \(String(format: "%.0f%%", value * 100))")
-            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+            .font(KSSFont.themed(isXcom ? SettingsFormStyle.meta : 11, .semibold, theme: theme))
             .foregroundStyle(theme.textSecondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(theme.surfaceRaised, in: Capsule())
-            .overlay(Capsule().stroke(theme.hairline))
+            .padding(.horizontal, isXcom ? 7 : 8)
+            .padding(.vertical, isXcom ? 1.5 : 4)
+            .background(
+                isXcom
+                    ? theme.textSecondary.opacity(0.12)
+                    : theme.surfaceRaised.opacity(1),
+                in: Capsule()
+            )
+            .overlay(
+                Capsule().stroke(isXcom ? Color.clear : theme.hairline)
+            )
     }
 }
 
@@ -836,6 +884,8 @@ struct HotspotBoardTable: View {
         }
     }
 
+    private var isXcom: Bool { XcomListChrome.isXcom(theme.system) }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -847,9 +897,18 @@ struct HotspotBoardTable: View {
                 }
             }
         }
-        .background(theme.surfaceRaised)
-        .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
-        .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
+        .background(isXcom ? theme.canvas : theme.surfaceRaised)
+        .clipShape(RoundedRectangle(cornerRadius: isXcom ? 0 : theme.cardRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: isXcom ? 0 : theme.cardRadius)
+                .stroke(isXcom ? Color.clear : theme.hairline)
+        )
+        .overlay(alignment: .top) {
+            if isXcom { Rectangle().fill(theme.hairline).frame(height: 1) }
+        }
+        .overlay(alignment: .bottom) {
+            if isXcom { Rectangle().fill(theme.hairline).frame(height: 1) }
+        }
     }
 
     private var header: some View {
@@ -865,16 +924,16 @@ struct HotspotBoardTable: View {
             Spacer(minLength: 8)
             Text("龙头").frame(width: 120, alignment: .leading)
         }
-        .font(KSSFont.themed(10.5, .medium, theme: theme))
+        .font(KSSFont.themed(isXcom ? 12 : 10.5, isXcom ? .bold : .medium, theme: theme))
         .foregroundStyle(theme.textSecondary)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
+        .padding(.horizontal, isXcom ? 10 : 14)
+        .padding(.vertical, isXcom ? 10 : 9)
     }
 
     private func row(_ b: HotspotBoard) -> some View {
         HStack(spacing: 10) {
             Text(b.name)
-                .font(KSSFont.themed(13.5, .bold, theme: theme))
+                .font(KSSFont.themed(isXcom ? 13 : 13.5, .bold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
                 .frame(width: 96, alignment: .leading)
             num(b.pctChange.map { KSSFormat.percent($0 / 100) }, tint: theme.signColor(b.pctChange ?? 0))
@@ -932,6 +991,8 @@ struct HotspotLeaderTable: View {
     @Environment(\.kssTheme) private var theme
     var boards: [HotspotBoard]
 
+    private var isXcom: Bool { XcomListChrome.isXcom(theme.system) }
+
     private struct LeaderRow: Identifiable, Hashable {
         var id: String { "\(boardName)-\(symbol)" }
         var boardName: String
@@ -952,9 +1013,18 @@ struct HotspotLeaderTable: View {
                 }
             }
         }
-        .background(theme.surfaceRaised)
-        .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
-        .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
+        .background(isXcom ? theme.canvas : theme.surfaceRaised)
+        .clipShape(RoundedRectangle(cornerRadius: isXcom ? 0 : theme.cardRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: isXcom ? 0 : theme.cardRadius)
+                .stroke(isXcom ? Color.clear : theme.hairline)
+        )
+        .overlay(alignment: .top) {
+            if isXcom { Rectangle().fill(theme.hairline).frame(height: 1) }
+        }
+        .overlay(alignment: .bottom) {
+            if isXcom { Rectangle().fill(theme.hairline).frame(height: 1) }
+        }
     }
 
     private var header: some View {
@@ -965,16 +1035,16 @@ struct HotspotLeaderTable: View {
             Text("频次").frame(width: 56, alignment: .trailing)
             Spacer(minLength: 8)
         }
-        .font(KSSFont.themed(10.5, .medium, theme: theme))
+        .font(KSSFont.themed(isXcom ? 12 : 10.5, isXcom ? .bold : .medium, theme: theme))
         .foregroundStyle(theme.textSecondary)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
+        .padding(.horizontal, isXcom ? 10 : 14)
+        .padding(.vertical, isXcom ? 10 : 9)
     }
 
     private func row(_ leader: LeaderRow) -> some View {
         HStack(spacing: 10) {
             Text(leader.boardName)
-                .font(KSSFont.themed(13.5, .bold, theme: theme))
+                .font(KSSFont.themed(isXcom ? 13 : 13.5, .bold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
                 .frame(width: 96, alignment: .leading)
             Text(leader.symbol)
@@ -983,8 +1053,8 @@ struct HotspotLeaderTable: View {
                 .frame(width: 72, alignment: .leading)
                 .lineLimit(1)
             Text(leader.name)
-                .font(KSSFont.themed(12.5, theme: theme))
-                .foregroundStyle(theme.textBody)
+                .font(KSSFont.themed(isXcom ? 13 : 12.5, theme: theme))
+                .foregroundStyle(isXcom ? theme.textPrimary : theme.textBody)
                 .frame(width: 96, alignment: .leading)
                 .lineLimit(1)
             Text("\(leader.appearances)")
