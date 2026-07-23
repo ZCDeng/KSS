@@ -16,7 +16,8 @@ enum SidebarNavIconCatalog {
         case .newsDigest: return "newsDigest"
         case .backtests: return "backtests"
         case .stocks: return "stocks"
-        case .runbook, .aiChat, .architecture, .settings:
+        case .aiChat: return "seesaw"
+        case .runbook, .architecture, .settings:
             return nil
         }
     }
