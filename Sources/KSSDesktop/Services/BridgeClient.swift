@@ -471,6 +471,7 @@ struct BridgeClient {
     }
 
     private struct SidecarResponse: Decodable { let code: Int; let stdout: String?; let stderr: String? }
+    private static let sidecarStartLock = NSLock()
 
     /// 计算本地 sidecar 代码指纹，与 Python 侧 `_sidecar_version_fingerprint()` 保持同步。
     /// 策略：dev 优先 git describe；bundle 或 git 失败 fallback 到 VERSION + 关键文件 hash。
@@ -510,6 +511,8 @@ struct BridgeClient {
     /// socket 缺失、pid 失效或版本不匹配则 spawn sidecar daemon（detached，best-effort），
     /// 等其就绪 ≤3s。U10：版本握手防止陈旧 sidecar 继续服务。
     private func ensureSidecarRunning() {
+        Self.sidecarStartLock.lock()
+        defer { Self.sidecarStartLock.unlock() }
         let fm = FileManager.default
         if fm.fileExists(atPath: socketPath) {
             let pidPath = (stateRoot.appending(path: "run/kss-sidecar.pid")).path
@@ -695,6 +698,78 @@ struct BridgeClient {
                             onFrame: onFrame, onConfirmRequired: onConfirmRequired, onEnd: onEnd)
     }
 
+    func agentSessions(action: String = "list", sessionId: String? = nil, title: String? = nil) throws -> AgentSessionListResponse {
+        var payload: [String: Any] = ["action": action]
+        if let sessionId { payload["session_id"] = sessionId }
+        if let title { payload["title"] = title }
+        return try agentCommand("agent-session", payload: payload, as: AgentSessionListResponse.self)
+    }
+
+    func agentSkills(action: String = "list", sessionId: String? = nil, skillId: String? = nil,
+                     pinned: Bool? = nil, enabled: Bool? = nil) throws -> AgentSkillsResponse {
+        var payload: [String: Any] = ["action": action]
+        if let sessionId { payload["session_id"] = sessionId }
+        if let skillId { payload["skill_id"] = skillId }
+        if let pinned { payload["pinned"] = pinned }
+        if let enabled { payload["enabled"] = enabled }
+        return try agentCommand("agent-skills", payload: payload, as: AgentSkillsResponse.self)
+    }
+
+    func agentMemories(action: String = "list", query: String? = nil, memoryId: String? = nil,
+                       candidateId: String? = nil, approved: Bool? = nil, text: String? = nil,
+                       kind: String? = nil, sourceSession: String? = nil) throws -> AgentMemoriesResponse {
+        var payload: [String: Any] = ["action": action]
+        if let query { payload["query"] = query }
+        if let memoryId { payload["memory_id"] = memoryId }
+        if let candidateId { payload["candidate_id"] = candidateId }
+        if let approved { payload["approved"] = approved }
+        if let text { payload["text"] = text }
+        if let kind { payload["kind"] = kind }
+        if let sourceSession { payload["source_session"] = sourceSession }
+        return try agentCommand("agent-memories", payload: payload, as: AgentMemoriesResponse.self)
+    }
+
+    func agentTurn(sessionId: String, clientTurnId: String, input: String,
+                   onControlReady: @escaping (AgentControlChannel) -> Void,
+                   onFrame: @escaping (AgentFrame) -> Void,
+                   onConfirmRequired: @escaping (AgentFrame) -> Bool,
+                   onEnd: @escaping (String?) -> Void) {
+        ensureSidecarRunning()
+        guard var request = try? JSONSerialization.data(
+            withJSONObject: [
+                "cmd": "agent-turn",
+                "session_id": sessionId,
+                "client_turn_id": clientTurnId,
+                "input": input,
+            ]) else {
+            onEnd("无法编码 Agent 请求"); return
+        }
+        request.append(0x0A)
+        Self.agentTurnStream(path: socketPath, request: request,
+                             onControlReady: onControlReady, onFrame: onFrame,
+                             onConfirmRequired: onConfirmRequired, onEnd: onEnd)
+    }
+
+    private func agentCommand<T: Decodable>(_ cmd: String, payload: [String: Any], as type: T.Type) throws -> T {
+        ensureSidecarRunning()
+        var requestPayload = payload
+        requestPayload["cmd"] = cmd
+        guard var request = try? JSONSerialization.data(withJSONObject: requestPayload) else {
+            throw BridgeError.invalidOutput
+        }
+        request.append(0x0A)
+        guard let respData = Self.unixSocketRoundtrip(path: socketPath, request: request, timeout: 20),
+              let resp = try? JSONDecoder().decode(SidecarResponse.self, from: respData)
+        else {
+            throw BridgeError.processFailed("无法连接 Agent sidecar")
+        }
+        if resp.code == 0, let out = resp.stdout {
+            return try Self.decodeEnvelope(Data(out.utf8))
+        }
+        throw BridgeError.processFailed(
+            (resp.stderr ?? "Agent sidecar failed").trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
     /// 连接 → 发请求 → 逐 newline 帧读到 done/error/EOF。SO_RCVTIMEO 作 **idle 间隔**而非硬超时。
     /// 连接失败时清理 stale pid/socket 并自动 respawn + 重试一次（处理 sidecar 突然崩溃的情况）。
     private static func chatTurnStream(path: String, request: Data,
@@ -720,6 +795,20 @@ struct BridgeClient {
                           onFrame: onFrame, onConfirmRequired: onConfirmRequired, onEnd: onEnd)
         } else {
             onEnd("无法连接 sidecar")
+        }
+    }
+
+    private static func agentTurnStream(path: String, request: Data,
+                                        onControlReady: @escaping (AgentControlChannel) -> Void,
+                                        onFrame: @escaping (AgentFrame) -> Void,
+                                        onConfirmRequired: @escaping (AgentFrame) -> Bool,
+                                        onEnd: @escaping (String?) -> Void) {
+        if let fd = connectToSidecar(path: path) {
+            runAgentStreamLoop(fd: fd, request: request,
+                               onControlReady: onControlReady, onFrame: onFrame,
+                               onConfirmRequired: onConfirmRequired, onEnd: onEnd)
+        } else {
+            onEnd("无法连接 Agent sidecar")
         }
     }
 
@@ -807,6 +896,67 @@ struct BridgeClient {
         }
     }
 
+    private static func runAgentStreamLoop(fd: Int32, request: Data,
+                                           onControlReady: @escaping (AgentControlChannel) -> Void,
+                                           onFrame: @escaping (AgentFrame) -> Void,
+                                           onConfirmRequired: @escaping (AgentFrame) -> Bool,
+                                           onEnd: @escaping (String?) -> Void) {
+        defer { close(fd) }
+        let control = AgentControlChannel(fd: fd)
+        onControlReady(control)
+        let reqBytes = [UInt8](request)
+        var sent = 0
+        while sent < reqBytes.count {
+            let w = reqBytes.withUnsafeBytes { raw in
+                send(fd, raw.baseAddress!.advanced(by: sent), reqBytes.count - sent, 0)
+            }
+            if w <= 0 { onEnd("发送 Agent 请求失败"); return }
+            sent += w
+        }
+
+        var acc = Data()
+        var buf = [UInt8](repeating: 0, count: 65536)
+        var idleTicks = 0
+        var streamError: String?
+        let maxIdleTicks = 300
+        while true {
+            let r = read(fd, &buf, buf.count)
+            if r > 0 {
+                idleTicks = 0
+                acc.append(contentsOf: buf[0..<r])
+                while let nl = acc.firstIndex(of: 0x0A) {
+                    let lineData = acc.subdata(in: acc.startIndex..<nl)
+                    acc.removeSubrange(acc.startIndex...nl)
+                    if lineData.isEmpty { continue }
+                    guard let frame = try? JSONDecoder().decode(AgentFrame.self, from: lineData)
+                    else { continue }
+                    onFrame(frame)
+                    if frame.type == "confirm_required" {
+                        let approved = onConfirmRequired(frame)
+                        control.confirm(runId: frame.runId, callId: frame.callId ?? "", approved: approved)
+                    }
+                    if frame.type == "error" {
+                        streamError = frame.error ?? "Agent error"
+                    }
+                    if frame.type == "turn_end" || frame.type == "agent_end" {
+                        onEnd(streamError)
+                        return
+                    }
+                }
+            } else if r == 0 {
+                onEnd("Agent 连接中断"); return
+            } else {
+                let e = errno
+                if e == EAGAIN || e == EWOULDBLOCK {
+                    idleTicks += 1
+                    if idleTicks >= maxIdleTicks { onEnd("Agent 响应超时"); return }
+                    continue
+                }
+                onEnd("Agent 读取错误 errno=\(e)"); return
+            }
+        }
+    }
+
     /// 在同连接写回 chat-turn-confirm{call_id, approved}（U5 人在环内闸）。
     private static func sendConfirm(fd: Int32, callId: String, approved: Bool) {
         guard var line = try? JSONSerialization.data(withJSONObject: [
@@ -821,6 +971,49 @@ struct BridgeClient {
             }
             if w <= 0 { return }
             sent += w
+        }
+    }
+
+    final class AgentControlChannel {
+        private let fd: Int32
+        private let lock = NSLock()
+
+        init(fd: Int32) {
+            self.fd = fd
+        }
+
+        func confirm(runId: String?, callId: String, approved: Bool) {
+            send([
+                "cmd": "agent-control",
+                "action": "confirm",
+                "run_id": runId ?? "",
+                "call_id": callId,
+                "approved": approved,
+            ])
+        }
+
+        func abort(runId: String?) {
+            send([
+                "cmd": "agent-control",
+                "action": "abort",
+                "run_id": runId ?? "",
+            ])
+        }
+
+        private func send(_ object: [String: Any]) {
+            guard var line = try? JSONSerialization.data(withJSONObject: object) else { return }
+            line.append(0x0A)
+            let bytes = [UInt8](line)
+            lock.lock()
+            defer { lock.unlock() }
+            var sent = 0
+            while sent < bytes.count {
+                let w = bytes.withUnsafeBytes { raw in
+                    Darwin.send(fd, raw.baseAddress!.advanced(by: sent), bytes.count - sent, 0)
+                }
+                if w <= 0 { return }
+                sent += w
+            }
         }
     }
 
@@ -914,7 +1107,8 @@ struct BridgeClient {
 
     /// 解析 (代码根, 状态根)。优先级：
     /// projectRoot = KSS_PROJECT_ROOT(dev) → breadcrumb → bundle Resources → 历史爬升兜底。
-    /// stateRoot   = KSS_STATE_ROOT → breadcrumb → (dev? projectRoot : ~/Library/Application Support/KSS)。
+    /// stateRoot   = KSS_STATE_ROOT → 有效 breadcrumb → (dev? projectRoot : ~/Library/Application Support/KSS)。
+    /// bundle 的代码仍来自 Resources，但可变数据继续使用安装期记录的状态根；二者不能混为一处。
     private static func resolveRoots() -> (project: URL, state: URL)? {
         let fm = FileManager.default
         let envProject = ProcessInfo.processInfo.environment["KSS_PROJECT_ROOT"]
@@ -964,13 +1158,40 @@ struct BridgeClient {
         guard let resolvedProject = project, hasBridge(resolvedProject) else { return nil }
 
         // ---- stateRoot ----
-        let state: URL
-        if let envState { state = URL(fileURLWithPath: envState) }
-        else if let crumb { state = URL(fileURLWithPath: crumb.stateRoot) }
-        else if isDevMode { state = resolvedProject }          // dev：in-repo，行为不变
-        else { state = appSupportDefault }                      // bundle 默认
+        let state = selectStateRoot(
+            envState: envState,
+            breadcrumbState: crumb?.stateRoot,
+            isDevMode: isDevMode,
+            projectRoot: resolvedProject,
+            appSupportRoot: appSupportDefault,
+            fileManager: fm
+        )
 
         return (resolvedProject, state)
+    }
+
+    /// 只负责状态根优先级，保留为可单测的启动契约。
+    /// 环境变量是显式覆盖，允许指向尚未创建的目录；面包屑来自旧安装，仅接受仍存在的绝对目录。
+    static func selectStateRoot(
+        envState: String?,
+        breadcrumbState: String?,
+        isDevMode: Bool,
+        projectRoot: URL,
+        appSupportRoot: URL,
+        fileManager: FileManager = .default
+    ) -> URL {
+        if let envState, !envState.isEmpty {
+            return URL(fileURLWithPath: envState).standardizedFileURL
+        }
+        if let breadcrumbState, breadcrumbState.hasPrefix("/") {
+            let candidate = URL(fileURLWithPath: breadcrumbState).standardizedFileURL
+            var isDirectory: ObjCBool = false
+            if fileManager.fileExists(atPath: candidate.path, isDirectory: &isDirectory),
+               isDirectory.boolValue {
+                return candidate
+            }
+        }
+        return isDevMode ? projectRoot : appSupportRoot
     }
 
     // MARK: - U2 运行时解析 + 首启 bootstrap

@@ -8,6 +8,9 @@ struct AIChatView: View {
     @Environment(\.kssTheme) private var theme
     @State private var input = ""
     @State private var hovered: String?
+    @State private var showSkillDrawer = false
+    @State private var showMemoryDrawer = false
+    @State private var memorySearch = ""
     /// 会话开场确定性候选建议（plan 2026-07-12-004 U9）；nil = 未加载或无候选，不显示 chip。
     @State private var indicatorSuggestion: IndicatorSuggestion?
 
@@ -45,21 +48,279 @@ struct AIChatView: View {
 
     var body: some View {
         GeometryReader { geo in
-            let width = min(geo.size.width - 64, 820)
-            ZStack {
-                theme.canvas.ignoresSafeArea()
-                if store.chatMessages.isEmpty {
-                    heroEmptyState(width: width)
-                } else {
+            let showsSidebar = geo.size.width >= 1040
+            let width = min(geo.size.width - (showsSidebar ? 336 : 64), 820)
+            HStack(spacing: 0) {
+                if showsSidebar {
+                    agentSidebar
+                        .frame(width: 272)
+                        .background(theme.surfaceContainer)
+                        .overlay(alignment: .trailing) { Rectangle().fill(theme.hairline).frame(width: 1) }
+                }
+                ZStack {
+                    theme.canvas.ignoresSafeArea()
                     VStack(spacing: 0) {
-                        messageList(width: width)
-                        pinnedInputBar(width: width)
+                        agentTopBar(width: width, compact: !showsSidebar)
+                        if store.chatMessages.isEmpty {
+                            heroEmptyState(width: width)
+                        } else {
+                            messageList(width: width)
+                            pinnedInputBar(width: width)
+                        }
                     }
                 }
             }
             .onAppear { Task { await store.preheatRealtimeContext() } }   // U4: Seesaw 加载时预温实时上下文（R3）
             .onAppear { Task { await loadIndicatorSuggestion() } }        // U9: 空态确定性候选建议 chip
+            .onAppear { Task { await store.loadAgentBootstrap() } }
         }
+    }
+
+    private var agentSidebar: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("会话")
+                    .font(KSSFont.themed(13, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                Spacer()
+                Button { store.createAgentSession() } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.borderless)
+                .help("新建会话")
+            }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    ForEach(store.agentSessions) { session in
+                        agentSessionRow(session)
+                    }
+                }
+            }
+            Divider().overlay(theme.hairline)
+            agentUtilityButtons
+        }
+        .padding(14)
+    }
+
+    private func agentSessionRow(_ session: AgentSession) -> some View {
+        HStack(spacing: 8) {
+            Button { store.openAgentSession(session.sessionId) } label: {
+                Image(systemName: store.selectedAgentSessionId == session.sessionId ? "bubble.left.and.bubble.right.fill" : "bubble.left")
+                    .foregroundStyle(store.selectedAgentSessionId == session.sessionId ? theme.accent : theme.textSecondary)
+            }
+            .buttonStyle(.plain)
+            TextField("会话名", text: Binding(
+                get: { store.agentSessions.first(where: { $0.sessionId == session.sessionId })?.title ?? session.title },
+                set: { store.renameAgentSession(session.sessionId, title: $0) }
+            ))
+            .textFieldStyle(.plain)
+            .font(KSSFont.themed(12.5, .semibold, theme: theme))
+            .foregroundStyle(theme.textPrimary)
+            Button { store.archiveAgentSession(session.sessionId) } label: {
+                Image(systemName: "archivebox")
+                    .foregroundStyle(theme.textSecondary)
+            }
+            .buttonStyle(.plain)
+            .help("归档会话")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            store.selectedAgentSessionId == session.sessionId ? theme.accentSoft : theme.surface,
+            in: RoundedRectangle(cornerRadius: KSSTheme.shapeS)
+        )
+        .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeS).stroke(theme.hairline))
+    }
+
+    private var agentUtilityButtons: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button { showSkillDrawer.toggle() } label: {
+                Label("技能", systemImage: "slider.horizontal.3")
+            }
+            Button { showMemoryDrawer.toggle() } label: {
+                Label("记忆", systemImage: "tray.full")
+            }
+            if store.agentProtocolUnavailable {
+                Label("Agent v1 暂不可用，已回退旧聊天", systemImage: "exclamationmark.triangle")
+                    .font(KSSFont.themed(11, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+            }
+        }
+        .font(KSSFont.themed(12, .semibold, theme: theme))
+        .buttonStyle(.plain)
+        .popover(isPresented: $showSkillDrawer) { skillDrawer.frame(width: 360, height: 420) }
+        .popover(isPresented: $showMemoryDrawer) { memoryDrawer.frame(width: 420, height: 520) }
+    }
+
+    private func agentTopBar(width: CGFloat, compact: Bool) -> some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 10) {
+                if compact {
+                    Picker("会话", selection: Binding(
+                        get: { store.selectedAgentSessionId ?? "" },
+                        set: { store.openAgentSession($0) }
+                    )) {
+                        ForEach(store.agentSessions) { session in
+                            Text(session.title).tag(session.sessionId)
+                        }
+                    }
+                    .frame(width: min(width * 0.48, 240))
+                    Button { store.createAgentSession() } label: { Image(systemName: "plus") }
+                        .buttonStyle(.borderless)
+                }
+                skillChipRow
+                Spacer()
+                if let usage = store.agentContextUsage {
+                    Text(usage.displayText)
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                if store.isChatStreaming {
+                    Button { store.stopChatGeneration() } label: {
+                        Label("停止", systemImage: "stop.fill")
+                    }
+                    .buttonStyle(.borderless)
+                }
+                Button { showMemoryDrawer.toggle() } label: {
+                    Image(systemName: "tray.full")
+                }
+                .buttonStyle(.borderless)
+                .help("记忆")
+            }
+            .frame(width: width)
+            if let issue = store.agentSequenceIssue {
+                Text(issue)
+                    .font(KSSFont.themed(11, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(width: width, alignment: .leading)
+            }
+        }
+        .padding(.top, 12)
+        .popover(isPresented: $showSkillDrawer) { skillDrawer.frame(width: 360, height: 420) }
+        .popover(isPresented: $showMemoryDrawer) { memoryDrawer.frame(width: 420, height: 520) }
+    }
+
+    private var skillChipRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                Button { showSkillDrawer.toggle() } label: {
+                    Image(systemName: "slider.horizontal.3")
+                }
+                .buttonStyle(.borderless)
+                ForEach(store.agentSkills.filter { store.pinnedAgentSkillIds.contains($0.id) }.prefix(4)) { skill in
+                    Text(skill.name)
+                        .font(KSSFont.themed(10.5, .semibold, theme: theme))
+                        .foregroundStyle(theme.accent)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(theme.accentSoft, in: Capsule())
+                }
+            }
+        }
+        .frame(maxWidth: 280)
+    }
+
+    private var skillDrawer: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("技能管理")
+                    .font(KSSFont.themed(15, .bold, theme: theme))
+                Spacer()
+                Button { store.reloadAgentSkills() } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.borderless)
+            }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(store.agentSkills) { skill in
+                        HStack(alignment: .top) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(skill.name).font(KSSFont.themed(12.5, .semibold, theme: theme))
+                                if let desc = skill.description, !desc.isEmpty {
+                                    Text(desc).font(KSSFont.themed(11, theme: theme)).foregroundStyle(theme.textSecondary)
+                                }
+                            }
+                            Spacer()
+                            Toggle("启用", isOn: Binding(
+                                get: { skill.enabled != false },
+                                set: { store.setAgentSkillEnabled(skill, enabled: $0) }
+                            ))
+                            .labelsHidden()
+                            Toggle("置顶", isOn: Binding(
+                                get: { store.pinnedAgentSkillIds.contains(skill.id) },
+                                set: { store.setAgentSkillPinned(skill, pinned: $0) }
+                            ))
+                            .labelsHidden()
+                        }
+                    }
+                    if !store.agentSkillDiagnostics.isEmpty {
+                        Divider()
+                        Text("诊断").font(KSSFont.themed(11, .semibold, theme: theme))
+                        ForEach(store.agentSkillDiagnostics) { item in
+                            Text(item.message)
+                                .font(KSSFont.themed(10.5, theme: theme))
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(theme.canvas)
+    }
+
+    private var memoryDrawer: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("记忆")
+                .font(KSSFont.themed(15, .bold, theme: theme))
+            HStack {
+                TextField("搜索记忆或来源", text: $memorySearch)
+                    .textFieldStyle(.roundedBorder)
+                Button { Task { await store.loadAgentMemories(query: memorySearch) }; store.recallAgentSources(query: memorySearch) } label: {
+                    Image(systemName: "magnifyingglass")
+                }
+            }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    ForEach(store.agentMemoryCandidates) { candidate in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(candidate.text).font(KSSFont.themed(12, theme: theme))
+                            HStack {
+                                Button("记住") { store.resolveMemoryCandidate(candidate, approved: true) }
+                                Button("忽略") { store.resolveMemoryCandidate(candidate, approved: false) }
+                            }
+                            .font(KSSFont.themed(11, .semibold, theme: theme))
+                        }
+                        .padding(10)
+                        .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
+                    }
+                    ForEach(store.agentMemories) { memory in
+                        HStack(alignment: .top) {
+                            Text(memory.text)
+                                .font(KSSFont.themed(12, theme: theme))
+                                .foregroundStyle(theme.textPrimary)
+                            Spacer()
+                            Button { store.archiveAgentMemory(memory) } label: { Image(systemName: "archivebox") }
+                            Button { store.deleteAgentMemory(memory) } label: { Image(systemName: "trash") }
+                        }
+                        .buttonStyle(.borderless)
+                        .padding(10)
+                        .background(theme.surface, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
+                    }
+                    ForEach(store.agentSourceRecalls) { recall in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(recall.title).font(KSSFont.themed(12, .semibold, theme: theme))
+                            if let excerpt = recall.excerpt {
+                                Text(excerpt).font(KSSFont.themed(11, theme: theme)).foregroundStyle(theme.textSecondary)
+                            }
+                        }
+                        .padding(10)
+                        .background(theme.accentSoft, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(theme.canvas)
     }
 
     // MARK: - 空态:Cortex 风格 hero
@@ -122,7 +383,7 @@ struct AIChatView: View {
                     .padding(.horizontal, 10).padding(.vertical, 5)
                     .background(theme.surface, in: Capsule())
                 Spacer()
-                sendButton
+                if store.isChatStreaming { stopButton } else { sendButton }
             }
         }
         .padding(16)
@@ -141,6 +402,17 @@ struct AIChatView: View {
         }
         .buttonStyle(.plain)
         .disabled(!canSend)
+    }
+
+    private var stopButton: some View {
+        Button(action: { store.stopChatGeneration() }) {
+            Image(systemName: "stop.fill")
+                .font(KSSFont.themed(13, .bold, theme: theme))
+                .foregroundStyle(.white)
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(theme.up))
+        }
+        .buttonStyle(.plain)
     }
 
     private var canSend: Bool {
@@ -273,7 +545,7 @@ struct AIChatView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 18)
             }
-            .onChange(of: store.chatMessages.last?.text) { _ in
+            .onChange(of: store.chatMessages.last?.text) { _, _ in
                 if let last = store.chatMessages.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
             }
         }
@@ -291,6 +563,9 @@ struct AIChatView: View {
                     .multilineTextAlignment(.leading)
                     .padding(.horizontal, 14).padding(.vertical, 10)
                     .background(theme.accent, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+                    .contextMenu {
+                        Button("记住这条消息") { store.proposeAgentMemory(msg.text) }
+                    }
             }
         } else {
             HStack {
@@ -326,6 +601,9 @@ struct AIChatView: View {
                 .padding(.horizontal, 14).padding(.vertical, 10)
                 .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
                 .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeM).stroke(theme.hairline))
+                .contextMenu {
+                    Button("记住这条消息") { store.proposeAgentMemory(msg.text) }
+                }
                 Spacer(minLength: 40)
             }
         }
@@ -360,7 +638,7 @@ struct AIChatView: View {
                     .textFieldStyle(.plain).font(KSSFont.themed(14, theme: theme)).lineLimit(1...4)
                     .disabled(store.isChatStreaming)
                     .onSubmit(send)
-                sendButton
+                if store.isChatStreaming { stopButton } else { sendButton }
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 10)

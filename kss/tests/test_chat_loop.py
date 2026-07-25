@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -112,6 +113,109 @@ def test_write_only_emits_intent_never_dispatches(monkeypatch):
     assert seen == {"command": "run", "args": ["update-cs-data"], "tool_name": "run_task"}
     # 结果回喂
     assert any(m["role"] == "tool" and "ran" in m["content"] for m in chat.calls[1])
+
+
+def test_run_turn_returns_complete_transcript(monkeypatch):
+    """Agent v1 需要完整 assistant/tool transcript，而不是流式 chunk。"""
+    monkeypatch.setattr(bridge, "dispatch", lambda cmd, args: {"symbol": args[0], "pctChange": 3.2})
+    frames = []
+
+    async def emit(ev):
+        frames.append(ev)
+
+    chat = FakeChat([
+        [_toolcall("get_stock", {"symbol": "688008.SH"}), {"type": "finish", "reason": "tool_calls"}],
+        [_text("688008 涨 3.2%"), {"type": "finish", "reason": "stop"}],
+    ])
+    transcript = asyncio.run(loop.run_turn(
+        [{"role": "user", "content": "看 688008"}],
+        emit,
+        lambda **kw: pytest.fail("read path should not request write"),
+        chat_client=chat,
+    ))
+    assert transcript.run_state["reason"] == "stop"
+    assert any(m["role"] == "assistant" and m.get("tool_calls") for m in transcript.messages)
+    assert any(m["role"] == "tool" and "pctChange" in m["content"] for m in transcript.messages)
+    assert any(m["role"] == "assistant" and m.get("content") == "688008 涨 3.2%"
+               for m in transcript.messages)
+    assert not any("688008 涨" in json.dumps(f, ensure_ascii=False)
+                   for f in frames if f["type"] == "tool_done")
+
+
+def test_bad_tool_calls_return_tool_results_without_execution(monkeypatch):
+    calls = []
+    monkeypatch.setattr(bridge, "dispatch", lambda *a, **k: calls.append(a) or {"bad": True})
+    scripts = [
+        [
+            _toolcall("no_such_tool", {}, id="u1"),
+            _toolcall("get_stock", "not-a-dict", id="m1"),
+            _toolcall("get_stock", {"symbol": "688008.SH", "_truncated": True}, id="t1"),
+            {"type": "finish", "reason": "tool_calls"},
+        ],
+        [_text("done"), {"type": "finish", "reason": "stop"}],
+    ]
+    frames, chat = _drive(scripts)
+    assert calls == []
+    tool_payloads = [
+        json.loads(m["content"]) for m in chat.calls[1]
+        if m["role"] == "tool"
+    ]
+    assert {p["error"] for p in tool_payloads} == {
+        "unknown_tool", "malformed_tool_args", "truncated_tool_args",
+    }
+    assert sum(1 for f in frames if f["type"] == "tool_done") == 3
+
+
+def test_abort_token_checked_before_provider(monkeypatch):
+    monkeypatch.setattr(bridge, "dispatch", lambda *a, **k: pytest.fail("abort should stop before dispatch"))
+    token = loop.AbortToken()
+    token.abort("stop-now")
+    frames = []
+
+    async def emit(ev):
+        frames.append(ev)
+
+    chat = FakeChat([[_toolcall("get_snapshot", {}), {"type": "finish", "reason": "tool_calls"}]])
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(loop.run_turn(
+            [{"role": "user", "content": "盘面"}],
+            emit,
+            lambda **kw: pytest.fail("abort should stop before write"),
+            chat_client=chat,
+            abort_token=token,
+        ))
+
+
+def test_abort_closes_active_provider_stream(monkeypatch):
+    monkeypatch.setattr(bridge, "dispatch", lambda *a, **k: pytest.fail("abort should stop tools"))
+    token = loop.AbortToken()
+    released = threading.Event()
+
+    class BlockingChat:
+        def stream_turn(self, messages, tools):
+            def generate():
+                released.wait(timeout=2)
+                yield {"type": "finish", "reason": "stop"}
+            return generate()
+
+        def abort_active_stream(self):
+            released.set()
+
+    async def run():
+        task = asyncio.create_task(loop.run_turn(
+            [{"role": "user", "content": "盘面"}],
+            lambda ev: asyncio.sleep(0),
+            lambda **kw: pytest.fail("abort should stop writes"),
+            chat_client=BlockingChat(),
+            abort_token=token,
+        ))
+        await asyncio.sleep(0.05)
+        token.abort("client_abort")
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run())
+    assert released.is_set()
 
 
 def test_request_write_rejection_feeds_back():

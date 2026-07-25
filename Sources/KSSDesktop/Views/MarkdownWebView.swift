@@ -16,7 +16,7 @@ struct MarkdownWebView: NSViewRepresentable {
         webView.navigationDelegate = context.coordinator
         context.coordinator.attach(webView)
         webView.setValue(false, forKey: "drawsBackground")
-        if let html = Bundle.module.url(forResource: "markdown", withExtension: "html") {
+        if let html = KSSResources.bundle.url(forResource: "markdown", withExtension: "html") {
             webView.loadFileURL(html, allowingReadAccessTo: html.deletingLastPathComponent())
         }
         return webView

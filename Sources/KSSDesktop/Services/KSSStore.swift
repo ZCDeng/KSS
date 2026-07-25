@@ -171,14 +171,37 @@ final class KSSStore: ObservableObject {
     @Published var isChatStreaming = false
     @Published var chatToolInProgress: String?            // 正在调用的工具名（进度指示）
     @Published var pendingWriteConfirm: PendingWriteConfirm?   // 待人工确认的写（app-modal）
+    @Published var agentSessions: [AgentSession] = []
+    @Published var selectedAgentSessionId: String?
+    @Published var agentSkills: [AgentSkill] = []
+    @Published var agentSkillDiagnostics: [AgentSkillDiagnostic] = []
+    @Published var pinnedAgentSkillIds: Set<String> = []
+    @Published var agentMemories: [AgentMemoryRecord] = []
+    @Published var agentMemoryCandidates: [AgentMemoryCandidate] = []
+    @Published var agentSourceRecalls: [AgentSourceRecall] = []
+    @Published var agentContextUsage: AgentContextUsage?
+    @Published var agentSequenceIssue: String?
+    @Published var agentProtocolUnavailable = false
     /// 当前阻塞中的 confirm 闸（后台流式线程持，UI tap 后 resolve）。
     private var activeConfirmGate: ChatConfirmGate?
+    private var activeAgentControl: BridgeClient.AgentControlChannel?
+    private var activeAgentRunId: String?
+    private var userAbortedAgentRun = false
+    private var agentSeenSequences: [String: Set<Int>] = [:]
+    private var agentExpectedSequence: [String: Int] = [:]
+    private var chatMessagesByAgentSession: [String: [ChatMessage]] = [:]
 
     let bridge: BridgeClient?
 
     init() {
         self.bridge = try? BridgeClient()
+        restoreLastAgentSession()
         refreshLLMCredentialsStatus()
+    }
+
+    init(testBridge bridge: BridgeClient?) {
+        self.bridge = bridge
+        restoreLastAgentSession()
     }
 
     // MARK: - 聊天一轮（流式 + 人在环内写闸）
@@ -187,10 +210,68 @@ final class KSSStore: ObservableObject {
         guard let bridge else { errorMessage = "Cannot locate KSS project root"; return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isChatStreaming else { return }   // 单活动轮（R11）
+        if !agentProtocolUnavailable {
+            sendAgentChat(trimmed, bridge: bridge)
+            return
+        }
         chatMessages.append(ChatMessage(role: .user, text: trimmed))
         let assistant = ChatMessage(role: .assistant, text: "", numbersUnverified: true)
         chatMessages.append(assistant)
         let assistantId = assistant.id
+        startLegacyChat(bridge: bridge, assistantId: assistantId)
+    }
+
+    private func sendAgentChat(_ trimmed: String, bridge: BridgeClient) {
+        ensureAgentSession()
+        guard let sessionId = selectedAgentSessionId else { return }
+        chatMessages.append(ChatMessage(role: .user, text: trimmed))
+        let assistant = ChatMessage(role: .assistant, text: "", numbersUnverified: true)
+        chatMessages.append(assistant)
+        chatMessagesByAgentSession[sessionId] = chatMessages
+        persistLastAgentSession(sessionId)
+        let assistantId = assistant.id
+        isChatStreaming = true
+        userAbortedAgentRun = false
+        chatToolInProgress = nil
+        agentSequenceIssue = nil
+        let clientTurnId = UUID().uuidString
+        Task.detached { [weak self] in
+            bridge.agentTurn(
+                sessionId: sessionId,
+                clientTurnId: clientTurnId,
+                input: trimmed,
+                onControlReady: { control in
+                    Task { @MainActor [weak self] in self?.activeAgentControl = control }
+                },
+                onFrame: { frame in
+                    Task { @MainActor [weak self] in self?.applyAgentFrame(frame, assistantId: assistantId) }
+                },
+                onConfirmRequired: { frame in
+                    let gate = ChatConfirmGate()
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self else { gate.resolve(false); return }
+                        self.activeConfirmGate = gate
+                        let ctx = self.chatMessages.last(where: { $0.role == .assistant })?.text ?? ""
+                        let confirm = PendingWriteConfirm(
+                            callId: frame.callId ?? "", tool: frame.tool ?? frame.name ?? "",
+                            command: frame.command ?? "", effect: frame.effect ?? "执行写操作",
+                            argsText: frame.argsText ?? "", contextLine: ctx)
+                        self.pendingWriteConfirm = nil
+                        DispatchQueue.main.async { [weak self] in
+                            self?.pendingWriteConfirm = confirm
+                        }
+                    }
+                    return gate.wait()
+                },
+                onEnd: { err in
+                    Task { @MainActor [weak self] in
+                        self?.endAgentChat(bridge: bridge, assistantId: assistantId, input: trimmed, error: err)
+                    }
+                })
+        }
+    }
+
+    private func startLegacyChat(bridge: BridgeClient, assistantId: UUID) {
         isChatStreaming = true
         chatToolInProgress = nil
         // 发给 sidecar 的历史：仅 user/assistant，去掉本轮空 assistant 占位。
@@ -246,6 +327,16 @@ final class KSSStore: ObservableObject {
         activeConfirmGate = nil
     }
 
+    func stopChatGeneration() {
+        userAbortedAgentRun = activeAgentControl != nil
+        activeAgentControl?.abort(runId: activeAgentRunId)
+        isChatStreaming = false
+        chatToolInProgress = nil
+        activeConfirmGate?.resolve(false)
+        activeConfirmGate = nil
+        pendingWriteConfirm = nil
+    }
+
     private func applyChatFrame(_ frame: ChatFrame, assistantId: UUID) {
         guard let idx = chatMessages.firstIndex(where: { $0.id == assistantId }) else { return }
         switch frame.type {
@@ -288,16 +379,429 @@ final class KSSStore: ObservableObject {
         }
     }
 
-    private func endChat(assistantId: UUID, error: String?) {
+    @discardableResult
+    func applyAgentFrame(_ frame: AgentFrame, assistantId: UUID? = nil) -> Bool {
+        let runKey = frame.runId ?? activeAgentRunId ?? "default"
+        if let sequence = frame.sequence {
+            var seen = agentSeenSequences[runKey] ?? []
+            if seen.contains(sequence) { return false }
+            seen.insert(sequence)
+            agentSeenSequences[runKey] = seen
+            let expected = agentExpectedSequence[runKey] ?? 1
+            if sequence > expected {
+                agentSequenceIssue = "Agent frame gap: expected \(expected), got \(sequence)"
+            }
+            agentExpectedSequence[runKey] = max(expected, sequence + 1)
+        }
+
+        if let runId = frame.runId { activeAgentRunId = runId }
+        if let sessionId = frame.sessionId {
+            selectedAgentSessionId = sessionId
+            persistLastAgentSession(sessionId)
+        }
+        if let usage = frame.contextUsage {
+            agentContextUsage = usage
+        }
+
+        let idx: Int? = {
+            if let assistantId, let idx = chatMessages.firstIndex(where: { $0.id == assistantId }) { return idx }
+            return chatMessages.lastIndex(where: { $0.role == .assistant })
+        }()
+
+        switch frame.type {
+        case "agent_start", "turn_start":
+            chatToolInProgress = nil
+        case "message_start":
+            if idx == nil {
+                chatMessages.append(ChatMessage(role: .assistant, text: "", numbersUnverified: true))
+            }
+        case "message_delta":
+            if let idx {
+                chatMessages[idx].text += frame.delta ?? frame.text ?? ""
+            }
+        case "message_end":
+            if let idx {
+                chatMessages[idx].numbersUnverified = false
+                mergeAgentEvidence(frame, into: idx)
+            }
+        case "tool_start", "tool_update":
+            chatToolInProgress = frame.name ?? frame.tool
+        case "tool_end":
+            if let idx { mergeAgentEvidence(frame, into: idx) }
+            chatToolInProgress = nil
+        case "confirm_required":
+            break
+        case "memory_candidate":
+            if let candidate = frame.memoryCandidate, !agentMemoryCandidates.contains(where: { $0.id == candidate.id }) {
+                agentMemoryCandidates.append(candidate)
+            }
+        case "memory_recall":
+            if let memories = frame.memories { agentMemories = memories }
+        case "source_recall", "recall":
+            if let recalls = frame.recalls {
+                agentSourceRecalls = recalls
+            }
+            if let recall = frame.recall, !agentSourceRecalls.contains(where: { $0.id == recall.id }) {
+                agentSourceRecalls.append(recall)
+            }
+        case "compaction_start":
+            agentContextUsage = frame.contextUsage ?? AgentContextUsage(used: nil, limit: nil, percent: nil, label: "压缩中")
+        case "compaction_end":
+            if let usage = frame.contextUsage { agentContextUsage = usage }
+        case "turn_end", "agent_end":
+            chatToolInProgress = nil
+            if let idx {
+                mergeAgentEvidence(frame, into: idx)
+                if let unverified = frame.numberGuard?.unverified {
+                    chatMessages[idx].numbersUnverified = !unverified.isEmpty
+                }
+            }
+        case "error":
+            chatToolInProgress = nil
+            if let idx, chatMessages[idx].text.isEmpty {
+                chatMessages[idx].text = "出错了：\(frame.error ?? "未知错误")"
+                chatMessages[idx].isError = true
+            } else {
+                errorMessage = frame.error
+            }
+        default:
+            break
+        }
+        if let sessionId = selectedAgentSessionId {
+            chatMessagesByAgentSession[sessionId] = chatMessages
+        }
+        return true
+    }
+
+    private func mergeAgentEvidence(_ frame: AgentFrame, into idx: Int) {
+        if let summary = frame.evidenceSummary {
+            chatMessages[idx].evidenceSummary.merge(summary)
+        }
+        if let drawer = frame.evidenceDrawer {
+            chatMessages[idx].evidenceDrawer.merge(drawer)
+        }
+    }
+
+    private func endAgentChat(bridge: BridgeClient, assistantId: UUID, input: String, error: String?) {
+        let wasUserAbort = userAbortedAgentRun
+        userAbortedAgentRun = false
+        let normalizedError = error?.lowercased() ?? ""
+        let isAbortError = normalizedError.contains("abort") || normalizedError.contains("client_abort")
+        let assistant = chatMessages.first(where: { $0.id == assistantId })
+        let shouldFallback = Self.shouldFallbackToLegacyAgent(
+            error: error,
+            userAborted: wasUserAbort,
+            assistantEmpty: assistant?.text.isEmpty == true,
+            assistantIsError: assistant?.isError == true)
+        if shouldFallback {
+            agentProtocolUnavailable = true
+            activeAgentControl = nil
+            activeAgentRunId = nil
+            startLegacyChat(bridge: bridge, assistantId: assistantId)
+            return
+        }
         isChatStreaming = false
         chatToolInProgress = nil
+        activeAgentControl = nil
+        activeAgentRunId = nil
         activeConfirmGate = nil
         pendingWriteConfirm = nil
+        if let sessionId = selectedAgentSessionId {
+            chatMessagesByAgentSession[sessionId] = chatMessages
+        }
+        if wasUserAbort || isAbortError {
+            if let idx = chatMessages.firstIndex(where: { $0.id == assistantId }),
+               chatMessages[idx].text.isEmpty {
+                chatMessages[idx].text = "（已停止）"
+                chatMessages[idx].numbersUnverified = false
+            }
+            return
+        }
         guard let error else { return }
         if let idx = chatMessages.firstIndex(where: { $0.id == assistantId }),
            chatMessages[idx].text.isEmpty {
             chatMessages[idx].text = "连接中断：\(error)"
             chatMessages[idx].isError = true
+        }
+    }
+
+    nonisolated static func shouldFallbackToLegacyAgent(
+        error: String?,
+        userAborted: Bool,
+        assistantEmpty: Bool,
+        assistantIsError: Bool
+    ) -> Bool {
+        let normalized = error?.lowercased() ?? ""
+        let isAbort = normalized.contains("abort") || normalized.contains("client_abort")
+        return !userAborted && !isAbort && error != nil && assistantEmpty && !assistantIsError
+    }
+
+    private func endChat(assistantId: UUID, error: String?) {
+        isChatStreaming = false
+        chatToolInProgress = nil
+        activeConfirmGate = nil
+        pendingWriteConfirm = nil
+        if let sessionId = selectedAgentSessionId {
+            chatMessagesByAgentSession[sessionId] = chatMessages
+        }
+        guard let error else { return }
+        if let idx = chatMessages.firstIndex(where: { $0.id == assistantId }),
+           chatMessages[idx].text.isEmpty {
+            chatMessages[idx].text = "连接中断：\(error)"
+            chatMessages[idx].isError = true
+        }
+    }
+
+    func loadAgentBootstrap() async {
+        await loadAgentSessions()
+        await loadAgentSkills()
+        await loadAgentMemories()
+    }
+
+    func loadAgentSessions() async {
+        guard let bridge else { return }
+        do {
+            let response = try await Task.detached { try bridge.agentSessions() }.value
+            agentProtocolUnavailable = false
+            agentSessions = response.sessions.filter { !$0.archived }
+            let preferred = response.selectedSessionId ?? selectedAgentSessionId
+            let target = preferred.flatMap { candidate in
+                agentSessions.contains(where: { $0.sessionId == candidate }) ? candidate : nil
+            } ?? agentSessions.first?.sessionId
+            if let target {
+                openAgentSession(target)
+            } else {
+                createAgentSession()
+            }
+        } catch {
+            agentProtocolUnavailable = true
+            ensureAgentSession()
+        }
+    }
+
+    func createAgentSession() {
+        let title = "新会话"
+        let localId = "local-\(UUID().uuidString)"
+        let session = AgentSession(sessionId: localId, title: title)
+        agentSessions.insert(session, at: 0)
+        openAgentSession(localId)
+        guard let bridge else { return }
+        Task {
+            let task = Task.detached {
+                try bridge.agentSessions(action: "create", sessionId: localId, title: title)
+            }
+            if let response = try? await task.value {
+                agentProtocolUnavailable = false
+                agentSessions = response.sessions.filter { !$0.archived }
+                if let selected = response.selectedSessionId ?? agentSessions.first?.sessionId {
+                    openAgentSession(selected)
+                }
+            }
+        }
+    }
+
+    func openAgentSession(_ sessionId: String) {
+        selectedAgentSessionId = sessionId
+        persistLastAgentSession(sessionId)
+        if let session = agentSessions.first(where: { $0.sessionId == sessionId }),
+           let hydrated = session.messages {
+            chatMessages = hydrateChatMessages(from: hydrated)
+            chatMessagesByAgentSession[sessionId] = chatMessages
+            agentContextUsage = session.contextUsage
+        } else if let cached = chatMessagesByAgentSession[sessionId] {
+            chatMessages = cached
+        } else if let session = agentSessions.first(where: { $0.sessionId == sessionId }) {
+            chatMessages = hydrateChatMessages(from: session.messages ?? [])
+            chatMessagesByAgentSession[sessionId] = chatMessages
+            agentContextUsage = session.contextUsage
+        }
+    }
+
+    func renameAgentSession(_ sessionId: String, title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if let idx = agentSessions.firstIndex(where: { $0.sessionId == sessionId }) {
+            agentSessions[idx].title = trimmed
+        }
+        guard let bridge else { return }
+        Task { _ = try? await Task.detached { try bridge.agentSessions(action: "rename", sessionId: sessionId, title: trimmed) }.value }
+    }
+
+    func archiveAgentSession(_ sessionId: String) {
+        agentSessions.removeAll { $0.sessionId == sessionId }
+        chatMessagesByAgentSession[sessionId] = nil
+        if selectedAgentSessionId == sessionId {
+            if let next = agentSessions.first?.sessionId {
+                openAgentSession(next)
+            } else {
+                createAgentSession()
+            }
+        }
+        guard let bridge else { return }
+        Task { _ = try? await Task.detached { try bridge.agentSessions(action: "archive", sessionId: sessionId) }.value }
+    }
+
+    func loadAgentSkills() async {
+        guard let bridge else { return }
+        let sessionId = selectedAgentSessionId
+        let task = Task.detached { try bridge.agentSkills(sessionId: sessionId) }
+        if let response = try? await task.value {
+            agentSkills = response.skills
+            agentSkillDiagnostics = response.diagnostics ?? []
+            pinnedAgentSkillIds = Set(response.skills.filter { $0.pinned == true }.map(\.id))
+        }
+    }
+
+    func setAgentSkillPinned(_ skill: AgentSkill, pinned: Bool) {
+        if pinned { pinnedAgentSkillIds.insert(skill.id) } else { pinnedAgentSkillIds.remove(skill.id) }
+        guard let bridge else { return }
+        let sessionId = selectedAgentSessionId
+        Task {
+            let response = try? await Task.detached {
+                try bridge.agentSkills(
+                    action: "pin", sessionId: sessionId, skillId: skill.id, pinned: pinned)
+            }.value
+            if let response {
+                agentSkills = response.skills
+                agentSkillDiagnostics = response.diagnostics ?? []
+                pinnedAgentSkillIds = Set(response.skills.filter { $0.pinned == true }.map(\.id))
+            }
+        }
+    }
+
+    func setAgentSkillEnabled(_ skill: AgentSkill, enabled: Bool) {
+        if let idx = agentSkills.firstIndex(where: { $0.id == skill.id }) {
+            agentSkills[idx].enabled = enabled
+        }
+        guard let bridge else { return }
+        let sessionId = selectedAgentSessionId
+        Task {
+            let response = try? await Task.detached {
+                try bridge.agentSkills(
+                    action: "enable", sessionId: sessionId, skillId: skill.id, enabled: enabled)
+            }.value
+            if let response {
+                agentSkills = response.skills
+                agentSkillDiagnostics = response.diagnostics ?? []
+            }
+        }
+    }
+
+    func reloadAgentSkills() {
+        guard let bridge else { return }
+        let sessionId = selectedAgentSessionId
+        Task {
+            let task = Task.detached { try bridge.agentSkills(action: "reload", sessionId: sessionId) }
+            if let response = try? await task.value {
+                agentSkills = response.skills
+                agentSkillDiagnostics = response.diagnostics ?? []
+                pinnedAgentSkillIds = Set(response.skills.filter { $0.pinned == true }.map(\.id))
+            }
+        }
+    }
+
+    func loadAgentMemories(query: String? = nil) async {
+        guard let bridge else { return }
+        let task = Task.detached { try bridge.agentMemories(action: query == nil ? "list" : "search", query: query) }
+        if let response = try? await task.value {
+            agentMemories = response.memories
+            agentMemoryCandidates = response.candidates ?? agentMemoryCandidates
+            agentSourceRecalls = response.recalls ?? agentSourceRecalls
+        }
+    }
+
+    func resolveMemoryCandidate(_ candidate: AgentMemoryCandidate, approved: Bool) {
+        agentMemoryCandidates.removeAll { $0.id == candidate.id }
+        guard let bridge else { return }
+        Task {
+            let task = Task.detached {
+                try bridge.agentMemories(action: "approve", candidateId: candidate.id, approved: approved)
+            }
+            if let response = try? await task.value {
+                agentMemories = response.memories
+            }
+        }
+    }
+
+    func proposeAgentMemory(_ text: String, kind: String = "preference") {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let bridge else { return }
+        let sessionId = selectedAgentSessionId
+        Task {
+            do {
+                let response = try await Task.detached {
+                    try bridge.agentMemories(
+                        action: "propose", text: trimmed, kind: kind, sourceSession: sessionId)
+                }.value
+                agentMemoryCandidates = response.candidates ?? []
+                agentMemories = response.memories
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func archiveAgentMemory(_ memory: AgentMemoryRecord) {
+        agentMemories.removeAll { $0.id == memory.id }
+        guard let bridge else { return }
+        Task { _ = try? await Task.detached { try bridge.agentMemories(action: "archive", memoryId: memory.id) }.value }
+    }
+
+    func deleteAgentMemory(_ memory: AgentMemoryRecord) {
+        agentMemories.removeAll { $0.id == memory.id }
+        guard let bridge else { return }
+        Task { _ = try? await Task.detached { try bridge.agentMemories(action: "delete", memoryId: memory.id) }.value }
+    }
+
+    func recallAgentSources(query: String) {
+        guard let bridge else { return }
+        Task {
+            let task = Task.detached { try bridge.agentMemories(action: "source-recall", query: query) }
+            if let response = try? await task.value {
+                agentSourceRecalls = response.recalls ?? []
+            }
+        }
+    }
+
+    private func ensureAgentSession() {
+        if selectedAgentSessionId != nil { return }
+        if let last = UserDefaults.standard.string(forKey: "kss.agent.lastSessionId"),
+           agentSessions.contains(where: { $0.sessionId == last }) {
+            openAgentSession(last)
+            return
+        }
+        let session = AgentSession(sessionId: "local-\(UUID().uuidString)", title: "本地会话")
+        agentSessions = [session]
+        openAgentSession(session.sessionId)
+    }
+
+    private func restoreLastAgentSession() {
+        let last = UserDefaults.standard.string(forKey: "kss.agent.lastSessionId")
+        let session = AgentSession(sessionId: last ?? "local-\(UUID().uuidString)", title: "本地会话")
+        agentSessions = [session]
+        openAgentSession(session.sessionId)
+    }
+
+    private func persistLastAgentSession(_ sessionId: String) {
+        UserDefaults.standard.set(sessionId, forKey: "kss.agent.lastSessionId")
+    }
+
+    private func hydrateChatMessages(from messages: [AgentHydratedMessage]) -> [ChatMessage] {
+        messages.compactMap { message in
+            guard message.role == "user"
+                    || (message.role == "assistant"
+                        && (message.toolCalls?.isEmpty ?? true)
+                        && !message.text.isEmpty)
+            else {
+                return nil
+            }
+            var chat = ChatMessage(
+                role: message.role == "user" ? .user : .assistant,
+                text: message.text,
+                numbersUnverified: false)
+            if let summary = message.evidenceSummary { chat.evidenceSummary = summary }
+            if let drawer = message.evidenceDrawer { chat.evidenceDrawer = drawer }
+            return chat
         }
     }
 

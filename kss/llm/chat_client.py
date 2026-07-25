@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from typing import Any, Iterator
 
 # 复用 openai_client 的凭证解析 + 异常类型,不 fork 网关逻辑。
@@ -57,6 +58,8 @@ class ChatClient:
         api_key, base_url, default_model = _resolve_credentials()
         self._model = model or os.getenv("KSS_LLM_MODEL") or default_model
         self._temperature = temperature
+        self._stream_lock = threading.Lock()
+        self._active_stream: Any | None = None
         if client is not None:           # 注入 SDK 客户端(测试/替身),跳过真 openai 构建
             self._client = client
             return
@@ -101,6 +104,8 @@ class ChatClient:
             logger.warning("[chat] create(stream) 失败: %s", exc)
             yield {"type": "error", "error": f"LLM 调用失败: {exc}"}
             return
+        with self._stream_lock:
+            self._active_stream = stream
 
         acc: dict[int, dict[str, Any]] = {}   # tool_call index → {id,name,args(str)}
         finish_reason: str | None = None
@@ -122,6 +127,16 @@ class ChatClient:
             logger.warning("[chat] 流式读取中断: %s", exc)
             yield {"type": "error", "error": f"流式中断: {exc}"}
             return
+        finally:
+            with self._stream_lock:
+                if self._active_stream is stream:
+                    self._active_stream = None
+            close = getattr(stream, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("[chat] 关闭 provider stream 失败: %s", exc)
 
         # 流结束后统一 emit 累积好的 tool_calls(全 args 已拼好,DeepSeek 分片已重组)。
         for idx in sorted(acc):
@@ -141,6 +156,17 @@ class ChatClient:
                 "args": parsed if isinstance(parsed, dict) else {},
             }
         yield {"type": "finish", "reason": finish_reason or "stop"}
+
+    def abort_active_stream(self) -> None:
+        """关闭当前 provider stream，使停止请求不再等待下一段模型输出."""
+        with self._stream_lock:
+            stream = self._active_stream
+        close = getattr(stream, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("[chat] abort provider stream 失败: %s", exc)
 
 
 def _accumulate(acc: dict[int, dict[str, Any]], tool_calls: Any) -> None:

@@ -446,7 +446,7 @@ struct AppHeader: View {
     }
 
     private func bundledImage(_ name: String) -> NSImage? {
-        guard let url = Bundle.module.url(forResource: name, withExtension: "png") else { return nil }
+        guard let url = KSSResources.bundle.url(forResource: name, withExtension: "png") else { return nil }
         return NSImage(contentsOf: url)
     }
 }
@@ -577,4 +577,3 @@ struct SidebarAccountRow: View {
             .accessibilityHidden(true)
     }
 }
-

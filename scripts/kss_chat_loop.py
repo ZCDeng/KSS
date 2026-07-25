@@ -20,14 +20,17 @@ AUTO_TASKS 默认空 → 该自动路径默认休眠;准入 = 人工调用图审
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import time
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 # bridge:读经受限 call;WRITE_COMMANDS 分级。**绝不**用 bridge.dispatch 做写(KTD-4)。
 import kss_app_bridge as bridge
 import kss_recipes  # provenance 标记复用(#3)
+from kss.agent import AbortToken as _CoreAbortToken
 from kss.llm.chat_client import ChatClient
 from kss.llm.sanitizer import scan_for_injection
 
@@ -145,40 +148,111 @@ TOOL_SPECS: list[dict[str, Any]] = [
     _spec("cron_rerun", "cron-rerun", "重跑计划任务。**写操作,须人工确认**", {"label": _STR}, ["label"]),
     _spec("cron_enable", "cron-enable", "启用计划任务。**写操作,须人工确认**", {"label": _STR}, ["label"]),
     _spec("cron_disable", "cron-disable", "停用计划任务。**写操作,须人工确认**", {"label": _STR}, ["label"]),
+    # ---- Agent v1 内建工具:agent-turn 注入真实 handler;legacy chat-turn 返回不可用而不执行写 ----
+    _spec("load_skill", "agent-load-skill",
+          "加载一个已登记技能的内容片段。skill_id 为技能标识",
+          {"skill_id": _STR}, ["skill_id"]),
+    _spec("propose_memory", "agent-propose-memory",
+          "提出一条待用户批准的记忆。**需要用户批准后才会进入记忆库**",
+          {
+              "text": _STR,
+              "source": _STR,
+              "kind": {
+                  "type": "string",
+                  "description": "preference、decision 或 thesis；默认 preference",
+              },
+          },
+          ["text", "source"]),
 ]
 _SPEC_BY_NAME = {s["name"]: s for s in TOOL_SPECS}
 
 
+HookFn = Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None] | dict[str, Any] | None]
+
+
+class AbortToken(_CoreAbortToken):
+    """兼容导出；实际中止语义复用 ``kss.agent.AbortToken``。"""
+
+
+@dataclass
+class TurnTranscript:
+    """一轮完整 transcript；不持久化流式 chunk，只记录完整消息/工具结果。"""
+
+    messages: list[dict[str, Any]] = field(default_factory=list)
+    assistant_messages: list[dict[str, Any]] = field(default_factory=list)
+    tool_results: list[dict[str, Any]] = field(default_factory=list)
+    run_state: dict[str, Any] = field(default_factory=dict)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "messages": list(self.messages),
+            "assistant_messages": list(self.assistant_messages),
+            "tool_results": list(self.tool_results),
+            "run_state": dict(self.run_state),
+        }
+
+
+class ToolRegistry:
+    """LLM tool registry；默认桥接既有 KSS bridge 工具，并预留 agent 工具。"""
+
+    def __init__(self, specs: list[dict[str, Any]] | None = None) -> None:
+        self._specs = list(specs or TOOL_SPECS)
+        self._by_name = {s["name"]: s for s in self._specs}
+        self._handlers: dict[str, Callable[[dict[str, Any]], Any]] = {
+            "load_skill": lambda args: {"error": "agent_tool_unavailable", "tool": "load_skill"},
+            "propose_memory": lambda args: {"error": "approval_required", "tool": "propose_memory",
+                                            "hint": "memory approval must be handled by agent sidecar"},
+        }
+
+    def register_handler(self, name: str, handler: Callable[[dict[str, Any]], Any]) -> None:
+        self._handlers[name] = handler
+
+    def build_schema(self) -> list[dict[str, Any]]:
+        out = []
+        for s in self._specs:
+            required = [p for p in s["order"] if p in s["params"]
+                        and "date" not in p and "args" != p and "limit" not in p
+                        and not p.startswith("max_")]
+            out.append({
+                "type": "function",
+                "function": {
+                    "name": s["name"], "description": s["desc"],
+                    "parameters": {"type": "object", "properties": s["params"],
+                                   "required": required},
+                },
+            })
+        return out
+
+    def resolve(self, name: str, args: dict[str, Any]) -> tuple[str, list[str]]:
+        spec = self._by_name[name]
+        pos: list[str] = []
+        for key in spec["order"]:
+            if key in args and args[key] is not None and str(args[key]) != "":
+                pos.append(str(args[key]))
+            else:
+                pos.append("")   # 占位,bridge 命令多数容空(空 date→最新等)
+        while pos and pos[-1] == "":
+            pos.pop()
+        return spec["command"], pos
+
+    def has_tool(self, name: str) -> bool:
+        return name in self._by_name
+
+    def handler(self, name: str) -> Callable[[dict[str, Any]], Any] | None:
+        return self._handlers.get(name)
+
+    def spec(self, name: str) -> dict[str, Any] | None:
+        return self._by_name.get(name)
+
+
 def build_tools_schema() -> list[dict[str, Any]]:
     """OpenAI function-calling tools 数组(DeepSeek 兼容)。"""
-    out = []
-    for s in TOOL_SPECS:
-        required = [p for p in s["order"] if p in s["params"]
-                    and "date" not in p and "args" != p and "limit" not in p
-                    and not p.startswith("max_")]
-        out.append({
-            "type": "function",
-            "function": {
-                "name": s["name"], "description": s["desc"],
-                "parameters": {"type": "object", "properties": s["params"],
-                               "required": required},
-            },
-        })
-    return out
+    return ToolRegistry().build_schema()
 
 
 def resolve_tool(name: str, args: dict[str, Any]) -> tuple[str, list[str]]:
     """工具名+args dict → (bridge command, 位置 args 列表)。未知工具 raise KeyError。"""
-    spec = _SPEC_BY_NAME[name]
-    pos: list[str] = []
-    for key in spec["order"]:
-        if key in args and args[key] is not None and str(args[key]) != "":
-            pos.append(str(args[key]))
-        else:
-            pos.append("")   # 占位,bridge 命令多数容空(空 date→最新等)
-    while pos and pos[-1] == "":   # 去尾部空,避免传无谓空参
-        pos.pop()
-    return spec["command"], pos
+    return ToolRegistry().resolve(name, args)
 
 
 def is_write_command(command: str) -> bool:
@@ -262,31 +336,56 @@ async def run_turn(
     chat_client: ChatClient | None = None,
     max_steps: int = _DEFAULT_MAX_STEPS,
     turn_timeout: float = _DEFAULT_TURN_TIMEOUT,
-) -> None:
+    before_step: HookFn | None = None,
+    after_step: HookFn | None = None,
+    before_tool_call: HookFn | None = None,
+    after_tool_call: HookFn | None = None,
+    transform_context: Callable[[list[dict[str, Any]]], list[dict[str, Any]] | None] | None = None,
+    transform_tool_result: Callable[[dict[str, Any]], Any] | None = None,
+    should_stop: Callable[[TurnTranscript], bool] | None = None,
+    should_stop_after_turn: Callable[[TurnTranscript], bool] | None = None,
+    abort_token: AbortToken | None = None,
+    tool_registry: ToolRegistry | None = None,
+) -> TurnTranscript:
     """跑一轮多步对话。emit 逐帧(await drain by caller);写经 request_write(loop 不 dispatch 写)。
 
     messages 末尾应含本轮 user 消息(调用方已 sanitize_user_text)。emit 的帧:
     chunk / tool_call / tool_done / confirm_required(由 request_write 内部 emit) / done / error。
     """
     client = chat_client or ChatClient()
-    tools = build_tools_schema()
+    if abort_token is not None and hasattr(abort_token, "add_callback"):
+        abort_stream = getattr(client, "abort_active_stream", None)
+        if callable(abort_stream):
+            abort_token.add_callback(abort_stream)
+    registry = tool_registry or ToolRegistry()
+    tools = registry.build_schema()
     read_call = bridge._make_read_only_call(bridge.dispatch)   # 读受限 call(碰写即 raise)
     convo = list(messages)
     if not convo or convo[0].get("role") != "system":          # U6:注入 system prompt
         convo.insert(0, {"role": "system", "content": load_system_prompt()})
+    if transform_context is not None:
+        transformed = transform_context(list(convo))
+        if transformed is not None:
+            convo = list(transformed)
     deadline = time.monotonic() + turn_timeout
     tool_results_text: list[str] = []   # 本轮所有 tool 结果文本(数字守卫用)
+    transcript = TurnTranscript(messages=list(convo), run_state={"status": "running"})
 
     for step in range(max_steps):
+        _check_abort(abort_token)
+        if before_step:
+            await _maybe_await(before_step({"step": step, "messages": list(convo)}))
         if time.monotonic() > deadline:
+            transcript.run_state.update(status="done", reason="timeout")
             await emit({"type": "done", "reason": "timeout",
                         "note": "已达单轮总超时,优雅终止"})
-            return
+            return transcript
 
         assistant_text_parts: list[str] = []
         tool_calls: list[dict[str, Any]] = []
         had_error = False
 
+        _check_abort(abort_token)
         gen = client.stream_turn(convo, tools)
         # 阻塞 SDK 流在线程里逐事件取出 → 每次 await 让出事件循环,reader 任务得以并发收 confirm。
         step_t0 = time.monotonic()
@@ -299,6 +398,7 @@ async def run_turn(
                 logger.info("[chat-loop] step=%d 取事件耗时=%.1fs (第 %d 个事件)",
                             step, ev_wait, event_count)
             event_count += 1
+            _check_abort(abort_token)
             if ev is None:
                 break
             etype = ev["type"]
@@ -313,33 +413,65 @@ async def run_turn(
             # finish 事件:不额外处理,循环靠 None(StopIteration)收尾
 
         if had_error:
+            transcript.run_state.update(status="done", reason="error")
             await emit({"type": "done", "reason": "error"})
-            return
+            return transcript
 
         if not tool_calls:
             # 无工具 → 本轮终。数字守卫:loop 自产数字 vs 本轮 tool 结果。
             full_text = "".join(assistant_text_parts)
+            if full_text:
+                assistant_msg = {"role": "assistant", "content": full_text}
+                convo.append(assistant_msg)
+                transcript.assistant_messages.append(assistant_msg)
+                transcript.messages = list(convo)
             unverified = number_guard(full_text, "\n".join(tool_results_text))
             if unverified:
                 logger.warning("[chat-loop] 未核实数字(非 tool 真值): %s", unverified)
+            transcript.run_state.update(status="done", reason="stop",
+                                        numberGuard={"unverified": unverified})
             await emit({"type": "done", "reason": "stop",
                         "numberGuard": {"unverified": unverified}})
-            return
+            return transcript
 
         logger.info("[chat-loop] step=%d 流式耗时=%.1fs tool_calls=%s",
                     step, time.monotonic() - step_t0, [tc.get("name") for tc in tool_calls])
         # 把本轮 assistant(含 tool_calls)记入对话,再逐个执行工具。
-        convo.append(_assistant_msg(assistant_text_parts, tool_calls))
+        assistant_msg = _assistant_msg(assistant_text_parts, tool_calls)
+        convo.append(assistant_msg)
+        transcript.assistant_messages.append(assistant_msg)
         for tc in tool_calls:
+            _check_abort(abort_token)
+            if before_tool_call:
+                await _maybe_await(before_tool_call({"tool_call": dict(tc), "messages": list(convo)}))
             tool_t0 = time.monotonic()
-            result = await _exec_tool(tc, read_call, request_write, emit)
+            result = await _exec_tool(tc, read_call, request_write, emit,
+                                      registry=registry, abort_token=abort_token,
+                                      transform_tool_result=transform_tool_result)
             logger.info("[chat-loop] tool=%s 耗时=%.1fs", tc.get("name"), time.monotonic() - tool_t0)
             tool_results_text.append(result)
-            convo.append({"role": "tool", "tool_call_id": tc.get("id") or tc["name"],
-                          "name": tc["name"], "content": result})
+            tool_msg = {"role": "tool", "tool_call_id": tc.get("id") or tc.get("name") or "tool",
+                        "name": tc.get("name") or "unknown", "content": result}
+            convo.append(tool_msg)
+            transcript.tool_results.append(tool_msg)
+            if after_tool_call:
+                await _maybe_await(after_tool_call({"tool_call": dict(tc), "result": result,
+                                                    "messages": list(convo)}))
+        transcript.messages = list(convo)
+        if after_step:
+            await _maybe_await(after_step({"step": step, "messages": list(convo),
+                                           "transcript": transcript.as_dict()}))
+        stop_hook = should_stop_after_turn or should_stop
+        if stop_hook and stop_hook(transcript):
+            transcript.run_state.update(status="done", reason="stop_hook")
+            await emit({"type": "done", "reason": "stop_hook"})
+            return transcript
 
+    transcript.messages = list(convo)
+    transcript.run_state.update(status="done", reason="max_steps")
     await emit({"type": "done", "reason": "max_steps",
                 "note": f"已达步数上限 {max_steps},优雅终止"})
+    return transcript
 
 
 def _next_event(gen) -> dict[str, Any] | None:
@@ -359,18 +491,39 @@ def _assistant_msg(text_parts: list[str], tool_calls: list[dict]) -> dict[str, A
     return msg
 
 
-async def _exec_tool(tc, read_call, request_write, emit) -> str:
+async def _exec_tool(
+    tc,
+    read_call,
+    request_write,
+    emit,
+    *,
+    registry: ToolRegistry | None = None,
+    abort_token: AbortToken | None = None,
+    transform_tool_result: Callable[[dict[str, Any]], Any] | None = None,
+) -> str:
     """执行单个 tool_call,返回喂回 LLM 的字符串结果。写经 request_write(loop 不 dispatch 写)。"""
+    registry = registry or ToolRegistry()
     name = tc.get("name") or ""
     args = tc.get("args") or {}
     await emit({"type": "tool_call", "name": name, "args": args})
+    validation_error = _validate_tool_call(name, args, registry)
+    if validation_error is not None:
+        return await _emit_tool_result(emit, name, "", validation_error)
     try:
-        command, pos = resolve_tool(name, args)
+        command, pos = registry.resolve(name, args)
     except KeyError:
-        return json.dumps({"error": "unknown_tool", "tool": name}, ensure_ascii=False)
+        return await _emit_tool_result(
+            emit, name, "", {"error": "unknown_tool", "tool": name}
+        )
 
     try:
-        if is_write_command(command):
+        _check_abort(abort_token)
+        handler = registry.handler(name)
+        if handler is not None:
+            result = handler(args)
+            if inspect.isawaitable(result):
+                result = await result
+        elif is_write_command(command):
             # 写:只发意图,reader 任务执行(KTD-4)。loop 不调 dispatch 写。
             result = await request_write(command=command, args=pos,
                                          tool_name=name, tool_args=args)
@@ -382,13 +535,68 @@ async def _exec_tool(tc, read_call, request_write, emit) -> str:
         logger.warning("[chat-loop] 工具 %s 执行失败: %s", name, exc)
         result = {"error": "tool_failed", "detail": str(exc)}
 
+    if transform_tool_result is not None:
+        transformed = transform_tool_result({"tool": name, "command": command, "result": result})
+        if transformed is not None:
+            result = transformed
+    return await _emit_tool_result(emit, name, command, result)
+
+
+async def _emit_tool_result(emit, name: str, command: str, result: Any) -> str:
     scrubbed = kss_recipes._scrub_llm_fields(result)   # commentary 标 provenance:llm_prior
     text = json.dumps(scrubbed, ensure_ascii=False, default=str)
     scan_for_injection(text)   # R8:pattern 扫描(只告警,不截断,完整透传)
     done_frame = {"type": "tool_done", "name": name}
+    if isinstance(scrubbed, dict) and (scrubbed.get("is_error") or scrubbed.get("error")):
+        done_frame["is_error"] = True
     done_frame.update(_evidence_payload(name, command, scrubbed))
     await emit(done_frame)
     return text
+
+
+def _validate_tool_call(name: str, args: Any, registry: ToolRegistry) -> dict[str, Any] | None:
+    if not name or not isinstance(name, str) or not registry.has_tool(name):
+        return {"error": "unknown_tool", "tool": name, "is_error": True}
+    if not isinstance(args, dict):
+        return {"error": "malformed_tool_args", "tool": name,
+                "hint": "tool args must be a JSON object", "is_error": True}
+    if args.get("_truncated") is True:
+        return {"error": "truncated_tool_args", "tool": name,
+                "hint": "truncated tool args are not executable", "is_error": True}
+    spec = registry.spec(name) or {}
+    params = spec.get("params") or {}
+    required = [p for p in spec.get("order", []) if p in params
+                and "date" not in p and "args" != p and "limit" not in p
+                and not p.startswith("max_")]
+    missing = [key for key in required if key not in args or args.get(key) in (None, "")]
+    if missing:
+        return {"error": "missing_tool_args", "tool": name, "missing": missing,
+                "is_error": True}
+    bad_types = []
+    for key, schema in params.items():
+        if key not in args or args[key] is None:
+            continue
+        if isinstance(schema, dict) and schema.get("type") == "string" and not isinstance(args[key], str):
+            bad_types.append(key)
+    if bad_types:
+        return {"error": "bad_tool_arg_type", "tool": name, "args": bad_types,
+                "hint": "schema requires string values", "is_error": True}
+    return None
+
+
+def _check_abort(abort_token: AbortToken | None) -> None:
+    if abort_token is None:
+        return
+    if hasattr(abort_token, "is_aborted") and abort_token.is_aborted():
+        raise asyncio.CancelledError(getattr(abort_token, "reason", None) or "aborted")
+    if hasattr(abort_token, "check"):
+        abort_token.check()
+
+
+async def _maybe_await(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 def _evidence_payload(tool_name: str, command: str, result: Any) -> dict[str, Any]:
@@ -484,5 +692,5 @@ def _research_warnings_for_ui(result: dict[str, Any]) -> list[dict[str, Any]]:
 __all__ = [
     "run_turn", "build_tools_schema", "resolve_tool", "is_write_command",
     "is_auto_task", "number_guard", "load_system_prompt", "write_effect_label",
-    "AUTO_TASKS", "TOOL_SPECS",
+    "AUTO_TASKS", "TOOL_SPECS", "AbortToken", "ToolRegistry", "TurnTranscript",
 ]

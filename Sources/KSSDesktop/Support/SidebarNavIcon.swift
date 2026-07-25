@@ -24,8 +24,8 @@ enum SidebarNavIconCatalog {
 
     static func image(base: String, filled: Bool) -> NSImage? {
         let name = filled ? "\(base)-filled" : "\(base)-outline"
-        // Bundle.module：Resources/Icons 整目录 copy 后路径为 Icons/nav/…
-        if let url = Bundle.module.url(
+        // Resources/Icons 整目录 copy 后路径为 Icons/nav/…
+        if let url = KSSResources.bundle.url(
             forResource: name,
             withExtension: "pdf",
             subdirectory: "Icons/nav"
@@ -33,7 +33,7 @@ enum SidebarNavIconCatalog {
             return NSImage(contentsOf: url)
         }
         // 兜底：不带 subdirectory（部分 SPM 布局会平铺）
-        if let url = Bundle.module.url(forResource: name, withExtension: "pdf") {
+        if let url = KSSResources.bundle.url(forResource: name, withExtension: "pdf") {
             return NSImage(contentsOf: url)
         }
         return nil

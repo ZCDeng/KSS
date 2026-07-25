@@ -17,7 +17,9 @@ import os
 import signal
 import sys
 import time
+from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -26,6 +28,17 @@ for p in (str(_REPO), str(_REPO / "scripts")):
         sys.path.insert(0, p)
 
 import kss_app_bridge as bridge  # noqa: E402
+from kss.agent import (  # noqa: E402
+    AgentMessage,
+    AbortToken,
+    ContextAssembler,
+    EventSequencer,
+    MemoryStore,
+    SessionStore,
+    SkillManager,
+    ToolCall,
+)
+from kss.agent.jsonl import utc_timestamp  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +60,31 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 _CHAT_LOOP_LIVE = os.environ.get("KSS_APP_LIVE") == "1"
 # 单个 confirm 等待人工 tap 的上限;超时即按拒(KTD-6 B3,防 loop await 挂死)。
 _CONFIRM_TIMEOUT = 300.0
+
+_AGENT_ABORTS: dict[str, Any] = {}
+
+def _session_store() -> SessionStore:
+    return SessionStore(bridge.STATE_ROOT)
+
+
+def _skill_manager() -> SkillManager:
+    return SkillManager(bridge.PROJECT_ROOT, bridge.STATE_ROOT)
+
+
+def _memory_store() -> MemoryStore:
+    return MemoryStore(bridge.STATE_ROOT)
+
+
+def _context_assembler() -> ContextAssembler:
+    return ContextAssembler()
+
+
+def _sidecar_ok(payload: Any) -> str:
+    return json.dumps({"code": 0, "stdout": bridge._envelope_json(payload)}, ensure_ascii=False)
+
+
+def _sidecar_err(message: str) -> str:
+    return json.dumps({"code": 1, "stderr": message}, ensure_ascii=False)
 
 
 def _execute_write(command: str, args: list[str]) -> dict:
@@ -160,6 +198,488 @@ async def _handle_chat_turn(reader: asyncio.StreamReader,
         _reject_all(pending, {"error": "turn_ended"})
 
 
+class _AgentFrameEmitter:
+    """Agent v1 NDJSON frame writer with per-run monotonic sequence."""
+
+    def __init__(self, writer: asyncio.StreamWriter, session_id: str, run_id: str) -> None:
+        self.writer = writer
+        self.session_id = session_id
+        self.run_id = run_id
+        self.sequencer = EventSequencer(session_id=session_id, run_id=run_id)
+        self.lock = asyncio.Lock()
+
+    async def emit(self, event: str, data: dict | None = None) -> None:
+        async with self.lock:
+            frame = self.sequencer.to_wire(self.sequencer.frame(event, data or {}))
+            payload = frame.pop("payload", {})
+            if isinstance(payload, dict):
+                frame.update(payload)
+            self.writer.write((json.dumps(frame, ensure_ascii=False) + "\n").encode("utf-8"))
+            await self.writer.drain()
+
+
+def _agent_event_name(ev_type: str) -> str:
+    return {
+        "chunk": "message_delta",
+        "tool_call": "tool_start",
+        "tool_done": "tool_end",
+        "confirm_required": "confirm_required",
+        "done": "turn_end",
+        "error": "error",
+    }.get(ev_type, ev_type)
+
+
+def _validate_agent_turn_request(req: dict) -> tuple[str, str, str] | tuple[None, None, str]:
+    allowed = {"cmd", "session_id", "client_turn_id", "input"}
+    extra = set(req) - allowed
+    if extra:
+        return None, None, f"agent-turn unexpected fields: {sorted(extra)}"
+    session_id = req.get("session_id")
+    client_turn_id = req.get("client_turn_id")
+    text = req.get("input")
+    if not isinstance(session_id, str) or not session_id:
+        return None, None, "agent-turn requires session_id"
+    if not isinstance(client_turn_id, str) or not client_turn_id:
+        return None, None, "agent-turn requires client_turn_id"
+    if not isinstance(text, str):
+        return None, None, "agent-turn requires string input"
+    return session_id, client_turn_id, text
+
+
+def _agent_message_to_chat(message: AgentMessage) -> dict[str, Any]:
+    out: dict[str, Any] = {"role": message.role, "content": message.content}
+    if message.role == "tool":
+        out["tool_call_id"] = message.metadata.get("tool_call_id") or message.id
+        out["name"] = message.metadata.get("name") or "tool"
+    if message.tool_calls:
+        out["tool_calls"] = [
+            {
+                "id": call.id,
+                "type": "function",
+                "function": {
+                    "name": call.name,
+                    "arguments": json.dumps(call.arguments, ensure_ascii=False),
+                },
+            }
+            for call in message.tool_calls
+        ]
+    return out
+
+
+def _agent_message_from_wire(message: dict[str, Any], *, run_id: str | None = None) -> AgentMessage:
+    role = message.get("role")
+    if role not in {"system", "user", "assistant", "tool"}:
+        role = "assistant"
+    tool_calls = []
+    for call in message.get("tool_calls") or []:
+        function = call.get("function") if isinstance(call, dict) else {}
+        raw_args = function.get("arguments") if isinstance(function, dict) else "{}"
+        try:
+            args = json.loads(raw_args) if isinstance(raw_args, str) else {}
+        except json.JSONDecodeError:
+            args = {}
+        tool_calls.append(ToolCall(
+            id=str(call.get("id") or uuid4().hex),
+            name=str(function.get("name") or call.get("name") or "tool"),
+            arguments=args if isinstance(args, dict) else {},
+        ))
+    metadata = dict(message.get("metadata") or {})
+    if run_id is not None:
+        metadata["run_id"] = run_id
+    if role == "tool":
+        metadata["tool_call_id"] = message.get("tool_call_id")
+        metadata["name"] = message.get("name")
+        try:
+            parsed = json.loads(str(message.get("content") or "{}"))
+        except json.JSONDecodeError:
+            parsed = message.get("content")
+        tool_calls.append(ToolCall(
+            id=str(message.get("tool_call_id") or uuid4().hex),
+            name=str(message.get("name") or "tool"),
+            result=parsed,
+            error=parsed.get("error") if isinstance(parsed, dict) else None,
+        ))
+    return AgentMessage(
+        id=str(message.get("id") or uuid4().hex),
+        role=role,  # type: ignore[arg-type]
+        content=str(message.get("content") or ""),
+        timestamp=float(message.get("timestamp") or utc_timestamp()),
+        tool_calls=tuple(tool_calls),
+        metadata=metadata,
+    )
+
+
+def _merge_agent_context(context: Any, convo: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    context_messages = [_agent_message_to_chat(m) for m in context.messages]
+    system_messages = [message for message in convo if message.get("role") == "system"]
+    remaining = [message for message in convo if message.get("role") != "system"]
+    return [*system_messages, *context_messages, *remaining]
+
+
+def _agent_wire_message(message: AgentMessage) -> dict[str, Any]:
+    return {
+        "id": message.id,
+        "role": message.role,
+        "text": message.content,
+        "content": message.content,
+        "timestamp": message.timestamp,
+        "tool_calls": [asdict(call) for call in message.tool_calls],
+        "metadata": message.metadata,
+    }
+
+
+def _session_summary(state: Any, messages: list[AgentMessage] | None = None) -> dict[str, Any]:
+    meta = dict(getattr(state, "metadata", {}) or {})
+    status = getattr(state, "status", "running")
+    return {
+        "session_id": state.session_id,
+        "title": meta.get("title") or state.session_id,
+        "archived": status == "archived",
+        "updated_at": str(meta.get("updated_at") or 0),
+        "messages": [_agent_wire_message(m) for m in (messages or [])],
+    }
+
+
+def _session_response(store: SessionStore, *, selected_session_id: str | None = None) -> dict[str, Any]:
+    """统一返回会话列表，避免动作响应与 Swift 解码形状漂移."""
+    return {
+        "sessions": [
+            _session_summary(state, store.read_messages(state.session_id))
+            for state in store.list_sessions()
+        ],
+        "selected_session_id": selected_session_id,
+    }
+
+
+def _skill_response(manager: SkillManager, session_id: str | None = None) -> dict[str, Any]:
+    """统一返回技能状态、诊断和当前会话 pin 状态."""
+    found, diagnostics = manager.discover()
+    pinned = set(manager.pinned_skill_ids(session_id)) if session_id else set()
+    return {
+        "skills": [{
+            "id": skill.id,
+            "name": skill.name,
+            "description": skill.description,
+            "enabled": skill.enabled,
+            "pinned": skill.id in pinned or skill.name in pinned,
+        } for skill in found],
+        "diagnostics": [{
+            "code": item.code,
+            "message": item.message,
+            "path": str(item.path) if item.path is not None else None,
+        } for item in diagnostics],
+        "status": manager.status(),
+    }
+
+
+def _memory_wire(record: Any) -> dict[str, Any]:
+    """把内部记忆记录映射为稳定的桌面协议字段."""
+    source = record.source_session
+    if record.source_entry:
+        source = f"{source or 'session'} · {record.source_entry}"
+    return {
+        "id": record.id,
+        "kind": record.kind,
+        "text": record.content,
+        "content": record.content,
+        "source": source,
+        "source_session": record.source_session,
+        "source_entry": record.source_entry,
+        "tags": list(record.tags),
+        "status": record.status,
+        "archived": record.status == "archived",
+        "created_at": record.created_at,
+        "expires_at": record.expires_at,
+    }
+
+
+def _memory_response(store: MemoryStore, query: str = "", *, limit: int = 100) -> dict[str, Any]:
+    """统一返回已批准记忆与待确认候选."""
+    records = store.search(
+        query,
+        include_status=("approved", "proposed", "archived"),
+        limit=limit,
+    )
+    return {
+        "memories": [_memory_wire(item) for item in records if item.status == "approved"],
+        "candidates": [_memory_wire(item) for item in records if item.status == "proposed"],
+        "recalls": [],
+    }
+
+
+def _recall_wire(items: list[str]) -> list[dict[str, Any]]:
+    """把本轮实际召回文本映射为可展示来源."""
+    return [{
+        "id": f"recall-{index}",
+        "title": "本轮召回记忆",
+        "source": "长期记忆",
+        "excerpt": text,
+    } for index, text in enumerate(items)]
+
+
+def _recent_complete_turns(messages: list[AgentMessage], *, max_chars: int = 32_000) -> list[AgentMessage]:
+    """从尾部保留完整 user turn，避免压缩后仍把全部历史送给模型."""
+    turns: list[list[AgentMessage]] = []
+    current: list[AgentMessage] = []
+    for message in messages:
+        if message.role == "user" and current:
+            turns.append(current)
+            current = []
+        current.append(message)
+    if current:
+        turns.append(current)
+    selected: list[list[AgentMessage]] = []
+    used = 0
+    for turn in reversed(turns):
+        size = sum(len(message.content) + 160 for message in turn)
+        if selected and used + size > max_chars:
+            break
+        selected.append(turn)
+        used += size
+    return [message for turn in reversed(selected) for message in turn]
+
+
+async def _agent_control_reader(reader: asyncio.StreamReader, pending: dict, abort_token: Any,
+                                run_id: str) -> None:
+    """agent-turn 同连接控制 reader:支持 chat-turn-confirm 和 agent-control abort。"""
+    while True:
+        try:
+            line = await reader.readline()
+        except (ConnectionError, asyncio.IncompleteReadError):
+            line = b""
+        if not line:
+            _reject_all(pending, {"error": "disconnected", "hint": "连接中断,写按拒收尾"})
+            abort_token.abort("disconnected")
+            return
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(msg, dict):
+            continue
+        if msg.get("cmd") == "agent-control":
+            action = msg.get("action")
+            if action == "abort" and msg.get("run_id") in (None, run_id):
+                abort_token.abort(str(msg.get("reason") or "client_abort"))
+                _reject_all(pending, {"error": "aborted", "hint": "用户中止本轮"})
+                return
+            if action != "confirm":
+                continue
+            call_id = msg.get("call_id")
+            approved = bool(msg.get("approved"))
+        elif msg.get("cmd") == "chat-turn-confirm":
+            call_id = msg.get("call_id")
+            approved = bool(msg.get("approved"))
+        else:
+            continue
+        entry = pending.pop(call_id, None)
+        if entry is None:
+            logger.warning("[agent] 丢弃不匹配/已消费 confirm call_id=%r", call_id)
+            continue
+        fut = entry["future"]
+        if fut.done():
+            continue
+        if approved:
+            result = await asyncio.to_thread(_execute_write, entry["command"], entry["args"])
+        else:
+            result = {"error": "denied", "hint": "用户拒绝该写操作"}
+        if not fut.done():
+            fut.set_result(result)
+
+
+async def _handle_agent_turn(reader: asyncio.StreamReader,
+                             writer: asyncio.StreamWriter, req: dict) -> None:
+    """Agent v1 长连一轮：durable session history + v1 frames + sidecar write gate。"""
+    import kss_chat_loop as chat_loop
+    from kss.llm.chat_client import sanitize_user_text
+
+    session_id, client_turn_id, user_text_or_error = _validate_agent_turn_request(req)
+    run_id = uuid4().hex
+    emitter = _AgentFrameEmitter(writer, session_id or "", run_id)
+    if session_id is None or client_turn_id is None:
+        await emitter.emit("error", {"error": user_text_or_error})
+        await emitter.emit("agent_end", {"reason": "bad_request"})
+        return
+
+    sessions = _session_store()
+    skills = _skill_manager()
+    memories = _memory_store()
+    assembler = _context_assembler()
+    abort_token = AbortToken()
+    _AGENT_ABORTS[run_id] = abort_token
+    pending: dict[str, dict] = {}
+    existing_state = sessions.open_session(session_id)
+    if existing_state is None:
+        sessions.create_session(session_id=session_id, metadata={"title": session_id})
+    had_user_message = any(
+        message.role == "user" for message in sessions.read_messages(session_id)
+    )
+    run_id = sessions.start_run(session_id, run_id=run_id)
+    emitter = _AgentFrameEmitter(writer, session_id, run_id)
+    user_msg = {
+        "id": uuid4().hex,
+        "role": "user",
+        "content": sanitize_user_text(user_text_or_error),
+        "timestamp": utc_timestamp(),
+        "client_turn_id": client_turn_id,
+    }
+    sessions.append_message(session_id, _agent_message_from_wire(user_msg))
+    if not had_user_message:
+        title = user_text_or_error.strip().replace("\n", " ")[:40] or "新会话"
+        sessions.rename_session(session_id, title)
+    stored_messages = sessions.read_messages(session_id)
+    recall_items = memories.recall(user_text_or_error, now_ms=int(time.time() * 1000), limit=5)
+    if recall_items:
+        sessions.append_entry(session_id, "recall", {"run_id": run_id, "items": recall_items})
+        await emitter.emit("recall", {
+            "items": recall_items,
+            "recalls": _recall_wire(recall_items),
+        })
+    skill_status = skills.status()
+    sessions.append_entry(session_id, "skill_index", {"run_id": run_id, "status": skill_status})
+    discovered_skills = skills.discover()[0]
+    skill_summaries = [
+        f"{item.name}: {item.description}" for item in discovered_skills if item.enabled
+    ]
+    pinned_ids = set(skills.pinned_skill_ids(session_id))
+    for skill in discovered_skills:
+        if skill.enabled and (skill.id in pinned_ids or skill.name in pinned_ids):
+            skill_summaries.append(f"置顶 Skill {skill.name}:\n{skills.load_skill(skill.id)}")
+    context = assembler.assemble(
+        session_id=session_id,
+        messages=stored_messages,
+        skills=skill_summaries,
+        memories=recall_items,
+        goal=user_text_or_error,
+    )
+    if context.compacted:
+        sessions.append_entry(session_id, "compaction_start", {"run_id": run_id})
+        await emitter.emit("compaction_start", {"reason": "context_budget"})
+        sessions.append_entry(session_id, "compaction_end", {"run_id": run_id, "sections": context.sections})
+        await emitter.emit("compaction_end", {
+            "sections": context.sections,
+            "context_usage": {
+                "used": max(1, (len(context.text) + 3) // 4),
+                "limit": 24_000,
+                "percent": min(100.0, len(context.text) / (24_000 * 4) * 100),
+                "label": "已压缩旧对话",
+            },
+        })
+    history_messages = (
+        _recent_complete_turns(stored_messages)
+        if context.compacted else stored_messages
+    )
+    history = [_agent_message_to_chat(message) for message in history_messages]
+
+    registry = chat_loop.ToolRegistry()
+    registry.register_handler("load_skill", lambda args: {
+        "skill_id": str(args.get("skill_id") or ""),
+        "content": skills.load_skill(str(args.get("skill_id") or "")),
+    })
+
+    async def propose_memory(args: dict[str, Any]) -> dict[str, Any]:
+        kind = str(args.get("kind") or "preference")
+        if kind not in {"preference", "decision", "thesis"}:
+            raise ValueError("memory kind must be preference, decision, or thesis")
+        record = memories.propose(
+            kind,
+            str(args.get("text") or ""),
+            source_session=session_id,
+            source_entry=run_id,
+            metadata={"source": str(args.get("source") or "agent")},
+        )
+        payload = _memory_wire(record)
+        sessions.append_entry(session_id, "memory_candidate", {"run_id": run_id, "memory": payload})
+        await emitter.emit("memory_candidate", {"memory_candidate": payload})
+        return {"memory": payload, "pending_approval": True}
+
+    registry.register_handler("propose_memory", propose_memory)
+    message_open = False
+
+    async def emit(ev: dict) -> None:
+        nonlocal message_open
+        ev_type = ev.get("type") or "event"
+        payload = {k: v for k, v in ev.items() if k != "type"}
+        if ev_type == "chunk" and not message_open:
+            message_open = True
+            await emitter.emit("message_start", {"role": "assistant"})
+        if ev_type == "done" and message_open:
+            message_open = False
+            await emitter.emit("message_end", {"role": "assistant"})
+        await emitter.emit(_agent_event_name(ev_type), payload)
+
+    async def request_write(*, command: str, args: list, tool_name: str, tool_args: dict) -> dict:
+        if chat_loop.is_auto_task(command, args):
+            return await asyncio.to_thread(_execute_write, command, args)
+        call_id = uuid4().hex
+        fut = asyncio.get_running_loop().create_future()
+        pending[call_id] = {"future": fut, "command": command, "args": args}
+        await emit({"type": "confirm_required", "call_id": call_id,
+                    "tool": tool_name, "command": command, "args": tool_args,
+                    "argsText": json.dumps(tool_args, ensure_ascii=False),
+                    "effect": chat_loop.write_effect_label(command, args)})
+        try:
+            return await asyncio.wait_for(fut, timeout=_CONFIRM_TIMEOUT)
+        except asyncio.TimeoutError:
+            pending.pop(call_id, None)
+            return {"error": "confirm_timeout", "hint": "确认超时,写按拒"}
+
+    control_task = asyncio.create_task(_agent_control_reader(reader, pending, abort_token, run_id))
+    run_state = {"run_id": run_id, "session_id": session_id, "client_turn_id": client_turn_id,
+                 "status": "running", "started_at": time.time()}
+    try:
+        await emitter.emit("agent_start", {"client_turn_id": client_turn_id})
+        await emitter.emit("turn_start", {
+            "client_turn_id": client_turn_id,
+            "context_usage": {
+                "used": max(1, (len(context.text) + 3) // 4),
+                "limit": 24_000,
+                "percent": min(100.0, len(context.text) / (24_000 * 4) * 100),
+                "label": f"上下文约 {max(1, (len(context.text) + 3) // 4)} / 24000",
+            },
+        })
+        transcript = await chat_loop.run_turn(
+            history, emit, request_write,
+            abort_token=abort_token, tool_registry=registry,
+            transform_context=lambda convo: _merge_agent_context(context, convo),
+        )
+        run_state.update(transcript.run_state)
+        current_user_index = max(
+            (
+                index for index, message in enumerate(transcript.messages)
+                if message.get("role") == "user"
+                and message.get("content") == user_msg["content"]
+            ),
+            default=len(transcript.messages) - 1,
+        )
+        for message in transcript.messages[current_user_index + 1:]:
+            if message.get("role") in {"assistant", "tool"}:
+                sessions.append_message(session_id, _agent_message_from_wire(message, run_id=run_id))
+        sessions.append_entry(session_id, "run_state", {**run_state, "completed_at": time.time()})
+        sessions.append_entry(session_id, "transcript", transcript.as_dict())
+        sessions.finish_run(session_id, run_id)
+        await emitter.emit("agent_end", {"reason": run_state.get("reason", "stop")})
+    except asyncio.CancelledError as exc:
+        run_state.update(status="aborted", reason=str(exc) or "aborted")
+        sessions.append_entry(session_id, "run_state", {**run_state, "completed_at": time.time()})
+        sessions.interrupt_session(session_id, reason=run_state["reason"], run_id=run_id)
+        await emitter.emit("error", {"error": run_state["reason"]})
+        await emitter.emit("turn_end", {"reason": "aborted"})
+        await emitter.emit("agent_end", {"reason": "aborted"})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[agent] run_turn 异常: %s", exc)
+        run_state.update(status="error", reason=f"{type(exc).__name__}: {exc}")
+        sessions.append_entry(session_id, "run_state", {**run_state, "completed_at": time.time()})
+        sessions.interrupt_session(session_id, reason=run_state["reason"], run_id=run_id)
+        await emitter.emit("error", {"error": run_state["reason"]})
+        await emitter.emit("turn_end", {"reason": "error"})
+        await emitter.emit("agent_end", {"reason": "error"})
+    finally:
+        control_task.cancel()
+        _reject_all(pending, {"error": "turn_ended"})
+        _AGENT_ABORTS.pop(run_id, None)
+
+
 def _prepare_messages(raw) -> list[dict]:
     """净化 user 输入(R8),其余角色原样。system prompt 由 run_turn 注入(U6)。"""
     from kss.llm.chat_client import sanitize_user_text
@@ -172,6 +692,146 @@ def _prepare_messages(raw) -> list[dict]:
         else:
             out.append(m)
     return out
+
+
+def _handle_agent_json_command(req: dict) -> str | None:
+    """Agent v1 非流式 JSON 命令；返回标准 sidecar response。"""
+    cmd = req.get("cmd")
+    try:
+        if cmd == "agent-session":
+            store = _session_store()
+            action = req.get("action") or "open"
+            if action == "create":
+                state = store.create_session(
+                    session_id=req.get("session_id"),
+                    metadata={"title": req.get("title") or req.get("session_id") or ""},
+                )
+                return _sidecar_ok(_session_response(
+                    store, selected_session_id=state.session_id,
+                ))
+            if action == "open":
+                sid = req.get("session_id")
+                if not isinstance(sid, str) or not sid:
+                    return _sidecar_err("agent-session open requires session_id")
+                state = store.open_session(sid)
+                if state is None:
+                    state = store.create_session(session_id=sid, metadata={"title": sid})
+                return _sidecar_ok(_session_response(store, selected_session_id=state.session_id))
+            if action == "list":
+                return _sidecar_ok(_session_response(store))
+            if action == "rename":
+                sid = req.get("session_id")
+                title = req.get("title")
+                if not isinstance(sid, str) or not sid:
+                    return _sidecar_err("agent-session rename requires session_id")
+                if not isinstance(title, str) or not title.strip():
+                    return _sidecar_err("agent-session rename requires title")
+                state = store.rename_session(sid, title)
+                return _sidecar_ok(_session_response(
+                    store, selected_session_id=state.session_id,
+                ))
+            if action == "archive":
+                sid = req.get("session_id")
+                if not isinstance(sid, str) or not sid:
+                    return _sidecar_err("agent-session archive requires session_id")
+                store.archive_session(sid)
+                return _sidecar_ok(_session_response(store))
+            return _sidecar_err(f"unknown agent-session action: {action}")
+        if cmd == "agent-skills":
+            manager = _skill_manager()
+            action = req.get("action") or "list"
+            if action in {"list", "discovery", "reload"}:
+                session_id = req.get("session_id")
+                return _sidecar_ok(_skill_response(
+                    manager, session_id if isinstance(session_id, str) else None,
+                ))
+            if action == "pin":
+                session_id = req.get("session_id")
+                skill_id = req.get("skill_id")
+                if not isinstance(session_id, str) or not isinstance(skill_id, str):
+                    return _sidecar_err("agent-skills pin requires session_id and skill_id")
+                if bool(req.get("pinned", True)):
+                    manager.pin_skill(session_id, skill_id)
+                else:
+                    manager.unpin_skill(session_id, skill_id)
+                return _sidecar_ok(_skill_response(manager, session_id))
+            if action == "enable":
+                skill_id = req.get("skill_id")
+                if not isinstance(skill_id, str):
+                    return _sidecar_err("agent-skills enable requires skill_id")
+                enabled = bool(req.get("enabled", True))
+                manager.set_enabled(skill_id, enabled)
+                session_id = req.get("session_id")
+                return _sidecar_ok(_skill_response(
+                    manager, session_id if isinstance(session_id, str) else None,
+                ))
+            return _sidecar_err(f"unknown agent-skills action: {action}")
+        if cmd == "agent-memories":
+            store = _memory_store()
+            action = req.get("action") or "search"
+            if action in {"list", "search"}:
+                query = req.get("query") if isinstance(req.get("query"), str) else ""
+                limit = int(req.get("limit") or 10)
+                return _sidecar_ok(_memory_response(store, query, limit=limit))
+            if action == "propose":
+                text = req.get("text")
+                kind = req.get("kind") or "preference"
+                if not isinstance(text, str) or not text.strip():
+                    return _sidecar_err("agent-memories propose requires text")
+                if kind not in {"preference", "decision", "thesis"}:
+                    return _sidecar_err("agent-memories propose kind is invalid")
+                store.propose(
+                    kind,
+                    text,
+                    source_session=req.get("source_session"),
+                    metadata={"source": req.get("source") or "message_action"},
+                )
+                return _sidecar_ok(_memory_response(store))
+            if action == "approve":
+                mid = req.get("memory_id") or req.get("candidate_id")
+                if not isinstance(mid, str) or not mid:
+                    return _sidecar_err("agent-memories approve requires memory_id or candidate_id")
+                if bool(req.get("approved", True)):
+                    store.approve(mid)
+                else:
+                    store.delete(mid)
+                return _sidecar_ok(_memory_response(store))
+            if action == "archive":
+                mid = req.get("memory_id")
+                if not isinstance(mid, str) or not mid:
+                    return _sidecar_err("agent-memories archive requires memory_id")
+                store.archive(mid)
+                return _sidecar_ok(_memory_response(store))
+            if action == "delete":
+                mid = req.get("memory_id")
+                if not isinstance(mid, str) or not mid:
+                    return _sidecar_err("agent-memories delete requires memory_id")
+                store.delete(mid)
+                return _sidecar_ok(_memory_response(store))
+            if action == "source-recall":
+                query = req.get("query") if isinstance(req.get("query"), str) else ""
+                recalled = store.recall(
+                    query, now_ms=int(time.time() * 1000), limit=int(req.get("limit") or 5),
+                )
+                response = _memory_response(store, query)
+                response["recalls"] = _recall_wire(recalled)
+                return _sidecar_ok(response)
+            return _sidecar_err(f"unknown agent-memories action: {action}")
+        if cmd == "agent-control":
+            run_id = req.get("run_id")
+            action = req.get("action")
+            if action != "abort":
+                return _sidecar_err("agent-control one-shot supports only abort")
+            if not isinstance(run_id, str) or not run_id:
+                return _sidecar_err("agent-control abort requires run_id")
+            token = _AGENT_ABORTS.get(run_id)
+            if token is None:
+                return _sidecar_ok({"ok": False, "error": "unknown_run", "run_id": run_id})
+            token.abort(str(req.get("reason") or "client_abort"))
+            return _sidecar_ok({"ok": True, "run_id": run_id})
+    except Exception as exc:  # noqa: BLE001
+        return _sidecar_err(f"{type(exc).__name__}: {exc}")
+    return None
 
 
 def _handle_request(line: bytes) -> str:
@@ -203,6 +863,14 @@ async def _on_connection(reader: asyncio.StreamReader, writer: asyncio.StreamWri
             req = None
         if cmd == "chat-turn":               # 长连聊天:不在此 close,handler 跑完为止(KTD-3)
             await _handle_chat_turn(reader, writer, req)
+            return
+        if cmd == "agent-turn":
+            await _handle_agent_turn(reader, writer, req if isinstance(req, dict) else {})
+            return
+        agent_resp = _handle_agent_json_command(req) if isinstance(req, dict) else None
+        if agent_resp is not None:
+            writer.write((agent_resp + "\n").encode("utf-8"))
+            await writer.drain()
             return
         # legacy 一次性命令:单 readline→单 write→close(保原路不回归)。
         # to_thread(而非直接同步调用):bridge.dispatch 可能做真实同步 I/O(pandas/文件),

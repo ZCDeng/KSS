@@ -41,7 +41,7 @@ struct LocalHTMLView: NSViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
         webView.navigationDelegate = context.coordinator
         context.coordinator.attach(webView)
-        if let html = Bundle.module.url(forResource: resource, withExtension: "html") {
+        if let html = KSSResources.bundle.url(forResource: resource, withExtension: "html") {
             webView.loadFileURL(html, allowingReadAccessTo: html.deletingLastPathComponent())
         }
         return webView
