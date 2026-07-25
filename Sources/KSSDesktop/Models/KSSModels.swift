@@ -1808,6 +1808,255 @@ struct ChatFrame: Decodable {
     }
 }
 
+// MARK: - Agent v1 chat protocol
+
+struct AgentSession: Codable, Identifiable, Equatable {
+    var id: String { sessionId }
+    var sessionId: String
+    var title: String
+    var archived: Bool
+    var updatedAt: String?
+    var messages: [AgentHydratedMessage]?
+    var contextUsage: AgentContextUsage?
+
+    enum CodingKeys: String, CodingKey {
+        case sessionId = "session_id"
+        case title, archived
+        case updatedAt = "updated_at"
+        case messages
+        case contextUsage = "context_usage"
+    }
+
+    init(sessionId: String, title: String, archived: Bool = false, updatedAt: String? = nil,
+         messages: [AgentHydratedMessage]? = nil, contextUsage: AgentContextUsage? = nil) {
+        self.sessionId = sessionId
+        self.title = title
+        self.archived = archived
+        self.updatedAt = updatedAt
+        self.messages = messages
+        self.contextUsage = contextUsage
+    }
+}
+
+struct AgentHydratedMessage: Codable, Equatable, Identifiable {
+    var id: String
+    var role: String
+    var text: String
+    var toolCalls: [AgentHydratedToolCall]?
+    var evidenceSummary: ChatEvidenceSummary?
+    var evidenceDrawer: ChatEvidenceDrawer?
+
+    enum CodingKeys: String, CodingKey {
+        case id, role, text, content
+        case toolCalls = "tool_calls"
+        case evidenceSummary, evidenceDrawer
+        case evidenceSummarySnake = "evidence_summary"
+        case evidenceDrawerSnake = "evidence_drawer"
+    }
+
+    init(id: String, role: String, text: String,
+         toolCalls: [AgentHydratedToolCall]? = nil,
+         evidenceSummary: ChatEvidenceSummary? = nil, evidenceDrawer: ChatEvidenceDrawer? = nil) {
+        self.id = id
+        self.role = role
+        self.text = text
+        self.toolCalls = toolCalls
+        self.evidenceSummary = evidenceSummary
+        self.evidenceDrawer = evidenceDrawer
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        role = (try? c.decode(String.self, forKey: .role)) ?? "assistant"
+        text = (try? c.decode(String.self, forKey: .text))
+            ?? (try? c.decode(String.self, forKey: .content)) ?? ""
+        toolCalls = try? c.decode([AgentHydratedToolCall].self, forKey: .toolCalls)
+        evidenceSummary = (try? c.decode(ChatEvidenceSummary.self, forKey: .evidenceSummary))
+            ?? (try? c.decode(ChatEvidenceSummary.self, forKey: .evidenceSummarySnake))
+        evidenceDrawer = (try? c.decode(ChatEvidenceDrawer.self, forKey: .evidenceDrawer))
+            ?? (try? c.decode(ChatEvidenceDrawer.self, forKey: .evidenceDrawerSnake))
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(role, forKey: .role)
+        try c.encode(text, forKey: .text)
+        try c.encodeIfPresent(toolCalls, forKey: .toolCalls)
+        try c.encodeIfPresent(evidenceSummary, forKey: .evidenceSummary)
+        try c.encodeIfPresent(evidenceDrawer, forKey: .evidenceDrawer)
+    }
+}
+
+struct AgentHydratedToolCall: Codable, Equatable {
+    var id: String
+    var name: String
+}
+
+struct AgentSkill: Codable, Identifiable, Equatable {
+    var id: String
+    var name: String
+    var description: String?
+    var enabled: Bool?
+    var pinned: Bool?
+}
+
+struct AgentSkillDiagnostic: Codable, Identifiable, Equatable {
+    var id: String { "\(code):\(path ?? message)" }
+    var code: String
+    var message: String
+    var path: String?
+}
+
+struct AgentMemoryCandidate: Codable, Identifiable, Equatable {
+    var id: String
+    var text: String
+    var source: String?
+    var status: String?
+}
+
+struct AgentMemoryRecord: Codable, Identifiable, Equatable {
+    var id: String
+    var text: String
+    var source: String?
+    var archived: Bool?
+}
+
+struct AgentSourceRecall: Codable, Identifiable, Equatable {
+    var id: String
+    var title: String
+    var source: String?
+    var excerpt: String?
+}
+
+struct AgentContextUsage: Codable, Equatable {
+    var used: Int?
+    var limit: Int?
+    var percent: Double?
+    var label: String?
+
+    enum CodingKeys: String, CodingKey {
+        case used, limit, percent, label
+    }
+
+    var displayText: String {
+        if let label, !label.isEmpty { return label }
+        if let percent { return "上下文 \(Int(percent.rounded()))%" }
+        if let used, let limit, limit > 0 { return "上下文 \(used)/\(limit)" }
+        return "上下文 —"
+    }
+}
+
+struct AgentNumberGuard: Codable, Equatable {
+    var unverified: [String]?
+}
+
+struct AgentCommandAck: Codable, Equatable {
+    var ok: Bool?
+    var error: String?
+}
+
+struct AgentSessionListResponse: Codable, Equatable {
+    var sessions: [AgentSession]
+    var selectedSessionId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case sessions
+        case selectedSessionId = "selected_session_id"
+    }
+}
+
+struct AgentSkillsResponse: Codable, Equatable {
+    var skills: [AgentSkill]
+    var diagnostics: [AgentSkillDiagnostic]?
+}
+
+struct AgentMemoriesResponse: Codable, Equatable {
+    var memories: [AgentMemoryRecord]
+    var candidates: [AgentMemoryCandidate]?
+    var recalls: [AgentSourceRecall]?
+}
+
+struct AgentFrame: Decodable, Equatable {
+    let protocolVersion: Int?
+    let sessionId: String?
+    let runId: String?
+    let sequence: Int?
+    let type: String
+    let messageId: String?
+    let text: String?
+    let delta: String?
+    let name: String?
+    let tool: String?
+    let command: String?
+    let effect: String?
+    let argsText: String?
+    let callId: String?
+    let reason: String?
+    let error: String?
+    let numberGuard: AgentNumberGuard?
+    let contextUsage: AgentContextUsage?
+    let memoryCandidate: AgentMemoryCandidate?
+    let memories: [AgentMemoryRecord]?
+    let recall: AgentSourceRecall?
+    let recalls: [AgentSourceRecall]?
+    let evidenceSummary: ChatEvidenceSummary?
+    let evidenceDrawer: ChatEvidenceDrawer?
+
+    enum CodingKeys: String, CodingKey {
+        case type, sequence, text, delta, name, tool, command, effect, reason, error, numberGuard
+        case numberGuardSnake = "number_guard"
+        case protocolVersion = "protocol_version"
+        case sessionId = "session_id"
+        case runId = "run_id"
+        case messageId = "message_id"
+        case argsText = "argsText"
+        case argsTextSnake = "args_text"
+        case callId = "call_id"
+        case contextUsage = "context_usage"
+        case memoryCandidate = "memory_candidate"
+        case memories, recall, recalls
+        case sourceRecall = "source_recall"
+        case evidenceSummary, evidenceDrawer
+        case evidenceSummarySnake = "evidence_summary"
+        case evidenceDrawerSnake = "evidence_drawer"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        protocolVersion = try? c.decode(Int.self, forKey: .protocolVersion)
+        sessionId = try? c.decode(String.self, forKey: .sessionId)
+        runId = try? c.decode(String.self, forKey: .runId)
+        sequence = try? c.decode(Int.self, forKey: .sequence)
+        type = try c.decode(String.self, forKey: .type)
+        messageId = try? c.decode(String.self, forKey: .messageId)
+        text = try? c.decode(String.self, forKey: .text)
+        delta = try? c.decode(String.self, forKey: .delta)
+        name = try? c.decode(String.self, forKey: .name)
+        tool = try? c.decode(String.self, forKey: .tool)
+        command = try? c.decode(String.self, forKey: .command)
+        effect = try? c.decode(String.self, forKey: .effect)
+        argsText = (try? c.decode(String.self, forKey: .argsText))
+            ?? (try? c.decode(String.self, forKey: .argsTextSnake))
+        callId = try? c.decode(String.self, forKey: .callId)
+        reason = try? c.decode(String.self, forKey: .reason)
+        error = try? c.decode(String.self, forKey: .error)
+        numberGuard = (try? c.decode(AgentNumberGuard.self, forKey: .numberGuard))
+            ?? (try? c.decode(AgentNumberGuard.self, forKey: .numberGuardSnake))
+        contextUsage = try? c.decode(AgentContextUsage.self, forKey: .contextUsage)
+        memoryCandidate = try? c.decode(AgentMemoryCandidate.self, forKey: .memoryCandidate)
+        memories = try? c.decode([AgentMemoryRecord].self, forKey: .memories)
+        recall = (try? c.decode(AgentSourceRecall.self, forKey: .recall))
+            ?? (try? c.decode(AgentSourceRecall.self, forKey: .sourceRecall))
+        recalls = try? c.decode([AgentSourceRecall].self, forKey: .recalls)
+        evidenceSummary = (try? c.decode(ChatEvidenceSummary.self, forKey: .evidenceSummary))
+            ?? (try? c.decode(ChatEvidenceSummary.self, forKey: .evidenceSummarySnake))
+        evidenceDrawer = (try? c.decode(ChatEvidenceDrawer.self, forKey: .evidenceDrawer))
+            ?? (try? c.decode(ChatEvidenceDrawer.self, forKey: .evidenceDrawerSnake))
+    }
+}
+
 /// 待人工确认的写操作（人在环内闸，U5）。modal 显 effect + args。
 struct PendingWriteConfirm: Identifiable {
     let id = UUID()

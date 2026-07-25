@@ -250,3 +250,225 @@ def test_legacy_command_not_regressed(monkeypatch):
         assert len(frames) == 1 and frames[0]["code"] == 0
         assert writer.closed
     asyncio.run(go())
+
+
+def test_agent_turn_emits_protocol_v1_frames_and_persists(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+
+    async def fake_run_turn(messages, emit, request_write, **kwargs):
+        assert messages[-1]["role"] == "user"
+        assert "abort_token" in kwargs and "tool_registry" in kwargs
+        effective = kwargs["transform_context"](messages)
+        await emit({"type": "chunk", "text": "答复"})
+        await emit({"type": "done", "reason": "stop"})
+        return chat_loop.TurnTranscript(
+            messages=[
+                *effective,
+                {"role": "assistant", "content": "答复"},
+            ],
+            assistant_messages=[{"role": "assistant", "content": "答复"}],
+            tool_results=[],
+            run_state={"status": "done", "reason": "stop"},
+        )
+
+    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+
+    async def go():
+        reader, writer = _mk_reader(), FakeWriter()
+        await sc._handle_agent_turn(reader, writer, {
+            "cmd": "agent-turn",
+            "session_id": "s1",
+            "client_turn_id": "c1",
+            "input": "你好",
+        })
+        frames = writer.frames()
+        assert frames[0]["protocol_version"] == 1
+        assert frames[0]["session_id"] == "s1"
+        assert frames[0]["run_id"]
+        assert frames[3]["text"] == "答复"
+        assert [f["sequence"] for f in frames] == list(range(1, len(frames) + 1))
+        assert [f["type"] for f in frames] == [
+            "agent_start", "turn_start", "message_start", "message_delta",
+            "message_end", "turn_end", "agent_end",
+        ]
+        store = sc.SessionStore(tmp_path)
+        messages = store.read_messages("s1")
+        assert [m.role for m in messages] == ["user", "assistant"]
+        assert (tmp_path / "storage" / "agent" / "sessions" / "s1.jsonl").is_file()
+    asyncio.run(go())
+
+
+def test_agent_turn_rejects_extra_fields(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+
+    async def go():
+        reader, writer = _mk_reader(), FakeWriter()
+        await sc._handle_agent_turn(reader, writer, {
+            "cmd": "agent-turn",
+            "session_id": "s1",
+            "client_turn_id": "c1",
+            "input": "x",
+            "messages": [],
+        })
+        frames = writer.frames()
+        assert frames[0]["type"] == "error"
+        assert "unexpected fields" in frames[0]["error"]
+        assert frames[1]["type"] == "agent_end"
+    asyncio.run(go())
+
+
+def test_agent_turn_confirm_approve_uses_same_connection(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(sc, "_CHAT_LOOP_LIVE", True)
+    monkeypatch.setattr(bridge, "dispatch", lambda command, args: {"command": command, "args": args})
+
+    async def fake_run_turn(messages, emit, request_write, **kwargs):
+        result = await request_write(
+            command="run", args=["update-cs-data"],
+            tool_name="run_task", tool_args={"task": "update-cs-data"},
+        )
+        await emit({"type": "done", "reason": "stop"})
+        return chat_loop.TurnTranscript(
+            messages=[*kwargs["transform_context"](messages), {
+                "role": "tool", "name": "run_task", "tool_call_id": "write-1",
+                "content": json.dumps(result),
+            }],
+            tool_results=[result],
+            run_state={"status": "done", "reason": "stop"},
+        )
+
+    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+
+    async def go():
+        reader, writer = _mk_reader(), FakeWriter()
+        task = asyncio.create_task(sc._handle_agent_turn(reader, writer, {
+            "cmd": "agent-turn", "session_id": "s1", "client_turn_id": "c1", "input": "更新",
+        }))
+        frame = await _wait_frame(writer, "confirm_required")
+        _feed(reader, {
+            "cmd": "agent-control", "action": "confirm", "run_id": frame["run_id"],
+            "call_id": frame["call_id"], "approved": True,
+        })
+        await task
+        assert writer.frames()[-1]["type"] == "agent_end"
+        tool_messages = [
+            message for message in sc.SessionStore(tmp_path).read_messages("s1")
+            if message.role == "tool"
+        ]
+        assert tool_messages[0].tool_calls[0].result["ok"] is True
+
+    asyncio.run(go())
+
+
+def test_agent_turn_abort_stops_run_before_more_tools(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+
+    async def fake_run_turn(messages, emit, request_write, **kwargs):
+        token = kwargs["abort_token"]
+        while not token.aborted:
+            await asyncio.sleep(0.01)
+        raise asyncio.CancelledError(token.reason)
+
+    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+
+    async def go():
+        reader, writer = _mk_reader(), FakeWriter()
+        task = asyncio.create_task(sc._handle_agent_turn(reader, writer, {
+            "cmd": "agent-turn", "session_id": "s1", "client_turn_id": "c1", "input": "停止",
+        }))
+        start = await _wait_frame(writer, "turn_start")
+        _feed(reader, {
+            "cmd": "agent-control", "action": "abort", "run_id": start["run_id"],
+        })
+        await task
+        assert [frame["type"] for frame in writer.frames()][-3:] == [
+            "error", "turn_end", "agent_end",
+        ]
+
+    asyncio.run(go())
+
+
+def test_agent_turn_emits_nested_memory_candidate(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+
+    async def fake_run_turn(messages, emit, request_write, **kwargs):
+        handler = kwargs["tool_registry"].handler("propose_memory")
+        assert handler is not None
+        result = await handler({"text": "偏好简洁回答", "source": "user"})
+        await emit({"type": "done", "reason": "stop"})
+        return chat_loop.TurnTranscript(
+            messages=list(kwargs["transform_context"](messages)),
+            tool_results=[result],
+            run_state={"status": "done", "reason": "stop"},
+        )
+
+    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+
+    async def go():
+        reader, writer = _mk_reader(), FakeWriter()
+        await sc._handle_agent_turn(reader, writer, {
+            "cmd": "agent-turn", "session_id": "s1", "client_turn_id": "c1", "input": "记住",
+        })
+        candidate = next(frame for frame in writer.frames() if frame["type"] == "memory_candidate")
+        assert candidate["memory_candidate"]["text"] == "偏好简洁回答"
+        assert candidate["memory_candidate"]["status"] == "proposed"
+
+    asyncio.run(go())
+
+
+def test_agent_json_commands_standard_response(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    resp = json.loads(sc._handle_agent_json_command({
+        "cmd": "agent-session", "action": "create", "session_id": "s2", "title": "T"
+    }))
+    assert resp["code"] == 0
+    payload = json.loads(resp["stdout"])["data"]
+    assert payload["selected_session_id"] == "s2"
+    assert payload["sessions"][0]["session_id"] == "s2"
+    assert payload["sessions"][0]["updated_at"]
+
+    mem_store = sc.MemoryStore(tmp_path)
+    mem = mem_store.propose("preference", "记住 A", metadata={"source": "test"})
+    assert mem.status == "proposed"
+    approved = json.loads(sc._handle_agent_json_command({
+        "cmd": "agent-memories", "action": "approve", "memory_id": mem.id
+    }))
+    memory_payload = json.loads(approved["stdout"])["data"]
+    assert memory_payload["memories"][0]["text"] == "记住 A"
+    assert memory_payload["memories"][0]["archived"] is False
+    assert memory_payload["candidates"] == []
+    assert (tmp_path / "storage" / "agent" / "memories.jsonl").is_file()
+
+    proposed = json.loads(sc._handle_agent_json_command({
+        "cmd": "agent-memories", "action": "propose",
+        "text": "偏好短回答", "kind": "preference", "source_session": "s2",
+    }))
+    proposed_payload = json.loads(proposed["stdout"])["data"]
+    assert proposed_payload["candidates"][0]["text"] == "偏好短回答"
+
+
+def test_agent_skill_actions_return_uniform_shape(monkeypatch, tmp_path):
+    skill = tmp_path / ".claude" / "skills" / "demo" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: demo\ndescription: demo skill\n---\nbody", encoding="utf-8")
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+
+    listed = json.loads(sc._handle_agent_json_command({
+        "cmd": "agent-skills", "action": "list", "session_id": "s1",
+    }))
+    listed_payload = json.loads(listed["stdout"])["data"]
+    assert listed_payload["skills"][0]["enabled"] is True
+    assert listed_payload["skills"][0]["pinned"] is False
+
+    pinned = json.loads(sc._handle_agent_json_command({
+        "cmd": "agent-skills", "action": "pin", "session_id": "s1",
+        "skill_id": listed_payload["skills"][0]["id"], "pinned": True,
+    }))
+    assert json.loads(pinned["stdout"])["data"]["skills"][0]["pinned"] is True
+
+    unpinned = json.loads(sc._handle_agent_json_command({
+        "cmd": "agent-skills", "action": "pin", "session_id": "s1",
+        "skill_id": listed_payload["skills"][0]["id"], "pinned": False,
+    }))
+    assert json.loads(unpinned["stdout"])["data"]["skills"][0]["pinned"] is False

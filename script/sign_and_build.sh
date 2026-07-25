@@ -78,15 +78,17 @@ cp "$BUILD_BIN_PATH/$APP_NAME" "$APP_BINARY"
 chmod +x "$APP_BINARY"
 [ -f "$ROOT_DIR/script/AppIcon.icns" ] && cp "$ROOT_DIR/script/AppIcon.icns" "$APP_RESOURCES/AppIcon.icns"
 RESOURCE_BUNDLE="${APP_NAME}_${APP_NAME}.bundle"
-[ -d "$BUILD_BIN_PATH/$RESOURCE_BUNDLE" ] && cp -R "$BUILD_BIN_PATH/$RESOURCE_BUNDLE" "$APP_MACOS/$RESOURCE_BUNDLE"
+APP_RESOURCE_BUNDLE="$APP_RESOURCES/$RESOURCE_BUNDLE"
+[ -d "$BUILD_BIN_PATH/$RESOURCE_BUNDLE" ] && cp -R "$BUILD_BIN_PATH/$RESOURCE_BUNDLE" "$APP_RESOURCE_BUNDLE"
 
-# ---- 代码 baseline 进 Resources（bundle-mode 的签名内脚本源；KTD7 第三层兜底）----
-# 运行时 venv 不拷（U2 bootstrap 到 state root）；仅拷代码 + 依赖清单。
-# deploy/launchd：cron-rerun 白名单真源；缺则 App 内重跑报 unknown label。
-for item in scripts kss deploy pyproject.toml uv.lock backtest_etf_radar.py run_scanner.sh; do
+copy_resource_item() {
+  local item="$1"
+  local dest_parent="$2"
+
   if [ -e "$ROOT_DIR/$item" ]; then
+    mkdir -p "$dest_parent"
     # rsync 排除缓存/状态，避免脏文件进签名包。
-    # 不排除 'storage/'：这个 for 循环从不拷贝仓库顶层 storage/（不在 item 列表里），
+    # 不排除 'storage/'：代码 baseline 从不拷贝仓库顶层 storage/（不在 item 列表里），
     # 无锚点的 --exclude 'storage/' 会匹配树内任意深度同名目录——之前把 kss/storage/
     # （真实 Python 子包，kss.news.rewrite 运行期 import 它）也一并排除掉了，
     # 打包出的 app 点开资讯雷达切换赛道就 ModuleNotFoundError: No module named
@@ -94,21 +96,40 @@ for item in scripts kss deploy pyproject.toml uv.lock backtest_etf_radar.py run_
     # （只删顶层路径，不影响 kss/storage/）。
     if command -v rsync >/dev/null 2>&1; then
       rsync -a --delete \
-        --exclude '__pycache__/' --exclude '*.py[cod]' --exclude '.DS_Store' \
-        --exclude '.pytest_cache/' --exclude '*.egg-info/' \
-        "$ROOT_DIR/$item" "$APP_RESOURCES/"
+        --exclude '.git/' --exclude '.git' --exclude '.DS_Store' \
+        --exclude '__pycache__/' --exclude '*.py[cod]' \
+        --exclude '.pytest_cache/' --exclude '.ruff_cache/' --exclude '*.egg-info/' \
+        --exclude '.cache/' --exclude 'cache/' --exclude 'caches/' \
+        --exclude '.omx/' --exclude '.codex/' --exclude 'state/' --exclude '.state/' --exclude 'logs/' \
+        "$ROOT_DIR/$item" "$dest_parent/"
     else
-      cp -R "$ROOT_DIR/$item" "$APP_RESOURCES/$item"
+      rm -rf "$dest_parent/$(basename "$item")"
+      cp -R "$ROOT_DIR/$item" "$dest_parent/$(basename "$item")"
     fi
   fi
+}
+
+# ---- 代码 baseline 进 Resources（bundle-mode 的签名内脚本源；KTD7 第三层兜底）----
+# 运行时 venv 不拷（U2 bootstrap 到 state root）；仅拷代码 + 依赖清单。
+# deploy/launchd：cron-rerun 白名单真源；缺则 App 内重跑报 unknown label。
+for item in scripts kss deploy pyproject.toml uv.lock backtest_etf_radar.py run_scanner.sh; do
+  copy_resource_item "$item" "$APP_RESOURCES"
+done
+
+# ---- Agent skills 进 Resources（bundle-mode 只读发现面）----
+for skills_root in .claude/skills .agents/skills; do
+  copy_resource_item "$skills_root" "$APP_RESOURCES/$(dirname "$skills_root")"
 done
 # 签名前硬清：任何事后写入（pyc / 误拷 storage）都会让 sealed resource 失效 → Gatekeeper 拒开
-find "$APP_RESOURCES" \( -name '__pycache__' -o -name '.pytest_cache' -o -name '*.egg-info' \) \
+find "$APP_RESOURCES" \( -name '.git' -o -name '__pycache__' -o -name '.pytest_cache' -o -name '.ruff_cache' -o -name '*.egg-info' -o -name '.cache' -o -name 'cache' -o -name 'caches' -o -name '.omx' -o -name '.codex' -o -name 'state' -o -name '.state' -o -name 'logs' \) \
   -type d -prune -exec rm -rf {} + 2>/dev/null || true
 find "$APP_RESOURCES" \( -name '*.py[cod]' -o -name '.DS_Store' -o -name '*.db' \) \
   -type f -delete 2>/dev/null || true
 # 禁止把可变状态打进包（ledger / mi_signals 等）
 rm -rf "$APP_RESOURCES/storage" 2>/dev/null || true
+for skills_root in "$APP_RESOURCES/.claude/skills" "$APP_RESOURCES/.agents/skills"; do
+  [ -d "$skills_root" ] && chmod -R a-w "$skills_root"
+done
 # 不 chmod a-w：只读会让下次 rm -rf dist/*.app 失败，且 Python 写 pyc 应靠 env 禁写而非锁目录
 
 cat >"$INFO_PLIST" <<PLIST
@@ -131,14 +152,14 @@ PLIST
 # ---- 签名（KTD6：只签 .app + hardened runtime；运行时是子进程，无逐 dylib 循环）----
 # 先签内嵌资源 bundle（若有），再签顶层 .app。
 # SwiftPM 资源包是平铺目录（无 Info.plist）→ codesign 拒签；补最小 Info.plist 使其成合法 bundle。
-if [ -d "$APP_MACOS/$RESOURCE_BUNDLE" ]; then
+if [ -d "$APP_RESOURCE_BUNDLE" ]; then
   # SwiftPM 资源包布局二选一，决定是否补 Info.plist：
   #  - 旧(flat / --build-system native)：平铺目录无 Info.plist → codesign 拒签，
   #    补根级最小 Info.plist 使其成合法 bundle。
   #  - 新(swiftpm 默认 build system)：已是 Contents/Info.plist 标准 bundle → 直接签；
   #    若再往根目录塞 Info.plist 反而触发「unsealed contents present in the bundle root」。
-  if [ ! -f "$APP_MACOS/$RESOURCE_BUNDLE/Contents/Info.plist" ]; then
-    cat >"$APP_MACOS/$RESOURCE_BUNDLE/Info.plist" <<RESPLIST
+  if [ ! -f "$APP_RESOURCE_BUNDLE/Contents/Info.plist" ]; then
+    cat >"$APP_RESOURCE_BUNDLE/Info.plist" <<RESPLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -152,7 +173,7 @@ if [ -d "$APP_MACOS/$RESOURCE_BUNDLE" ]; then
 RESPLIST
   fi
   codesign --force --options runtime --timestamp \
-    --sign "$SIGN_IDENTITY" "$APP_MACOS/$RESOURCE_BUNDLE"
+    --sign "$SIGN_IDENTITY" "$APP_RESOURCE_BUNDLE"
 fi
 codesign --force --options runtime --timestamp \
   --entitlements "$ENTITLEMENTS" \

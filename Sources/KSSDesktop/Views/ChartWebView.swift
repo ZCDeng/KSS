@@ -43,7 +43,7 @@ struct ChartWebView: NSViewRepresentable {
         context.coordinator.attach(webView)
         webView.setValue(false, forKey: "drawsBackground")
 
-        if let html = Bundle.module.url(forResource: "chart", withExtension: "html") {
+        if let html = KSSResources.bundle.url(forResource: "chart", withExtension: "html") {
             webView.loadFileURL(html, allowingReadAccessTo: html.deletingLastPathComponent())
         }
         return webView

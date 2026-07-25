@@ -41,9 +41,9 @@ struct KSSLaunchWebView: NSViewRepresentable {
         webView.underPageBackgroundColor = canvas // 透明区域露出 canvas 色，消除白闪
         context.coordinator.attach(webView)
 
-        if let url = Bundle.module.url(forResource: "launch", withExtension: "html",
-                                       subdirectory: "Launch")
-            ?? Bundle.module.url(forResource: "launch", withExtension: "html") {
+        if let url = KSSResources.bundle.url(forResource: "launch", withExtension: "html",
+                                             subdirectory: "Launch")
+            ?? KSSResources.bundle.url(forResource: "launch", withExtension: "html") {
             webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
             context.coordinator.startWatchdog()
         } else {
