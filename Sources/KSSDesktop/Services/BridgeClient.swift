@@ -935,16 +935,20 @@ struct BridgeClient {
                         let approved = onConfirmRequired(frame)
                         control.confirm(runId: frame.runId, callId: frame.callId ?? "", approved: approved)
                     }
+                    if Self.isAgentStreamTerminal(frame) {
+                        onEnd(nil)
+                        return
+                    }
                     if frame.type == "error" {
                         streamError = frame.error ?? "Agent error"
                     }
-                    if frame.type == "turn_end" || frame.type == "agent_end" {
+                    if frame.type == "agent_end" {
                         onEnd(streamError)
                         return
                     }
                 }
             } else if r == 0 {
-                onEnd("Agent 连接中断"); return
+                onEnd(streamError ?? "Agent 连接中断"); return
             } else {
                 let e = errno
                 if e == EAGAIN || e == EWOULDBLOCK {
@@ -955,6 +959,14 @@ struct BridgeClient {
                 onEnd("Agent 读取错误 errno=\(e)"); return
             }
         }
+    }
+
+    static func isAgentDuplicateTerminal(_ frame: AgentFrame) -> Bool {
+        frame.duplicateReason != nil
+    }
+
+    static func isAgentStreamTerminal(_ frame: AgentFrame) -> Bool {
+        isAgentDuplicateTerminal(frame) || frame.type == "agent_end"
     }
 
     /// 在同连接写回 chat-turn-confirm{call_id, approved}（U5 人在环内闸）。

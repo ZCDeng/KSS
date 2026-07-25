@@ -20,9 +20,11 @@ AUTO_TASKS 默认空 → 该自动路径默认休眠;准入 = 人工调用图审
 from __future__ import annotations
 
 import asyncio
+import copy
 import inspect
 import json
 import logging
+import re as _re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
@@ -168,6 +170,12 @@ _SPEC_BY_NAME = {s["name"]: s for s in TOOL_SPECS}
 
 
 HookFn = Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None] | dict[str, Any] | None]
+_SUPPORTED_SCHEMA_TYPES = frozenset({
+    "object", "string", "number", "integer", "boolean", "array",
+})
+_SUPPORTED_SCHEMA_KEYS = frozenset({
+    "type", "description", "properties", "required", "items", "enum",
+})
 
 
 class AbortToken(_CoreAbortToken):
@@ -192,33 +200,73 @@ class TurnTranscript:
         }
 
 
+@dataclass
+class ToolExecution:
+    """工具执行的已序列化结果，以及 after hook 请求的终止信号."""
+
+    content: str
+    terminate: bool = False
+    termination_reason: str | None = None
+
+
 class ToolRegistry:
     """LLM tool registry；默认桥接既有 KSS bridge 工具，并预留 agent 工具。"""
 
     def __init__(self, specs: list[dict[str, Any]] | None = None) -> None:
-        self._specs = list(specs or TOOL_SPECS)
-        self._by_name = {s["name"]: s for s in self._specs}
+        self._specs: list[dict[str, Any]] = []
+        self._by_name: dict[str, dict[str, Any]] = {}
+        self._parameters: dict[str, dict[str, Any]] = {}
         self._handlers: dict[str, Callable[[dict[str, Any]], Any]] = {
             "load_skill": lambda args: {"error": "agent_tool_unavailable", "tool": "load_skill"},
             "propose_memory": lambda args: {"error": "approval_required", "tool": "propose_memory",
                                             "hint": "memory approval must be handled by agent sidecar"},
         }
+        for spec in TOOL_SPECS if specs is None else specs:
+            self.register_tool(spec)
+
+    def register_tool(
+        self,
+        spec: dict[str, Any],
+        handler: Callable[[dict[str, Any]], Any] | None = None,
+    ) -> None:
+        """注册工具并在暴露给模型前验证受支持的 JSON Schema 子集."""
+        if not isinstance(spec, dict):
+            raise TypeError("tool spec must be an object")
+        name = spec.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError("tool spec name must be a non-empty string")
+        if name in self._by_name:
+            raise ValueError(f"duplicate tool name: {name}")
+        if handler is not None and not callable(handler):
+            raise TypeError("tool handler must be callable")
+        normalized = copy.deepcopy(spec)
+        normalized.setdefault("command", name)
+        normalized.setdefault("desc", "")
+        normalized.setdefault("params", {})
+        normalized.setdefault("order", [])
+        parameters = copy.deepcopy(_parameters_for_spec(normalized))
+        _validate_schema_definition(parameters, path=f"tool.{name}.parameters")
+        self._specs.append(normalized)
+        self._by_name[name] = normalized
+        self._parameters[name] = parameters
+        if handler is not None:
+            self.register_handler(name, handler)
 
     def register_handler(self, name: str, handler: Callable[[dict[str, Any]], Any]) -> None:
+        if name not in self._by_name:
+            raise KeyError(f"unknown tool: {name}")
+        if not callable(handler):
+            raise TypeError("tool handler must be callable")
         self._handlers[name] = handler
 
     def build_schema(self) -> list[dict[str, Any]]:
         out = []
         for s in self._specs:
-            required = [p for p in s["order"] if p in s["params"]
-                        and "date" not in p and "args" != p and "limit" not in p
-                        and not p.startswith("max_")]
             out.append({
                 "type": "function",
                 "function": {
                     "name": s["name"], "description": s["desc"],
-                    "parameters": {"type": "object", "properties": s["params"],
-                                   "required": required},
+                    "parameters": copy.deepcopy(self._parameters[s["name"]]),
                 },
             })
         return out
@@ -243,6 +291,80 @@ class ToolRegistry:
 
     def spec(self, name: str) -> dict[str, Any] | None:
         return self._by_name.get(name)
+
+    def parameters(self, name: str) -> dict[str, Any] | None:
+        return self._parameters.get(name)
+
+
+def _parameters_for_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    explicit = spec.get("parameters")
+    if explicit is not None:
+        if not isinstance(explicit, dict):
+            raise TypeError("tool parameters must be an object")
+        return explicit
+    params = spec.get("params") or {}
+    order = spec.get("order") or []
+    required = [
+        p for p in order if p in params
+        and "date" not in p and p != "args" and "limit" not in p
+        and not p.startswith("max_")
+    ]
+    return {"type": "object", "properties": params, "required": required}
+
+
+def _validate_schema_definition(schema: Any, *, path: str) -> None:
+    if not isinstance(schema, dict):
+        raise TypeError(f"{path} must be an object")
+    unsupported = set(schema) - _SUPPORTED_SCHEMA_KEYS
+    if unsupported:
+        raise ValueError(f"{path} uses unsupported schema keys: {sorted(unsupported)}")
+    schema_type = schema.get("type")
+    if schema_type not in _SUPPORTED_SCHEMA_TYPES:
+        raise ValueError(f"{path} has unsupported schema type: {schema_type!r}")
+    enum = schema.get("enum")
+    if enum is not None:
+        if not isinstance(enum, list) or not enum:
+            raise ValueError(f"{path}.enum must be a non-empty array")
+        if any(not _value_matches_schema_type(value, schema_type) for value in enum):
+            raise ValueError(f"{path}.enum contains a value incompatible with {schema_type}")
+    if schema_type == "object":
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+        if not isinstance(properties, dict):
+            raise TypeError(f"{path}.properties must be an object")
+        if not isinstance(required, list) or any(not isinstance(item, str) for item in required):
+            raise TypeError(f"{path}.required must be an array of strings")
+        unknown_required = set(required) - set(properties)
+        if unknown_required:
+            raise ValueError(f"{path}.required contains unknown properties: {sorted(unknown_required)}")
+        for key, child in properties.items():
+            if not isinstance(key, str) or not key:
+                raise ValueError(f"{path}.properties keys must be non-empty strings")
+            _validate_schema_definition(child, path=f"{path}.properties.{key}")
+    elif any(key in schema for key in ("properties", "required")):
+        raise ValueError(f"{path} may only use properties/required with object")
+    if schema_type == "array":
+        if "items" not in schema:
+            raise ValueError(f"{path}.items is required for array")
+        _validate_schema_definition(schema["items"], path=f"{path}.items")
+    elif "items" in schema:
+        raise ValueError(f"{path} may only use items with array")
+
+
+def _value_matches_schema_type(value: Any, schema_type: str) -> bool:
+    if schema_type == "object":
+        return isinstance(value, dict)
+    if schema_type == "array":
+        return isinstance(value, list)
+    if schema_type == "string":
+        return isinstance(value, str)
+    if schema_type == "boolean":
+        return isinstance(value, bool)
+    if schema_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if schema_type == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return False
 
 
 def build_tools_schema() -> list[dict[str, Any]]:
@@ -304,8 +426,6 @@ def write_effect_label(command: str, args: list[str]) -> str:
 # 数字 provenance 守卫(KTD-5/R7)
 # ---------------------------------------------------------------------------
 
-import re as _re
-
 _NUM = _re.compile(r"\d[\d,]*\.?\d*%?")
 
 
@@ -364,9 +484,17 @@ async def run_turn(
     if not convo or convo[0].get("role") != "system":          # U6:注入 system prompt
         convo.insert(0, {"role": "system", "content": load_system_prompt()})
     if transform_context is not None:
-        transformed = transform_context(list(convo))
-        if transformed is not None:
-            convo = list(transformed)
+        try:
+            transformed = await _await_with_abort(
+                _maybe_await(transform_context(list(convo))),
+                abort_token,
+            )
+            if transformed is not None:
+                convo = list(transformed)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            await _emit_hook_error(emit, "transform_context", exc)
     deadline = time.monotonic() + turn_timeout
     tool_results_text: list[str] = []   # 本轮所有 tool 结果文本(数字守卫用)
     transcript = TurnTranscript(messages=list(convo), run_state={"status": "running"})
@@ -374,7 +502,15 @@ async def run_turn(
     for step in range(max_steps):
         _check_abort(abort_token)
         if before_step:
-            await _maybe_await(before_step({"step": step, "messages": list(convo)}))
+            try:
+                await _await_with_abort(
+                    _maybe_await(before_step({"step": step, "messages": list(convo)})),
+                    abort_token,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                await _emit_hook_error(emit, "before_step", exc)
         if time.monotonic() > deadline:
             transcript.run_state.update(status="done", reason="timeout")
             await emit({"type": "done", "reason": "timeout",
@@ -410,6 +546,10 @@ async def run_turn(
             elif etype == "error":
                 had_error = True
                 await emit({"type": "error", "error": ev["error"]})
+            elif etype == "usage":
+                usage = ev.get("usage")
+                if isinstance(usage, dict):
+                    transcript.run_state["usage"] = dict(usage)
             # finish 事件:不额外处理,循环靠 None(StopIteration)收尾
 
         if had_error:
@@ -425,6 +565,29 @@ async def run_turn(
                 convo.append(assistant_msg)
                 transcript.assistant_messages.append(assistant_msg)
                 transcript.messages = list(convo)
+            if after_step:
+                try:
+                    await _await_with_abort(
+                        _maybe_await(after_step({
+                            "step": step,
+                            "messages": list(convo),
+                            "transcript": transcript.as_dict(),
+                        })),
+                        abort_token,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    await _emit_hook_error(emit, "after_step", exc)
+            if await _should_stop_turn(
+                should_stop_after_turn or should_stop,
+                transcript,
+                emit,
+                abort_token,
+            ):
+                transcript.run_state.update(status="done", reason="stop_hook")
+                await emit({"type": "done", "reason": "stop_hook"})
+                return transcript
             unverified = number_guard(full_text, "\n".join(tool_results_text))
             if unverified:
                 logger.warning("[chat-loop] 未核实数字(非 tool 真值): %s", unverified)
@@ -440,29 +603,67 @@ async def run_turn(
         assistant_msg = _assistant_msg(assistant_text_parts, tool_calls)
         convo.append(assistant_msg)
         transcript.assistant_messages.append(assistant_msg)
+        terminate_requested = False
+        termination_reason: str | None = None
         for tc in tool_calls:
             _check_abort(abort_token)
-            if before_tool_call:
-                await _maybe_await(before_tool_call({"tool_call": dict(tc), "messages": list(convo)}))
             tool_t0 = time.monotonic()
-            result = await _exec_tool(tc, read_call, request_write, emit,
-                                      registry=registry, abort_token=abort_token,
-                                      transform_tool_result=transform_tool_result)
+            execution = await _exec_tool(
+                tc,
+                read_call,
+                request_write,
+                emit,
+                registry=registry,
+                abort_token=abort_token,
+                before_tool_call=before_tool_call,
+                after_tool_call=after_tool_call,
+                transform_tool_result=transform_tool_result,
+                messages=list(convo),
+            )
             logger.info("[chat-loop] tool=%s 耗时=%.1fs", tc.get("name"), time.monotonic() - tool_t0)
-            tool_results_text.append(result)
+            tool_results_text.append(execution.content)
             tool_msg = {"role": "tool", "tool_call_id": tc.get("id") or tc.get("name") or "tool",
-                        "name": tc.get("name") or "unknown", "content": result}
+                        "name": tc.get("name") or "unknown", "content": execution.content}
             convo.append(tool_msg)
             transcript.tool_results.append(tool_msg)
-            if after_tool_call:
-                await _maybe_await(after_tool_call({"tool_call": dict(tc), "result": result,
-                                                    "messages": list(convo)}))
+            if execution.terminate:
+                terminate_requested = True
+                termination_reason = execution.termination_reason or "after_tool_call"
+                break
         transcript.messages = list(convo)
         if after_step:
-            await _maybe_await(after_step({"step": step, "messages": list(convo),
-                                           "transcript": transcript.as_dict()}))
-        stop_hook = should_stop_after_turn or should_stop
-        if stop_hook and stop_hook(transcript):
+            try:
+                await _await_with_abort(
+                    _maybe_await(after_step({
+                        "step": step,
+                        "messages": list(convo),
+                        "transcript": transcript.as_dict(),
+                    })),
+                    abort_token,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                await _emit_hook_error(emit, "after_step", exc)
+        stop_requested = await _should_stop_turn(
+            should_stop_after_turn or should_stop,
+            transcript,
+            emit,
+            abort_token,
+        )
+        if terminate_requested:
+            transcript.run_state.update(
+                status="done",
+                reason="tool_terminated",
+                termination_reason=termination_reason,
+            )
+            await emit({
+                "type": "done",
+                "reason": "tool_terminated",
+                "termination_reason": termination_reason,
+            })
+            return transcript
+        if stop_requested:
             transcript.run_state.update(status="done", reason="stop_hook")
             await emit({"type": "done", "reason": "stop_hook"})
             return transcript
@@ -484,8 +685,18 @@ def _next_event(gen) -> dict[str, Any] | None:
 def _assistant_msg(text_parts: list[str], tool_calls: list[dict]) -> dict[str, Any]:
     msg: dict[str, Any] = {"role": "assistant", "content": "".join(text_parts) or None}
     msg["tool_calls"] = [
-        {"id": tc.get("id") or tc["name"], "type": "function",
-         "function": {"name": tc["name"], "arguments": json.dumps(tc.get("args") or {})}}
+        {
+            "id": tc.get("id") or tc.get("name") or "unknown",
+            "type": "function",
+            "function": {
+                "name": tc.get("name") or "",
+                "arguments": json.dumps(
+                    {} if "args" not in tc or tc.get("args") is None else tc.get("args"),
+                    ensure_ascii=False,
+                    default=str,
+                ),
+            },
+        }
         for tc in tool_calls
     ]
     return msg
@@ -499,59 +710,157 @@ async def _exec_tool(
     *,
     registry: ToolRegistry | None = None,
     abort_token: AbortToken | None = None,
+    before_tool_call: HookFn | None = None,
+    after_tool_call: HookFn | None = None,
     transform_tool_result: Callable[[dict[str, Any]], Any] | None = None,
-) -> str:
+    messages: list[dict[str, Any]] | None = None,
+) -> ToolExecution:
     """执行单个 tool_call,返回喂回 LLM 的字符串结果。写经 request_write(loop 不 dispatch 写)。"""
     registry = registry or ToolRegistry()
     name = tc.get("name") or ""
-    args = tc.get("args") or {}
+    args = {} if "args" not in tc or tc.get("args") is None else tc.get("args")
     await emit({"type": "tool_call", "name": name, "args": args})
     validation_error = _validate_tool_call(name, args, registry)
     if validation_error is not None:
-        return await _emit_tool_result(emit, name, "", validation_error)
+        return ToolExecution(await _emit_tool_result(emit, name, "", validation_error))
+    if before_tool_call is not None:
+        try:
+            decision = await _await_with_abort(
+                _maybe_await(before_tool_call({
+                    "tool_call": dict(tc),
+                    "messages": list(messages or []),
+                    "abort_token": abort_token,
+                })),
+                abort_token,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            error = _hook_error_payload("before_tool_call", exc, tool=name)
+            return ToolExecution(await _emit_tool_result(emit, name, "", error))
+        blocked, reason = _before_hook_block(decision)
+        if blocked:
+            result = {
+                "error": "tool_call_blocked",
+                "tool": name,
+                "reason": reason or "blocked by before_tool_call",
+                "is_error": True,
+            }
+            return ToolExecution(await _emit_tool_result(emit, name, "", result))
     try:
         command, pos = registry.resolve(name, args)
     except KeyError:
-        return await _emit_tool_result(
-            emit, name, "", {"error": "unknown_tool", "tool": name}
-        )
+        return ToolExecution(await _emit_tool_result(
+            emit, name, "", {"error": "unknown_tool", "tool": name, "is_error": True}
+        ))
 
     try:
         _check_abort(abort_token)
         handler = registry.handler(name)
         if handler is not None:
-            result = handler(args)
-            if inspect.isawaitable(result):
-                result = await result
+            result = await _call_tool_handler(
+                handler,
+                args,
+                emit=emit,
+                tool_name=name,
+                abort_token=abort_token,
+            )
         elif is_write_command(command):
             # 写:只发意图,reader 任务执行(KTD-4)。loop 不调 dispatch 写。
-            result = await request_write(command=command, args=pos,
-                                         tool_name=name, tool_args=args)
+            result = await _await_with_abort(
+                request_write(command=command, args=pos, tool_name=name, tool_args=args),
+                abort_token,
+            )
         else:
-            result = read_call(command, pos)   # #3 受限 call(碰写命令即 raise)
+            # 同步 bridge 调用在线程执行；abort 后不再等待，晚到结果不会进入 transcript。
+            result = await _await_with_abort(
+                asyncio.to_thread(read_call, command, pos),
+                abort_token,
+            )
     except PermissionError as exc:
-        result = {"error": "blocked_write", "detail": str(exc)}
+        result = {"error": "blocked_write", "detail": str(exc), "is_error": True}
+    except asyncio.CancelledError:
+        raise
     except Exception as exc:  # noqa: BLE001  单工具失败降级,不崩整轮
         logger.warning("[chat-loop] 工具 %s 执行失败: %s", name, exc)
-        result = {"error": "tool_failed", "detail": str(exc)}
+        result = {"error": "tool_failed", "detail": str(exc), "is_error": True}
 
     if transform_tool_result is not None:
-        transformed = transform_tool_result({"tool": name, "command": command, "result": result})
-        if transformed is not None:
-            result = transformed
-    return await _emit_tool_result(emit, name, command, result)
+        try:
+            transformed = await _await_with_abort(
+                _maybe_await(transform_tool_result({
+                    "tool": name,
+                    "command": command,
+                    "result": result,
+                    "abort_token": abort_token,
+                })),
+                abort_token,
+            )
+            if transformed is not None:
+                result = transformed
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            result = _hook_error_payload("transform_tool_result", exc, tool=name)
+
+    terminate = False
+    termination_reason = None
+    if after_tool_call is not None:
+        try:
+            decision = await _await_with_abort(
+                _maybe_await(after_tool_call({
+                    "tool_call": dict(tc),
+                    "result": result,
+                    "messages": list(messages or []),
+                    "abort_token": abort_token,
+                })),
+                abort_token,
+            )
+            result, terminate, termination_reason = _apply_after_hook(result, decision)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            result = _hook_error_payload("after_tool_call", exc, tool=name)
+
+    content = await _emit_tool_result(
+        emit,
+        name,
+        command,
+        result,
+        termination_reason=termination_reason if terminate else None,
+    )
+    return ToolExecution(content, terminate=terminate, termination_reason=termination_reason)
 
 
-async def _emit_tool_result(emit, name: str, command: str, result: Any) -> str:
+async def _emit_tool_result(
+    emit,
+    name: str,
+    command: str,
+    result: Any,
+    *,
+    termination_reason: str | None = None,
+) -> str:
     scrubbed = kss_recipes._scrub_llm_fields(result)   # commentary 标 provenance:llm_prior
     text = json.dumps(scrubbed, ensure_ascii=False, default=str)
     scan_for_injection(text)   # R8:pattern 扫描(只告警,不截断,完整透传)
     done_frame = {"type": "tool_done", "name": name}
     if isinstance(scrubbed, dict) and (scrubbed.get("is_error") or scrubbed.get("error")):
         done_frame["is_error"] = True
+    if termination_reason:
+        done_frame["termination_reason"] = termination_reason
     done_frame.update(_evidence_payload(name, command, scrubbed))
     await emit(done_frame)
     return text
+
+
+def _contains_truncation_marker(value: Any) -> bool:
+    if isinstance(value, dict):
+        if value.get("_truncated") is True:
+            return True
+        return any(_contains_truncation_marker(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_truncation_marker(item) for item in value)
+    return False
 
 
 def _validate_tool_call(name: str, args: Any, registry: ToolRegistry) -> dict[str, Any] | None:
@@ -560,28 +869,181 @@ def _validate_tool_call(name: str, args: Any, registry: ToolRegistry) -> dict[st
     if not isinstance(args, dict):
         return {"error": "malformed_tool_args", "tool": name,
                 "hint": "tool args must be a JSON object", "is_error": True}
-    if args.get("_truncated") is True:
+    if _contains_truncation_marker(args):
         return {"error": "truncated_tool_args", "tool": name,
                 "hint": "truncated tool args are not executable", "is_error": True}
-    spec = registry.spec(name) or {}
-    params = spec.get("params") or {}
-    required = [p for p in spec.get("order", []) if p in params
-                and "date" not in p and "args" != p and "limit" not in p
-                and not p.startswith("max_")]
-    missing = [key for key in required if key not in args or args.get(key) in (None, "")]
-    if missing:
-        return {"error": "missing_tool_args", "tool": name, "missing": missing,
-                "is_error": True}
-    bad_types = []
-    for key, schema in params.items():
-        if key not in args or args[key] is None:
-            continue
-        if isinstance(schema, dict) and schema.get("type") == "string" and not isinstance(args[key], str):
-            bad_types.append(key)
-    if bad_types:
-        return {"error": "bad_tool_arg_type", "tool": name, "args": bad_types,
-                "hint": "schema requires string values", "is_error": True}
+    schema = registry.parameters(name) or {"type": "object", "properties": {}}
+    issue = _validate_schema_value(args, schema, path="$")
+    if issue is not None:
+        kind, path, detail = issue
+        if kind == "missing":
+            return {
+                "error": "missing_tool_args",
+                "tool": name,
+                "missing": detail,
+                "path": path,
+                "is_error": True,
+            }
+        if kind == "enum":
+            return {
+                "error": "bad_tool_arg_enum",
+                "tool": name,
+                "path": path,
+                "allowed": detail,
+                "is_error": True,
+            }
+        return {
+            "error": "bad_tool_arg_type",
+            "tool": name,
+            "path": path,
+            "expected": detail,
+            "is_error": True,
+        }
     return None
+
+
+def _validate_schema_value(
+    value: Any,
+    schema: dict[str, Any],
+    *,
+    path: str,
+) -> tuple[str, str, Any] | None:
+    schema_type = schema["type"]
+    if not _value_matches_schema_type(value, schema_type):
+        return ("type", path, schema_type)
+    enum = schema.get("enum")
+    if enum is not None and value not in enum:
+        return ("enum", path, list(enum))
+    if schema_type == "object":
+        missing = [
+            key for key in schema.get("required", [])
+            if key not in value or value.get(key) in (None, "")
+        ]
+        if missing:
+            return ("missing", path, missing)
+        for key, child_schema in schema.get("properties", {}).items():
+            if key not in value or value[key] is None:
+                continue
+            issue = _validate_schema_value(value[key], child_schema, path=f"{path}.{key}")
+            if issue is not None:
+                return issue
+    elif schema_type == "array":
+        for index, item in enumerate(value):
+            issue = _validate_schema_value(item, schema["items"], path=f"{path}[{index}]")
+            if issue is not None:
+                return issue
+    return None
+
+
+def _before_hook_block(decision: Any) -> tuple[bool, str | None]:
+    if decision is False:
+        return True, None
+    if not isinstance(decision, dict):
+        return False, None
+    blocked = decision.get("allow") is False or decision.get("block") is True
+    reason = decision.get("reason") or decision.get("block_reason")
+    return blocked, str(reason) if reason is not None else None
+
+
+def _apply_after_hook(result: Any, decision: Any) -> tuple[Any, bool, str | None]:
+    if decision is None:
+        return result, False, None
+    if not isinstance(decision, dict):
+        return decision, False, None
+    control_keys = {"result", "is_error", "terminate", "termination_reason"}
+    if not (set(decision) & control_keys):
+        return decision, False, None
+    updated = decision["result"] if "result" in decision else result
+    if decision.get("is_error"):
+        if isinstance(updated, dict):
+            updated = {**updated, "is_error": True}
+        else:
+            updated = {"result": updated, "is_error": True}
+    terminate = decision.get("terminate") is True
+    reason = decision.get("termination_reason")
+    if terminate and reason is None:
+        reason = "after_tool_call"
+    return updated, terminate, str(reason) if reason is not None else None
+
+
+def _hook_error_payload(hook: str, exc: Exception, *, tool: str | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "error": "hook_error",
+        "hook": hook,
+        "detail": f"{type(exc).__name__}: {exc}",
+        "is_error": True,
+    }
+    if tool:
+        payload["tool"] = tool
+    return payload
+
+
+async def _emit_hook_error(emit: EmitFn, hook: str, exc: Exception) -> None:
+    payload = _hook_error_payload(hook, exc)
+    await emit({"type": "error", **payload})
+
+
+async def _should_stop_turn(
+    hook: Callable[[TurnTranscript], bool] | None,
+    transcript: TurnTranscript,
+    emit: EmitFn,
+    abort_token: AbortToken | None,
+) -> bool:
+    if hook is None:
+        return False
+    try:
+        return bool(await _await_with_abort(_maybe_await(hook(transcript)), abort_token))
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        await _emit_hook_error(emit, "should_stop_after_turn", exc)
+        return False
+
+
+def _handler_accepts_on_update(handler: Callable[..., Any]) -> bool:
+    try:
+        parameters = inspect.signature(handler).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        parameter.name == "on_update" or parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters
+    )
+
+
+async def _call_tool_handler(
+    handler: Callable[..., Any],
+    args: dict[str, Any],
+    *,
+    emit: EmitFn,
+    tool_name: str,
+    abort_token: AbortToken | None,
+) -> Any:
+    event_loop = asyncio.get_running_loop()
+
+    async def async_update(update: Any) -> None:
+        _check_abort(abort_token)
+        payload = update if isinstance(update, dict) else {"message": str(update)}
+        await emit({"type": "tool_update", "name": tool_name, "update": payload})
+
+    accepts_update = _handler_accepts_on_update(handler)
+    if inspect.iscoroutinefunction(handler):
+        value = handler(args, on_update=async_update) if accepts_update else handler(args)
+        return await _await_with_abort(value, abort_token)
+
+    def sync_update(update: Any) -> None:
+        future = asyncio.run_coroutine_threadsafe(async_update(update), event_loop)
+        future.result()
+
+    def invoke_sync() -> Any:
+        if accepts_update:
+            return handler(args, on_update=sync_update)
+        return handler(args)
+
+    value = await _await_with_abort(asyncio.to_thread(invoke_sync), abort_token)
+    if inspect.isawaitable(value):
+        return await _await_with_abort(value, abort_token)
+    return value
 
 
 def _check_abort(abort_token: AbortToken | None) -> None:
@@ -597,6 +1059,49 @@ async def _maybe_await(value: Any) -> Any:
     if inspect.isawaitable(value):
         return await value
     return value
+
+
+def _consume_background_task(task: asyncio.Future[Any]) -> None:
+    try:
+        task.result()
+    except BaseException:
+        pass
+
+
+async def _await_with_abort(value: Any, abort_token: AbortToken | None) -> Any:
+    """等待异步操作；abort 时立即离开，线程型操作的晚到结果被安静丢弃."""
+    if not inspect.isawaitable(value):
+        _check_abort(abort_token)
+        return value
+    if abort_token is None or not hasattr(abort_token, "add_callback"):
+        return await value
+    _check_abort(abort_token)
+    operation = asyncio.ensure_future(value)
+    loop = asyncio.get_running_loop()
+    aborted = loop.create_future()
+
+    def signal_abort() -> None:
+        def set_aborted() -> None:
+            if not aborted.done():
+                aborted.set_result(getattr(abort_token, "reason", None) or "aborted")
+        loop.call_soon_threadsafe(set_aborted)
+
+    abort_token.add_callback(signal_abort)
+    try:
+        done, _ = await asyncio.wait({operation, aborted}, return_when=asyncio.FIRST_COMPLETED)
+    except asyncio.CancelledError:
+        operation.cancel()
+        operation.add_done_callback(_consume_background_task)
+        if not aborted.done():
+            aborted.cancel()
+        raise
+    if aborted in done:
+        operation.cancel()
+        operation.add_done_callback(_consume_background_task)
+        raise asyncio.CancelledError(aborted.result())
+    if not aborted.done():
+        aborted.cancel()
+    return await operation
 
 
 def _evidence_payload(tool_name: str, command: str, result: Any) -> dict[str, Any]:

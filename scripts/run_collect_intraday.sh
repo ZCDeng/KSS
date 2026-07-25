@@ -41,10 +41,9 @@ echo "===== $(date '+%Y-%m-%d %H:%M:%S') collect_intraday 开始 ====="
 # 东财为 fallback；Tushare 仅 trade_cal。不 echo 任何密钥。
 # shellcheck source=scripts/lib_cron_credentials.sh
 source "$PROJECT_ROOT/scripts/lib_cron_credentials.sh"
-KSS_ENV="${KSS_ENV:-$PROJECT_ROOT/.env}"
 _lb_n=0
 for _k in LONGBRIDGE_APP_KEY LONGBRIDGE_APP_SECRET LONGBRIDGE_ACCESS_TOKEN; do
-    if kss_load_credential "$_k" "$KSS_ENV"; then
+    if kss_load_credential "$_k"; then
         _lb_n=$((_lb_n + 1))
     fi
 done
@@ -53,8 +52,5 @@ if [ "$_lb_n" -eq 3 ]; then
 else
     echo "[wrapper] longbridge creds: incomplete ($_lb_n/3) — auto 将更多走东财 fallback"
 fi
-# trade_cal 用；失败由 collect 以 calendar_unknown 退出，不在此硬失败
-kss_load_credential TUSHARE_TOKEN "$KSS_ENV" || true
-
 cd "$PROJECT_ROOT"
 exec "$PYTHON" scripts/collect_intraday.py --mode close "$@"

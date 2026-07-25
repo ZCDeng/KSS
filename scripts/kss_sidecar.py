@@ -29,16 +29,16 @@ for p in (str(_REPO), str(_REPO / "scripts")):
 
 import kss_app_bridge as bridge  # noqa: E402
 from kss.agent import (  # noqa: E402
+    AgentEvent,
     AgentMessage,
-    AbortToken,
-    ContextAssembler,
     EventSequencer,
+    KSSAgentService,
     MemoryStore,
+    RunAdmissionError,
+    RuntimeBusyError,
     SessionStore,
     SkillManager,
-    ToolCall,
 )
-from kss.agent.jsonl import utc_timestamp  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,18 @@ _CHAT_LOOP_LIVE = os.environ.get("KSS_APP_LIVE") == "1"
 _CONFIRM_TIMEOUT = 300.0
 
 _AGENT_ABORTS: dict[str, Any] = {}
+_AGENT_SERVICE: KSSAgentService | None = None
+_AGENT_SERVICE_ROOTS: tuple[Path, Path] | None = None
+
+
+def _agent_service() -> KSSAgentService:
+    """Return the process-wide stateful Runtime, rebuilding only when roots change."""
+    global _AGENT_SERVICE, _AGENT_SERVICE_ROOTS
+    roots = (Path(bridge.STATE_ROOT), Path(bridge.PROJECT_ROOT))
+    if _AGENT_SERVICE is None or _AGENT_SERVICE_ROOTS != roots:
+        _AGENT_SERVICE = KSSAgentService(*roots)
+        _AGENT_SERVICE_ROOTS = roots
+    return _AGENT_SERVICE
 
 def _session_store() -> SessionStore:
     return SessionStore(bridge.STATE_ROOT)
@@ -73,10 +85,6 @@ def _skill_manager() -> SkillManager:
 
 def _memory_store() -> MemoryStore:
     return MemoryStore(bridge.STATE_ROOT)
-
-
-def _context_assembler() -> ContextAssembler:
-    return ContextAssembler()
 
 
 def _sidecar_ok(payload: Any) -> str:
@@ -218,15 +226,18 @@ class _AgentFrameEmitter:
             await self.writer.drain()
 
 
-def _agent_event_name(ev_type: str) -> str:
-    return {
-        "chunk": "message_delta",
-        "tool_call": "tool_start",
-        "tool_done": "tool_end",
-        "confirm_required": "confirm_required",
-        "done": "turn_end",
-        "error": "error",
-    }.get(ev_type, ev_type)
+async def _write_runtime_event(writer: asyncio.StreamWriter, event: AgentEvent,
+                               lock: asyncio.Lock) -> None:
+    """Flatten a Runtime AgentEvent onto the existing v1 NDJSON wire."""
+    async with lock:
+        frame = asdict(event)
+        payload = frame.pop("payload", {})
+        if isinstance(payload, dict):
+            frame.update(payload)
+        if frame.get("type") == "error" and "error" not in frame:
+            frame["error"] = frame.get("message") or "agent runtime error"
+        writer.write((json.dumps(frame, ensure_ascii=False) + "\n").encode("utf-8"))
+        await writer.drain()
 
 
 def _validate_agent_turn_request(req: dict) -> tuple[str, str, str] | tuple[None, None, str]:
@@ -244,76 +255,6 @@ def _validate_agent_turn_request(req: dict) -> tuple[str, str, str] | tuple[None
     if not isinstance(text, str):
         return None, None, "agent-turn requires string input"
     return session_id, client_turn_id, text
-
-
-def _agent_message_to_chat(message: AgentMessage) -> dict[str, Any]:
-    out: dict[str, Any] = {"role": message.role, "content": message.content}
-    if message.role == "tool":
-        out["tool_call_id"] = message.metadata.get("tool_call_id") or message.id
-        out["name"] = message.metadata.get("name") or "tool"
-    if message.tool_calls:
-        out["tool_calls"] = [
-            {
-                "id": call.id,
-                "type": "function",
-                "function": {
-                    "name": call.name,
-                    "arguments": json.dumps(call.arguments, ensure_ascii=False),
-                },
-            }
-            for call in message.tool_calls
-        ]
-    return out
-
-
-def _agent_message_from_wire(message: dict[str, Any], *, run_id: str | None = None) -> AgentMessage:
-    role = message.get("role")
-    if role not in {"system", "user", "assistant", "tool"}:
-        role = "assistant"
-    tool_calls = []
-    for call in message.get("tool_calls") or []:
-        function = call.get("function") if isinstance(call, dict) else {}
-        raw_args = function.get("arguments") if isinstance(function, dict) else "{}"
-        try:
-            args = json.loads(raw_args) if isinstance(raw_args, str) else {}
-        except json.JSONDecodeError:
-            args = {}
-        tool_calls.append(ToolCall(
-            id=str(call.get("id") or uuid4().hex),
-            name=str(function.get("name") or call.get("name") or "tool"),
-            arguments=args if isinstance(args, dict) else {},
-        ))
-    metadata = dict(message.get("metadata") or {})
-    if run_id is not None:
-        metadata["run_id"] = run_id
-    if role == "tool":
-        metadata["tool_call_id"] = message.get("tool_call_id")
-        metadata["name"] = message.get("name")
-        try:
-            parsed = json.loads(str(message.get("content") or "{}"))
-        except json.JSONDecodeError:
-            parsed = message.get("content")
-        tool_calls.append(ToolCall(
-            id=str(message.get("tool_call_id") or uuid4().hex),
-            name=str(message.get("name") or "tool"),
-            result=parsed,
-            error=parsed.get("error") if isinstance(parsed, dict) else None,
-        ))
-    return AgentMessage(
-        id=str(message.get("id") or uuid4().hex),
-        role=role,  # type: ignore[arg-type]
-        content=str(message.get("content") or ""),
-        timestamp=float(message.get("timestamp") or utc_timestamp()),
-        tool_calls=tuple(tool_calls),
-        metadata=metadata,
-    )
-
-
-def _merge_agent_context(context: Any, convo: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    context_messages = [_agent_message_to_chat(m) for m in context.messages]
-    system_messages = [message for message in convo if message.get("role") == "system"]
-    remaining = [message for message in convo if message.get("role") != "system"]
-    return [*system_messages, *context_messages, *remaining]
 
 
 def _agent_wire_message(message: AgentMessage) -> dict[str, Any]:
@@ -417,28 +358,6 @@ def _recall_wire(items: list[str]) -> list[dict[str, Any]]:
     } for index, text in enumerate(items)]
 
 
-def _recent_complete_turns(messages: list[AgentMessage], *, max_chars: int = 32_000) -> list[AgentMessage]:
-    """从尾部保留完整 user turn，避免压缩后仍把全部历史送给模型."""
-    turns: list[list[AgentMessage]] = []
-    current: list[AgentMessage] = []
-    for message in messages:
-        if message.role == "user" and current:
-            turns.append(current)
-            current = []
-        current.append(message)
-    if current:
-        turns.append(current)
-    selected: list[list[AgentMessage]] = []
-    used = 0
-    for turn in reversed(turns):
-        size = sum(len(message.content) + 160 for message in turn)
-        if selected and used + size > max_chars:
-            break
-        selected.append(turn)
-        used += size
-    return [message for turn in reversed(selected) for message in turn]
-
-
 async def _agent_control_reader(reader: asyncio.StreamReader, pending: dict, abort_token: Any,
                                 run_id: str) -> None:
     """agent-turn 同连接控制 reader:支持 chat-turn-confirm 和 agent-control abort。"""
@@ -489,195 +408,161 @@ async def _agent_control_reader(reader: asyncio.StreamReader, pending: dict, abo
 
 async def _handle_agent_turn(reader: asyncio.StreamReader,
                              writer: asyncio.StreamWriter, req: dict) -> None:
-    """Agent v1 长连一轮：durable session history + v1 frames + sidecar write gate。"""
+    """Agent v1 transport: decode, stream Runtime events, and own the write gate."""
     import kss_chat_loop as chat_loop
-    from kss.llm.chat_client import sanitize_user_text
 
     session_id, client_turn_id, user_text_or_error = _validate_agent_turn_request(req)
-    run_id = uuid4().hex
-    emitter = _AgentFrameEmitter(writer, session_id or "", run_id)
+    transport_run_id = uuid4().hex
+    emitter = _AgentFrameEmitter(writer, session_id or "", transport_run_id)
     if session_id is None or client_turn_id is None:
         await emitter.emit("error", {"error": user_text_or_error})
         await emitter.emit("agent_end", {"reason": "bad_request"})
         return
 
-    sessions = _session_store()
-    skills = _skill_manager()
-    memories = _memory_store()
-    assembler = _context_assembler()
-    abort_token = AbortToken()
-    _AGENT_ABORTS[run_id] = abort_token
+    service = _agent_service()
+    duplicate = service.duplicate_turn(session_id, client_turn_id)
+    if duplicate is not None:
+        payload = {
+            "existing_run_id": duplicate.existing_run_id,
+            "client_turn_id": client_turn_id,
+        }
+        if duplicate.status == "running":
+            await emitter.emit("agent_start", payload)
+            await emitter.emit("agent_end", {
+                **payload,
+                "reason": "already_running",
+                "termination_reason": "already_running",
+            })
+        elif duplicate.status == "completed":
+            await emitter.emit("agent_start", payload)
+            await emitter.emit("agent_end", {
+                **payload,
+                "reason": "duplicate_completed",
+                "termination_reason": "duplicate_completed",
+            })
+        else:
+            await emitter.emit("error", {
+                **payload,
+                "error": "interrupted or failed turns require a new client_turn_id",
+                "is_error": True,
+            })
+            await emitter.emit("agent_end", {
+                **payload,
+                "reason": "retry_requires_new_client_turn_id",
+                "termination_reason": "retry_requires_new_client_turn_id",
+            })
+        return
+
     pending: dict[str, dict] = {}
-    existing_state = sessions.open_session(session_id)
-    if existing_state is None:
-        sessions.create_session(session_id=session_id, metadata={"title": session_id})
-    had_user_message = any(
-        message.role == "user" for message in sessions.read_messages(session_id)
-    )
-    run_id = sessions.start_run(session_id, run_id=run_id)
-    emitter = _AgentFrameEmitter(writer, session_id, run_id)
-    user_msg = {
-        "id": uuid4().hex,
-        "role": "user",
-        "content": sanitize_user_text(user_text_or_error),
-        "timestamp": utc_timestamp(),
-        "client_turn_id": client_turn_id,
-    }
-    sessions.append_message(session_id, _agent_message_from_wire(user_msg))
-    if not had_user_message:
-        title = user_text_or_error.strip().replace("\n", " ")[:40] or "新会话"
-        sessions.rename_session(session_id, title)
-    stored_messages = sessions.read_messages(session_id)
-    recall_items = memories.recall(user_text_or_error, now_ms=int(time.time() * 1000), limit=5)
-    if recall_items:
-        sessions.append_entry(session_id, "recall", {"run_id": run_id, "items": recall_items})
-        await emitter.emit("recall", {
-            "items": recall_items,
-            "recalls": _recall_wire(recall_items),
-        })
-    skill_status = skills.status()
-    sessions.append_entry(session_id, "skill_index", {"run_id": run_id, "status": skill_status})
-    discovered_skills = skills.discover()[0]
-    skill_summaries = [
-        f"{item.name}: {item.description}" for item in discovered_skills if item.enabled
-    ]
-    pinned_ids = set(skills.pinned_skill_ids(session_id))
-    for skill in discovered_skills:
-        if skill.enabled and (skill.id in pinned_ids or skill.name in pinned_ids):
-            skill_summaries.append(f"置顶 Skill {skill.name}:\n{skills.load_skill(skill.id)}")
-    context = assembler.assemble(
-        session_id=session_id,
-        messages=stored_messages,
-        skills=skill_summaries,
-        memories=recall_items,
-        goal=user_text_or_error,
-    )
-    if context.compacted:
-        sessions.append_entry(session_id, "compaction_start", {"run_id": run_id})
-        await emitter.emit("compaction_start", {"reason": "context_budget"})
-        sessions.append_entry(session_id, "compaction_end", {"run_id": run_id, "sections": context.sections})
-        await emitter.emit("compaction_end", {
-            "sections": context.sections,
-            "context_usage": {
-                "used": max(1, (len(context.text) + 3) // 4),
-                "limit": 24_000,
-                "percent": min(100.0, len(context.text) / (24_000 * 4) * 100),
-                "label": "已压缩旧对话",
-            },
-        })
-    history_messages = (
-        _recent_complete_turns(stored_messages)
-        if context.compacted else stored_messages
-    )
-    history = [_agent_message_to_chat(message) for message in history_messages]
+    writer_lock = asyncio.Lock()
+    control_task: asyncio.Task | None = None
+    active_run_id: str | None = None
 
-    registry = chat_loop.ToolRegistry()
-    registry.register_handler("load_skill", lambda args: {
-        "skill_id": str(args.get("skill_id") or ""),
-        "content": skills.load_skill(str(args.get("skill_id") or "")),
-    })
+    async def emit_runtime(event: AgentEvent) -> None:
+        nonlocal control_task, active_run_id
+        if active_run_id is None:
+            active_run_id = event.run_id
+            state = service.runtime.state(event.run_id)
+            token = state.abort_token if state is not None else None
+            if token is not None:
+                _AGENT_ABORTS[event.run_id] = token
+                control_task = asyncio.create_task(
+                    _agent_control_reader(reader, pending, token, event.run_id)
+                )
+        await _write_runtime_event(writer, event, writer_lock)
 
-    async def propose_memory(args: dict[str, Any]) -> dict[str, Any]:
-        kind = str(args.get("kind") or "preference")
-        if kind not in {"preference", "decision", "thesis"}:
-            raise ValueError("memory kind must be preference, decision, or thesis")
-        record = memories.propose(
-            kind,
-            str(args.get("text") or ""),
-            source_session=session_id,
-            source_entry=run_id,
-            metadata={"source": str(args.get("source") or "agent")},
-        )
-        payload = _memory_wire(record)
-        sessions.append_entry(session_id, "memory_candidate", {"run_id": run_id, "memory": payload})
-        await emitter.emit("memory_candidate", {"memory_candidate": payload})
-        return {"memory": payload, "pending_approval": True}
-
-    registry.register_handler("propose_memory", propose_memory)
-    message_open = False
-
-    async def emit(ev: dict) -> None:
-        nonlocal message_open
-        ev_type = ev.get("type") or "event"
-        payload = {k: v for k, v in ev.items() if k != "type"}
-        if ev_type == "chunk" and not message_open:
-            message_open = True
-            await emitter.emit("message_start", {"role": "assistant"})
-        if ev_type == "done" and message_open:
-            message_open = False
-            await emitter.emit("message_end", {"role": "assistant"})
-        await emitter.emit(_agent_event_name(ev_type), payload)
-
-    async def request_write(*, command: str, args: list, tool_name: str, tool_args: dict) -> dict:
+    async def request_write(*, command: str, args: list,
+                            tool_name: str, tool_args: dict,
+                            emit_event: Any) -> dict:
         if chat_loop.is_auto_task(command, args):
             return await asyncio.to_thread(_execute_write, command, args)
         call_id = uuid4().hex
         fut = asyncio.get_running_loop().create_future()
         pending[call_id] = {"future": fut, "command": command, "args": args}
-        await emit({"type": "confirm_required", "call_id": call_id,
-                    "tool": tool_name, "command": command, "args": tool_args,
-                    "argsText": json.dumps(tool_args, ensure_ascii=False),
-                    "effect": chat_loop.write_effect_label(command, args)})
+        await emit_event("confirm_required", {
+            "call_id": call_id,
+            "tool": tool_name,
+            "command": command,
+            "args": tool_args,
+            "argsText": json.dumps(tool_args, ensure_ascii=False),
+            "effect": chat_loop.write_effect_label(command, args),
+        })
         try:
             return await asyncio.wait_for(fut, timeout=_CONFIRM_TIMEOUT)
         except asyncio.TimeoutError:
             pending.pop(call_id, None)
             return {"error": "confirm_timeout", "hint": "确认超时,写按拒"}
 
-    control_task = asyncio.create_task(_agent_control_reader(reader, pending, abort_token, run_id))
-    run_state = {"run_id": run_id, "session_id": session_id, "client_turn_id": client_turn_id,
-                 "status": "running", "started_at": time.time()}
     try:
-        await emitter.emit("agent_start", {"client_turn_id": client_turn_id})
-        await emitter.emit("turn_start", {
+        await service.run_turn(
+            session_id,
+            client_turn_id,
+            user_text_or_error,
+            emit_runtime,
+            request_write,
+        )
+    except RunAdmissionError as exc:
+        rejected = _AgentFrameEmitter(writer, session_id, transport_run_id)
+        payload = {
+            "existing_run_id": exc.existing_run_id,
             "client_turn_id": client_turn_id,
-            "context_usage": {
-                "used": max(1, (len(context.text) + 3) // 4),
-                "limit": 24_000,
-                "percent": min(100.0, len(context.text) / (24_000 * 4) * 100),
-                "label": f"上下文约 {max(1, (len(context.text) + 3) // 4)} / 24000",
-            },
-        })
-        transcript = await chat_loop.run_turn(
-            history, emit, request_write,
-            abort_token=abort_token, tool_registry=registry,
-            transform_context=lambda convo: _merge_agent_context(context, convo),
-        )
-        run_state.update(transcript.run_state)
-        current_user_index = max(
-            (
-                index for index, message in enumerate(transcript.messages)
-                if message.get("role") == "user"
-                and message.get("content") == user_msg["content"]
-            ),
-            default=len(transcript.messages) - 1,
-        )
-        for message in transcript.messages[current_user_index + 1:]:
-            if message.get("role") in {"assistant", "tool"}:
-                sessions.append_message(session_id, _agent_message_from_wire(message, run_id=run_id))
-        sessions.append_entry(session_id, "run_state", {**run_state, "completed_at": time.time()})
-        sessions.append_entry(session_id, "transcript", transcript.as_dict())
-        sessions.finish_run(session_id, run_id)
-        await emitter.emit("agent_end", {"reason": run_state.get("reason", "stop")})
-    except asyncio.CancelledError as exc:
-        run_state.update(status="aborted", reason=str(exc) or "aborted")
-        sessions.append_entry(session_id, "run_state", {**run_state, "completed_at": time.time()})
-        sessions.interrupt_session(session_id, reason=run_state["reason"], run_id=run_id)
-        await emitter.emit("error", {"error": run_state["reason"]})
-        await emitter.emit("turn_end", {"reason": "aborted"})
-        await emitter.emit("agent_end", {"reason": "aborted"})
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("[agent] run_turn 异常: %s", exc)
-        run_state.update(status="error", reason=f"{type(exc).__name__}: {exc}")
-        sessions.append_entry(session_id, "run_state", {**run_state, "completed_at": time.time()})
-        sessions.interrupt_session(session_id, reason=run_state["reason"], run_id=run_id)
-        await emitter.emit("error", {"error": run_state["reason"]})
-        await emitter.emit("turn_end", {"reason": "error"})
-        await emitter.emit("agent_end", {"reason": "error"})
+        }
+        if exc.status == "running":
+            reason = "already_running"
+            await rejected.emit("agent_start", payload)
+            await rejected.emit(
+                "agent_end",
+                {
+                    **payload,
+                    "reason": reason,
+                    "termination_reason": reason,
+                },
+            )
+        elif exc.status == "completed":
+            reason = "duplicate_completed"
+            await rejected.emit("agent_start", payload)
+            await rejected.emit(
+                "agent_end",
+                {
+                    **payload,
+                    "reason": reason,
+                    "termination_reason": reason,
+                },
+            )
+        else:
+            reason = "retry_requires_new_client_turn_id"
+            await rejected.emit(
+                "error",
+                {
+                    **payload,
+                    "error": "interrupted or failed turns require a new client_turn_id",
+                    "is_error": True,
+                },
+            )
+            await rejected.emit(
+                "agent_end",
+                {
+                    **payload,
+                    "reason": reason,
+                    "termination_reason": reason,
+                },
+            )
+    except RuntimeBusyError as exc:
+        busy = _AgentFrameEmitter(writer, session_id, transport_run_id)
+        payload = {
+            "existing_run_id": exc.existing_run_id,
+            "client_turn_id": client_turn_id,
+            "reason": "already_running",
+            "termination_reason": "already_running",
+        }
+        await busy.emit("agent_start", payload)
+        await busy.emit("agent_end", payload)
     finally:
-        control_task.cancel()
+        if control_task is not None:
+            control_task.cancel()
         _reject_all(pending, {"error": "turn_ended"})
-        _AGENT_ABORTS.pop(run_id, None)
+        if active_run_id is not None:
+            _AGENT_ABORTS.pop(active_run_id, None)
 
 
 def _prepare_messages(raw) -> list[dict]:

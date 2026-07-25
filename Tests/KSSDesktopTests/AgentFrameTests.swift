@@ -12,9 +12,15 @@ final class AgentFrameTests: XCTestCase {
           "sequence": 4,
           "type": "message_delta",
           "delta": "hello",
-          "context_usage": {"used": 1200, "limit": 4000, "percent": 30},
+          "model": "gpt-test",
+          "usage": {"input_tokens": 80, "output_tokens": 20, "total_tokens": 100, "cached_input_tokens": 12},
+          "context_usage": {"used": 1200, "limit": 4000, "percent": 30, "estimated": true},
+          "existing_run_id": "r0",
+          "is_error": false,
+          "termination_reason": "stop",
           "memory_candidate": {"id": "m1", "text": "remember this", "source": "chat"},
-          "evidence_summary": {"kssTruthCount": 1, "externalSourceCount": 0, "injectionWarningCount": 0, "conflictCount": 0}
+          "evidence_summary": {"kssTruthCount": 1, "externalSourceCount": 0, "injectionWarningCount": 0, "conflictCount": 0},
+          "future_field": {"must": "be ignored"}
         }
         """.utf8)
 
@@ -25,9 +31,36 @@ final class AgentFrameTests: XCTestCase {
         XCTAssertEqual(frame.sequence, 4)
         XCTAssertEqual(frame.type, "message_delta")
         XCTAssertEqual(frame.delta, "hello")
+        XCTAssertEqual(frame.model, "gpt-test")
+        XCTAssertEqual(frame.usage?.inputTokens, 80)
+        XCTAssertEqual(frame.usage?.outputTokens, 20)
+        XCTAssertEqual(frame.usage?.totalTokens, 100)
+        XCTAssertEqual(frame.usage?.cachedInputTokens, 12)
         XCTAssertEqual(frame.contextUsage?.percent, 30)
+        XCTAssertEqual(frame.contextUsage?.estimated, true)
+        XCTAssertEqual(frame.existingRunId, "r0")
+        XCTAssertEqual(frame.isError, false)
+        XCTAssertEqual(frame.terminationReason, "stop")
         XCTAssertEqual(frame.memoryCandidate?.id, "m1")
         XCTAssertEqual(frame.evidenceSummary?.kssTruthCount, 1)
+    }
+
+    func testAgentUsageDecodesOpenAIAliases() throws {
+        let frame = try decodeFrame("""
+        {"type":"agent_end","usage":{
+          "prompt_tokens":90,
+          "completion_tokens":10,
+          "total_tokens":100,
+          "cache_read_tokens":25,
+          "reasoning_tokens":4
+        }}
+        """)
+
+        XCTAssertEqual(frame.usage?.inputTokens, 90)
+        XCTAssertEqual(frame.usage?.outputTokens, 10)
+        XCTAssertEqual(frame.usage?.totalTokens, 100)
+        XCTAssertEqual(frame.usage?.cachedInputTokens, 25)
+        XCTAssertEqual(frame.usage?.reasoningTokens, 4)
     }
 
     func testAgentFrameDeduplicatesSequencesAndReportsGaps() throws {
@@ -80,6 +113,99 @@ final class AgentFrameTests: XCTestCase {
             error: "aborted", userAborted: false, assistantEmpty: true, assistantIsError: false))
         XCTAssertTrue(KSSStore.shouldFallbackToLegacyAgent(
             error: "Agent 连接中断", userAborted: false, assistantEmpty: true, assistantIsError: false))
+    }
+
+    func testDuplicateRunFramesUpdateStateHydrateAndNeverFallbackToLegacy() throws {
+        let store = KSSStore(testBridge: nil)
+        store.agentSessions = [
+            AgentSession(sessionId: "s1", title: "A", messages: [
+                AgentHydratedMessage(id: "old", role: "assistant", text: "旧内容"),
+            ])
+        ]
+        store.openAgentSession("s1")
+        store.chatMessages = [
+            ChatMessage(role: .user, text: "重复输入"),
+            ChatMessage(role: .assistant, text: "", numbersUnverified: true),
+        ]
+
+        let frame = try decodeFrame("""
+        {"protocol_version":1,"session_id":"s1","run_id":"attempt-2","sequence":1,
+         "type":"agent_end","reason":"already_running","existing_run_id":"run-1",
+         "model":"gpt-test","usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10},
+         "is_error":false}
+        """)
+        XCTAssertTrue(store.applyAgentFrame(frame))
+        XCTAssertEqual(store.agentExistingRunId, "run-1")
+        XCTAssertEqual(store.agentTerminationReason, "already_running")
+        XCTAssertEqual(store.agentModel, "gpt-test")
+        XCTAssertEqual(store.agentUsage?.totalTokens, 10)
+        XCTAssertEqual(store.agentLastEventIsError, false)
+        XCTAssertEqual(KSSStore.duplicateAgentReason(for: frame), "already_running")
+        XCTAssertTrue(BridgeClient.isAgentDuplicateTerminal(frame))
+        XCTAssertFalse(KSSStore.shouldFallbackToLegacyAgent(
+            error: "already_running",
+            terminationReason: "already_running",
+            userAborted: false,
+            assistantEmpty: true,
+            assistantIsError: false))
+        let duplicateCompleted = try decodeFrame(
+            #"{"type":"duplicate_completed","existing_run_id":"run-0"}"#)
+        XCTAssertEqual(KSSStore.duplicateAgentReason(for: duplicateCompleted), "duplicate_completed")
+        XCTAssertTrue(BridgeClient.isAgentDuplicateTerminal(duplicateCompleted))
+        let confirm = try decodeFrame(#"{"type":"confirm_required","call_id":"c1"}"#)
+        XCTAssertFalse(BridgeClient.isAgentDuplicateTerminal(confirm))
+
+        let response = AgentSessionListResponse(
+            sessions: [
+                AgentSession(sessionId: "s1", title: "A", messages: [
+                    AgentHydratedMessage(id: "u1", role: "user", text: "原问题"),
+                    AgentHydratedMessage(id: "a1", role: "assistant", text: "已完成答案"),
+                ])
+            ],
+            selectedSessionId: "s1")
+        XCTAssertTrue(store.applyAgentSessionHydration(
+            response,
+            sessionId: "s1",
+            triggeringRunId: "attempt-2"))
+        XCTAssertEqual(store.chatMessages.map(\.text), ["原问题", "已完成答案"])
+    }
+
+    func testAgentStreamWaitsForAgentEndAfterTurnEnd() throws {
+        let turnEnd = try JSONDecoder().decode(
+            AgentFrame.self,
+            from: Data(#"{"protocol_version":1,"type":"turn_end","session_id":"s","run_id":"r","sequence":1}"#.utf8)
+        )
+        let agentEnd = try JSONDecoder().decode(
+            AgentFrame.self,
+            from: Data(#"{"protocol_version":1,"type":"agent_end","session_id":"s","run_id":"r","sequence":2}"#.utf8)
+        )
+
+        XCTAssertFalse(BridgeClient.isAgentStreamTerminal(turnEnd))
+        XCTAssertTrue(BridgeClient.isAgentStreamTerminal(agentEnd))
+    }
+
+    func testDuplicateHydrationCannotOverwriteAnotherSelectedSession() {
+        let store = KSSStore(testBridge: nil)
+        store.agentSessions = [
+            AgentSession(sessionId: "s2", title: "B", messages: [
+                AgentHydratedMessage(id: "b1", role: "assistant", text: "会话 B"),
+            ])
+        ]
+        store.openAgentSession("s2")
+
+        let response = AgentSessionListResponse(
+            sessions: [
+                AgentSession(sessionId: "s1", title: "A", messages: [
+                    AgentHydratedMessage(id: "a1", role: "assistant", text: "会话 A"),
+                ])
+            ],
+            selectedSessionId: "s1")
+        XCTAssertFalse(store.applyAgentSessionHydration(
+            response,
+            sessionId: "s1",
+            triggeringRunId: "attempt-1"))
+        XCTAssertEqual(store.selectedAgentSessionId, "s2")
+        XCTAssertEqual(store.chatMessages.map(\.text), ["会话 B"])
     }
 
     func testAgentCommandResponsesDecodeUniformWireShape() throws {

@@ -1935,9 +1935,10 @@ struct AgentContextUsage: Codable, Equatable {
     var limit: Int?
     var percent: Double?
     var label: String?
+    var estimated: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
-        case used, limit, percent, label
+        case used, limit, percent, label, estimated
     }
 
     var displayText: String {
@@ -1945,6 +1946,37 @@ struct AgentContextUsage: Codable, Equatable {
         if let percent { return "上下文 \(Int(percent.rounded()))%" }
         if let used, let limit, limit > 0 { return "上下文 \(used)/\(limit)" }
         return "上下文 —"
+    }
+}
+
+struct AgentUsage: Decodable, Equatable {
+    var inputTokens: Int?
+    var outputTokens: Int?
+    var totalTokens: Int?
+    var cachedInputTokens: Int?
+    var reasoningTokens: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case inputTokens = "input_tokens"
+        case promptTokens = "prompt_tokens"
+        case outputTokens = "output_tokens"
+        case completionTokens = "completion_tokens"
+        case totalTokens = "total_tokens"
+        case cachedInputTokens = "cached_input_tokens"
+        case cacheReadTokens = "cache_read_tokens"
+        case reasoningTokens = "reasoning_tokens"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        inputTokens = (try? c.decode(Int.self, forKey: .inputTokens))
+            ?? (try? c.decode(Int.self, forKey: .promptTokens))
+        outputTokens = (try? c.decode(Int.self, forKey: .outputTokens))
+            ?? (try? c.decode(Int.self, forKey: .completionTokens))
+        totalTokens = try? c.decode(Int.self, forKey: .totalTokens)
+        cachedInputTokens = (try? c.decode(Int.self, forKey: .cachedInputTokens))
+            ?? (try? c.decode(Int.self, forKey: .cacheReadTokens))
+        reasoningTokens = try? c.decode(Int.self, forKey: .reasoningTokens)
     }
 }
 
@@ -1995,6 +2027,11 @@ struct AgentFrame: Decodable, Equatable {
     let callId: String?
     let reason: String?
     let error: String?
+    let model: String?
+    let usage: AgentUsage?
+    let existingRunId: String?
+    let isError: Bool?
+    let terminationReason: String?
     let numberGuard: AgentNumberGuard?
     let contextUsage: AgentContextUsage?
     let memoryCandidate: AgentMemoryCandidate?
@@ -2005,11 +2042,16 @@ struct AgentFrame: Decodable, Equatable {
     let evidenceDrawer: ChatEvidenceDrawer?
 
     enum CodingKeys: String, CodingKey {
-        case type, sequence, text, delta, name, tool, command, effect, reason, error, numberGuard
+        case type, sequence, text, delta, name, tool, command, effect, reason, error, model, usage, numberGuard
         case numberGuardSnake = "number_guard"
         case protocolVersion = "protocol_version"
         case sessionId = "session_id"
         case runId = "run_id"
+        case existingRunId = "existing_run_id"
+        case isError = "is_error"
+        case isErrorCamel = "isError"
+        case terminationReason = "termination_reason"
+        case terminationReasonCamel = "terminationReason"
         case messageId = "message_id"
         case argsText = "argsText"
         case argsTextSnake = "args_text"
@@ -2042,6 +2084,13 @@ struct AgentFrame: Decodable, Equatable {
         callId = try? c.decode(String.self, forKey: .callId)
         reason = try? c.decode(String.self, forKey: .reason)
         error = try? c.decode(String.self, forKey: .error)
+        model = try? c.decode(String.self, forKey: .model)
+        usage = try? c.decode(AgentUsage.self, forKey: .usage)
+        existingRunId = try? c.decode(String.self, forKey: .existingRunId)
+        isError = (try? c.decode(Bool.self, forKey: .isError))
+            ?? (try? c.decode(Bool.self, forKey: .isErrorCamel))
+        terminationReason = (try? c.decode(String.self, forKey: .terminationReason))
+            ?? (try? c.decode(String.self, forKey: .terminationReasonCamel))
         numberGuard = (try? c.decode(AgentNumberGuard.self, forKey: .numberGuard))
             ?? (try? c.decode(AgentNumberGuard.self, forKey: .numberGuardSnake))
         contextUsage = try? c.decode(AgentContextUsage.self, forKey: .contextUsage)
@@ -2054,6 +2103,20 @@ struct AgentFrame: Decodable, Equatable {
             ?? (try? c.decode(ChatEvidenceSummary.self, forKey: .evidenceSummarySnake))
         evidenceDrawer = (try? c.decode(ChatEvidenceDrawer.self, forKey: .evidenceDrawer))
             ?? (try? c.decode(ChatEvidenceDrawer.self, forKey: .evidenceDrawerSnake))
+    }
+
+    var duplicateReason: String? {
+        let values = [type, terminationReason, reason, error]
+            .compactMap { $0?.lowercased() }
+        if values.contains(where: { $0.contains("duplicate_completed") }) {
+            return "duplicate_completed"
+        }
+        if values.contains(where: {
+            $0.contains("already_running") || $0.contains("already has active run")
+        }) {
+            return "already_running"
+        }
+        return nil
     }
 }
 

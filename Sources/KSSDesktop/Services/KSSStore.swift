@@ -180,6 +180,11 @@ final class KSSStore: ObservableObject {
     @Published var agentMemoryCandidates: [AgentMemoryCandidate] = []
     @Published var agentSourceRecalls: [AgentSourceRecall] = []
     @Published var agentContextUsage: AgentContextUsage?
+    @Published var agentModel: String?
+    @Published var agentUsage: AgentUsage?
+    @Published var agentExistingRunId: String?
+    @Published var agentLastEventIsError: Bool?
+    @Published var agentTerminationReason: String?
     @Published var agentSequenceIssue: String?
     @Published var agentProtocolUnavailable = false
     /// 当前阻塞中的 confirm 闸（后台流式线程持，UI tap 后 resolve）。
@@ -189,6 +194,7 @@ final class KSSStore: ObservableObject {
     private var userAbortedAgentRun = false
     private var agentSeenSequences: [String: Set<Int>] = [:]
     private var agentExpectedSequence: [String: Int] = [:]
+    private var agentDuplicateHydrationKeys: Set<String> = []
     private var chatMessagesByAgentSession: [String: [ChatMessage]] = [:]
 
     let bridge: BridgeClient?
@@ -233,7 +239,13 @@ final class KSSStore: ObservableObject {
         isChatStreaming = true
         userAbortedAgentRun = false
         chatToolInProgress = nil
+        agentModel = nil
+        agentUsage = nil
+        agentExistingRunId = nil
+        agentLastEventIsError = nil
+        agentTerminationReason = nil
         agentSequenceIssue = nil
+        agentDuplicateHydrationKeys.removeAll()
         let clientTurnId = UUID().uuidString
         Task.detached { [weak self] in
             bridge.agentTurn(
@@ -402,11 +414,40 @@ final class KSSStore: ObservableObject {
         if let usage = frame.contextUsage {
             agentContextUsage = usage
         }
+        if let model = frame.model {
+            agentModel = model
+        }
+        if let usage = frame.usage {
+            agentUsage = usage
+        }
+        if let existingRunId = frame.existingRunId {
+            agentExistingRunId = existingRunId
+        }
+        if let isError = frame.isError {
+            agentLastEventIsError = isError
+        }
+        if let terminationReason = frame.terminationReason {
+            agentTerminationReason = terminationReason
+        } else if frame.type == "turn_end" || frame.type == "agent_end" {
+            agentTerminationReason = frame.reason
+        }
 
         let idx: Int? = {
             if let assistantId, let idx = chatMessages.firstIndex(where: { $0.id == assistantId }) { return idx }
             return chatMessages.lastIndex(where: { $0.role == .assistant })
         }()
+
+        if let duplicateReason = Self.duplicateAgentReason(for: frame) {
+            agentTerminationReason = duplicateReason
+            chatToolInProgress = nil
+            if let sessionId = frame.sessionId ?? selectedAgentSessionId {
+                requestDuplicateSessionHydration(
+                    sessionId: sessionId,
+                    triggeringRunId: frame.runId ?? activeAgentRunId,
+                    existingRunId: frame.existingRunId)
+            }
+            return true
+        }
 
         switch frame.type {
         case "agent_start", "turn_start":
@@ -473,6 +514,62 @@ final class KSSStore: ObservableObject {
         return true
     }
 
+    static func duplicateAgentReason(for frame: AgentFrame) -> String? {
+        frame.duplicateReason
+    }
+
+    private func requestDuplicateSessionHydration(
+        sessionId: String,
+        triggeringRunId: String?,
+        existingRunId: String?
+    ) {
+        let runGeneration = triggeringRunId ?? activeAgentRunId
+        let key = "\(sessionId):\(runGeneration ?? existingRunId ?? "duplicate")"
+        guard agentDuplicateHydrationKeys.insert(key).inserted, let bridge else { return }
+        Task { [weak self] in
+            do {
+                let response = try await Task.detached {
+                    try bridge.agentSessions(action: "open", sessionId: sessionId)
+                }.value
+                self?.applyAgentSessionHydration(
+                    response,
+                    sessionId: sessionId,
+                    triggeringRunId: runGeneration)
+            } catch {
+                guard let self, self.selectedAgentSessionId == sessionId else { return }
+                self.errorMessage = "会话恢复失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Duplicate frames may race with stream teardown or a newly-started turn.
+    /// Only replace UI state when the user is still viewing the same session and
+    /// no newer run has taken ownership of the chat surface.
+    @discardableResult
+    func applyAgentSessionHydration(
+        _ response: AgentSessionListResponse,
+        sessionId: String,
+        triggeringRunId: String?
+    ) -> Bool {
+        guard selectedAgentSessionId == sessionId else { return false }
+        if let activeAgentRunId, let triggeringRunId, activeAgentRunId != triggeringRunId {
+            return false
+        }
+        guard let hydrated = response.sessions.first(where: {
+            $0.sessionId == sessionId && !$0.archived
+        }) else {
+            return false
+        }
+        agentSessions = response.sessions.filter { !$0.archived }
+        chatMessages = hydrateChatMessages(from: hydrated.messages ?? [])
+        chatMessagesByAgentSession[sessionId] = chatMessages
+        if let contextUsage = hydrated.contextUsage {
+            agentContextUsage = contextUsage
+        }
+        persistLastAgentSession(sessionId)
+        return true
+    }
+
     private func mergeAgentEvidence(_ frame: AgentFrame, into idx: Int) {
         if let summary = frame.evidenceSummary {
             chatMessages[idx].evidenceSummary.merge(summary)
@@ -490,6 +587,7 @@ final class KSSStore: ObservableObject {
         let assistant = chatMessages.first(where: { $0.id == assistantId })
         let shouldFallback = Self.shouldFallbackToLegacyAgent(
             error: error,
+            terminationReason: agentTerminationReason,
             userAborted: wasUserAbort,
             assistantEmpty: assistant?.text.isEmpty == true,
             assistantIsError: assistant?.isError == true)
@@ -527,13 +625,19 @@ final class KSSStore: ObservableObject {
 
     nonisolated static func shouldFallbackToLegacyAgent(
         error: String?,
+        terminationReason: String? = nil,
         userAborted: Bool,
         assistantEmpty: Bool,
         assistantIsError: Bool
     ) -> Bool {
         let normalized = error?.lowercased() ?? ""
         let isAbort = normalized.contains("abort") || normalized.contains("client_abort")
-        return !userAborted && !isAbort && error != nil && assistantEmpty && !assistantIsError
+        let duplicateValues = [normalized, terminationReason?.lowercased() ?? ""]
+        let isDuplicate = duplicateValues.contains {
+            $0.contains("duplicate_completed") || $0.contains("already_running")
+        }
+        return !userAborted && !isAbort && !isDuplicate
+            && error != nil && assistantEmpty && !assistantIsError
     }
 
     private func endChat(assistantId: UUID, error: String?) {

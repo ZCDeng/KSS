@@ -17,7 +17,8 @@ elif [ -x "$HOME/Library/Application Support/KSS/venv/bin/python3" ]; then
 elif [ -x "$PROJECT_ROOT/.venv-desktop/bin/python" ]; then
     PYTHON="$PROJECT_ROOT/.venv-desktop/bin/python"
 else
-    PYTHON="python3"
+    echo "no usable python interpreter found (checked KSS_PYTHON, state-root venv, .venv-desktop)" >&2
+    exit 1
 fi
 
 cd "$PROJECT_ROOT"

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 from kss.agent import AgentMessage, AgentState, SessionStore, ToolCall
+from kss.agent.context import CompactionRecord
 
 
 def test_session_store_crud_open_does_not_interrupt_normal_session(tmp_path):
@@ -35,7 +37,7 @@ def test_session_store_crud_open_does_not_interrupt_normal_session(tmp_path):
 def test_session_store_marks_only_unfinished_run_interrupted(tmp_path):
     store = SessionStore(tmp_path)
     store.create_session(session_id="run-session")
-    run_id = store.start_run("run-session", run_id="r1")
+    run_id = store.start_run("run-session", run_id="r1", owner_pid=-1)
 
     recovered = store.get_session("run-session")
 
@@ -43,6 +45,216 @@ def test_session_store_marks_only_unfinished_run_interrupted(tmp_path):
     assert recovered.status == "interrupted"
     assert recovered.metadata["reason"] == "recovered_incomplete_run"
     assert recovered.metadata["run_id"] == run_id
+
+
+def test_session_store_recovery_appends_run_terminal_only_once(tmp_path):
+    store = SessionStore(tmp_path)
+    store.create_session(session_id="recover-once")
+    store.start_run(
+        "recover-once",
+        run_id="run-once",
+        client_turn_id="client-once",
+        owner_pid=-1,
+    )
+
+    first = store.get_session("recover-once")
+    second = store.get_session("recover-once")
+
+    assert first is not None and first.status == "interrupted"
+    assert second is not None and second.status == "interrupted"
+    path = tmp_path / "storage" / "agent" / "sessions" / "recover-once.jsonl"
+    entries = [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+    ]
+    terminal = [
+        entry
+        for entry in entries
+        if entry["type"] == "run_finished"
+        and entry["payload"]["run_id"] == "run-once"
+    ]
+    recovery_status = [
+        entry
+        for entry in entries
+        if entry["type"] == "status_changed"
+        and entry["payload"]["metadata"].get("reason") == "recovered_incomplete_run"
+    ]
+    assert len(terminal) == 1
+    assert terminal[0]["payload"]["status"] == "interrupted"
+    assert len(recovery_status) == 1
+
+
+def test_session_store_persists_client_turn_id_and_queries_terminal_statuses(tmp_path):
+    store = SessionStore(tmp_path)
+    store.create_session(session_id="idempotent")
+
+    store.start_run(
+        "idempotent", run_id="running", client_turn_id="client-running"
+    )
+    assert store.find_run_by_client_turn_id(
+        "idempotent", "client-running"
+    )["status"] == "running"
+    store.finish_run("idempotent", "running", status="completed")
+    completed = store.find_run_by_client_turn_id(
+        "idempotent", "client-running"
+    )
+    assert completed is not None
+    assert completed["run_id"] == "running"
+    assert completed["status"] == "completed"
+
+    store.start_run("idempotent", run_id="failed", client_turn_id="client-failed")
+    store.finish_run("idempotent", "failed", status="failed", reason="provider")
+    failed = store.find_run_by_client_turn_id("idempotent", "client-failed")
+    assert failed is not None
+    assert failed["status"] == "failed"
+    assert failed["reason"] == "provider"
+
+    store.start_run(
+        "idempotent", run_id="interrupted", client_turn_id="client-interrupted"
+    )
+    store.interrupt_session("idempotent", run_id="interrupted", reason="abort")
+    interrupted = store.find_run_by_client_turn_id(
+        "idempotent", "client-interrupted"
+    )
+    assert interrupted is not None
+    assert interrupted["status"] == "interrupted"
+    assert interrupted["reason"] == "abort"
+
+
+def test_atomic_run_admission_rejects_live_owner_and_duplicate(tmp_path):
+    store = SessionStore(tmp_path)
+    first = store.try_start_run(
+        "atomic",
+        run_id="run-1",
+        client_turn_id="client-1",
+    )
+    busy = store.try_start_run(
+        "atomic",
+        run_id="run-2",
+        client_turn_id="client-2",
+    )
+    duplicate = store.try_start_run(
+        "atomic",
+        run_id="run-3",
+        client_turn_id="client-1",
+    )
+
+    assert first.admitted is True
+    assert busy.admitted is False
+    assert busy.status == "running"
+    assert busy.run_id == "run-1"
+    assert duplicate.admitted is False
+    assert duplicate.status == "running"
+    assert duplicate.run_id == "run-1"
+
+
+def test_atomic_run_admission_recovers_dead_owner_before_duplicate_check(tmp_path):
+    store = SessionStore(tmp_path)
+    store.create_session(session_id="restart")
+    store.start_run(
+        "restart",
+        run_id="dead-run",
+        client_turn_id="dead-client",
+        owner_pid=-1,
+    )
+
+    duplicate = store.find_run_by_client_turn_id("restart", "dead-client")
+    rejected = store.try_start_run(
+        "restart",
+        run_id="replacement-with-same-key",
+        client_turn_id="dead-client",
+    )
+    accepted = store.try_start_run(
+        "restart",
+        run_id="replacement",
+        client_turn_id="new-client",
+    )
+
+    assert duplicate is not None and duplicate["status"] == "interrupted"
+    assert rejected.admitted is False
+    assert rejected.status == "interrupted"
+    assert accepted.admitted is True
+
+
+def test_atomic_run_admission_serializes_independent_store_instances(tmp_path):
+    stores = (SessionStore(tmp_path), SessionStore(tmp_path))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(
+                lambda item: item[0].try_start_run(
+                    "double-sidecar",
+                    run_id=f"run-{item[1]}",
+                    client_turn_id=f"client-{item[1]}",
+                ),
+                ((stores[0], 1), (stores[1], 2)),
+            )
+        )
+
+    assert sum(result.admitted for result in results) == 1
+    assert {result.status for result in results} == {"running"}
+    winner = next(result for result in results if result.admitted)
+    loser = next(result for result in results if not result.admitted)
+    assert loser.run_id == winner.run_id
+
+
+def test_session_store_compaction_round_trip(tmp_path):
+    store = SessionStore(tmp_path)
+    store.create_session(session_id="compaction")
+    record = CompactionRecord(
+        summary={
+            "目标": "目标",
+            "偏好": "偏好",
+            "已完成": "完成",
+            "关键决策": "决策",
+            "未完成": "待办",
+            "关键证据": "证据",
+        },
+        first_kept_entry_id="message-7",
+        tokens_before=25_000,
+        tokens_after=7_500,
+        model="model-a",
+        usage={"input_tokens": 100, "output_tokens": 50},
+        fallback_used=False,
+    )
+
+    entry = store.append_compaction("compaction", record, run_id="run-1")
+    loaded = store.latest_compaction("compaction")
+
+    assert entry["type"] == "compaction"
+    assert loaded is not None
+    assert loaded["entry_id"] == entry["id"]
+    assert loaded["first_kept_entry_id"] == "message-7"
+    assert loaded["summary"]["关键决策"] == "决策"
+    assert loaded["tokens_before"] == 25_000
+    assert loaded["tokens_after"] == 7_500
+    assert loaded["run_id"] == "run-1"
+
+
+def test_concurrent_session_appends_keep_single_parent_chain(tmp_path):
+    store = SessionStore(tmp_path)
+    store.create_session(session_id="concurrent")
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(
+            pool.map(
+                lambda value: store.append_entry(
+                    "concurrent", "concurrent_event", {"value": value}
+                ),
+                range(40),
+            )
+        )
+
+    path = tmp_path / "storage" / "agent" / "sessions" / "concurrent.jsonl"
+    entries = [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(entries) == 41
+    assert len({entry["id"] for entry in entries}) == len(entries)
+    assert entries[0]["parent_id"] is None
+    assert all(
+        entry["parent_id"] == entries[index - 1]["id"]
+        for index, entry in enumerate(entries[1:], start=1)
+    )
 
 
 def test_session_store_repairs_corrupt_tail_and_keeps_valid_entries(tmp_path):
@@ -66,7 +278,7 @@ def test_session_store_repairs_corrupt_tail_and_keeps_valid_entries(tmp_path):
             ),
         ),
     )
-    run_id = store.start_run("s2")
+    run_id = store.start_run("s2", owner_pid=-1)
     path = tmp_path / "storage" / "agent" / "sessions" / "s2.jsonl"
     with path.open("ab") as handle:
         handle.write(b'{"broken":')

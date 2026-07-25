@@ -109,14 +109,17 @@ def test_tools_passed_through(make):
     assert kw["tool_choice"] == "auto"
 
 
-def test_bad_tool_args_yields_error(make):
+def test_bad_tool_args_yields_repairable_tool_call(make):
     c = make([
         _chunk(tool_calls=[_tc(0, id="a", name="x", arguments="{not json")]),
         _chunk(finish_reason="tool_calls"),
     ])
     events = list(c.stream_turn([{"role": "user", "content": "x"}], tools=[{}]))
-    assert any(e["type"] == "error" for e in events)
-    assert not any(e["type"] == "tool_call" for e in events)
+    malformed = next(e for e in events if e["type"] == "tool_call")
+    assert malformed["id"] == "a"
+    assert malformed["name"] == "x"
+    assert malformed["args"] == "{not json"
+    assert malformed["argument_error"]["code"] == "malformed_tool_arguments"
 
 
 def test_create_failure_yields_error(make):

@@ -15,15 +15,16 @@ DeepSeek 坑(R1/R-spike):流式时 `delta.tool_calls[].function.arguments` **跨
 """
 from __future__ import annotations
 
-import json
 import logging
-import threading
 from typing import Any, Iterator
 
-# 复用 openai_client 的凭证解析 + 异常类型,不 fork 网关逻辑。
+from kss.agent.provider import (
+    OpenAICompatibleProvider,
+    ProviderConfig,
+    ProviderEvent,
+)
 from kss.llm.openai_client import (
     LLMUnavailable,
-    _coerce_float,
     _resolve_credentials,
 )
 from kss.llm.sanitizer import sanitize_llm_input
@@ -52,31 +53,30 @@ class ChatClient:
         timeout: float | None = None,
         temperature: float = _DEFAULT_TEMPERATURE,
         client: Any | None = None,
+        provider: OpenAICompatibleProvider | None = None,
     ) -> None:
         import os
 
-        api_key, base_url, default_model = _resolve_credentials()
-        self._model = model or os.getenv("KSS_LLM_MODEL") or default_model
+        self._model_override = model
         self._temperature = temperature
-        self._stream_lock = threading.Lock()
-        self._active_stream: Any | None = None
-        if client is not None:           # 注入 SDK 客户端(测试/替身),跳过真 openai 构建
-            self._client = client
-            return
-        effective_timeout = (
-            timeout if timeout is not None
-            else _coerce_float(os.getenv("KSS_LLM_TIMEOUT"), _DEFAULT_TIMEOUT_SEC)
-        )
-        try:
-            from openai import OpenAI  # type: ignore[import-not-found]
-        except ImportError as exc:  # pragma: no cover
-            raise LLMUnavailable("openai 包未安装,请 pip install openai") from exc
-        self._client = OpenAI(
-            api_key=api_key, timeout=effective_timeout,
-            **({"base_url": base_url} if base_url else {}),
-        )
-        logger.debug("[chat] ChatClient ready (model=%s base_url=%s)",
-                     self._model, base_url or "openai default")
+        self._timeout = timeout
+        self._client = client  # Kept for compatibility with existing injected-client tests.
+        if provider is not None:
+            self._provider = provider
+            self._model = model or os.getenv("KSS_LLM_MODEL") or "gpt-4o-mini"
+        elif client is not None:
+            api_key, base_url, default_model = _resolve_credentials()
+            self._model = model or os.getenv("KSS_LLM_MODEL") or default_model
+            self._provider = OpenAICompatibleProvider(
+                credential_resolver=lambda: [(api_key, base_url, default_model)],
+                client_factory=lambda _key, _base, _timeout: client,
+            )
+        else:
+            # Do not snapshot credentials here: provider resolves Keychain/env
+            # candidates for every model call.
+            self._model = model or os.getenv("KSS_LLM_MODEL") or "gpt-4o-mini"
+            self._provider = OpenAICompatibleProvider()
+        logger.debug("[chat] ChatClient facade ready (model=%s)", self._model)
 
     def stream_turn(
         self,
@@ -88,100 +88,55 @@ class ChatClient:
         text-delta 边收边 yield(流式);tool_call 待流结束、全 args 拼好再统一 yield
         (DeepSeek 分片重组,R1)。SDK/解析异常 → yield error 事件,不抛。
         """
-        kwargs: dict[str, Any] = {
-            "model": self._model,
-            "messages": messages,
-            "temperature": self._temperature,
-            "stream": True,
-        }
-        if tools:
-            kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
-
-        try:
-            stream = self._client.chat.completions.create(**kwargs)
-        except Exception as exc:  # noqa: BLE001  网关多种异常统一收口
-            logger.warning("[chat] create(stream) 失败: %s", exc)
-            yield {"type": "error", "error": f"LLM 调用失败: {exc}"}
-            return
-        with self._stream_lock:
-            self._active_stream = stream
-
-        acc: dict[int, dict[str, Any]] = {}   # tool_call index → {id,name,args(str)}
-        finish_reason: str | None = None
-        try:
-            for chunk in stream:
-                if not getattr(chunk, "choices", None):
-                    continue
-                choice = chunk.choices[0]
-                if getattr(choice, "finish_reason", None):
-                    finish_reason = choice.finish_reason
-                delta = getattr(choice, "delta", None)
-                if delta is None:
-                    continue
-                if getattr(delta, "content", None):
-                    yield {"type": "text", "text": delta.content}
-                if getattr(delta, "tool_calls", None):
-                    _accumulate(acc, delta.tool_calls)
-        except Exception as exc:  # noqa: BLE001  流式中途断
-            logger.warning("[chat] 流式读取中断: %s", exc)
-            yield {"type": "error", "error": f"流式中断: {exc}"}
-            return
-        finally:
-            with self._stream_lock:
-                if self._active_stream is stream:
-                    self._active_stream = None
-            close = getattr(stream, "close", None)
-            if callable(close):
-                try:
-                    close()
-                except Exception as exc:  # noqa: BLE001
-                    logger.debug("[chat] 关闭 provider stream 失败: %s", exc)
-
-        # 流结束后统一 emit 累积好的 tool_calls(全 args 已拼好,DeepSeek 分片已重组)。
-        for idx in sorted(acc):
-            slot = acc[idx]
-            raw_args = (slot.get("args") or "").strip()
-            try:
-                parsed = json.loads(raw_args) if raw_args else {}
-            except json.JSONDecodeError as exc:
-                logger.warning("[chat] tool args JSON 解析失败 idx=%s: %s", idx, exc)
-                yield {"type": "error",
-                       "error": f"tool args 解析失败: {raw_args[:80]}"}
-                continue
-            yield {
-                "type": "tool_call",
-                "id": slot.get("id"),
-                "name": slot.get("name"),
-                "args": parsed if isinstance(parsed, dict) else {},
-            }
-        yield {"type": "finish", "reason": finish_reason or "stop"}
+        config = ProviderConfig(
+            model=self._model_override,
+            temperature=self._temperature,
+            timeout=self._timeout,
+            include_usage=True,
+        )
+        for event in self._provider.stream_sync(messages, tools, config):
+            yield _legacy_event(event)
 
     def abort_active_stream(self) -> None:
         """关闭当前 provider stream，使停止请求不再等待下一段模型输出."""
-        with self._stream_lock:
-            stream = self._active_stream
-        close = getattr(stream, "close", None)
-        if callable(close):
-            try:
-                close()
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("[chat] abort provider stream 失败: %s", exc)
+        self._provider.abort_active_stream()
 
 
 def _accumulate(acc: dict[int, dict[str, Any]], tool_calls: Any) -> None:
-    """把一个 chunk 的 delta.tool_calls 累积进 acc(按 index 合并分片 args)。"""
-    for tc in tool_calls:
-        idx = getattr(tc, "index", 0) or 0
-        slot = acc.setdefault(idx, {"id": None, "name": None, "args": ""})
-        if getattr(tc, "id", None):
-            slot["id"] = tc.id
-        fn = getattr(tc, "function", None)
-        if fn is not None:
-            if getattr(fn, "name", None):
-                slot["name"] = fn.name
-            if getattr(fn, "arguments", None):
-                slot["args"] += fn.arguments   # 关键:跨 chunk 拼全 args(R1)
+    """Deprecated compatibility helper for callers that imported it directly."""
+    from kss.agent.provider import _accumulate_tool_calls
+
+    _accumulate_tool_calls(acc, tool_calls)
+
+
+def _legacy_event(event: ProviderEvent) -> dict[str, Any]:
+    """Map normalized events to the v1 dictionary contract consumed by the loop."""
+    if event.type == "text":
+        return {"type": "text", "text": event.text or ""}
+    if event.type == "tool_call":
+        return {
+            "type": "tool_call",
+            "id": event.tool_call_id,
+            "name": event.tool_name,
+            "args": event.tool_arguments or {},
+        }
+    if event.type == "usage":
+        return {"type": "usage", "usage": event.usage.as_dict() if event.usage else {}}
+    if event.type == "finish":
+        return {"type": "finish", "reason": event.finish_reason or "stop"}
+    error = event.error
+    if error is not None and error.phase == "tool_arguments":
+        # Invalid model-generated arguments are a tool-call contract failure,
+        # not a provider failure. Preserve the call so the loop can append an
+        # is_error tool result and let the model repair its next attempt.
+        return {
+            "type": "tool_call",
+            "id": error.tool_call_id,
+            "name": error.tool_name,
+            "args": error.raw_arguments or "",
+            "argument_error": error.as_dict(),
+        }
+    return {"type": "error", "error": error.message if error else "未知 provider 错误"}
 
 
 __all__ = ["ChatClient", "sanitize_user_text", "LLMUnavailable"]
