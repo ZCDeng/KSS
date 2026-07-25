@@ -240,16 +240,19 @@ struct AIChatView: View {
                                 }
                             }
                             Spacer()
-                            Toggle("启用", isOn: Binding(
-                                get: { skill.enabled != false },
-                                set: { store.setAgentSkillEnabled(skill, enabled: $0) }
-                            ))
-                            .labelsHidden()
-                            Toggle("置顶", isOn: Binding(
-                                get: { store.pinnedAgentSkillIds.contains(skill.id) },
-                                set: { store.setAgentSkillPinned(skill, pinned: $0) }
-                            ))
-                            .labelsHidden()
+                            VStack(alignment: .leading, spacing: 6) {
+                                Toggle("启用", isOn: Binding(
+                                    get: { skill.enabled != false },
+                                    set: { store.setAgentSkillEnabled(skill, enabled: $0) }
+                                ))
+                                Toggle("置顶", isOn: Binding(
+                                    get: { store.pinnedAgentSkillIds.contains(skill.id) },
+                                    set: { store.setAgentSkillPinned(skill, pinned: $0) }
+                                ))
+                            }
+                            .toggleStyle(.checkbox)
+                            .font(KSSFont.themed(10.5, .medium, theme: theme))
+                            .fixedSize()
                         }
                     }
                     if !store.agentSkillDiagnostics.isEmpty {
