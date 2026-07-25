@@ -59,4 +59,3 @@ def append_jsonl(path: Path, item: dict[str, Any]) -> None:
         handle.write(line)
         handle.flush()
         os.fsync(handle.fileno())
-
