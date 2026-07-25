@@ -1,8 +1,7 @@
 import SwiftUI
 
-/// #4 U4：AI 复盘助手聊天面板。空态走 Cortex 风格 hero(光晕球 + 问候 + 突出输入卡 + 能力卡);
-/// 有消息走对话流。会话历史归 KSSStore(不放 @State,避免 .id(selectedSection) 销毁)。
-/// 全用主题 token,自适应 8 套主题。
+/// AI 复盘助手聊天面板。x.com 主题使用 600pt 投研时间线；
+/// 经典主题保留原有 hero + 卡片布局。会话状态归 KSSStore，视觉切换不重建 Agent runtime。
 struct AIChatView: View {
     @EnvironmentObject private var store: KSSStore
     @Environment(\.kssTheme) private var theme
@@ -46,33 +45,913 @@ struct AIChatView: View {
               tag: "get_orientation", prompt: "这个仓库有哪些数据和可用工具，先帮我上手"),
     ]
 
+    private var isXcom: Bool { XcomListChrome.isXcom(theme.system) }
+
     var body: some View {
         GeometryReader { geo in
-            let showsSidebar = geo.size.width >= 1040
-            let width = min(geo.size.width - (showsSidebar ? 336 : 64), 820)
-            HStack(spacing: 0) {
-                if showsSidebar {
-                    agentSidebar
-                        .frame(width: 272)
-                        .background(theme.surfaceContainer)
-                        .overlay(alignment: .trailing) { Rectangle().fill(theme.hairline).frame(width: 1) }
-                }
-                ZStack {
-                    theme.canvas.ignoresSafeArea()
-                    VStack(spacing: 0) {
-                        agentTopBar(width: width, compact: !showsSidebar)
-                        if store.chatMessages.isEmpty {
-                            heroEmptyState(width: width)
-                        } else {
-                            messageList(width: width)
-                            pinnedInputBar(width: width)
-                        }
-                    }
+            Group {
+                if isXcom {
+                    xcomSeesawShell(size: geo.size)
+                } else {
+                    classicSeesawShell(size: geo.size)
                 }
             }
             .onAppear { Task { await store.preheatRealtimeContext() } }   // U4: Seesaw 加载时预温实时上下文（R3）
             .onAppear { Task { await loadIndicatorSuggestion() } }        // U9: 空态确定性候选建议 chip
             .onAppear { Task { await store.loadAgentBootstrap() } }
+        }
+    }
+
+    private func xcomSeesawShell(size: CGSize) -> some View {
+        let showsSidebar = size.width >= 980
+        let showsUtilityPanel = (showSkillDrawer || showMemoryDrawer)
+            && size.width >= SeesawXcomChrome.minimumThreeColumnWidth
+        let reserved = (showsSidebar ? SeesawXcomChrome.sessionRailWidth : 0)
+            + (showsUtilityPanel ? SeesawXcomChrome.utilityPanelWidth : 0)
+        let available = max(420, size.width - reserved)
+        let feedWidth = min(SeesawXcomChrome.feedColumnWidth, available)
+
+        return HStack(spacing: 0) {
+            if showsSidebar {
+                xcomAgentSidebar
+                    .frame(width: SeesawXcomChrome.sessionRailWidth)
+            }
+
+            VStack(spacing: 0) {
+                xcomHeader
+                if store.chatMessages.isEmpty {
+                    xcomEmptyTimeline
+                } else {
+                    xcomMessageList
+                    xcomConversationComposer
+                }
+            }
+            .frame(width: feedWidth)
+            .frame(maxHeight: .infinity)
+            .background(theme.surface)
+            .overlay(alignment: .leading) {
+                Rectangle().fill(theme.hairline).frame(width: 1)
+            }
+            .overlay(alignment: .trailing) {
+                Rectangle().fill(theme.hairline).frame(width: 1)
+            }
+
+            if showsUtilityPanel {
+                xcomUtilityPanel
+                    .frame(width: SeesawXcomChrome.utilityPanelWidth)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .background(theme.canvas.ignoresSafeArea())
+        .overlay(alignment: .trailing) {
+            if (showSkillDrawer || showMemoryDrawer) && !showsUtilityPanel {
+                xcomUtilityPanel
+                    .frame(width: min(SeesawXcomChrome.utilityPanelWidth, size.width * 0.88))
+                    .overlay(alignment: .leading) {
+                        Rectangle().fill(theme.hairline).frame(width: 1)
+                    }
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.18), value: showSkillDrawer)
+        .animation(.easeOut(duration: 0.18), value: showMemoryDrawer)
+    }
+
+    private func classicSeesawShell(size: CGSize) -> some View {
+        let showsSidebar = size.width >= 1040
+        let width = min(size.width - (showsSidebar ? 336 : 64), 820)
+
+        return HStack(spacing: 0) {
+            if showsSidebar {
+                agentSidebar
+                    .frame(width: 272)
+                    .background(theme.surfaceContainer)
+                    .overlay(alignment: .trailing) {
+                        Rectangle().fill(theme.hairline).frame(width: 1)
+                    }
+            }
+            ZStack {
+                theme.canvas.ignoresSafeArea()
+                VStack(spacing: 0) {
+                    agentTopBar(width: width, compact: !showsSidebar)
+                    if store.chatMessages.isEmpty {
+                        heroEmptyState(width: width)
+                    } else {
+                        messageList(width: width)
+                        pinnedInputBar(width: width)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - x.com Seesaw shell
+
+    private var xcomAgentSidebar: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("会话")
+                    .font(KSSFont.themed(20, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                Spacer()
+                Button { store.createAgentSession() } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(width: 36, height: 36)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(theme.accent)
+                .help("新建会话")
+            }
+            .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+            .frame(height: SeesawXcomChrome.headerHeight)
+
+            Rectangle().fill(theme.hairline).frame(height: 1)
+
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(store.agentSessions) { session in
+                        xcomSessionRow(session)
+                    }
+                }
+            }
+
+            Rectangle().fill(theme.hairline).frame(height: 1)
+
+            VStack(spacing: 0) {
+                xcomSidebarAction(
+                    title: "技能",
+                    systemImage: "slider.horizontal.3",
+                    isSelected: showSkillDrawer
+                ) {
+                    showMemoryDrawer = false
+                    showSkillDrawer.toggle()
+                }
+                xcomSidebarAction(
+                    title: "记忆",
+                    systemImage: "tray.full",
+                    isSelected: showMemoryDrawer
+                ) {
+                    showSkillDrawer = false
+                    showMemoryDrawer.toggle()
+                }
+                if store.agentProtocolUnavailable {
+                    Label("Agent v1 暂不可用，已回退旧聊天", systemImage: "exclamationmark.triangle")
+                        .font(KSSFont.themed(12, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                        .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .background(theme.surface)
+        .overlay(alignment: .trailing) {
+            Rectangle().fill(theme.hairline).frame(width: 1)
+        }
+    }
+
+    private func xcomSessionRow(_ session: AgentSession) -> some View {
+        let selected = store.selectedAgentSessionId == session.sessionId
+        let hoverKey = "session:\(session.sessionId)"
+
+        return HStack(spacing: 12) {
+            Button { store.openAgentSession(session.sessionId) } label: {
+                Image(systemName: selected ? "bubble.left.and.bubble.right.fill" : "bubble.left")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(selected ? theme.accent : theme.textSecondary)
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
+            .help("打开会话")
+
+            TextField("会话名", text: Binding(
+                get: { store.agentSessions.first(where: { $0.sessionId == session.sessionId })?.title ?? session.title },
+                set: { store.renameAgentSession(session.sessionId, title: $0) }
+            ))
+            .textFieldStyle(.plain)
+            .font(KSSFont.themed(15, selected ? .semibold : .regular, theme: theme))
+            .foregroundStyle(theme.textPrimary)
+            .lineLimit(1)
+
+            Button { store.archiveAgentSession(session.sessionId) } label: {
+                Image(systemName: "archivebox")
+                    .font(.system(size: 14))
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
+            .help("归档会话")
+        }
+        .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+        .frame(minHeight: 52)
+        .background(
+            XcomListChrome.listSelectionFill(
+                isOn: selected,
+                isHovered: hovered == hoverKey,
+                theme: theme
+            )
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { store.openAgentSession(session.sessionId) }
+        .onHover { isHovered in
+            hovered = isHovered ? hoverKey : (hovered == hoverKey ? nil : hovered)
+        }
+    }
+
+    private func xcomSidebarAction(
+        title: String,
+        systemImage: String,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 16, weight: .medium))
+                    .frame(width: 32)
+                Text(title)
+                    .font(KSSFont.themed(15, .semibold, theme: theme))
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(theme.textSecondary)
+            }
+            .foregroundStyle(isSelected ? theme.accent : theme.textPrimary)
+            .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+            .frame(minHeight: 48)
+            .contentShape(Rectangle())
+            .background(isSelected ? theme.accentSoft : Color.clear)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var xcomHeader: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(store.agentSessions.first { $0.sessionId == store.selectedAgentSessionId }?.title ?? "Seesaw")
+                    .font(KSSFont.themed(20, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                    .lineLimit(1)
+                if let usage = store.agentContextUsage {
+                    Text(usage.displayText)
+                        .font(KSSFont.themed(12, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            Button {
+                showMemoryDrawer = false
+                showSkillDrawer.toggle()
+            } label: {
+                Label("技能", systemImage: "slider.horizontal.3")
+                    .labelStyle(.iconOnly)
+                    .font(.system(size: 15, weight: .medium))
+                    .frame(width: 36, height: 36)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(showSkillDrawer ? theme.accent : theme.textPrimary)
+            .help("技能")
+
+            Button {
+                showSkillDrawer = false
+                showMemoryDrawer.toggle()
+            } label: {
+                Label("记忆", systemImage: "tray.full")
+                    .labelStyle(.iconOnly)
+                    .font(.system(size: 15, weight: .medium))
+                    .frame(width: 36, height: 36)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(showMemoryDrawer ? theme.accent : theme.textPrimary)
+            .help("记忆")
+
+            if store.isChatStreaming {
+                Button { store.stopChatGeneration() } label: {
+                    Label("停止", systemImage: "stop.fill")
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 36, height: 36)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.red)
+                .help("停止")
+            }
+        }
+        .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+        .frame(height: SeesawXcomChrome.headerHeight)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(theme.hairline).frame(height: 1)
+        }
+    }
+
+    private var xcomEmptyTimeline: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                xcomComposer
+
+                if store.isCredentialConfigured("llm") == false {
+                    VStack(spacing: 0) {
+                        MissingCredentialCard(sourceDisplayName: "LLM key") {
+                            store.openSettings(category: .llm)
+                        }
+                        .padding(SeesawXcomChrome.rowHorizontalPadding)
+                        Rectangle().fill(theme.hairline).frame(height: 1)
+                    }
+                }
+
+                if indicatorSuggestion?.family != nil {
+                    xcomIndicatorSuggestion
+                }
+
+                HStack {
+                    Text("开始研究")
+                        .font(KSSFont.themed(15, .bold, theme: theme))
+                        .foregroundStyle(theme.textPrimary)
+                    Spacer()
+                    Text("选择一个入口，或直接提问")
+                        .font(KSSFont.themed(13, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+                .frame(minHeight: 48)
+                .overlay(alignment: .bottom) {
+                    Rectangle().fill(theme.hairline).frame(height: 1)
+                }
+
+                ForEach(capabilities) { capability in
+                    xcomCapabilityRow(capability)
+                }
+            }
+        }
+        .background(theme.surface)
+    }
+
+    private var xcomComposer: some View {
+        HStack(alignment: .top, spacing: 12) {
+            xcomIdentityIcon(systemImage: "sparkles", accent: theme.accent)
+
+            VStack(alignment: .leading, spacing: 12) {
+                TextField("问问盘面…", text: $input, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(KSSFont.themed(15, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                    .lineLimit(2...6)
+                    .disabled(store.isChatStreaming)
+                    .onSubmit(send)
+
+                HStack(spacing: 8) {
+                    Label("只解释 · 不荐买卖", systemImage: "shield.lefthalf.filled")
+                        .font(KSSFont.themed(13, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                    Spacer()
+                    if store.isChatStreaming {
+                        xcomStopButton
+                    } else {
+                        xcomSendButton
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+        .padding(.vertical, SeesawXcomChrome.rowVerticalPadding)
+        .frame(minHeight: 116, alignment: .top)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(theme.hairline).frame(height: 1)
+        }
+    }
+
+    @ViewBuilder
+    private var xcomIndicatorSuggestion: some View {
+        if let suggestion = indicatorSuggestion, let family = suggestion.family {
+            let label = Self.indicatorFamilyLabels[family] ?? family
+            Button {
+                let reason = suggestion.reason.map { "：\($0)" } ?? ""
+                input = "帮我回测 \(label)\(reason)"
+                send()
+            } label: {
+                HStack(alignment: .top, spacing: 12) {
+                    xcomIdentityIcon(systemImage: "sparkles", accent: theme.accent)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 5) {
+                            Text("Seesaw")
+                                .font(KSSFont.themed(15, .bold, theme: theme))
+                            Text("建议")
+                                .font(KSSFont.themed(13, theme: theme))
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                        Text("研究一下\(label)")
+                            .font(KSSFont.themed(15, theme: theme))
+                            .foregroundStyle(theme.textPrimary)
+                        if let reason = suggestion.reason, !reason.isEmpty {
+                            Text(reason)
+                                .font(KSSFont.themed(13, theme: theme))
+                                .foregroundStyle(theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+                        .padding(.top, 3)
+                }
+                .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+                .padding(.vertical, SeesawXcomChrome.rowVerticalPadding)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(store.isChatStreaming)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(theme.hairline).frame(height: 1)
+            }
+        }
+    }
+
+    private func xcomCapabilityRow(_ capability: Capability) -> some View {
+        let hoverKey = "capability:\(capability.tag)"
+
+        return Button {
+            input = capability.prompt
+            send()
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                xcomIdentityIcon(systemImage: capability.icon, accent: theme.accent)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(capability.title)
+                            .font(KSSFont.themed(15, .bold, theme: theme))
+                            .foregroundStyle(theme.textPrimary)
+                        Text(capability.tag)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(theme.textSecondary)
+                            .lineLimit(1)
+                    }
+                    Text(capability.desc)
+                        .font(KSSFont.themed(15, theme: theme))
+                        .foregroundStyle(theme.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(theme.textSecondary)
+                    .padding(.top, 4)
+            }
+            .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+            .padding(.vertical, SeesawXcomChrome.rowVerticalPadding)
+            .frame(minHeight: 78, alignment: .top)
+            .contentShape(Rectangle())
+            .background(hovered == hoverKey ? theme.surfaceContainer : Color.clear)
+        }
+        .buttonStyle(.plain)
+        .disabled(store.isChatStreaming)
+        .onHover { isHovered in
+            hovered = isHovered ? hoverKey : (hovered == hoverKey ? nil : hovered)
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(theme.hairline).frame(height: 1)
+        }
+    }
+
+    private var xcomMessageList: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(store.chatMessages) { message in
+                        xcomMessageCell(message)
+                            .id(message.id)
+                    }
+                    if let tool = store.chatToolInProgress {
+                        xcomToolRow(tool)
+                            .id("tool-progress")
+                    }
+                }
+            }
+            .onChange(of: store.chatMessages.last?.text) { _, _ in
+                if let last = store.chatMessages.last {
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        proxy.scrollTo(last.id, anchor: .bottom)
+                    }
+                }
+            }
+        }
+    }
+
+    private func xcomMessageCell(_ message: ChatMessage) -> some View {
+        let isUser = message.role == .user
+
+        return HStack(alignment: .top, spacing: 12) {
+            xcomIdentityIcon(
+                systemImage: isUser ? "person.fill" : "sparkles",
+                accent: isUser ? theme.textSecondary : theme.accent
+            )
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 5) {
+                    Text(isUser ? "你" : "Seesaw")
+                        .font(KSSFont.themed(15, .bold, theme: theme))
+                        .foregroundStyle(theme.textPrimary)
+                    Text(isUser ? "提问" : "研究助手")
+                        .font(KSSFont.themed(13, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                    Spacer()
+                }
+
+                if message.text.isEmpty && store.isChatStreaming {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("思考中…")
+                            .font(KSSFont.themed(13, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                } else {
+                    markdownText(message.text)
+                        .font(KSSFont.themed(15, theme: theme))
+                        .foregroundStyle(message.isError ? Color.red : theme.textPrimary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if message.numbersUnverified && store.isChatStreaming {
+                    Label("数字校验中（以工具真值为准）", systemImage: "exclamationmark.triangle")
+                        .font(KSSFont.themed(13, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                }
+
+                if message.evidenceSummary.hasEvidence || message.evidenceSummary.provider != nil {
+                    EvidenceDrawerView(summary: message.evidenceSummary, drawer: message.evidenceDrawer)
+                        .padding(.top, 4)
+                }
+
+                if let chart = message.chartAttachment, !chart.bars.isEmpty {
+                    ChartWebView(points: [], intradayBars: chart.bars)
+                        .frame(height: 300)
+                        .background(theme.chartSurface)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .padding(.top, 6)
+                }
+            }
+        }
+        .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+        .padding(.vertical, SeesawXcomChrome.rowVerticalPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button("记住这条消息") { store.proposeAgentMemory(message.text) }
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(theme.hairline).frame(height: 1)
+        }
+    }
+
+    private func xcomToolRow(_ tool: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            xcomIdentityIcon(systemImage: "wrench.and.screwdriver", accent: theme.accent)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("工具调用")
+                    .font(KSSFont.themed(15, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("正在调用 \(tool)…")
+                        .font(.system(size: 13, design: .monospaced))
+                        .foregroundStyle(theme.textSecondary)
+                }
+            }
+            Spacer()
+        }
+        .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+        .padding(.vertical, SeesawXcomChrome.rowVerticalPadding)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(theme.hairline).frame(height: 1)
+        }
+    }
+
+    private var xcomConversationComposer: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let provider = latestResearchProvider {
+                HStack {
+                    Label(
+                        provider == "disabled" ? "外部研究不可用" : "外部研究 · \(provider)",
+                        systemImage: provider == "disabled" ? "wifi.slash" : "link"
+                    )
+                    .font(KSSFont.themed(12, .semibold, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                    Spacer()
+                }
+                .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+                .padding(.top, 8)
+            }
+
+            HStack(alignment: .bottom, spacing: 10) {
+                TextField("继续问…", text: $input, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(KSSFont.themed(15, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                    .lineLimit(1...5)
+                    .disabled(store.isChatStreaming)
+                    .onSubmit(send)
+                if store.isChatStreaming {
+                    xcomStopButton
+                } else {
+                    xcomSendButton
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: 18))
+            .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+            .padding(.vertical, 10)
+
+            Text("AI 仅解释与复盘，不给个性化买卖建议")
+                .font(KSSFont.themed(11, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 8)
+        }
+        .background(theme.surface)
+        .overlay(alignment: .top) {
+            Rectangle().fill(theme.hairline).frame(height: 1)
+        }
+    }
+
+    private var xcomSendButton: some View {
+        Button(action: send) {
+            Text("发送")
+                .font(KSSFont.themed(13, .bold, theme: theme))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .frame(height: 32)
+                .background(canSend ? theme.accent : theme.accent.opacity(0.4), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(!canSend)
+    }
+
+    private var xcomStopButton: some View {
+        Button { store.stopChatGeneration() } label: {
+            Label("停止", systemImage: "stop.fill")
+                .font(KSSFont.themed(13, .bold, theme: theme))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .frame(height: 32)
+                .background(Color.red, in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func xcomIdentityIcon(systemImage: String, accent: Color) -> some View {
+        Circle()
+            .fill(accent.opacity(0.12))
+            .frame(width: SeesawXcomChrome.avatarSize, height: SeesawXcomChrome.avatarSize)
+            .overlay {
+                Image(systemName: systemImage)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(accent)
+            }
+    }
+
+    @ViewBuilder
+    private var xcomUtilityPanel: some View {
+        if showSkillDrawer {
+            xcomSkillPanel
+        } else if showMemoryDrawer {
+            xcomMemoryPanel
+        }
+    }
+
+    private var xcomSkillPanel: some View {
+        VStack(spacing: 0) {
+            xcomPanelHeader(title: "技能管理", systemImage: "arrow.clockwise") {
+                store.reloadAgentSkills()
+            } close: {
+                showSkillDrawer = false
+            }
+
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(store.agentSkills) { skill in
+                        HStack(alignment: .top, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(skill.name)
+                                    .font(KSSFont.themed(15, .bold, theme: theme))
+                                    .foregroundStyle(theme.textPrimary)
+                                if let description = skill.description, !description.isEmpty {
+                                    Text(description)
+                                        .font(KSSFont.themed(13, theme: theme))
+                                        .foregroundStyle(theme.textSecondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+
+                            Spacer(minLength: 8)
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Toggle("启用", isOn: Binding(
+                                    get: { skill.enabled != false },
+                                    set: { store.setAgentSkillEnabled(skill, enabled: $0) }
+                                ))
+                                Toggle("置顶", isOn: Binding(
+                                    get: { store.pinnedAgentSkillIds.contains(skill.id) },
+                                    set: { store.setAgentSkillPinned(skill, pinned: $0) }
+                                ))
+                            }
+                            .toggleStyle(.checkbox)
+                            .font(KSSFont.themed(13, .semibold, theme: theme))
+                            .foregroundStyle(theme.textPrimary)
+                            .fixedSize()
+                        }
+                        .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+                        .padding(.vertical, SeesawXcomChrome.rowVerticalPadding)
+                        .overlay(alignment: .bottom) {
+                            Rectangle().fill(theme.hairline).frame(height: 1)
+                        }
+                    }
+
+                    if !store.agentSkillDiagnostics.isEmpty {
+                        HStack {
+                            Text("诊断")
+                                .font(KSSFont.themed(15, .bold, theme: theme))
+                            Spacer()
+                            Text("\(store.agentSkillDiagnostics.count)")
+                                .font(KSSFont.themed(13, theme: theme))
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                        .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+                        .frame(minHeight: 48)
+                        .overlay(alignment: .bottom) {
+                            Rectangle().fill(theme.hairline).frame(height: 1)
+                        }
+
+                        ForEach(store.agentSkillDiagnostics) { diagnostic in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(diagnostic.code)
+                                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(Color.red)
+                                Text(diagnostic.message)
+                                    .font(KSSFont.themed(13, theme: theme))
+                                    .foregroundStyle(theme.textSecondary)
+                            }
+                            .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .overlay(alignment: .bottom) {
+                                Rectangle().fill(theme.hairline).frame(height: 1)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .background(theme.surface)
+    }
+
+    private var xcomMemoryPanel: some View {
+        VStack(spacing: 0) {
+            xcomPanelHeader(title: "记忆", systemImage: "magnifyingglass") {
+                Task { await store.loadAgentMemories(query: memorySearch) }
+                store.recallAgentSources(query: memorySearch)
+            } close: {
+                showMemoryDrawer = false
+            }
+
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(theme.textSecondary)
+                TextField("搜索记忆或来源", text: $memorySearch)
+                    .textFieldStyle(.plain)
+                    .font(KSSFont.themed(14, theme: theme))
+                    .onSubmit {
+                        Task { await store.loadAgentMemories(query: memorySearch) }
+                        store.recallAgentSources(query: memorySearch)
+                    }
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 38)
+            .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: 19))
+            .padding(SeesawXcomChrome.rowHorizontalPadding)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(theme.hairline).frame(height: 1)
+            }
+
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(store.agentMemoryCandidates) { candidate in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("待确认")
+                                .font(KSSFont.themed(13, .bold, theme: theme))
+                                .foregroundStyle(theme.accent)
+                            Text(candidate.text)
+                                .font(KSSFont.themed(15, theme: theme))
+                                .foregroundStyle(theme.textPrimary)
+                            HStack {
+                                Button("记住") { store.resolveMemoryCandidate(candidate, approved: true) }
+                                    .buttonStyle(.borderedProminent)
+                                Button("忽略") { store.resolveMemoryCandidate(candidate, approved: false) }
+                                    .buttonStyle(.borderless)
+                            }
+                            .font(KSSFont.themed(13, .semibold, theme: theme))
+                        }
+                        .padding(SeesawXcomChrome.rowHorizontalPadding)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .overlay(alignment: .bottom) {
+                            Rectangle().fill(theme.hairline).frame(height: 1)
+                        }
+                    }
+
+                    ForEach(store.agentMemories) { memory in
+                        HStack(alignment: .top, spacing: 10) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(memory.text)
+                                    .font(KSSFont.themed(15, theme: theme))
+                                    .foregroundStyle(theme.textPrimary)
+                                if let source = memory.source, !source.isEmpty {
+                                    Text(source)
+                                        .font(KSSFont.themed(12, theme: theme))
+                                        .foregroundStyle(theme.textSecondary)
+                                }
+                            }
+                            Spacer()
+                            Button { store.archiveAgentMemory(memory) } label: {
+                                Label("归档", systemImage: "archivebox").labelStyle(.iconOnly)
+                            }
+                            Button { store.deleteAgentMemory(memory) } label: {
+                                Label("删除", systemImage: "trash").labelStyle(.iconOnly)
+                            }
+                            .foregroundStyle(Color.red)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(SeesawXcomChrome.rowHorizontalPadding)
+                        .overlay(alignment: .bottom) {
+                            Rectangle().fill(theme.hairline).frame(height: 1)
+                        }
+                    }
+
+                    ForEach(store.agentSourceRecalls) { recall in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(recall.title)
+                                .font(KSSFont.themed(15, .bold, theme: theme))
+                                .foregroundStyle(theme.textPrimary)
+                            if let excerpt = recall.excerpt, !excerpt.isEmpty {
+                                Text(excerpt)
+                                    .font(KSSFont.themed(13, theme: theme))
+                                    .foregroundStyle(theme.textSecondary)
+                            }
+                        }
+                        .padding(SeesawXcomChrome.rowHorizontalPadding)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .overlay(alignment: .bottom) {
+                            Rectangle().fill(theme.hairline).frame(height: 1)
+                        }
+                    }
+                }
+            }
+        }
+        .background(theme.surface)
+    }
+
+    private func xcomPanelHeader(
+        title: String,
+        systemImage: String,
+        action: @escaping () -> Void,
+        close: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(KSSFont.themed(20, .bold, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+            Spacer()
+            Button(action: action) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 15, weight: .medium))
+                    .frame(width: 36, height: 36)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(theme.accent)
+            Button(action: close) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 36, height: 36)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(theme.textPrimary)
+        }
+        .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+        .frame(height: SeesawXcomChrome.headerHeight)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(theme.hairline).frame(height: 1)
         }
     }
 
@@ -592,7 +1471,7 @@ struct AIChatView: View {
                         EvidenceDrawerView(summary: msg.evidenceSummary, drawer: msg.evidenceDrawer)
                             .padding(.top, 2)
                     }
-                    // U4: K 线附件 (R8) — intraday-snapshot 工具返回 bar 数据后渲染
+                    // U4: K 线附件 (R8) — intraday-snapshot 工具返回后渲染 K 线 bubble
                     if let chart = msg.chartAttachment, !chart.bars.isEmpty {
                         ChartWebView(points: [], intradayBars: chart.bars)
                             .frame(height: 300)
@@ -654,7 +1533,8 @@ struct AIChatView: View {
     }
 
     private func send() {
-        let text = input
+        let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !store.isChatStreaming else { return }
         input = ""
         store.sendChat(text)
     }

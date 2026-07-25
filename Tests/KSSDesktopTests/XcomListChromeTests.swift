@@ -33,4 +33,12 @@ final class XcomListChromeTests: XCTestCase {
         let off = XcomListChrome.listSelectionFill(isOn: false, isHovered: false, theme: theme)
         XCTAssertNotEqual(String(describing: hovered), String(describing: off))
     }
+
+    func testSeesawTimelineGeometryMatchesXcomReference() {
+        XCTAssertEqual(SeesawXcomChrome.feedColumnWidth, 600)
+        XCTAssertEqual(SeesawXcomChrome.sessionRailWidth, 320)
+        XCTAssertEqual(SeesawXcomChrome.headerHeight, 53)
+        XCTAssertEqual(SeesawXcomChrome.avatarSize, 40)
+        XCTAssertEqual(SeesawXcomChrome.minimumThreeColumnWidth, 1320)
+    }
 }

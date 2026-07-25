@@ -39,6 +39,20 @@ enum XcomListChrome {
     }
 }
 
+/// Seesaw 在 x.com 主题下的时间线几何。与通用 list/detail chrome 分开，
+/// 避免经典主题或其他工作区被 600pt 阅读列约束。
+enum SeesawXcomChrome {
+    static let feedColumnWidth: CGFloat = 600
+    static let sessionRailWidth: CGFloat = 320
+    static let utilityPanelWidth: CGFloat = 400
+    static let headerHeight: CGFloat = 53
+    static let avatarSize: CGFloat = 40
+    static let rowHorizontalPadding: CGFloat = 16
+    static let rowVerticalPadding: CGFloat = 12
+    static let minimumThreeColumnWidth =
+        sessionRailWidth + feedColumnWidth + utilityPanelWidth
+}
+
 /// xcom 底蓝下划线 Tab；经典调用方仍用 `KSSSegmentedControl`。
 struct XcomUnderlineTabBar<Key: Hashable>: View {
     @Environment(\.kssTheme) private var theme

@@ -26,7 +26,12 @@ swift build $SWIFT_BUILD_FLAGS
 BUILD_BIN_PATH="$(swift build $SWIFT_BUILD_FLAGS --show-bin-path)"
 BUILD_BINARY="$BUILD_BIN_PATH/$APP_NAME"
 
-rm -rf "$APP_BUNDLE"
+# Release packaging marks bundled Skill resources read-only. A later dev build
+# may reuse the same dist path, so restore owner write access before replacing it.
+if [ -d "$APP_BUNDLE" ]; then
+  chmod -R u+w "$APP_BUNDLE" 2>/dev/null || true
+  rm -rf "$APP_BUNDLE"
+fi
 mkdir -p "$APP_MACOS"
 APP_RESOURCES="$APP_CONTENTS/Resources"
 mkdir -p "$APP_RESOURCES"
