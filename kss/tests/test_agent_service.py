@@ -246,3 +246,206 @@ def test_service_second_compaction_iterates_from_previous_summary(monkeypatch, t
         assert len(summarize_sources) == 2
 
     asyncio.run(scenario())
+
+
+def test_service_preserves_structured_recall_and_wires_skill_resource(
+    monkeypatch, tmp_path
+):
+    async def scenario():
+        skill_dir = tmp_path / ".agents" / "skills" / "demo"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: demo\ndescription: Demo skill\n---\n正文",
+            encoding="utf-8",
+        )
+        (skill_dir / "guide.txt").write_text("分页资源", encoding="utf-8")
+
+        service = KSSAgentService(tmp_path, tmp_path)
+        memory = service.memories.propose(
+            "thesis",
+            "旧研究判断需要重新核实",
+            source_session="source-session",
+            source_entry="source-entry",
+        )
+        service.memories.approve(memory.id)
+        captured = {}
+
+        async def fake_run_turn(messages, emit, request_write, **kwargs):
+            registry = kwargs["tool_registry"]
+            read_handler = registry.handler("read_skill_resource")
+            assert read_handler is not None
+            captured["resource"] = read_handler(
+                {
+                    "skill_id": "demo",
+                    "path": "guide.txt",
+                    "offset": 0,
+                    "max_chars": 4,
+                }
+            )
+            propose_handler = registry.handler("propose_memory")
+            assert propose_handler is not None
+            captured["candidate"] = await propose_handler(
+                {
+                    "kind": "decision",
+                    "text": "后续使用真实 user message 作为来源",
+                    "source": "agent",
+                }
+            )
+            await emit({"type": "chunk", "text": "回答"})
+            await emit({"type": "done", "reason": "stop"})
+            return chat_loop.TurnTranscript(
+                messages=[
+                    *messages,
+                    {"role": "assistant", "content": "回答"},
+                ],
+                run_state={"status": "done", "reason": "stop"},
+            )
+
+        monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+        events = []
+
+        async def no_write(**kwargs):
+            raise AssertionError("write gate should not be used")
+
+        await service.run_turn(
+            "structured",
+            "client-structured",
+            "需要重新核实什么",
+            events.append,
+            no_write,
+        )
+
+        recalls = next(
+            event.payload["recalls"] for event in events if event.type == "recall"
+        )
+        assert recalls[0]["id"] == memory.id
+        assert recalls[0]["source_session"] == "source-session"
+        assert recalls[0]["source_entry"] == "source-entry"
+        assert recalls[0]["review_required"] is True
+        assert recalls[0]["score"] > 0
+        persisted_recall = next(
+            entry["payload"]["items"]
+            for entry in service.sessions._read_entries("structured")
+            if entry["type"] == "recall"
+        )
+        assert persisted_recall == recalls
+
+        resource = captured["resource"]
+        assert resource["content"] == "分页资源"
+        assert resource["size_bytes"] == len("分页资源".encode("utf-8"))
+        assert resource["provenance"] == "skill_resource"
+
+        candidate = captured["candidate"]["memory"]
+        user_message = service.sessions.read_messages("structured")[0]
+        assert candidate["source_entry"] == user_message.id
+        assert candidate["source_entry"] != next(
+            event.run_id for event in events if event.type == "agent_start"
+        )
+
+    asyncio.run(scenario())
+
+
+def test_service_applies_steering_then_follow_up_in_one_settled_run(
+    monkeypatch, tmp_path
+):
+    async def scenario():
+        service = KSSAgentService(tmp_path, tmp_path)
+        provider_ready = asyncio.Event()
+        consume_queue = asyncio.Event()
+
+        async def fake_run_turn(messages, emit, request_write, **kwargs):
+            provider_ready.set()
+            await consume_queue.wait()
+            transcript_messages = list(messages)
+
+            steering = await kwargs["take_steering"]()
+            assert steering is not None
+            assert [item["content"] for item in steering] == ["补充约束"]
+            transcript_messages.extend(steering)
+            await emit({"type": "turn_start", "step": 0, "kind": "initial"})
+            await emit({"type": "message_start", "role": "assistant"})
+            await emit({"type": "chunk", "text": "已接收补充"})
+            await emit({"type": "message_end", "role": "assistant"})
+            await emit({"type": "turn_end", "reason": "steering"})
+            transcript_messages.append(
+                {"role": "assistant", "content": "已接收补充"}
+            )
+
+            follow_up = await kwargs["take_follow_up"]()
+            assert follow_up is not None
+            assert follow_up["content"] == "然后呢"
+            transcript_messages.append(follow_up)
+            await emit({"type": "turn_start", "step": 1, "kind": "follow_up"})
+            await emit({"type": "message_start", "role": "assistant"})
+            await emit({"type": "chunk", "text": "继续回答"})
+            await emit({"type": "message_end", "role": "assistant"})
+            await emit({"type": "turn_end", "reason": "stop"})
+            transcript_messages.append(
+                {"role": "assistant", "content": "继续回答"}
+            )
+            await emit({"type": "done", "reason": "stop"})
+            return chat_loop.TurnTranscript(
+                messages=transcript_messages,
+                run_state={"status": "done", "reason": "stop"},
+            )
+
+        monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+        events = []
+
+        async def no_write(**kwargs):
+            raise AssertionError("write gate should not be used")
+
+        task = asyncio.create_task(
+            service.run_turn(
+                "queued",
+                "client-initial",
+                "初始问题",
+                events.append,
+                no_write,
+            )
+        )
+        await provider_ready.wait()
+        run_id = service.runtime.active_run_id("queued")
+        assert run_id is not None
+
+        first = service.steer(run_id, "client-steer", "补充约束")
+        duplicate = service.steer(run_id, "client-steer", "不会重复")
+        follow = service.follow_up(run_id, "client-follow", "然后呢")
+        assert first["item"]["id"] == duplicate["item"]["id"]
+        assert first["item"]["mode"] == "steering"
+        assert follow["item"]["mode"] == "follow_up"
+
+        consume_queue.set()
+        result = await task
+        assert result.status == "completed"
+        assert [event.type for event in events].count("agent_start") == 1
+        assert [event.type for event in events].count("agent_end") == 1
+        assert [event.type for event in events].count("turn_start") == 2
+        assert [event.type for event in events].count("turn_end") == 2
+        assert [
+            event.payload["item"]["mode"]
+            for event in events
+            if event.type == "queue_update"
+            and event.payload.get("operation") == "applied"
+        ] == ["steering", "follow_up"]
+
+        messages = service.sessions.read_messages("queued")
+        assert [message.content for message in messages if message.role == "user"] == [
+            "初始问题",
+            "补充约束",
+            "然后呢",
+        ]
+        queue_events = [
+            entry["type"]
+            for entry in service.sessions._read_entries("queued")
+            if entry["type"].startswith("queue_")
+        ]
+        assert queue_events == [
+            "queue_added",
+            "queue_added",
+            "queue_applied",
+            "queue_applied",
+        ]
+        assert service.queued_inputs(run_id=run_id) == []
+
+    asyncio.run(scenario())

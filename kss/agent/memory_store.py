@@ -36,6 +36,88 @@ class MemoryRecord:
         return self.content
 
 
+class MemoryRecall(str):
+    """结构化召回结果，同时保持旧字符串调用兼容.
+
+    ``MemoryRecall`` 的字符串值就是受长度限制的 ``injection_text``，因此旧的
+    context assembler、JSON 编码和 ``"\n".join(...)`` 不需要同步迁移。新协议
+    应读取结构化属性或 :meth:`as_dict`，而不是生成假的 recall ID/来源。
+    """
+
+    id: str
+    kind: MemoryKind
+    content: str
+    source_session: str | None
+    source_entry: str | None
+    tags: tuple[str, ...]
+    created_at: float
+    expires_at: float | None
+    review_required: bool
+    score: float
+    injection_text: str
+
+    def __new__(
+        cls,
+        *,
+        id: str,
+        kind: MemoryKind,
+        content: str,
+        source_session: str | None,
+        source_entry: str | None,
+        tags: tuple[str, ...],
+        created_at: float,
+        expires_at: float | None,
+        review_required: bool,
+        score: float,
+        injection_text: str,
+    ) -> "MemoryRecall":
+        instance = super().__new__(cls, injection_text)
+        instance.id = id
+        instance.kind = kind
+        instance.content = content
+        instance.source_session = source_session
+        instance.source_entry = source_entry
+        instance.tags = tags
+        instance.created_at = created_at
+        instance.expires_at = expires_at
+        instance.review_required = review_required
+        instance.score = score
+        instance.injection_text = injection_text
+        return instance
+
+    @property
+    def source(self) -> str | None:
+        """返回适合 UI 的真实来源，不伪造“长期记忆”标签."""
+        if self.source_entry:
+            return f"{self.source_session or 'session'} · {self.source_entry}"
+        return self.source_session
+
+    @property
+    def expiry(self) -> float | None:
+        """``expires_at`` 的协议友好别名."""
+        return self.expires_at
+
+    def as_dict(self) -> dict[str, Any]:
+        """转换为稳定协议字段."""
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "content": self.content,
+            "text": self.content,
+            "source": self.source,
+            "source_session": self.source_session,
+            "source_entry": self.source_entry,
+            "tags": list(self.tags),
+            "created_at": self.created_at,
+            "expires_at": self.expires_at,
+            "expiry": self.expiry,
+            "review_required": self.review_required,
+            "score": self.score,
+            "injection_text": self.injection_text,
+            "excerpt": self.injection_text,
+        }
+
+
 class MemoryStore:
     """append-only 记忆库.
 
@@ -128,11 +210,12 @@ class MemoryStore:
         matched = [record for record in records if query_lower in record.text.lower()]
         return sorted(matched, key=lambda item: (item.updated_at, item.id), reverse=True)[:limit]
 
-    def recall(self, query: str, *, now_ms: int, limit: int = 5) -> list[str]:
-        """召回适合注入的短记忆.
+    def recall(self, query: str, *, now_ms: int, limit: int = 5) -> list[MemoryRecall]:
+        """召回适合注入的结构化短记忆.
 
         Returns:
-            最多五条、每条不超过 250 字符的记忆文本。
+            最多五条 ``MemoryRecall``；其字符串值/``injection_text`` 不超过
+            250 字符。thesis 永远带“待复核”前缀。
         """
         capped_limit = min(5, max(0, limit))
         records = [
@@ -151,25 +234,53 @@ class MemoryStore:
         ]
         ranked = rank(candidates, query=query, now_ms=now_ms, top_k=capped_limit)
         by_id = {record.id: record for record in records}
-        return [self._cap(by_id[item.id].text, 250) for item in ranked]
+        recalls: list[MemoryRecall] = []
+        for item in ranked:
+            record = by_id[item.id]
+            review_required = record.kind == "thesis" or bool(
+                (record.metadata or {}).get("review_required")
+            )
+            prefix = "【待复核的历史判断】" if review_required else ""
+            injection_text = self._cap(prefix + record.text, 250)
+            recalls.append(
+                MemoryRecall(
+                    id=record.id,
+                    kind=record.kind,
+                    content=record.content,
+                    source_session=record.source_session,
+                    source_entry=record.source_entry,
+                    tags=record.tags,
+                    created_at=record.created_at,
+                    expires_at=record.expires_at,
+                    review_required=review_required,
+                    score=float(item.score),
+                    injection_text=injection_text,
+                )
+            )
+        return recalls
 
     def _records(self) -> dict[str, MemoryRecord]:
         records: dict[str, MemoryRecord] = {}
         for entry in read_jsonl_repair_tail(self.path):
             payload = entry.get("payload")
             if isinstance(payload, dict):
-                records[payload["id"]] = MemoryRecord(
-                    id=payload["id"],
-                    kind=payload["kind"],
+                memory_id = str(payload.get("id") or entry.get("parent_id") or entry.get("id"))
+                created_at = float(
+                    payload.get("created_at", entry.get("timestamp", utc_timestamp()))
+                )
+                metadata = payload.get("metadata")
+                records[memory_id] = MemoryRecord(
+                    id=memory_id,
+                    kind=payload.get("kind", "preference"),
                     content=payload.get("content", payload.get("text", "")),
                     source_session=payload.get("source_session"),
                     source_entry=payload.get("source_entry"),
-                    tags=tuple(payload.get("tags", ())),
-                    status=payload["status"],
-                    created_at=payload["created_at"],
-                    updated_at=payload["updated_at"],
+                    tags=self._coerce_tags(payload.get("tags")),
+                    status=payload.get("status", "approved"),
+                    created_at=created_at,
+                    updated_at=float(payload.get("updated_at", created_at)),
                     expires_at=payload.get("expires_at"),
-                    metadata=payload.get("metadata", {}),
+                    metadata=metadata if isinstance(metadata, dict) else {},
                 )
         return records
 
@@ -247,3 +358,11 @@ class MemoryStore:
         if kind == "thesis":
             return now + 30 * 24 * 60 * 60
         return None
+
+    def _coerce_tags(self, value: Any) -> tuple[str, ...]:
+        """兼容旧 JSONL 的缺失、单字符串或列表 tags."""
+        if isinstance(value, str):
+            return (value,)
+        if isinstance(value, (list, tuple)):
+            return tuple(str(item) for item in value)
+        return ()

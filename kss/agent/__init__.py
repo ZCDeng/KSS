@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from kss.agent.context import ContextAssembler
 from kss.agent.events import AbortToken, EventSequencer
-from kss.agent.memory_store import MemoryRecord, MemoryStore
+from kss.agent.memory_store import MemoryRecall, MemoryRecord, MemoryStore
 from kss.agent.provider import (
     ModelCapabilities,
     OpenAICompatibleProvider,
@@ -16,7 +16,13 @@ from kss.agent.provider import (
 from kss.agent.runtime import AgentRuntime, RunAdmission, RuntimeBusyError, RuntimeTurn
 from kss.agent.service import DuplicateTurn, KSSAgentService
 from kss.agent.session_store import RunAdmissionError, SessionStore
-from kss.agent.skills import SkillDiagnostic, SkillInfo, SkillManager
+from kss.agent.skills import (
+    SkillDiagnostic,
+    SkillInfo,
+    SkillManager,
+    SkillResource,
+    SkillResourceError,
+)
 from kss.agent.types import (
     AgentEvent,
     AgentMessage,
@@ -39,6 +45,7 @@ __all__ = [
     "DuplicateTurn",
     "EventSequencer",
     "MemoryRecord",
+    "MemoryRecall",
     "MemoryStore",
     "KSSAgentService",
     "ModelCapabilities",
@@ -57,6 +64,8 @@ __all__ = [
     "SkillDiagnostic",
     "SkillInfo",
     "SkillManager",
+    "SkillResource",
+    "SkillResourceError",
     "ToolCall",
     "convert_to_llm",
 ]

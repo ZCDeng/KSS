@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 from concurrent.futures import ThreadPoolExecutor
 
+import pytest
+
 from kss.agent import AgentMessage, AgentState, SessionStore, ToolCall
 from kss.agent.context import CompactionRecord
+from kss.agent.session_store import QueuedInputLimitError
 
 
 def test_session_store_crud_open_does_not_interrupt_normal_session(tmp_path):
@@ -56,6 +59,13 @@ def test_session_store_recovery_appends_run_terminal_only_once(tmp_path):
         client_turn_id="client-once",
         owner_pid=-1,
     )
+    queued = store.add_queued_input(
+        "recover-once",
+        "run-once",
+        "follow_up",
+        "queued-after-crash",
+        "恢复后继续",
+    )
 
     first = store.get_session("recover-once")
     second = store.get_session("recover-once")
@@ -81,6 +91,14 @@ def test_session_store_recovery_appends_run_terminal_only_once(tmp_path):
     assert len(terminal) == 1
     assert terminal[0]["payload"]["status"] == "interrupted"
     assert len(recovery_status) == 1
+    restored = [
+        entry
+        for entry in entries
+        if entry["type"] == "queue_restored"
+        and entry["payload"]["id"] == queued.id
+    ]
+    assert len(restored) == 1
+    assert store.queued_inputs(session_id="recover-once")[0].status == "restored"
 
 
 def test_session_store_persists_client_turn_id_and_queries_terminal_statuses(tmp_path):
@@ -118,6 +136,201 @@ def test_session_store_persists_client_turn_id_and_queries_terminal_statuses(tmp
     assert interrupted is not None
     assert interrupted["status"] == "interrupted"
     assert interrupted["reason"] == "abort"
+
+
+def test_queue_add_is_idempotent_and_limit_is_cumulative(tmp_path):
+    store = SessionStore(tmp_path)
+    store.create_session(session_id="queue-limit")
+    store.start_run("queue-limit", run_id="run-1", client_turn_id="turn-1")
+
+    first = store.add_queued_input(
+        "queue-limit", "run-1", "steering", "message-1", "先查风险"
+    )
+    duplicate = store.add_queued_input(
+        "queue-limit", "run-1", "steering", "message-1", "不同正文也不重复"
+    )
+    assert duplicate == first
+
+    store.discard_queued_input("queue-limit", first.id)
+    for index in range(2, 9):
+        store.add_queued_input(
+            "queue-limit",
+            "run-1",
+            "follow_up",
+            f"message-{index}",
+            f"问题 {index}",
+        )
+    with pytest.raises(QueuedInputLimitError):
+        store.add_queued_input(
+            "queue-limit", "run-1", "follow_up", "message-9", "超限"
+        )
+
+    path = tmp_path / "storage" / "agent" / "sessions" / "queue-limit.jsonl"
+    entries = [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert sum(entry["type"] == "queue_added" for entry in entries) == 8
+
+
+def test_queue_reader_normalizes_legacy_steer_mode(tmp_path):
+    store = SessionStore(tmp_path)
+    store.create_session(session_id="legacy-steer")
+    store.append_entry(
+        "legacy-steer",
+        "queue_added",
+        {
+            "id": "legacy-queue",
+            "client_message_id": "legacy-message",
+            "session_id": "legacy-steer",
+            "run_id": "legacy-run",
+            "mode": "steer",
+            "content": "旧 steering",
+            "status": "queued",
+            "created_at": 1.0,
+            "applied_at": None,
+        },
+    )
+
+    item = store.queued_inputs(session_id="legacy-steer")[0]
+    assert item.mode == "steering"
+
+
+def test_apply_queued_input_atomically_writes_message_then_applied_once(tmp_path):
+    store = SessionStore(tmp_path)
+    store.create_session(session_id="queue-apply")
+    queued = store.add_queued_input(
+        "queue-apply", "run-1", "steering", "message-1", "改变方向"
+    )
+
+    applied = store.apply_queued_input(
+        "queue-apply", queued.id, target_run_id="run-2"
+    )
+    again = store.apply_queued_input(
+        "queue-apply", queued.id, target_run_id="run-2"
+    )
+
+    assert applied == again
+    assert applied.status == "applied"
+    messages = store.read_messages("queue-apply")
+    assert [message.content for message in messages] == ["改变方向"]
+    assert messages[0].metadata["run_id"] == "run-2"
+    path = tmp_path / "storage" / "agent" / "sessions" / "queue-apply.jsonl"
+    entries = [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+    ]
+    lifecycle = [
+        entry["type"]
+        for entry in entries
+        if entry["type"] in {"message_appended", "queue_applied"}
+    ]
+    assert lifecycle == ["message_appended", "queue_applied"]
+
+
+def test_pending_queue_restores_once_for_any_run_settlement(tmp_path):
+    store = SessionStore(tmp_path)
+    store.create_session(session_id="queue-restore")
+    queued = store.add_queued_input(
+        "queue-restore", "run-1", "follow_up", "message-1", "继续"
+    )
+
+    first = store.restore_pending_inputs("queue-restore", "run-1")
+    second = store.restore_pending_inputs("queue-restore", "run-1")
+
+    assert [item.id for item in first] == [queued.id]
+    assert first[0].status == "restored"
+    assert second == []
+    path = tmp_path / "storage" / "agent" / "sessions" / "queue-restore.jsonl"
+    entries = [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert sum(entry["type"] == "queue_restored" for entry in entries) == 1
+
+
+def test_source_queue_is_discarded_in_same_apply_transaction(tmp_path):
+    store = SessionStore(tmp_path)
+    store.create_session(session_id="queue-source")
+    source = store.add_queued_input(
+        "queue-source", "old-run", "follow_up", "old-message", "恢复输入"
+    )
+    store.restore_pending_inputs("queue-source", "old-run")
+    replacement = store.add_queued_input(
+        "queue-source",
+        "new-run",
+        "follow_up",
+        "new-message",
+        "恢复输入",
+        source_queue_id=source.id,
+    )
+
+    store.apply_queued_input(
+        "queue-source", replacement.id, target_run_id="new-run"
+    )
+
+    all_items = store.queued_inputs(
+        session_id="queue-source", include_terminal=True
+    )
+    by_id = {item.id: item for item in all_items}
+    assert by_id[replacement.id].status == "applied"
+    assert by_id[source.id].status == "discarded"
+    path = tmp_path / "storage" / "agent" / "sessions" / "queue-source.jsonl"
+    entries = [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [entry["type"] for entry in entries[-3:]] == [
+        "message_appended",
+        "queue_applied",
+        "queue_discarded",
+    ]
+
+
+def test_append_message_source_queue_fails_closed_when_not_restored(tmp_path):
+    store = SessionStore(tmp_path)
+    store.create_session(session_id="queue-consume")
+    source = store.add_queued_input(
+        "queue-consume", "old-run", "follow_up", "old-message", "旧输入"
+    )
+    message = AgentMessage(
+        id="new-message",
+        role="user",
+        content="新输入",
+        timestamp=1.0,
+    )
+
+    with pytest.raises(ValueError, match="restored"):
+        store.append_message(
+            "queue-consume", message, source_queue_id=source.id
+        )
+
+    assert store.read_messages("queue-consume") == []
+    assert store.queued_inputs(session_id="queue-consume") == [source]
+
+
+def test_queue_replacement_rejects_non_restored_source_before_acceptance(tmp_path):
+    store = SessionStore(tmp_path)
+    store.create_session(session_id="queue-source-admission")
+    source = store.add_queued_input(
+        "queue-source-admission",
+        "old-run",
+        "follow_up",
+        "old-message",
+        "旧输入",
+    )
+
+    with pytest.raises(ValueError, match="restored"):
+        store.add_queued_input(
+            "queue-source-admission",
+            "new-run",
+            "follow_up",
+            "new-message",
+            "重发",
+            source_queue_id=source.id,
+        )
+
+    all_items = store.queued_inputs(
+        session_id="queue-source-admission",
+        include_terminal=True,
+    )
+    assert all_items == [source]
 
 
 def test_atomic_run_admission_rejects_live_owner_and_duplicate(tmp_path):

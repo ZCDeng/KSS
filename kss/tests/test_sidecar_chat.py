@@ -401,6 +401,162 @@ def test_agent_turn_rejects_extra_fields(monkeypatch, tmp_path):
     asyncio.run(go())
 
 
+def test_agent_turn_accepts_source_queue_id_field(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+
+    async def fake_run_turn(messages, emit, request_write, **kwargs):
+        await emit({"type": "done", "reason": "stop"})
+        return chat_loop.TurnTranscript(
+            messages=list(kwargs["transform_context"](messages)),
+            run_state={"status": "done", "reason": "stop"},
+        )
+
+    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+
+    async def go():
+        service = sc._agent_service()
+        service.sessions.create_session(session_id="s1")
+        restored = service.sessions.add_queued_input(
+            "s1",
+            "old-run",
+            "follow_up",
+            "old-client-message",
+            "x",
+        )
+        service.sessions.restore_pending_inputs("s1", "old-run")
+        reader, writer = _mk_reader(), FakeWriter()
+        await sc._handle_agent_turn(reader, writer, {
+            "cmd": "agent-turn",
+            "session_id": "s1",
+            "client_turn_id": "c1",
+            "input": "x",
+            "source_queue_id": restored.id,
+        })
+        assert not any(frame["type"] == "error" for frame in writer.frames())
+        assert writer.frames()[-1]["type"] == "agent_end"
+        queue_items = service.sessions.queued_inputs(
+            session_id="s1",
+            include_terminal=True,
+        )
+        assert next(item for item in queue_items if item.id == restored.id).status == "discarded"
+
+    asyncio.run(go())
+
+
+def test_agent_turn_rejects_invalid_source_queue_id_without_appending_message(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+
+    async def go():
+        reader, writer = _mk_reader(), FakeWriter()
+        await sc._handle_agent_turn(
+            reader,
+            writer,
+            {
+                "cmd": "agent-turn",
+                "session_id": "s-invalid-source",
+                "client_turn_id": "c1",
+                "input": "must not persist",
+                "source_queue_id": "missing-restored-item",
+            },
+        )
+        frames = writer.frames()
+        assert any(frame["type"] == "error" for frame in frames)
+        assert frames[-1]["type"] == "agent_end"
+        service = sc._agent_service()
+        assert all(
+            message.content != "must not persist"
+            for message in service.sessions.read_messages("s-invalid-source")
+        )
+
+    asyncio.run(go())
+
+
+def test_agent_turn_same_connection_accepts_steering_queue(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+
+    class Token:
+        def __init__(self):
+            self.reason = None
+
+        def abort(self, reason):
+            self.reason = reason
+
+    class Runtime:
+        def __init__(self, token):
+            self.token = token
+
+        def state(self, run_id):
+            return type("State", (), {"abort_token": self.token})()
+
+    class Service:
+        def __init__(self):
+            self.token = Token()
+            self.runtime = Runtime(self.token)
+            self.accepted = asyncio.Event()
+
+        def duplicate_turn(self, session_id, client_turn_id):
+            return None
+
+        async def run_turn(self, session_id, client_turn_id, input, emit, request_write):
+            await emit(sc.AgentEvent(
+                id="e1", session_id=session_id, run_id="run-q", parent_id=None,
+                timestamp=1.0, sequence=1, type="agent_start",
+                payload={"client_turn_id": client_turn_id},
+            ))
+            await asyncio.wait_for(self.accepted.wait(), timeout=1)
+            await emit(sc.AgentEvent(
+                id="e2", session_id=session_id, run_id="run-q", parent_id=None,
+                timestamp=2.0, sequence=2, type="agent_end",
+                payload={"status": "completed"},
+            ))
+
+        def steer(self, run_id, client_message_id, input, source_queue_id=None):
+            item = {
+                "id": "q1",
+                "client_message_id": client_message_id,
+                "session_id": "s1",
+                "run_id": run_id,
+                "mode": "steering",
+                "content": input,
+                "status": "pending",
+                "created_at": 1.5,
+            }
+            self.accepted.set()
+            return {"item": item, "queued_inputs": [item]}
+
+    service = Service()
+    monkeypatch.setattr(sc, "_AGENT_SERVICE", service)
+    monkeypatch.setattr(sc, "_AGENT_SERVICE_ROOTS", (tmp_path, tmp_path))
+
+    async def go():
+        reader, writer = _mk_reader(), FakeWriter()
+        task = asyncio.create_task(sc._handle_agent_turn(reader, writer, {
+            "cmd": "agent-turn", "session_id": "s1", "client_turn_id": "c1", "input": "开始",
+        }))
+        start = await _wait_frame(writer, "agent_start")
+        _feed(reader, {
+            "cmd": "agent-control",
+            "action": "steer",
+            "run_id": start["run_id"],
+            "client_message_id": "m1",
+            "input": "补充条件",
+        })
+        update = await _wait_frame(writer, "queue_update")
+        await task
+        assert update["operation"] == "accepted"
+        assert update["item"]["id"] == "q1"
+        assert update["steering_count"] == 1
+        frames = writer.frames()
+        assert [frame["sequence"] for frame in frames] == list(range(1, len(frames) + 1))
+
+    asyncio.run(go())
+
+
 def test_agent_turn_confirm_approve_uses_same_connection(monkeypatch, tmp_path):
     monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
     monkeypatch.setattr(sc, "_CHAT_LOOP_LIVE", True)
@@ -517,8 +673,10 @@ def test_agent_turn_abort_stops_run_before_more_tools(monkeypatch, tmp_path):
             "cmd": "agent-control", "action": "abort", "run_id": start["run_id"],
         })
         await task
+        # Runner-owned turn boundaries close before Runtime reports the
+        # terminal abort and crosses the agent settlement barrier.
         assert [frame["type"] for frame in writer.frames()][-3:] == [
-            "error", "turn_end", "agent_end",
+            "turn_end", "error", "agent_end",
         ]
 
     asyncio.run(go())
@@ -581,6 +739,93 @@ def test_agent_json_commands_standard_response(monkeypatch, tmp_path):
     }))
     proposed_payload = json.loads(proposed["stdout"])["data"]
     assert proposed_payload["candidates"][0]["text"] == "偏好短回答"
+
+
+def test_agent_queue_json_list_and_discard(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+
+    class Service:
+        def queued_inputs(self, session_id=None, run_id=None):
+            return [{
+                "id": "q1",
+                "client_message_id": "m1",
+                "session_id": session_id,
+                "run_id": "run-1",
+                "mode": "follow_up",
+                "content": "追问",
+                "status": "restored",
+                "created_at": 1.0,
+            }]
+
+        def discard_queued_input(self, session_id, queue_id):
+            return {"item": {"id": queue_id, "session_id": session_id, "status": "discarded"}}
+
+    monkeypatch.setattr(sc, "_AGENT_SERVICE", Service())
+    monkeypatch.setattr(sc, "_AGENT_SERVICE_ROOTS", (tmp_path, tmp_path))
+
+    listed = json.loads(sc._handle_agent_json_command({
+        "cmd": "agent-queue", "action": "list", "session_id": "s1",
+    }))
+    listed_payload = json.loads(listed["stdout"])["data"]
+    assert listed_payload["queued_inputs"][0]["id"] == "q1"
+    assert listed_payload["follow_up_count"] == 1
+
+    discarded = json.loads(sc._handle_agent_json_command({
+        "cmd": "agent-queue", "action": "discard", "session_id": "s1", "queue_id": "q1",
+    }))
+    discarded_payload = json.loads(discarded["stdout"])["data"]
+    assert discarded_payload["ok"] is True
+    assert discarded_payload["operation"] == "discarded"
+
+
+def test_agent_queue_list_preserves_store_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+
+    class Service:
+        def queued_inputs(self, session_id=None, run_id=None):
+            raise OSError("queue file unreadable")
+
+    monkeypatch.setattr(sc, "_AGENT_SERVICE", Service())
+    monkeypatch.setattr(sc, "_AGENT_SERVICE_ROOTS", (tmp_path, tmp_path))
+
+    response = json.loads(
+        sc._handle_agent_json_command(
+            {
+                "cmd": "agent-queue",
+                "action": "list",
+                "session_id": "s1",
+            }
+        )
+    )
+    assert response["code"] == 1
+    assert "queue file unreadable" in response["stderr"]
+
+
+def test_agent_memory_source_recall_uses_structured_memory_id(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    store = sc.MemoryStore(tmp_path)
+    record = store.propose(
+        "thesis",
+        "RSI 阈值历史判断需要复核",
+        source_session="s1",
+        source_entry="entry-1",
+    )
+    store.approve(record.id)
+
+    recalled = json.loads(sc._handle_agent_json_command({
+        "cmd": "agent-memories",
+        "action": "source-recall",
+        "query": "RSI 阈值",
+    }))
+    payload = json.loads(recalled["stdout"])["data"]
+    item = payload["recalls"][0]
+    assert item["id"] == record.id
+    assert item["source_session"] == "s1"
+    assert item["source_entry"] == "entry-1"
+    assert item["review_required"] is True
+    assert "待复核" in item["excerpt"]
 
 
 def test_agent_skill_actions_return_uniform_shape(monkeypatch, tmp_path):

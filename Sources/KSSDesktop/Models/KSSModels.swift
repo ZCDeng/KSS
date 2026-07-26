@@ -1818,6 +1818,7 @@ struct AgentSession: Codable, Identifiable, Equatable {
     var updatedAt: String?
     var messages: [AgentHydratedMessage]?
     var contextUsage: AgentContextUsage?
+    var queuedInputs: [AgentQueuedInput]?
 
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
@@ -1825,17 +1826,125 @@ struct AgentSession: Codable, Identifiable, Equatable {
         case updatedAt = "updated_at"
         case messages
         case contextUsage = "context_usage"
+        case queuedInputs = "queued_inputs"
     }
 
     init(sessionId: String, title: String, archived: Bool = false, updatedAt: String? = nil,
-         messages: [AgentHydratedMessage]? = nil, contextUsage: AgentContextUsage? = nil) {
+         messages: [AgentHydratedMessage]? = nil, contextUsage: AgentContextUsage? = nil,
+         queuedInputs: [AgentQueuedInput]? = nil) {
         self.sessionId = sessionId
         self.title = title
         self.archived = archived
         self.updatedAt = updatedAt
         self.messages = messages
         self.contextUsage = contextUsage
+        self.queuedInputs = queuedInputs
     }
+}
+
+struct AgentQueuedInput: Codable, Identifiable, Equatable {
+    var id: String
+    var clientMessageId: String?
+    var sessionId: String?
+    var runId: String?
+    var mode: String
+    var content: String
+    var status: String
+    var createdAt: Double?
+    var appliedAt: Double?
+    var sourceQueueId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, mode, content, input, status
+        case clientMessageId = "client_message_id"
+        case sessionId = "session_id"
+        case runId = "run_id"
+        case createdAt = "created_at"
+        case appliedAt = "applied_at"
+        case sourceQueueId = "source_queue_id"
+    }
+
+    init(
+        id: String,
+        clientMessageId: String? = nil,
+        sessionId: String? = nil,
+        runId: String? = nil,
+        mode: String,
+        content: String,
+        status: String,
+        createdAt: Double? = nil,
+        appliedAt: Double? = nil,
+        sourceQueueId: String? = nil
+    ) {
+        self.id = id
+        self.clientMessageId = clientMessageId
+        self.sessionId = sessionId
+        self.runId = runId
+        self.mode = mode
+        self.content = content
+        self.status = status
+        self.createdAt = createdAt
+        self.appliedAt = appliedAt
+        self.sourceQueueId = sourceQueueId
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        clientMessageId = try? c.decode(String.self, forKey: .clientMessageId)
+        sessionId = try? c.decode(String.self, forKey: .sessionId)
+        runId = try? c.decode(String.self, forKey: .runId)
+        mode = (try? c.decode(String.self, forKey: .mode)) ?? "follow_up"
+        content = (try? c.decode(String.self, forKey: .content))
+            ?? (try? c.decode(String.self, forKey: .input)) ?? ""
+        status = (try? c.decode(String.self, forKey: .status)) ?? "pending"
+        createdAt = try? c.decode(Double.self, forKey: .createdAt)
+        appliedAt = try? c.decode(Double.self, forKey: .appliedAt)
+        sourceQueueId = try? c.decode(String.self, forKey: .sourceQueueId)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encodeIfPresent(clientMessageId, forKey: .clientMessageId)
+        try c.encodeIfPresent(sessionId, forKey: .sessionId)
+        try c.encodeIfPresent(runId, forKey: .runId)
+        try c.encode(mode, forKey: .mode)
+        try c.encode(content, forKey: .content)
+        try c.encode(status, forKey: .status)
+        try c.encodeIfPresent(createdAt, forKey: .createdAt)
+        try c.encodeIfPresent(appliedAt, forKey: .appliedAt)
+        try c.encodeIfPresent(sourceQueueId, forKey: .sourceQueueId)
+    }
+
+    var isRestorable: Bool {
+        status == "queued" || status == "pending" || status == "restored"
+    }
+}
+
+struct AgentQueueResponse: Codable, Equatable {
+    var ok: Bool?
+    var operation: String?
+    var item: AgentQueuedInput?
+    var queuedInputs: [AgentQueuedInput]?
+    var steeringCount: Int?
+    var followUpCount: Int?
+    var reason: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, operation, item, reason
+        case queuedInputs = "queued_inputs"
+        case steeringCount = "steering_count"
+        case followUpCount = "follow_up_count"
+    }
+}
+
+struct AgentQueueAcknowledgement: Identifiable, Equatable {
+    var id: String { clientMessageId }
+    var clientMessageId: String
+    var accepted: Bool
+    var operation: String
+    var reason: String?
 }
 
 struct AgentHydratedMessage: Codable, Equatable, Identifiable {
@@ -1921,6 +2030,86 @@ struct AgentMemoryRecord: Codable, Identifiable, Equatable {
     var text: String
     var source: String?
     var archived: Bool?
+    var kind: String?
+    var sourceSession: String?
+    var sourceEntry: String?
+    var tags: [String]?
+    var status: String?
+    var createdAt: Double?
+    var expiresAt: Double?
+    var reviewRequired: Bool?
+    var score: Double?
+    var injectionText: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, text, content, source, archived, kind, tags, status, score
+        case sourceSession = "source_session"
+        case sourceEntry = "source_entry"
+        case createdAt = "created_at"
+        case expiresAt = "expires_at"
+        case reviewRequired = "review_required"
+        case injectionText = "injection_text"
+    }
+
+    init(
+        id: String, text: String, source: String? = nil, archived: Bool? = nil,
+        kind: String? = nil, sourceSession: String? = nil, sourceEntry: String? = nil,
+        tags: [String]? = nil, status: String? = nil, createdAt: Double? = nil,
+        expiresAt: Double? = nil, reviewRequired: Bool? = nil, score: Double? = nil,
+        injectionText: String? = nil
+    ) {
+        self.id = id
+        self.text = text
+        self.source = source
+        self.archived = archived
+        self.kind = kind
+        self.sourceSession = sourceSession
+        self.sourceEntry = sourceEntry
+        self.tags = tags
+        self.status = status
+        self.createdAt = createdAt
+        self.expiresAt = expiresAt
+        self.reviewRequired = reviewRequired
+        self.score = score
+        self.injectionText = injectionText
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        text = (try? c.decode(String.self, forKey: .text))
+            ?? (try? c.decode(String.self, forKey: .content)) ?? ""
+        source = try? c.decode(String.self, forKey: .source)
+        archived = try? c.decode(Bool.self, forKey: .archived)
+        kind = try? c.decode(String.self, forKey: .kind)
+        sourceSession = try? c.decode(String.self, forKey: .sourceSession)
+        sourceEntry = try? c.decode(String.self, forKey: .sourceEntry)
+        tags = try? c.decode([String].self, forKey: .tags)
+        status = try? c.decode(String.self, forKey: .status)
+        createdAt = try? c.decode(Double.self, forKey: .createdAt)
+        expiresAt = try? c.decode(Double.self, forKey: .expiresAt)
+        reviewRequired = try? c.decode(Bool.self, forKey: .reviewRequired)
+        score = try? c.decode(Double.self, forKey: .score)
+        injectionText = try? c.decode(String.self, forKey: .injectionText)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(text, forKey: .text)
+        try c.encodeIfPresent(source, forKey: .source)
+        try c.encodeIfPresent(archived, forKey: .archived)
+        try c.encodeIfPresent(kind, forKey: .kind)
+        try c.encodeIfPresent(sourceSession, forKey: .sourceSession)
+        try c.encodeIfPresent(sourceEntry, forKey: .sourceEntry)
+        try c.encodeIfPresent(tags, forKey: .tags)
+        try c.encodeIfPresent(status, forKey: .status)
+        try c.encodeIfPresent(createdAt, forKey: .createdAt)
+        try c.encodeIfPresent(expiresAt, forKey: .expiresAt)
+        try c.encodeIfPresent(reviewRequired, forKey: .reviewRequired)
+        try c.encodeIfPresent(score, forKey: .score)
+        try c.encodeIfPresent(injectionText, forKey: .injectionText)
+    }
 }
 
 struct AgentSourceRecall: Codable, Identifiable, Equatable {
@@ -1928,6 +2117,90 @@ struct AgentSourceRecall: Codable, Identifiable, Equatable {
     var title: String
     var source: String?
     var excerpt: String?
+    var kind: String?
+    var content: String?
+    var sourceSession: String?
+    var sourceEntry: String?
+    var tags: [String]?
+    var createdAt: Double?
+    var expiresAt: Double?
+    var reviewRequired: Bool?
+    var score: Double?
+    var injectionText: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, source, excerpt, kind, content, text, tags, score
+        case sourceSession = "source_session"
+        case sourceEntry = "source_entry"
+        case createdAt = "created_at"
+        case expiresAt = "expires_at"
+        case reviewRequired = "review_required"
+        case injectionText = "injection_text"
+    }
+
+    init(
+        id: String, title: String, source: String? = nil, excerpt: String? = nil,
+        kind: String? = nil, content: String? = nil, sourceSession: String? = nil,
+        sourceEntry: String? = nil, tags: [String]? = nil, createdAt: Double? = nil,
+        expiresAt: Double? = nil, reviewRequired: Bool? = nil, score: Double? = nil,
+        injectionText: String? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.source = source
+        self.excerpt = excerpt
+        self.kind = kind
+        self.content = content
+        self.sourceSession = sourceSession
+        self.sourceEntry = sourceEntry
+        self.tags = tags
+        self.createdAt = createdAt
+        self.expiresAt = expiresAt
+        self.reviewRequired = reviewRequired
+        self.score = score
+        self.injectionText = injectionText
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        kind = try? c.decode(String.self, forKey: .kind)
+        reviewRequired = try? c.decode(Bool.self, forKey: .reviewRequired)
+        title = (try? c.decode(String.self, forKey: .title))
+            ?? [kind ?? "记忆", reviewRequired == true ? "待复核" : nil]
+                .compactMap { $0 }.joined(separator: " · ")
+        sourceSession = try? c.decode(String.self, forKey: .sourceSession)
+        sourceEntry = try? c.decode(String.self, forKey: .sourceEntry)
+        source = (try? c.decode(String.self, forKey: .source))
+            ?? [sourceSession, sourceEntry].compactMap { $0 }.joined(separator: " · ")
+        content = (try? c.decode(String.self, forKey: .content))
+            ?? (try? c.decode(String.self, forKey: .text))
+        injectionText = try? c.decode(String.self, forKey: .injectionText)
+        excerpt = (try? c.decode(String.self, forKey: .excerpt))
+            ?? injectionText ?? content
+        tags = try? c.decode([String].self, forKey: .tags)
+        createdAt = try? c.decode(Double.self, forKey: .createdAt)
+        expiresAt = try? c.decode(Double.self, forKey: .expiresAt)
+        score = try? c.decode(Double.self, forKey: .score)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(title, forKey: .title)
+        try c.encodeIfPresent(source, forKey: .source)
+        try c.encodeIfPresent(excerpt, forKey: .excerpt)
+        try c.encodeIfPresent(kind, forKey: .kind)
+        try c.encodeIfPresent(content, forKey: .content)
+        try c.encodeIfPresent(sourceSession, forKey: .sourceSession)
+        try c.encodeIfPresent(sourceEntry, forKey: .sourceEntry)
+        try c.encodeIfPresent(tags, forKey: .tags)
+        try c.encodeIfPresent(createdAt, forKey: .createdAt)
+        try c.encodeIfPresent(expiresAt, forKey: .expiresAt)
+        try c.encodeIfPresent(reviewRequired, forKey: .reviewRequired)
+        try c.encodeIfPresent(score, forKey: .score)
+        try c.encodeIfPresent(injectionText, forKey: .injectionText)
+    }
 }
 
 struct AgentContextUsage: Codable, Equatable {
@@ -2040,9 +2313,15 @@ struct AgentFrame: Decodable, Equatable {
     let recalls: [AgentSourceRecall]?
     let evidenceSummary: ChatEvidenceSummary?
     let evidenceDrawer: ChatEvidenceDrawer?
+    let operation: String?
+    let item: AgentQueuedInput?
+    let queuedInputs: [AgentQueuedInput]?
+    let steeringCount: Int?
+    let followUpCount: Int?
 
     enum CodingKeys: String, CodingKey {
         case type, sequence, text, delta, name, tool, command, effect, reason, error, model, usage, numberGuard
+        case operation, item
         case numberGuardSnake = "number_guard"
         case protocolVersion = "protocol_version"
         case sessionId = "session_id"
@@ -2063,6 +2342,9 @@ struct AgentFrame: Decodable, Equatable {
         case evidenceSummary, evidenceDrawer
         case evidenceSummarySnake = "evidence_summary"
         case evidenceDrawerSnake = "evidence_drawer"
+        case queuedInputs = "queued_inputs"
+        case steeringCount = "steering_count"
+        case followUpCount = "follow_up_count"
     }
 
     init(from decoder: Decoder) throws {
@@ -2103,6 +2385,11 @@ struct AgentFrame: Decodable, Equatable {
             ?? (try? c.decode(ChatEvidenceSummary.self, forKey: .evidenceSummarySnake))
         evidenceDrawer = (try? c.decode(ChatEvidenceDrawer.self, forKey: .evidenceDrawer))
             ?? (try? c.decode(ChatEvidenceDrawer.self, forKey: .evidenceDrawerSnake))
+        operation = try? c.decode(String.self, forKey: .operation)
+        item = try? c.decode(AgentQueuedInput.self, forKey: .item)
+        queuedInputs = try? c.decode([AgentQueuedInput].self, forKey: .queuedInputs)
+        steeringCount = try? c.decode(Int.self, forKey: .steeringCount)
+        followUpCount = try? c.decode(Int.self, forKey: .followUpCount)
     }
 
     var duplicateReason: String? {

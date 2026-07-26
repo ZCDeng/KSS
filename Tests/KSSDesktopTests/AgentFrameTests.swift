@@ -79,6 +79,47 @@ final class AgentFrameTests: XCTestCase {
         XCTAssertEqual(store.agentSequenceIssue, "Agent frame gap: expected 2, got 3")
     }
 
+    func testRepeatedMessageStartCreatesDistinctAssistantBubbles() throws {
+        let store = KSSStore(testBridge: nil)
+        store.chatMessages = [
+            ChatMessage(role: .user, text: "开始"),
+            ChatMessage(role: .assistant, text: "", numbersUnverified: true),
+        ]
+        let initialAssistantId = try XCTUnwrap(store.chatMessages.last?.id)
+
+        for json in [
+            #"{"type":"message_start","run_id":"r1","sequence":1}"#,
+            #"{"type":"message_delta","run_id":"r1","sequence":2,"delta":"第一段"}"#,
+            #"{"type":"message_end","run_id":"r1","sequence":3}"#,
+            #"{"type":"message_start","run_id":"r1","sequence":4}"#,
+            #"{"type":"message_delta","run_id":"r1","sequence":5,"delta":"后续段"}"#,
+            #"{"type":"message_end","run_id":"r1","sequence":6}"#,
+        ] {
+            XCTAssertTrue(
+                store.applyAgentFrame(
+                    try decodeFrame(json),
+                    assistantId: initialAssistantId))
+        }
+
+        XCTAssertEqual(
+            store.chatMessages.filter { $0.role == .assistant }.map(\.text),
+            ["第一段", "后续段"])
+    }
+
+    func testOldAgentStreamCannotOwnNewerChatSurface() {
+        let oldStreamId = UUID()
+        let newStreamId = UUID()
+
+        XCTAssertFalse(
+            KSSStore.agentStreamOwnsChatSurface(
+                endingStreamId: oldStreamId,
+                activeStreamId: newStreamId))
+        XCTAssertTrue(
+            KSSStore.agentStreamOwnsChatSurface(
+                endingStreamId: newStreamId,
+                activeStreamId: newStreamId))
+    }
+
     func testAgentSessionHydratesCachedMessagesWhenOpened() {
         let store = KSSStore(testBridge: nil)
         store.agentSessions = [
@@ -235,6 +276,106 @@ final class AgentFrameTests: XCTestCase {
         let memories = try JSONDecoder().decode(AgentMemoriesResponse.self, from: memoryData)
         XCTAssertEqual(memories.memories[0].text, "偏好 A")
         XCTAssertEqual(memories.candidates?[0].status, "proposed")
+    }
+
+    func testQueueUpdateAcceptedAndRejectedPreserveServerTruth() throws {
+        let store = KSSStore(testBridge: nil)
+        let accepted = try decodeFrame("""
+        {"protocol_version":1,"session_id":"s1","run_id":"r1","sequence":1,
+         "type":"queue_update","operation":"accepted",
+         "item":{"id":"q1","client_message_id":"m1","session_id":"s1","run_id":"r1",
+         "mode":"steering","content":"补充条件","status":"queued","created_at":1.5},
+         "queued_inputs":[{"id":"q1","client_message_id":"m1","session_id":"s1","run_id":"r1",
+         "mode":"steering","content":"补充条件","status":"queued","created_at":1.5}],
+         "steering_count":1,"follow_up_count":0}
+        """)
+        XCTAssertTrue(store.applyAgentFrame(accepted))
+        XCTAssertEqual(store.agentQueuedInputs.map(\.id), ["q1"])
+        XCTAssertEqual(store.agentSteeringCount, 1)
+        XCTAssertEqual(store.agentFollowUpCount, 0)
+        XCTAssertEqual(store.agentQueueAcknowledgement?.clientMessageId, "m1")
+        XCTAssertEqual(store.agentQueueAcknowledgement?.accepted, true)
+
+        let rejected = try decodeFrame("""
+        {"protocol_version":1,"session_id":"s1","run_id":"r1","sequence":2,
+         "type":"queue_update","operation":"rejected","reason":"run_id_mismatch"}
+        """)
+        XCTAssertTrue(store.applyAgentFrame(rejected))
+        XCTAssertEqual(store.agentQueuedInputs.map(\.id), ["q1"])
+        XCTAssertEqual(rejected.reason, "run_id_mismatch")
+
+        let applied = try decodeFrame("""
+        {"protocol_version":1,"session_id":"s1","run_id":"r1","sequence":3,
+         "type":"queue_update","operation":"applied",
+         "item":{"id":"q1","mode":"steering","content":"补充条件","status":"applied"},
+         "queued_inputs":[{"id":"q1","mode":"steering","content":"补充条件","status":"applied"}],
+         "steering_count":1,"follow_up_count":0}
+        """)
+        XCTAssertTrue(store.applyAgentFrame(applied))
+        XCTAssertTrue(store.agentQueuedInputs.isEmpty)
+        XCTAssertEqual(store.agentSteeringCount, 0)
+    }
+
+    func testQueueEditorClearsOnlyForMatchingAcceptedAcknowledgement() {
+        let accepted = AgentQueueAcknowledgement(
+            clientMessageId: "m1", accepted: true, operation: "accepted")
+        let rejected = AgentQueueAcknowledgement(
+            clientMessageId: "m1", accepted: false, operation: "rejected")
+
+        XCTAssertTrue(KSSStore.shouldClearQueuedEditor(
+            acknowledgement: accepted, pendingClientMessageId: "m1"))
+        XCTAssertFalse(KSSStore.shouldClearQueuedEditor(
+            acknowledgement: rejected, pendingClientMessageId: "m1"))
+        XCTAssertFalse(KSSStore.shouldClearQueuedEditor(
+            acknowledgement: accepted, pendingClientMessageId: "m2"))
+    }
+
+    func testSessionHydrationRestoresOnlyPendingQueueInputs() {
+        let store = KSSStore(testBridge: nil)
+        store.agentSessions = [
+            AgentSession(
+                sessionId: "s1",
+                title: "A",
+                queuedInputs: [
+                    AgentQueuedInput(
+                        id: "q1", mode: "follow_up", content: "恢复后续",
+                        status: "restored"),
+                    AgentQueuedInput(
+                        id: "q2", mode: "steering", content: "已执行",
+                        status: "applied"),
+                ])
+        ]
+
+        store.openAgentSession("s1")
+        XCTAssertEqual(store.agentQueuedInputs.map(\.id), ["q1"])
+        XCTAssertEqual(store.agentSteeringCount, 0)
+        XCTAssertEqual(store.agentFollowUpCount, 1)
+    }
+
+    func testStructuredMemoryKeepsTrueSourceExpiryReviewAndScore() throws {
+        let data = Data("""
+        {"memories":[{"id":"m1","kind":"thesis","content":"历史判断",
+          "source_session":"s1","source_entry":"e1","tags":["RSI"],
+          "status":"approved","created_at":10,"expires_at":20,
+          "review_required":true,"score":0.8,"injection_text":"【待复核】历史判断"}],
+         "candidates":[],
+         "recalls":[{"id":"m1","kind":"thesis","content":"历史判断",
+          "source_session":"s1","source_entry":"e1","expires_at":20,
+          "review_required":true,"score":0.8,
+          "injection_text":"【待复核】历史判断"}]}
+        """.utf8)
+
+        let response = try JSONDecoder().decode(AgentMemoriesResponse.self, from: data)
+        XCTAssertEqual(response.memories[0].text, "历史判断")
+        XCTAssertEqual(response.memories[0].sourceSession, "s1")
+        XCTAssertEqual(response.memories[0].sourceEntry, "e1")
+        XCTAssertEqual(response.memories[0].expiresAt, 20)
+        XCTAssertEqual(response.memories[0].reviewRequired, true)
+        XCTAssertEqual(response.memories[0].score, 0.8)
+        XCTAssertEqual(response.recalls?[0].id, "m1")
+        XCTAssertEqual(response.recalls?[0].title, "thesis · 待复核")
+        XCTAssertEqual(response.recalls?[0].source, "s1 · e1")
+        XCTAssertEqual(response.recalls?[0].injectionText, "【待复核】历史判断")
     }
 
     private func decodeFrame(_ json: String) throws -> AgentFrame {

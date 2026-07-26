@@ -19,7 +19,8 @@ import sys
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+import inspect
+from typing import Any, Callable
 from uuid import uuid4
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -241,7 +242,7 @@ async def _write_runtime_event(writer: asyncio.StreamWriter, event: AgentEvent,
 
 
 def _validate_agent_turn_request(req: dict) -> tuple[str, str, str] | tuple[None, None, str]:
-    allowed = {"cmd", "session_id", "client_turn_id", "input"}
+    allowed = {"cmd", "session_id", "client_turn_id", "input", "source_queue_id"}
     extra = set(req) - allowed
     if extra:
         return None, None, f"agent-turn unexpected fields: {sorted(extra)}"
@@ -278,6 +279,7 @@ def _session_summary(state: Any, messages: list[AgentMessage] | None = None) -> 
         "archived": status == "archived",
         "updated_at": str(meta.get("updated_at") or 0),
         "messages": [_agent_wire_message(m) for m in (messages or [])],
+        "queued_inputs": _queued_inputs_wire(session_id=state.session_id),
     }
 
 
@@ -348,19 +350,232 @@ def _memory_response(store: MemoryStore, query: str = "", *, limit: int = 100) -
     }
 
 
-def _recall_wire(items: list[str]) -> list[dict[str, Any]]:
-    """把本轮实际召回文本映射为可展示来源."""
-    return [{
-        "id": f"recall-{index}",
-        "title": "本轮召回记忆",
-        "source": "长期记忆",
-        "excerpt": text,
-    } for index, text in enumerate(items)]
+def _recall_wire(items: list[Any]) -> list[dict[str, Any]]:
+    """把本轮实际召回映射为可展示来源；优先保留真实 memory ID/source."""
+    out: list[dict[str, Any]] = []
+    for index, item in enumerate(items):
+        if hasattr(item, "as_dict") and callable(item.as_dict):
+            payload = dict(item.as_dict())
+        elif isinstance(item, dict):
+            payload = dict(item)
+        else:
+            payload = {"id": f"recall-{index}", "excerpt": str(item), "injection_text": str(item)}
+        payload.setdefault("id", f"recall-{index}")
+        payload.setdefault("title", _memory_recall_title(payload))
+        payload.setdefault("source", _memory_recall_source(payload))
+        payload.setdefault("excerpt", payload.get("injection_text") or payload.get("content") or payload.get("text") or "")
+        out.append(payload)
+    return out
 
 
-async def _agent_control_reader(reader: asyncio.StreamReader, pending: dict, abort_token: Any,
-                                run_id: str) -> None:
-    """agent-turn 同连接控制 reader:支持 chat-turn-confirm 和 agent-control abort。"""
+def _memory_recall_title(payload: dict[str, Any]) -> str:
+    kind = str(payload.get("kind") or "memory")
+    if payload.get("review_required"):
+        return f"{kind} · 待复核"
+    return kind
+
+
+def _memory_recall_source(payload: dict[str, Any]) -> str | None:
+    source = payload.get("source")
+    if source:
+        return str(source)
+    source_session = payload.get("source_session")
+    source_entry = payload.get("source_entry")
+    if source_entry:
+        return f"{source_session or 'session'} · {source_entry}"
+    return str(source_session) if source_session else None
+
+
+async def _maybe_call(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+def _call_with_supported_kwargs(function: Callable[..., Any], **kwargs: Any) -> Any:
+    """Call a service compatibility hook with only the kwargs it declares."""
+    try:
+        signature = inspect.signature(function)
+    except (TypeError, ValueError):
+        return function(**kwargs)
+    parameters = signature.parameters
+    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
+        return function(**kwargs)
+    accepted = {key: value for key, value in kwargs.items() if key in parameters}
+    return function(**accepted)
+
+
+def _queue_item_wire(item: Any) -> dict[str, Any]:
+    if hasattr(item, "as_dict") and callable(item.as_dict):
+        payload = dict(item.as_dict())
+    elif hasattr(item, "__dataclass_fields__"):
+        payload = asdict(item)
+    elif isinstance(item, dict):
+        payload = dict(item)
+    else:
+        payload = {"id": str(item)}
+    if "input" not in payload and "content" in payload:
+        payload["input"] = payload.get("content")
+    if "content" not in payload and "input" in payload:
+        payload["content"] = payload.get("input")
+    return payload
+
+
+def _queue_counts(items: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "steering_count": sum(1 for item in items if item.get("mode") == "steering"),
+        "follow_up_count": sum(1 for item in items if item.get("mode") == "follow_up"),
+    }
+
+
+def _queued_inputs_wire(
+    *,
+    session_id: str | None = None,
+    run_id: str | None = None,
+) -> list[dict[str, Any]]:
+    service = _agent_service()
+    method = getattr(service, "queued_inputs", None) or getattr(service, "list_queued", None)
+    if method is None:
+        return []
+    result = _call_with_supported_kwargs(
+        method,
+        session_id=session_id,
+        run_id=run_id,
+    )
+    if inspect.isawaitable(result):
+        if hasattr(result, "close"):
+            result.close()
+        raise RuntimeError("queue hydration requires a synchronous service method")
+    if isinstance(result, dict):
+        raw_items = result.get("queued_inputs") or result.get("items") or []
+    else:
+        raw_items = result or []
+    return [_queue_item_wire(item) for item in raw_items]
+
+
+async def _emit_queue_update(
+    emit: Callable[[str, dict[str, Any]], Any],
+    *,
+    operation: str,
+    item: Any | None = None,
+    queued_inputs: list[dict[str, Any]] | None = None,
+    reason: str | None = None,
+) -> None:
+    items = list(queued_inputs or [])
+    if item is not None and not items:
+        items = [_queue_item_wire(item)]
+    payload: dict[str, Any] = {
+        "operation": operation,
+        "queued_inputs": items,
+        **_queue_counts(items),
+    }
+    if item is not None:
+        payload["item"] = _queue_item_wire(item)
+    if reason is not None:
+        payload["reason"] = reason
+    await _maybe_call(emit("queue_update", payload))
+
+
+async def _service_queue_control(
+    service: KSSAgentService,
+    *,
+    action: str,
+    run_id: str,
+    client_message_id: str,
+    input_text: str,
+    source_queue_id: str | None = None,
+) -> tuple[bool, dict[str, Any]]:
+    method_name = "steer" if action == "steer" else "follow_up"
+    method = getattr(service, method_name, None)
+    if method is None:
+        return False, {"error": "queue_unavailable", "reason": f"service.{method_name} is not implemented"}
+    result = await _maybe_call(
+        _call_with_supported_kwargs(
+            method,
+            run_id=run_id,
+            client_message_id=client_message_id,
+            input=input_text,
+            input_text=input_text,
+            source_queue_id=source_queue_id,
+        )
+    )
+    if isinstance(result, dict):
+        return not bool(result.get("error") or result.get("rejected")), result
+    return True, {"item": _queue_item_wire(result)}
+
+
+def _service_queue_control_sync(
+    service: KSSAgentService,
+    *,
+    action: str,
+    run_id: str,
+    client_message_id: str,
+    input_text: str,
+    source_queue_id: str | None = None,
+) -> tuple[bool, dict[str, Any]]:
+    method_name = "steer" if action == "steer" else "follow_up"
+    method = getattr(service, method_name, None)
+    if method is None:
+        return False, {"error": "queue_unavailable", "reason": f"service.{method_name} is not implemented"}
+    result = _call_with_supported_kwargs(
+        method,
+        run_id=run_id,
+        client_message_id=client_message_id,
+        input=input_text,
+        input_text=input_text,
+        source_queue_id=source_queue_id,
+    )
+    if inspect.isawaitable(result):
+        return False, {"error": "queue_async_unavailable", "reason": "one-shot queue control requires a synchronous service method"}
+    if isinstance(result, dict):
+        return not bool(result.get("error") or result.get("rejected")), result
+    return True, {"item": _queue_item_wire(result)}
+
+
+async def _service_queue_discard(
+    service: KSSAgentService,
+    *,
+    session_id: str,
+    queue_id: str,
+) -> tuple[bool, dict[str, Any]]:
+    method = getattr(service, "discard_queued_input", None) or getattr(service, "discard_queued", None)
+    if method is None:
+        return False, {"error": "queue_unavailable", "reason": "service.discard_queued_input is not implemented"}
+    result = await _maybe_call(
+        _call_with_supported_kwargs(method, session_id=session_id, queue_id=queue_id)
+    )
+    if isinstance(result, dict):
+        return not bool(result.get("error") or result.get("rejected")), result
+    return True, {"item": _queue_item_wire(result)}
+
+
+def _service_queue_discard_sync(
+    service: KSSAgentService,
+    *,
+    session_id: str,
+    queue_id: str,
+) -> tuple[bool, dict[str, Any]]:
+    method = getattr(service, "discard_queued_input", None) or getattr(service, "discard_queued", None)
+    if method is None:
+        return False, {"error": "queue_unavailable", "reason": "service.discard_queued_input is not implemented"}
+    result = _call_with_supported_kwargs(method, session_id=session_id, queue_id=queue_id)
+    if inspect.isawaitable(result):
+        return False, {"error": "queue_async_unavailable", "reason": "one-shot queue discard requires a synchronous service method"}
+    if isinstance(result, dict):
+        return not bool(result.get("error") or result.get("rejected")), result
+    return True, {"item": _queue_item_wire(result)}
+
+
+async def _agent_control_reader(
+    reader: asyncio.StreamReader,
+    pending: dict,
+    abort_token: Any,
+    run_id: str,
+    *,
+    service: KSSAgentService,
+    emit_control: Callable[[str, dict[str, Any]], Any],
+) -> None:
+    """agent-turn 同连接控制 reader:支持 confirm/abort/steer/follow_up。"""
     while True:
         try:
             line = await reader.readline()
@@ -382,6 +597,57 @@ async def _agent_control_reader(reader: asyncio.StreamReader, pending: dict, abo
                 abort_token.abort(str(msg.get("reason") or "client_abort"))
                 _reject_all(pending, {"error": "aborted", "hint": "用户中止本轮"})
                 return
+            if action in {"steer", "follow_up"}:
+                if msg.get("run_id") not in (None, run_id):
+                    await _emit_queue_update(
+                        emit_control,
+                        operation="rejected",
+                        reason="run_id_mismatch",
+                    )
+                    continue
+                client_message_id = msg.get("client_message_id")
+                input_text = msg.get("input")
+                if not isinstance(client_message_id, str) or not client_message_id:
+                    await _emit_queue_update(
+                        emit_control,
+                        operation="rejected",
+                        reason="missing_client_message_id",
+                    )
+                    continue
+                if not isinstance(input_text, str) or not input_text.strip():
+                    await _emit_queue_update(
+                        emit_control,
+                        operation="rejected",
+                        reason="missing_input",
+                    )
+                    continue
+                ok, payload = await _service_queue_control(
+                    service,
+                    action=action,
+                    run_id=run_id,
+                    client_message_id=client_message_id,
+                    input_text=input_text,
+                    source_queue_id=msg.get("source_queue_id")
+                    if isinstance(msg.get("source_queue_id"), str)
+                    else None,
+                )
+                item = payload.get("item") if isinstance(payload, dict) else None
+                queued_inputs = (
+                    payload.get("queued_inputs") if isinstance(payload, dict) else None
+                )
+                reason = (
+                    payload.get("reason") or payload.get("error")
+                    if isinstance(payload, dict)
+                    else None
+                )
+                await _emit_queue_update(
+                    emit_control,
+                    operation="accepted" if ok else "rejected",
+                    item=item,
+                    queued_inputs=queued_inputs,
+                    reason=reason if not ok else None,
+                )
+                continue
             if action != "confirm":
                 continue
             call_id = msg.get("call_id")
@@ -457,6 +723,39 @@ async def _handle_agent_turn(reader: asyncio.StreamReader,
     writer_lock = asyncio.Lock()
     control_task: asyncio.Task | None = None
     active_run_id: str | None = None
+    wire_sequence = 0
+
+    async def write_agent_frame(
+        event_type: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        event: AgentEvent | None = None,
+    ) -> None:
+        nonlocal wire_sequence
+        async with writer_lock:
+            wire_sequence += 1
+            if event is not None:
+                frame = asdict(event)
+                nested = frame.pop("payload", {})
+                if isinstance(nested, dict):
+                    frame.update(nested)
+            else:
+                frame = {
+                    "protocol_version": 1,
+                    "id": uuid4().hex,
+                    "session_id": session_id,
+                    "run_id": active_run_id or transport_run_id,
+                    "parent_id": None,
+                    "timestamp": time.time(),
+                    "type": event_type,
+                }
+                if payload:
+                    frame.update(payload)
+            frame["sequence"] = wire_sequence
+            if frame.get("type") == "error" and "error" not in frame:
+                frame["error"] = frame.get("message") or "agent runtime error"
+            writer.write((json.dumps(frame, ensure_ascii=False) + "\n").encode("utf-8"))
+            await writer.drain()
 
     async def emit_runtime(event: AgentEvent) -> None:
         nonlocal control_task, active_run_id
@@ -467,9 +766,16 @@ async def _handle_agent_turn(reader: asyncio.StreamReader,
             if token is not None:
                 _AGENT_ABORTS[event.run_id] = token
                 control_task = asyncio.create_task(
-                    _agent_control_reader(reader, pending, token, event.run_id)
+                    _agent_control_reader(
+                        reader,
+                        pending,
+                        token,
+                        event.run_id,
+                        service=service,
+                        emit_control=write_agent_frame,
+                    )
                 )
-        await _write_runtime_event(writer, event, writer_lock)
+        await write_agent_frame(event.type, event=event)
 
     async def request_write(*, command: str, args: list,
                             tool_name: str, tool_args: dict,
@@ -494,12 +800,20 @@ async def _handle_agent_turn(reader: asyncio.StreamReader,
             return {"error": "confirm_timeout", "hint": "确认超时,写按拒"}
 
     try:
-        await service.run_turn(
-            session_id,
-            client_turn_id,
-            user_text_or_error,
-            emit_runtime,
-            request_write,
+        kwargs: dict[str, Any] = {}
+        source_queue_id = req.get("source_queue_id")
+        if isinstance(source_queue_id, str) and source_queue_id:
+            kwargs["source_queue_id"] = source_queue_id
+        await _maybe_call(
+            _call_with_supported_kwargs(
+                service.run_turn,
+                session_id=session_id,
+                client_turn_id=client_turn_id,
+                input=user_text_or_error,
+                emit=emit_runtime,
+                request_write=request_write,
+                **kwargs,
+            )
         )
     except RunAdmissionError as exc:
         rejected = _AgentFrameEmitter(writer, session_id, transport_run_id)
@@ -702,18 +1016,76 @@ def _handle_agent_json_command(req: dict) -> str | None:
                 response["recalls"] = _recall_wire(recalled)
                 return _sidecar_ok(response)
             return _sidecar_err(f"unknown agent-memories action: {action}")
+        if cmd == "agent-queue":
+            service = _agent_service()
+            action = req.get("action") or "list"
+            session_id = req.get("session_id")
+            queue_id = req.get("queue_id")
+            if action == "list":
+                if not isinstance(session_id, str) or not session_id:
+                    return _sidecar_err("agent-queue list requires session_id")
+                items = _queued_inputs_wire(session_id=session_id)
+                return _sidecar_ok({"queued_inputs": items, **_queue_counts(items)})
+            if action == "discard":
+                if not isinstance(session_id, str) or not session_id:
+                    return _sidecar_err("agent-queue discard requires session_id")
+                if not isinstance(queue_id, str) or not queue_id:
+                    return _sidecar_err("agent-queue discard requires queue_id")
+                ok, payload = _service_queue_discard_sync(
+                    service, session_id=session_id, queue_id=queue_id
+                )
+                items = _queued_inputs_wire(session_id=session_id)
+                return _sidecar_ok({
+                    "ok": ok,
+                    "operation": "discarded" if ok else "rejected",
+                    "queued_inputs": items,
+                    **_queue_counts(items),
+                    **(payload if isinstance(payload, dict) else {}),
+                })
+            return _sidecar_err(f"unknown agent-queue action: {action}")
         if cmd == "agent-control":
             run_id = req.get("run_id")
             action = req.get("action")
-            if action != "abort":
-                return _sidecar_err("agent-control one-shot supports only abort")
             if not isinstance(run_id, str) or not run_id:
-                return _sidecar_err("agent-control abort requires run_id")
-            token = _AGENT_ABORTS.get(run_id)
-            if token is None:
-                return _sidecar_ok({"ok": False, "error": "unknown_run", "run_id": run_id})
-            token.abort(str(req.get("reason") or "client_abort"))
-            return _sidecar_ok({"ok": True, "run_id": run_id})
+                return _sidecar_err("agent-control requires run_id")
+            if action == "abort":
+                token = _AGENT_ABORTS.get(run_id)
+                if token is None:
+                    return _sidecar_ok({"ok": False, "error": "unknown_run", "run_id": run_id})
+                token.abort(str(req.get("reason") or "client_abort"))
+                return _sidecar_ok({"ok": True, "run_id": run_id})
+            if action in {"steer", "follow_up"}:
+                client_message_id = req.get("client_message_id")
+                input_text = req.get("input")
+                if not isinstance(client_message_id, str) or not client_message_id:
+                    return _sidecar_err("agent-control queue requires client_message_id")
+                if not isinstance(input_text, str) or not input_text.strip():
+                    return _sidecar_err("agent-control queue requires input")
+                service = _agent_service()
+                ok, payload = _service_queue_control_sync(
+                    service,
+                    action=action,
+                    run_id=run_id,
+                    client_message_id=client_message_id,
+                    input_text=input_text,
+                    source_queue_id=req.get("source_queue_id")
+                    if isinstance(req.get("source_queue_id"), str)
+                    else None,
+                )
+                item = payload.get("item") if isinstance(payload, dict) else None
+                items = payload.get("queued_inputs") if isinstance(payload, dict) else None
+                if not isinstance(items, list):
+                    items = [item] if item is not None else []
+                return _sidecar_ok({
+                    "ok": ok,
+                    "operation": "accepted" if ok else "rejected",
+                    "item": item,
+                    "queued_inputs": [_queue_item_wire(item) for item in items],
+                    **_queue_counts([_queue_item_wire(item) for item in items]),
+                    **({"reason": payload.get("reason") or payload.get("error")}
+                       if isinstance(payload, dict) and not ok else {}),
+                })
+            return _sidecar_err("agent-control one-shot supports abort, steer and follow_up")
     except Exception as exc:  # noqa: BLE001
         return _sidecar_err(f"{type(exc).__name__}: {exc}")
     return None

@@ -6,18 +6,22 @@ import asyncio
 import json
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping
 from uuid import uuid4
 
 from kss.agent.context import ContextAssembler, ContextAssembly
 from kss.agent.jsonl import utc_timestamp
-from kss.agent.memory_store import MemoryStore
+from kss.agent.memory_store import MemoryRecall, MemoryStore
 from kss.agent.provider import OpenAICompatibleProvider
 from kss.agent.runtime import AgentRuntime, RuntimeTurn
-from kss.agent.session_store import RunAdmissionError, SessionStore
-from kss.agent.skills import SkillManager
+from kss.agent.session_store import (
+    QueuedInputLimitError,
+    RunAdmissionError,
+    SessionStore,
+)
+from kss.agent.skills import SkillManager, SkillResourceError
 from kss.agent.types import AgentEvent, AgentMessage, RunResult, ToolCall, convert_to_llm
 from kss.llm.chat_client import ChatClient, sanitize_user_text
 
@@ -52,6 +56,7 @@ class KSSAgentService:
             model_capabilities=self.provider.model_capabilities(self.model)
         )
         self._request_writes: dict[tuple[str, str], RequestWrite] = {}
+        self._source_queue_ids: dict[tuple[str, str], str] = {}
         self._transcripts: dict[str, Any] = {}
         self.runtime = AgentRuntime(
             self._execute_turn,
@@ -60,6 +65,8 @@ class KSSAgentService:
             message_loader=self.sessions.read_messages,
             run_admission=self._admit_run,
             persistence_barrier=self._persist_turn,
+            queue_store=self.sessions,
+            runner_owns_turn_boundaries=True,
         )
 
     def duplicate_turn(self, session_id: str, client_turn_id: str) -> DuplicateTurn | None:
@@ -94,10 +101,13 @@ class KSSAgentService:
         input: str,
         emit: EmitEvent,
         request_write: RequestWrite,
+        source_queue_id: str | None = None,
     ) -> RunResult:
         """Run one idempotency-checked turn through the shared Runtime."""
         key = (session_id, client_turn_id)
         self._request_writes[key] = request_write
+        if source_queue_id:
+            self._source_queue_ids[key] = source_queue_id
         try:
             return await self.runtime.run_turn(
                 session_id,
@@ -107,6 +117,143 @@ class KSSAgentService:
             )
         finally:
             self._request_writes.pop(key, None)
+            self._source_queue_ids.pop(key, None)
+
+    def steer(
+        self,
+        run_id: str,
+        client_message_id: str,
+        input: str,
+        source_queue_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Queue a steering message without changing the current tool batch."""
+        return self._queue_input(
+            "steering",
+            run_id,
+            client_message_id,
+            input,
+            source_queue_id=source_queue_id,
+        )
+
+    def follow_up(
+        self,
+        run_id: str,
+        client_message_id: str,
+        input: str,
+        source_queue_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Queue one follow-up for processing after the current task settles."""
+        return self._queue_input(
+            "follow_up",
+            run_id,
+            client_message_id,
+            input,
+            source_queue_id=source_queue_id,
+        )
+
+    def queued_inputs(
+        self,
+        session_id: str | None = None,
+        run_id: str | None = None,
+    ) -> list[Any]:
+        """Return pending/restored inputs for protocol hydration."""
+        return self.runtime.queued_inputs(session_id=session_id, run_id=run_id)
+
+    def discard_queued_input(
+        self, session_id: str, queue_id: str
+    ) -> dict[str, Any]:
+        """Discard one pending/restored item and return the new queue snapshot."""
+        try:
+            item = self.runtime.discard_queued_input(session_id, queue_id)
+        except (KeyError, ValueError) as exc:
+            return {
+                "rejected": True,
+                "error": "queue_discard_rejected",
+                "reason": str(exc),
+                "queued_inputs": [
+                    asdict(value) for value in self.queued_inputs(session_id=session_id)
+                ],
+            }
+        return {
+            "item": asdict(item),
+            "queued_inputs": [
+                asdict(value) for value in self.queued_inputs(session_id=session_id)
+            ],
+        }
+
+    def _queue_input(
+        self,
+        mode: str,
+        run_id: str,
+        client_message_id: str,
+        input: str,
+        *,
+        source_queue_id: str | None,
+    ) -> dict[str, Any]:
+        cleaned = sanitize_user_text(input)
+        if not cleaned.strip():
+            return {
+                "rejected": True,
+                "error": "invalid_input",
+                "reason": "queued input is empty after sanitization",
+            }
+        try:
+            if mode == "steering":
+                item = self.runtime.steer(
+                    run_id,
+                    client_message_id,
+                    cleaned,
+                    source_queue_id=source_queue_id,
+                )
+            else:
+                item = self.runtime.follow_up(
+                    run_id,
+                    client_message_id,
+                    cleaned,
+                    source_queue_id=source_queue_id,
+                )
+        except KeyError as exc:
+            if "source queued input" in str(exc):
+                return {
+                    "rejected": True,
+                    "error": "source_queue_invalid",
+                    "reason": str(exc),
+                }
+            return {
+                "rejected": True,
+                "error": "unknown_run",
+                "reason": "run_settling",
+            }
+        except QueuedInputLimitError:
+            return {
+                "rejected": True,
+                "error": "queue_limit",
+                "reason": "每个 run 最多排队 8 条输入",
+            }
+        except RuntimeError:
+            return {
+                "rejected": True,
+                "error": "run_settling",
+                "reason": "run_settling",
+            }
+        except ValueError as exc:
+            if "source queued input" in str(exc):
+                return {
+                    "rejected": True,
+                    "error": "source_queue_invalid",
+                    "reason": str(exc),
+                }
+            return {
+                "rejected": True,
+                "error": "invalid_input",
+                "reason": str(exc),
+            }
+        return {
+            "item": asdict(item),
+            "queued_inputs": [
+                asdict(value) for value in self.queued_inputs(run_id=run_id)
+            ],
+        }
 
     def abort(self, run_id: str, reason: str = "aborted") -> bool:
         """Forward an abort request to the shared Runtime."""
@@ -138,21 +285,38 @@ class KSSAgentService:
 
         had_user = any(message.role == "user" for message in turn.messages[:-1])
         current_user = turn.messages[-1]
-        self.sessions.append_message(session_id, current_user)
+        source_queue_id = self._source_queue_ids.get((session_id, client_turn_id))
+        self.sessions.append_message(
+            session_id,
+            current_user,
+            source_queue_id=source_queue_id,
+        )
         if not had_user:
             title = current_user.content.strip().replace("\n", " ")[:40] or "新会话"
             self.sessions.rename_session(session_id, title)
+        await turn.emit(
+            "turn_start",
+            {
+                "client_turn_id": client_turn_id,
+                "kind": "initial",
+                "step": 0,
+                "message_id": current_user.id,
+            },
+        )
 
         recall_items = self.memories.recall(
             turn.input, now_ms=int(time.time() * 1000), limit=5
         )
         if recall_items:
+            recall_payloads = _recall_wire(recall_items)
             self.sessions.append_entry(
-                session_id, "recall", {"run_id": run_id, "items": recall_items}
+                session_id,
+                "recall",
+                {"run_id": run_id, "items": recall_payloads},
             )
             await turn.emit(
                 "recall",
-                {"items": recall_items, "recalls": _recall_wire(recall_items)},
+                {"items": recall_payloads, "recalls": recall_payloads},
             )
 
         skill_status = self.skills.status()
@@ -175,20 +339,59 @@ class KSSAgentService:
             skills=skill_summaries,
             memories=recall_items,
         )
+        current_assembly = assembly
         await turn.emit(
             "context_usage",
             {"context_usage": _usage_wire(assembly.usage.to_dict())},
         )
         registry = chat_loop.ToolRegistry()
-        registry.register_handler(
-            "load_skill",
-            lambda args: {
-                "skill_id": str(args.get("skill_id") or ""),
-                "content": self.skills.load_skill(
-                    str(args.get("skill_id") or "")
-                ),
-            },
-        )
+        def load_skill(args: dict[str, Any]) -> dict[str, Any]:
+            skill_id = str(args.get("skill_id") or "")
+            try:
+                return {
+                    "skill_id": skill_id,
+                    "content": self.skills.load_skill(skill_id),
+                    "provenance": "skill",
+                }
+            except SkillResourceError as exc:
+                return {
+                    **exc.as_dict(),
+                    "is_error": True,
+                    "provenance": "skill",
+                }
+
+        registry.register_handler("load_skill", load_skill)
+
+        def read_skill_resource(args: dict[str, Any]) -> dict[str, Any]:
+            skill_id = str(args.get("skill_id") or "")
+            path = str(args.get("path") or "")
+            try:
+                resource = self.skills.read_resource_info(
+                    skill_id,
+                    path,
+                    offset=int(args.get("offset") or 0),
+                    limit=int(args.get("max_chars") or 12_000),
+                )
+                return {
+                    "skill_id": resource.skill_id,
+                    "path": resource.relative_path,
+                    "content": resource.content,
+                    "offset": resource.offset,
+                    "next_offset": resource.next_offset,
+                    "truncated": resource.truncated,
+                    "size_bytes": resource.byte_size,
+                    "provenance": "skill_resource",
+                }
+            except SkillResourceError as exc:
+                return {
+                    **exc.as_dict(),
+                    "is_error": True,
+                    "provenance": "skill_resource",
+                }
+
+        registry.register_handler("read_skill_resource", read_skill_resource)
+
+        source_user_entry = current_user.id
 
         async def propose_memory(args: dict[str, Any]) -> dict[str, Any]:
             kind = str(args.get("kind") or "preference")
@@ -198,7 +401,7 @@ class KSSAgentService:
                 kind,
                 str(args.get("text") or ""),
                 source_session=session_id,
-                source_entry=run_id,
+                source_entry=source_user_entry,
                 metadata={"source": str(args.get("source") or "agent")},
             )
             payload = _memory_wire(record)
@@ -211,34 +414,177 @@ class KSSAgentService:
             return {"memory": payload, "pending_approval": True}
 
         registry.register_handler("propose_memory", propose_memory)
-        message_open = False
-
         async def runtime_write_gate(**kwargs: Any) -> dict[str, Any]:
             return await request_write(**kwargs, emit_event=turn.emit)
 
+        boundary_open = True
+        message_open = False
+        first_internal_turn_start = True
+
         async def emit_loop(event: dict[str, Any]) -> None:
-            nonlocal message_open
+            nonlocal boundary_open, first_internal_turn_start, message_open
             event_type = str(event.get("type") or "event")
             payload = {key: value for key, value in event.items() if key != "type"}
-            if event_type == "chunk" and not message_open:
+            if event_type == "turn_start":
+                if first_internal_turn_start:
+                    first_internal_turn_start = False
+                    boundary_open = True
+                    return
+                boundary_open = True
+            elif event_type == "message_start":
                 message_open = True
-                await turn.emit("message_start", {"role": "assistant"})
+            elif event_type == "message_end":
+                message_open = False
+            elif event_type == "turn_end":
+                boundary_open = False
+            elif event_type == "chunk" and not message_open:
+                message_open = True
+                await turn.emit(
+                    "message_start",
+                    {"role": "assistant", "kind": "initial"},
+                )
             if event_type == "done":
                 if message_open:
                     message_open = False
                     await turn.emit("message_end", {"role": "assistant"})
+                if boundary_open:
+                    boundary_open = False
+                    await turn.emit(
+                        "turn_end",
+                        {"reason": str(payload.get("reason") or "stop")},
+                    )
                 return
             await turn.emit(_loop_event_name(event_type), payload)
 
+        def queue_snapshot() -> list[Any]:
+            return [
+                item
+                for item in turn.queued_inputs()
+                if item.status == "queued"
+            ]
+
+        async def emit_queue_applied(item: Any) -> None:
+            items = turn.queued_inputs()
+            await turn.emit(
+                "queue_update",
+                {
+                    "operation": "applied",
+                    "item": asdict(item),
+                    "queued_inputs": [asdict(value) for value in items],
+                    "steering_count": sum(
+                        1 for value in items if value.mode == "steering"
+                    ),
+                    "follow_up_count": sum(
+                        1 for value in items if value.mode == "follow_up"
+                    ),
+                },
+            )
+
+        async def take_steering() -> list[dict[str, Any]] | None:
+            applied: list[dict[str, Any]] = []
+            for queued in queue_snapshot():
+                if queued.mode != "steering":
+                    continue
+                item = turn.apply_queued_input(queued.id)
+                await emit_queue_applied(item)
+                applied.append(
+                    {
+                        "role": "user",
+                        "content": item.content,
+                        "message_id": item.client_message_id,
+                    }
+                )
+            return applied or None
+
+        async def take_follow_up() -> dict[str, Any] | None:
+            nonlocal current_assembly, source_user_entry
+            queued = next(
+                (
+                    item
+                    for item in queue_snapshot()
+                    if item.mode == "follow_up"
+                ),
+                None,
+            )
+            if queued is None:
+                return None
+            item = turn.apply_queued_input(queued.id)
+            source_user_entry = item.client_message_id
+            await emit_queue_applied(item)
+
+            follow_up_recalls = self.memories.recall(
+                item.content,
+                now_ms=int(time.time() * 1000),
+                limit=5,
+            )
+            if follow_up_recalls:
+                payloads = _recall_wire(follow_up_recalls)
+                self.sessions.append_entry(
+                    session_id,
+                    "recall",
+                    {
+                        "run_id": run_id,
+                        "queue_item_id": item.id,
+                        "items": payloads,
+                    },
+                )
+                await turn.emit(
+                    "recall",
+                    {
+                        "queue_item_id": item.id,
+                        "items": payloads,
+                        "recalls": payloads,
+                    },
+                )
+            current_assembly = await self._assemble_context(
+                turn,
+                skills=skill_summaries,
+                memories=follow_up_recalls,
+                goal=item.content,
+            )
+            await turn.emit(
+                "context_usage",
+                {
+                    "context_usage": _usage_wire(
+                        current_assembly.usage.to_dict()
+                    )
+                },
+            )
+            return {
+                "role": "user",
+                "content": item.content,
+                "message_id": item.client_message_id,
+            }
+
+        def transform_context(
+            conversation: list[dict[str, Any]],
+        ) -> list[dict[str, Any]]:
+            return _merge_context(current_assembly, conversation)
+
         history = [convert_to_llm(message) for message in assembly.kept_messages]
-        transcript = await chat_loop.run_turn(
-            history,
-            emit_loop,
-            runtime_write_gate,
-            abort_token=turn.abort_token,
-            tool_registry=registry,
-            transform_context=lambda convo: _merge_context(assembly, convo),
-        )
+        try:
+            transcript = await chat_loop.run_turn(
+                history,
+                emit_loop,
+                runtime_write_gate,
+                abort_token=turn.abort_token,
+                tool_registry=registry,
+                transform_context=transform_context,
+                take_steering=take_steering,
+                take_follow_up=take_follow_up,
+                emit_internal_boundaries=True,
+            )
+        except BaseException:
+            if message_open:
+                message_open = False
+                await turn.emit(
+                    "message_end",
+                    {"role": "assistant", "reason": "aborted"},
+                )
+            if boundary_open:
+                boundary_open = False
+                await turn.emit("turn_end", {"reason": "aborted"})
+            raise
         self._transcripts[run_id] = transcript
         usage = transcript.run_state.get("usage")
         if isinstance(usage, dict):
@@ -269,6 +615,7 @@ class KSSAgentService:
         *,
         skills: list[str],
         memories: list[str],
+        goal: str | None = None,
     ) -> ContextAssembly:
         previous = self.sessions.latest_compaction(turn.state.session_id)
         kwargs = {
@@ -276,7 +623,7 @@ class KSSAgentService:
             "messages": list(turn.messages),
             "skills": skills,
             "memories": memories,
-            "goal": turn.input,
+            "goal": turn.input if goal is None else goal,
             "model": turn.model or self.model,
             "model_capabilities": self.provider.model_capabilities(
                 turn.model or self.model
@@ -520,16 +867,9 @@ def _usage_wire(usage: Mapping[str, Any]) -> dict[str, Any]:
     return output
 
 
-def _recall_wire(items: list[str]) -> list[dict[str, Any]]:
-    return [
-        {
-            "id": f"recall-{index}",
-            "title": "本轮召回记忆",
-            "source": "长期记忆",
-            "excerpt": text,
-        }
-        for index, text in enumerate(items)
-    ]
+def _recall_wire(items: list[MemoryRecall]) -> list[dict[str, Any]]:
+    """Serialize the exact structured objects used for model injection."""
+    return [item.as_dict() for item in items]
 
 
 def _memory_wire(record: Any) -> dict[str, Any]:

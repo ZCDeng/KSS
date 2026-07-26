@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import threading
 import uuid
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Protocol, Sequence, TypeVar
@@ -17,6 +18,8 @@ from kss.agent.jsonl import utc_timestamp
 from kss.agent.types import (
     AgentEvent,
     AgentMessage,
+    QueuedAgentInput,
+    QueuedInputMode,
     RunResult,
     RunTerminalStatus,
     RuntimeState,
@@ -46,6 +49,55 @@ class PersistenceBarrier(Protocol):
         result: RunResult,
     ) -> MaybeAwaitable[None]:
         """持久化最终消息与 run 状态；失败时应抛出异常."""
+
+
+class QueueStore(Protocol):
+    """Runtime 队列的同步 append-only 存储边界."""
+
+    def add_queued_input(
+        self,
+        session_id: str,
+        run_id: str,
+        mode: QueuedInputMode,
+        client_message_id: str,
+        content: str,
+        *,
+        source_queue_id: str | None = None,
+    ) -> QueuedAgentInput:
+        """幂等追加一条队列输入."""
+
+    def queued_inputs(
+        self,
+        *,
+        session_id: str | None = None,
+        run_id: str | None = None,
+        include_terminal: bool = False,
+    ) -> list[QueuedAgentInput]:
+        """列出持久队列."""
+
+    def apply_queued_input(
+        self,
+        session_id: str,
+        queue_id: str,
+        *,
+        target_run_id: str | None = None,
+    ) -> QueuedAgentInput:
+        """原子追加 user message 与 applied 终态."""
+
+    def discard_queued_input(
+        self, session_id: str, queue_id: str
+    ) -> QueuedAgentInput:
+        """丢弃队列输入."""
+
+    def restore_queued_inputs(
+        self, session_id: str, *, run_id: str | None = None
+    ) -> list[QueuedAgentInput]:
+        """恢复 interrupted run 的待处理输入."""
+
+    def restore_pending_inputs(
+        self, session_id: str, run_id: str
+    ) -> list[QueuedAgentInput]:
+        """在 run 终态前恢复所有 pending 输入."""
 
 
 class RuntimeBusyError(RuntimeError):
@@ -118,6 +170,14 @@ class RuntimeTurn:
             else:
                 self.state.usage[key] = value
 
+    def queued_inputs(self) -> list[QueuedAgentInput]:
+        """返回本 run 尚待应用的 steering / follow-up."""
+        return self.runtime.queued_inputs(run_id=self.state.run_id)
+
+    def apply_queued_input(self, queue_id: str) -> QueuedAgentInput:
+        """在 runner 选择的安全点原子应用一条 queued input."""
+        return self.runtime.apply_queued_input(self.state.session_id, queue_id)
+
 
 class AgentRuntime:
     """状态化 Agent 生命周期管理器.
@@ -137,6 +197,8 @@ class AgentRuntime:
         message_loader: MessageLoader | None = None,
         run_admission: RunAdmission | None = None,
         persistence_barrier: PersistenceBarrier | None = None,
+        queue_store: QueueStore | None = None,
+        runner_owns_turn_boundaries: bool = False,
         run_id_factory: Callable[[], str] | None = None,
     ) -> None:
         self.model = model
@@ -146,6 +208,8 @@ class AgentRuntime:
         self._message_loader = message_loader
         self._run_admission = run_admission
         self._persistence_barrier = persistence_barrier
+        self._queue_store = queue_store
+        self._runner_owns_turn_boundaries = runner_owns_turn_boundaries
         self._run_id_factory = run_id_factory or (lambda: uuid.uuid4().hex)
         self._subscribers: list[EventCallback] = []
         self._states: dict[str, RuntimeState] = {}
@@ -154,6 +218,9 @@ class AgentRuntime:
         self._results: dict[str, RunResult] = {}
         self._messages_by_session: dict[str, list[AgentMessage]] = {}
         self._lock = asyncio.Lock()
+        self._queue_lock = threading.RLock()
+        self._queued_by_id: dict[str, QueuedAgentInput] = {}
+        self._queue_sources: dict[str, str] = {}
 
     def subscribe(self, callback: EventCallback) -> Callable[[], None]:
         """订阅所有 run 的事件并返回幂等取消函数."""
@@ -190,6 +257,130 @@ class AgentRuntime:
             return False
         token.abort(reason)
         return True
+
+    def steer(
+        self,
+        run_id: str,
+        client_message_id: str,
+        input: str,
+        source_queue_id: str | None = None,
+    ) -> QueuedAgentInput:
+        """为 active run 排入 steering 输入."""
+        return self._add_queued_input(
+            run_id,
+            "steering",
+            client_message_id,
+            input,
+            source_queue_id=source_queue_id,
+        )
+
+    def follow_up(
+        self,
+        run_id: str,
+        client_message_id: str,
+        input: str,
+        source_queue_id: str | None = None,
+    ) -> QueuedAgentInput:
+        """为 active run 排入完成后处理的 follow-up."""
+        return self._add_queued_input(
+            run_id,
+            "follow_up",
+            client_message_id,
+            input,
+            source_queue_id=source_queue_id,
+        )
+
+    def queued_inputs(
+        self,
+        session_id: str | None = None,
+        run_id: str | None = None,
+    ) -> list[QueuedAgentInput]:
+        """列出尚未应用或丢弃的队列输入."""
+        if self._queue_store is not None:
+            return self._queue_store.queued_inputs(
+                session_id=session_id,
+                run_id=run_id,
+            )
+        with self._queue_lock:
+            return [
+                item
+                for item in self._queued_by_id.values()
+                if item.status in {"queued", "restored"}
+                and (session_id is None or item.session_id == session_id)
+                and (run_id is None or item.run_id == run_id)
+            ]
+
+    def apply_queued_input(
+        self, session_id: str, queue_id: str
+    ) -> QueuedAgentInput:
+        """应用队列输入，并同步更新当前 RuntimeState."""
+        target_run_id = self._active_by_session.get(session_id)
+        if self._queue_store is not None:
+            item = self._queue_store.apply_queued_input(
+                session_id,
+                queue_id,
+                target_run_id=target_run_id,
+            )
+        else:
+            item = self._apply_in_memory_queued_input(session_id, queue_id)
+        target_state = (
+            self._states.get(target_run_id) if target_run_id is not None else None
+        )
+        if target_state is not None and not any(
+            message.metadata.get("queued_input_id") == item.id
+            for message in target_state.messages
+        ):
+            target_state.messages.append(
+                self._queued_input_message(item, target_run_id=target_run_id)
+            )
+        return item
+
+    def discard_queued_input(
+        self, session_id: str, queue_id: str
+    ) -> QueuedAgentInput:
+        """幂等丢弃队列输入."""
+        if self._queue_store is not None:
+            return self._queue_store.discard_queued_input(session_id, queue_id)
+        with self._queue_lock:
+            current = self._queued_by_id.get(queue_id)
+            if current is None or current.session_id != session_id:
+                raise KeyError(queue_id)
+            if current.status == "applied":
+                raise ValueError("applied queued input 不能丢弃")
+            if current.status == "discarded":
+                return current
+            discarded = self._queued_copy(current, status="discarded")
+            self._queued_by_id[queue_id] = discarded
+            return discarded
+
+    def restore_queued_inputs(
+        self, session_id: str, *, run_id: str | None = None
+    ) -> list[QueuedAgentInput]:
+        """恢复 interrupted run 的 pending queue."""
+        if self._queue_store is not None:
+            return self._queue_store.restore_queued_inputs(
+                session_id, run_id=run_id
+            )
+        with self._queue_lock:
+            restored: list[QueuedAgentInput] = []
+            for queue_id, current in list(self._queued_by_id.items()):
+                if (
+                    current.session_id == session_id
+                    and current.status == "queued"
+                    and (run_id is None or current.run_id == run_id)
+                ):
+                    item = self._queued_copy(current, status="restored")
+                    self._queued_by_id[queue_id] = item
+                    restored.append(item)
+            return restored
+
+    def restore_pending_inputs(
+        self, session_id: str, run_id: str
+    ) -> list[QueuedAgentInput]:
+        """在 persistence barrier 前 settle 仍 pending 的输入."""
+        if self._queue_store is not None:
+            return self._queue_store.restore_pending_inputs(session_id, run_id)
+        return self.restore_queued_inputs(session_id, run_id=run_id)
 
     async def wait_for_idle(self, run_id: str) -> RunResult:
         """等待 run 进入终态；已完成 run 立即返回."""
@@ -254,7 +445,8 @@ class AgentRuntime:
                 "agent_start",
                 {"client_turn_id": client_turn_id, "model": state.model},
             )
-            await turn.emit("turn_start", {"client_turn_id": client_turn_id})
+            if not self._runner_owns_turn_boundaries:
+                await turn.emit("turn_start", {"client_turn_id": client_turn_id})
             runner_result = await _await_if_needed(self._turn_runner(turn))
             result = self._normalize_result(state, runner_result)
         except asyncio.CancelledError:
@@ -268,6 +460,16 @@ class AgentRuntime:
             else:
                 result = self._terminal_result(state, "failed", str(exc), "runtime_error")
 
+        # Close the queue admission gate before settlement so an input racing
+        # natural completion cannot appear after restore_pending_inputs.
+        # Queue admission is synchronous and may briefly hold the gate while a
+        # JSONL append/fsync completes. Wait for that gate off the event-loop
+        # thread so a slow disk cannot deadlock abort/control processing.
+        await asyncio.to_thread(
+            self._close_queue_admission,
+            state,
+            result.status,
+        )
         result, persisted = await self._cross_persistence_barrier(turn, result)
         self._apply_result(state, result)
         await self._finish_run(state, result)
@@ -288,7 +490,8 @@ class AgentRuntime:
             "usage": dict(result.usage),
             "termination_reason": result.termination_reason,
         }
-        await turn.emit("turn_end", terminal_payload)
+        if not self._runner_owns_turn_boundaries:
+            await turn.emit("turn_end", terminal_payload)
         await turn.emit("agent_end", terminal_payload)
         return result
 
@@ -361,24 +564,31 @@ class AgentRuntime:
         result: RunResult,
     ) -> tuple[RunResult, bool]:
         if self._persistence_barrier is None:
+            try:
+                self.restore_pending_inputs(result.session_id, result.run_id)
+            except Exception as exc:
+                return self._persistence_failure(result, exc), False
             return result, True
         try:
+            self.restore_pending_inputs(result.session_id, result.run_id)
             await _await_if_needed(self._persistence_barrier(turn, result))
             return result, True
         except Exception as exc:
-            return (
-                RunResult(
-                    run_id=result.run_id,
-                    session_id=result.session_id,
-                    client_turn_id=result.client_turn_id,
-                    status="failed",
-                    messages=result.messages,
-                    error=f"persistence barrier failed: {exc}",
-                    usage=result.usage,
-                    termination_reason="persistence_error",
-                ),
-                False,
-            )
+            return self._persistence_failure(result, exc), False
+
+    def _persistence_failure(
+        self, result: RunResult, exc: Exception
+    ) -> RunResult:
+        return RunResult(
+            run_id=result.run_id,
+            session_id=result.session_id,
+            client_turn_id=result.client_turn_id,
+            status="failed",
+            messages=result.messages,
+            error=f"persistence barrier failed: {exc}",
+            usage=result.usage,
+            termination_reason="persistence_error",
+        )
 
     def _apply_result(self, state: RuntimeState, result: RunResult) -> None:
         state.status = result.status
@@ -399,6 +609,14 @@ class AgentRuntime:
             if future is not None and not future.done():
                 future.set_result(result)
 
+    def _close_queue_admission(
+        self,
+        state: RuntimeState,
+        status: RunTerminalStatus,
+    ) -> None:
+        with self._queue_lock:
+            state.status = status
+
     async def _emit(
         self,
         event: AgentEvent,
@@ -417,6 +635,155 @@ class AgentRuntime:
                 continue
         return event
 
+    def _add_queued_input(
+        self,
+        run_id: str,
+        mode: QueuedInputMode,
+        client_message_id: str,
+        content: str,
+        *,
+        source_queue_id: str | None,
+    ) -> QueuedAgentInput:
+        with self._queue_lock:
+            state = self._states.get(run_id)
+            if state is None:
+                raise KeyError(run_id)
+            existing = next(
+                (
+                    item
+                    for item in self._all_queued_inputs(run_id=run_id)
+                    if item.client_message_id == client_message_id
+                ),
+                None,
+            )
+            if existing is not None:
+                return existing
+            if state.status in {"completed", "failed", "aborted", "interrupted"}:
+                raise RuntimeError(f"run {run_id!r} is already terminal")
+            if self._queue_store is not None:
+                # Settlement flips state.status under this same gate before it
+                # restores pending entries. Therefore an admission either lands
+                # before settlement and is restored, or observes the terminal
+                # state and is rejected; it can never be stranded as queued.
+                return self._queue_store.add_queued_input(
+                    state.session_id,
+                    run_id,
+                    mode,
+                    client_message_id,
+                    content,
+                    source_queue_id=source_queue_id,
+                )
+            if not client_message_id.strip() or not content.strip():
+                raise ValueError("client_message_id 和 queued input 不能为空")
+            cumulative = sum(
+                1 for item in self._queued_by_id.values() if item.run_id == run_id
+            )
+            if cumulative >= 8:
+                raise RuntimeError(f"run {run_id!r} queued input limit 8 reached")
+            item = QueuedAgentInput(
+                id=uuid.uuid4().hex,
+                client_message_id=client_message_id,
+                session_id=state.session_id,
+                run_id=run_id,
+                mode=mode,
+                content=content,
+                status="queued",
+                created_at=utc_timestamp(),
+            )
+            self._queued_by_id[item.id] = item
+            if source_queue_id is not None:
+                self._queue_sources[item.id] = source_queue_id
+            return item
+
+    def _all_queued_inputs(
+        self, *, run_id: str | None = None
+    ) -> list[QueuedAgentInput]:
+        if self._queue_store is not None:
+            return self._queue_store.queued_inputs(
+                run_id=run_id,
+                include_terminal=True,
+            )
+        with self._queue_lock:
+            return [
+                item
+                for item in self._queued_by_id.values()
+                if run_id is None or item.run_id == run_id
+            ]
+
+    def _apply_in_memory_queued_input(
+        self, session_id: str, queue_id: str
+    ) -> QueuedAgentInput:
+        with self._queue_lock:
+            current = self._queued_by_id.get(queue_id)
+            if current is None or current.session_id != session_id:
+                raise KeyError(queue_id)
+            if current.status == "applied":
+                return current
+            if current.status == "discarded":
+                raise ValueError("discarded queued input 不能应用")
+            source_queue_id = self._queue_sources.get(queue_id)
+            source = (
+                self._queued_by_id.get(source_queue_id)
+                if source_queue_id is not None
+                else None
+            )
+            if source_queue_id is not None and (
+                source is None or source.status != "restored"
+            ):
+                raise ValueError(
+                    "source queued input 必须处于 restored 状态"
+                )
+            item = self._queued_copy(
+                current,
+                status="applied",
+                applied_at=utc_timestamp(),
+            )
+            self._queued_by_id[queue_id] = item
+            if source_queue_id is not None and source is not None:
+                self._queued_by_id[source_queue_id] = self._queued_copy(
+                    source, status="discarded"
+                )
+            return item
+
+    def _queued_copy(
+        self,
+        item: QueuedAgentInput,
+        *,
+        status: str,
+        applied_at: float | None = None,
+    ) -> QueuedAgentInput:
+        return QueuedAgentInput(
+            id=item.id,
+            client_message_id=item.client_message_id,
+            session_id=item.session_id,
+            run_id=item.run_id,
+            mode=item.mode,
+            content=item.content,
+            status=status,  # type: ignore[arg-type]
+            created_at=item.created_at,
+            applied_at=applied_at,
+        )
+
+    def _queued_input_message(
+        self,
+        item: QueuedAgentInput,
+        *,
+        target_run_id: str | None,
+    ) -> AgentMessage:
+        return AgentMessage(
+            id=item.client_message_id,
+            role="user",
+            content=item.content,
+            timestamp=item.applied_at or utc_timestamp(),
+            metadata={
+                "run_id": target_run_id or item.run_id,
+                "source_run_id": item.run_id,
+                "client_message_id": item.client_message_id,
+                "queued_input_id": item.id,
+                "queue_mode": item.mode,
+            },
+        )
+
 
 async def _await_if_needed(value: MaybeAwaitable[T]) -> T:
     if inspect.isawaitable(value):
@@ -429,6 +796,7 @@ __all__ = [
     "EventCallback",
     "MessageLoader",
     "PersistenceBarrier",
+    "QueueStore",
     "RunAdmission",
     "RuntimeBusyError",
     "RuntimeTurn",

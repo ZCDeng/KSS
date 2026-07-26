@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from kss.agent import SkillManager
+from kss.agent.skills import SkillResourceError
 
 
 def _write_skill(root: Path, rel: str, text: str) -> Path:
@@ -97,3 +98,117 @@ def test_skill_manager_rejects_large_skill(tmp_path):
     skill = manager.discover()[0][0]
     with pytest.raises(ValueError, match="超过 64KB"):
         manager.load_skill(skill.id)
+
+
+def test_skill_resource_requires_enabled_skill(tmp_path):
+    root = tmp_path / ".claude" / "skills"
+    skill_path = _write_skill(root, "alpha", "---\nname: alpha\n---\nbody")
+    (skill_path.parent / "ref.md").write_text("resource", encoding="utf-8")
+    manager = SkillManager(tmp_path, state_root=tmp_path)
+    skill = manager.discover()[0][0]
+    manager.set_enabled(skill.id, False)
+
+    with pytest.raises(SkillResourceError) as load_error:
+        manager.load_skill(skill.id)
+    with pytest.raises(SkillResourceError) as resource_error:
+        manager.read_resource(skill.id, "ref.md")
+
+    assert load_error.value.code == "skill_disabled"
+    assert resource_error.value.code == "skill_disabled"
+
+
+def test_skill_resource_pagination_reports_raw_size(tmp_path):
+    root = tmp_path / ".claude" / "skills"
+    skill_path = _write_skill(root, "alpha", "---\nname: alpha\n---\nbody")
+    text = "页" * 20_000
+    (skill_path.parent / "ref.md").write_text(text, encoding="utf-8")
+    manager = SkillManager(tmp_path)
+
+    first = manager.read_resource_info("alpha", "ref.md", limit=8_000)
+    second = manager.read_resource_info(
+        "alpha",
+        "ref.md",
+        offset=first.next_offset or 0,
+        limit=8_000,
+    )
+    third = manager.read_resource_info(
+        "alpha",
+        "ref.md",
+        offset=second.next_offset or 0,
+        limit=8_000,
+    )
+
+    assert first.total_chars == 20_000
+    assert first.byte_size == len(text.encode("utf-8"))
+    assert first.truncated is True and first.next_offset == 8_000
+    assert second.next_offset == 16_000
+    assert third.next_offset is None and third.truncated is False
+    assert first.content + second.content + third.content == text
+    assert first.as_dict()["relative_path"] == "ref.md"
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "expected_code"),
+    [
+        ("missing.md", "resource_not_found"),
+        (".", "resource_not_file"),
+        ("bad\x00name", "invalid_resource_path"),
+        ("../../outside.md", "resource_path_escape"),
+    ],
+)
+def test_skill_resource_stable_path_errors(tmp_path, relative_path, expected_code):
+    root = tmp_path / ".claude" / "skills"
+    _write_skill(root, "alpha", "---\nname: alpha\n---\nbody")
+    manager = SkillManager(tmp_path)
+
+    with pytest.raises(SkillResourceError) as error:
+        manager.read_resource("alpha", relative_path)
+
+    assert error.value.code == expected_code
+    assert error.value.as_dict()["error"] == expected_code
+
+
+def test_skill_resource_rejects_symlink_escape(tmp_path):
+    root = tmp_path / ".claude" / "skills"
+    skill_path = _write_skill(root, "alpha", "---\nname: alpha\n---\nbody")
+    outside = tmp_path / "outside.md"
+    outside.write_text("outside", encoding="utf-8")
+    (skill_path.parent / "escape.md").symlink_to(outside)
+    manager = SkillManager(tmp_path)
+
+    with pytest.raises(SkillResourceError) as error:
+        manager.read_resource("alpha", "escape.md")
+
+    assert error.value.code == "resource_path_escape"
+
+
+def test_skill_resource_rejects_binary_non_utf8_and_oversize(tmp_path):
+    root = tmp_path / ".claude" / "skills"
+    skill_path = _write_skill(root, "alpha", "---\nname: alpha\n---\nbody")
+    (skill_path.parent / "nul.bin").write_bytes(b"text\x00binary")
+    (skill_path.parent / "latin1.txt").write_bytes(b"caf\xe9")
+    (skill_path.parent / "huge.txt").write_bytes(b"x" * (64 * 1024 + 1))
+    manager = SkillManager(tmp_path)
+
+    expected = {
+        "nul.bin": "resource_binary",
+        "latin1.txt": "resource_not_utf8",
+        "huge.txt": "resource_too_large",
+    }
+    for path, code in expected.items():
+        with pytest.raises(SkillResourceError) as error:
+            manager.read_resource("alpha", path)
+        assert error.value.code == code
+
+
+def test_skill_script_is_returned_as_source_and_never_executed(tmp_path):
+    root = tmp_path / ".claude" / "skills"
+    skill_path = _write_skill(root, "alpha", "---\nname: alpha\n---\nbody")
+    marker = tmp_path / "must-not-exist"
+    script = skill_path.parent / "script.sh"
+    source = f"#!/bin/sh\ntouch {marker}\n"
+    script.write_text(source, encoding="utf-8")
+    manager = SkillManager(tmp_path)
+
+    assert manager.read_resource("alpha", "script.sh") == source
+    assert not marker.exists()

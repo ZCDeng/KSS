@@ -5,6 +5,8 @@ import time
 import pytest
 
 from kss.agent import MemoryStore
+from kss.agent.jsonl import append_jsonl
+from kss.agent.memory_store import MemoryRecall
 
 
 def test_memory_store_propose_approve_search_archive_delete(tmp_path):
@@ -55,6 +57,7 @@ def test_memory_store_recall_uses_rank_and_caps_items(tmp_path):
     recalled = store.recall("纯新增 零侵入", now_ms=now_ms, limit=10)
 
     assert 1 <= len(recalled) <= 5
+    assert isinstance(recalled[0], MemoryRecall)
     assert "纯新增" in recalled[0]
     assert all(len(item) <= 250 for item in recalled)
 
@@ -79,3 +82,78 @@ def test_memory_store_expiry_hides_old_records(tmp_path):
     store.approve(record.id)
 
     assert store.search("过期") == []
+
+
+def test_memory_recall_preserves_real_source_score_and_injection_text(tmp_path):
+    store = MemoryStore(tmp_path)
+    record = store.propose(
+        "decision",
+        "发布前必须验证实际运行进程来自 Applications bundle",
+        source_session="session-real",
+        source_entry="entry-real",
+        tags=("release", "macos"),
+    )
+    store.approve(record.id)
+
+    recalled = store.recall(
+        "Applications bundle 发布验证",
+        now_ms=int(time.time() * 1000),
+    )
+
+    assert len(recalled) == 1
+    item = recalled[0]
+    assert item.id == record.id
+    assert item.kind == "decision"
+    assert item.source_session == "session-real"
+    assert item.source_entry == "entry-real"
+    assert item.source == "session-real · entry-real"
+    assert item.created_at == record.created_at
+    assert item.expires_at == record.expires_at
+    assert item.review_required is False
+    assert item.score > 0
+    assert item.injection_text == str(item)
+    assert item.as_dict()["id"] == record.id
+    assert item.as_dict()["excerpt"] == item.injection_text
+
+
+def test_thesis_recall_always_marks_review_and_caps_prefixed_text(tmp_path):
+    store = MemoryStore(tmp_path)
+    record = store.propose(
+        "thesis",
+        "历史研究判断：" + "待验证" * 100,
+        metadata={"review_required": False},
+    )
+    store.approve(record.id)
+
+    item = store.recall("历史研究判断", now_ms=int(time.time() * 1000))[0]
+
+    assert item.review_required is True
+    assert item.injection_text.startswith("【待复核的历史判断】")
+    assert len(item.injection_text) <= 250
+
+
+def test_recall_reads_legacy_text_only_record(tmp_path):
+    store = MemoryStore(tmp_path)
+    append_jsonl(
+        store.path,
+        {
+            "version": 1,
+            "id": "legacy-event",
+            "parent_id": "legacy-memory",
+            "timestamp": time.time(),
+            "type": "legacy",
+            "payload": {
+                "id": "legacy-memory",
+                "text": "旧格式记忆仍可召回",
+                "tags": "legacy",
+            },
+        },
+    )
+
+    item = store.recall("旧格式", now_ms=int(time.time() * 1000))[0]
+
+    assert item.id == "legacy-memory"
+    assert item.kind == "preference"
+    assert item.tags == ("legacy",)
+    assert item.content == "旧格式记忆仍可召回"
+    assert item.review_required is False

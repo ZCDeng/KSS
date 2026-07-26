@@ -186,16 +186,24 @@ final class KSSStore: ObservableObject {
     @Published var agentLastEventIsError: Bool?
     @Published var agentTerminationReason: String?
     @Published var agentSequenceIssue: String?
+    @Published var agentQueuedInputs: [AgentQueuedInput] = []
+    @Published var agentSteeringCount = 0
+    @Published var agentFollowUpCount = 0
+    @Published var agentQueueAcknowledgement: AgentQueueAcknowledgement?
     @Published var agentProtocolUnavailable = false
     /// 当前阻塞中的 confirm 闸（后台流式线程持，UI tap 后 resolve）。
     private var activeConfirmGate: ChatConfirmGate?
     private var activeAgentControl: BridgeClient.AgentControlChannel?
     private var activeAgentRunId: String?
+    private var activeAgentStreamId: UUID?
     private var userAbortedAgentRun = false
     private var agentSeenSequences: [String: Set<Int>] = [:]
     private var agentExpectedSequence: [String: Int] = [:]
     private var agentDuplicateHydrationKeys: Set<String> = []
     private var chatMessagesByAgentSession: [String: [ChatMessage]] = [:]
+    private var pendingQueueClientMessageId: String?
+    private var agentMessageStartCounts: [String: Int] = [:]
+    private var agentCurrentAssistantMessageIds: [String: UUID] = [:]
 
     let bridge: BridgeClient?
 
@@ -212,12 +220,12 @@ final class KSSStore: ObservableObject {
 
     // MARK: - 聊天一轮（流式 + 人在环内写闸）
 
-    func sendChat(_ text: String) {
+    func sendChat(_ text: String, sourceQueueId: String? = nil) {
         guard let bridge else { errorMessage = "Cannot locate KSS project root"; return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isChatStreaming else { return }   // 单活动轮（R11）
         if !agentProtocolUnavailable {
-            sendAgentChat(trimmed, bridge: bridge)
+            sendAgentChat(trimmed, sourceQueueId: sourceQueueId, bridge: bridge)
             return
         }
         chatMessages.append(ChatMessage(role: .user, text: trimmed))
@@ -227,7 +235,7 @@ final class KSSStore: ObservableObject {
         startLegacyChat(bridge: bridge, assistantId: assistantId)
     }
 
-    private func sendAgentChat(_ trimmed: String, bridge: BridgeClient) {
+    private func sendAgentChat(_ trimmed: String, sourceQueueId: String?, bridge: BridgeClient) {
         ensureAgentSession()
         guard let sessionId = selectedAgentSessionId else { return }
         chatMessages.append(ChatMessage(role: .user, text: trimmed))
@@ -236,6 +244,8 @@ final class KSSStore: ObservableObject {
         chatMessagesByAgentSession[sessionId] = chatMessages
         persistLastAgentSession(sessionId)
         let assistantId = assistant.id
+        let streamId = UUID()
+        activeAgentStreamId = streamId
         isChatStreaming = true
         userAbortedAgentRun = false
         chatToolInProgress = nil
@@ -246,22 +256,31 @@ final class KSSStore: ObservableObject {
         agentTerminationReason = nil
         agentSequenceIssue = nil
         agentDuplicateHydrationKeys.removeAll()
+        agentMessageStartCounts.removeAll()
         let clientTurnId = UUID().uuidString
         Task.detached { [weak self] in
             bridge.agentTurn(
                 sessionId: sessionId,
                 clientTurnId: clientTurnId,
                 input: trimmed,
+                sourceQueueId: sourceQueueId,
                 onControlReady: { control in
-                    Task { @MainActor [weak self] in self?.activeAgentControl = control }
+                    Task { @MainActor [weak self] in
+                        guard self?.activeAgentStreamId == streamId else { return }
+                        self?.activeAgentControl = control
+                    }
                 },
                 onFrame: { frame in
-                    Task { @MainActor [weak self] in self?.applyAgentFrame(frame, assistantId: assistantId) }
+                    Task { @MainActor [weak self] in
+                        guard self?.activeAgentStreamId == streamId else { return }
+                        self?.applyAgentFrame(frame, assistantId: assistantId)
+                    }
                 },
                 onConfirmRequired: { frame in
                     let gate = ChatConfirmGate()
                     DispatchQueue.main.async { [weak self] in
-                        guard let self else { gate.resolve(false); return }
+                        guard let self, self.activeAgentStreamId == streamId
+                        else { gate.resolve(false); return }
                         self.activeConfirmGate = gate
                         let ctx = self.chatMessages.last(where: { $0.role == .assistant })?.text ?? ""
                         let confirm = PendingWriteConfirm(
@@ -277,7 +296,12 @@ final class KSSStore: ObservableObject {
                 },
                 onEnd: { err in
                     Task { @MainActor [weak self] in
-                        self?.endAgentChat(bridge: bridge, assistantId: assistantId, input: trimmed, error: err)
+                        self?.endAgentChat(
+                            bridge: bridge,
+                            assistantId: assistantId,
+                            input: trimmed,
+                            streamId: streamId,
+                            error: err)
                     }
                 })
         }
@@ -347,6 +371,40 @@ final class KSSStore: ObservableObject {
         activeConfirmGate?.resolve(false)
         activeConfirmGate = nil
         pendingWriteConfirm = nil
+        pendingQueueClientMessageId = nil
+    }
+
+    /// 将生成期间的新输入排入当前 run。编辑器只在服务端 queue_update=accepted
+    /// 后清空；调用者通过返回的 client_message_id 关联这次确认。
+    @discardableResult
+    func enqueueAgentInput(
+        _ text: String,
+        mode: String,
+        sourceQueueId: String? = nil
+    ) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isChatStreaming, !trimmed.isEmpty,
+              pendingQueueClientMessageId == nil,
+              let control = activeAgentControl,
+              let runId = activeAgentRunId
+        else { return nil }
+        let clientMessageId = UUID().uuidString
+        pendingQueueClientMessageId = clientMessageId
+        agentQueueAcknowledgement = nil
+        if mode == "follow_up" {
+            control.followUp(
+                runId: runId,
+                clientMessageId: clientMessageId,
+                input: trimmed,
+                sourceQueueId: sourceQueueId)
+        } else {
+            control.steer(
+                runId: runId,
+                clientMessageId: clientMessageId,
+                input: trimmed,
+                sourceQueueId: sourceQueueId)
+        }
+        return clientMessageId
     }
 
     private func applyChatFrame(_ frame: ChatFrame, assistantId: UUID) {
@@ -433,6 +491,10 @@ final class KSSStore: ObservableObject {
         }
 
         let idx: Int? = {
+            if let currentId = agentCurrentAssistantMessageIds[runKey],
+               let idx = chatMessages.firstIndex(where: { $0.id == currentId }) {
+                return idx
+            }
             if let assistantId, let idx = chatMessages.firstIndex(where: { $0.id == assistantId }) { return idx }
             return chatMessages.lastIndex(where: { $0.role == .assistant })
         }()
@@ -453,9 +515,18 @@ final class KSSStore: ObservableObject {
         case "agent_start", "turn_start":
             chatToolInProgress = nil
         case "message_start":
-            if idx == nil {
-                chatMessages.append(ChatMessage(role: .assistant, text: "", numbersUnverified: true))
+            let messageCount = agentMessageStartCounts[runKey] ?? 0
+            if messageCount > 0 || idx == nil {
+                let assistant = ChatMessage(
+                    role: .assistant,
+                    text: "",
+                    numbersUnverified: true)
+                chatMessages.append(assistant)
+                agentCurrentAssistantMessageIds[runKey] = assistant.id
+            } else if let idx {
+                agentCurrentAssistantMessageIds[runKey] = chatMessages[idx].id
             }
+            agentMessageStartCounts[runKey] = messageCount + 1
         case "message_delta":
             if let idx {
                 chatMessages[idx].text += frame.delta ?? frame.text ?? ""
@@ -485,6 +556,8 @@ final class KSSStore: ObservableObject {
             if let recall = frame.recall, !agentSourceRecalls.contains(where: { $0.id == recall.id }) {
                 agentSourceRecalls.append(recall)
             }
+        case "queue_update":
+            applyAgentQueueUpdate(frame)
         case "compaction_start":
             agentContextUsage = frame.contextUsage ?? AgentContextUsage(used: nil, limit: nil, percent: nil, label: "压缩中")
         case "compaction_end":
@@ -496,6 +569,9 @@ final class KSSStore: ObservableObject {
                 if let unverified = frame.numberGuard?.unverified {
                     chatMessages[idx].numbersUnverified = !unverified.isEmpty
                 }
+            }
+            if frame.type == "agent_end" {
+                agentCurrentAssistantMessageIds.removeValue(forKey: runKey)
             }
         case "error":
             chatToolInProgress = nil
@@ -512,6 +588,55 @@ final class KSSStore: ObservableObject {
             chatMessagesByAgentSession[sessionId] = chatMessages
         }
         return true
+    }
+
+    private func applyAgentQueueUpdate(_ frame: AgentFrame) {
+        let operation = frame.operation ?? "updated"
+        if operation != "rejected" {
+            if let queuedInputs = frame.queuedInputs {
+                agentQueuedInputs = queuedInputs.filter(\.isRestorable)
+            } else if let item = frame.item {
+                if item.isRestorable {
+                    if let idx = agentQueuedInputs.firstIndex(where: { $0.id == item.id }) {
+                        agentQueuedInputs[idx] = item
+                    } else {
+                        agentQueuedInputs.append(item)
+                    }
+                } else {
+                    agentQueuedInputs.removeAll { $0.id == item.id }
+                }
+            }
+            let hasSnapshot = frame.queuedInputs != nil
+            agentSteeringCount = hasSnapshot
+                ? agentQueuedInputs.filter { $0.mode == "steering" }.count
+                : frame.steeringCount
+                    ?? agentQueuedInputs.filter { $0.mode == "steering" }.count
+            agentFollowUpCount = hasSnapshot
+                ? agentQueuedInputs.filter { $0.mode == "follow_up" }.count
+                : frame.followUpCount
+                    ?? agentQueuedInputs.filter { $0.mode == "follow_up" }.count
+        }
+
+        if operation == "accepted" || operation == "rejected" {
+            let clientMessageId = frame.item?.clientMessageId ?? pendingQueueClientMessageId
+            if let clientMessageId {
+                agentQueueAcknowledgement = AgentQueueAcknowledgement(
+                    clientMessageId: clientMessageId,
+                    accepted: operation == "accepted",
+                    operation: operation,
+                    reason: frame.reason)
+            }
+            pendingQueueClientMessageId = nil
+        }
+    }
+
+    nonisolated static func shouldClearQueuedEditor(
+        acknowledgement: AgentQueueAcknowledgement?,
+        pendingClientMessageId: String?
+    ) -> Bool {
+        guard let acknowledgement, let pendingClientMessageId else { return false }
+        return acknowledgement.accepted
+            && acknowledgement.clientMessageId == pendingClientMessageId
     }
 
     static func duplicateAgentReason(for frame: AgentFrame) -> String? {
@@ -566,6 +691,7 @@ final class KSSStore: ObservableObject {
         if let contextUsage = hydrated.contextUsage {
             agentContextUsage = contextUsage
         }
+        hydrateAgentQueue(hydrated.queuedInputs)
         persistLastAgentSession(sessionId)
         return true
     }
@@ -579,7 +705,17 @@ final class KSSStore: ObservableObject {
         }
     }
 
-    private func endAgentChat(bridge: BridgeClient, assistantId: UUID, input: String, error: String?) {
+    private func endAgentChat(
+        bridge: BridgeClient,
+        assistantId: UUID,
+        input: String,
+        streamId: UUID,
+        error: String?
+    ) {
+        guard Self.agentStreamOwnsChatSurface(
+            endingStreamId: streamId,
+            activeStreamId: activeAgentStreamId)
+        else { return }
         let wasUserAbort = userAbortedAgentRun
         userAbortedAgentRun = false
         let normalizedError = error?.lowercased() ?? ""
@@ -595,6 +731,7 @@ final class KSSStore: ObservableObject {
             agentProtocolUnavailable = true
             activeAgentControl = nil
             activeAgentRunId = nil
+            activeAgentStreamId = nil
             startLegacyChat(bridge: bridge, assistantId: assistantId)
             return
         }
@@ -602,8 +739,10 @@ final class KSSStore: ObservableObject {
         chatToolInProgress = nil
         activeAgentControl = nil
         activeAgentRunId = nil
+        activeAgentStreamId = nil
         activeConfirmGate = nil
         pendingWriteConfirm = nil
+        pendingQueueClientMessageId = nil
         if let sessionId = selectedAgentSessionId {
             chatMessagesByAgentSession[sessionId] = chatMessages
         }
@@ -638,6 +777,13 @@ final class KSSStore: ObservableObject {
         }
         return !userAborted && !isAbort && !isDuplicate
             && error != nil && assistantEmpty && !assistantIsError
+    }
+
+    nonisolated static func agentStreamOwnsChatSurface(
+        endingStreamId: UUID,
+        activeStreamId: UUID?
+    ) -> Bool {
+        endingStreamId == activeStreamId
     }
 
     private func endChat(assistantId: UUID, error: String?) {
@@ -707,17 +853,48 @@ final class KSSStore: ObservableObject {
     func openAgentSession(_ sessionId: String) {
         selectedAgentSessionId = sessionId
         persistLastAgentSession(sessionId)
-        if let session = agentSessions.first(where: { $0.sessionId == sessionId }),
-           let hydrated = session.messages {
-            chatMessages = hydrateChatMessages(from: hydrated)
+        if let session = agentSessions.first(where: { $0.sessionId == sessionId }) {
+            if let hydrated = session.messages {
+                chatMessages = hydrateChatMessages(from: hydrated)
+            } else if let cached = chatMessagesByAgentSession[sessionId] {
+                chatMessages = cached
+            } else {
+                chatMessages = []
+            }
             chatMessagesByAgentSession[sessionId] = chatMessages
             agentContextUsage = session.contextUsage
+            hydrateAgentQueue(session.queuedInputs)
         } else if let cached = chatMessagesByAgentSession[sessionId] {
             chatMessages = cached
-        } else if let session = agentSessions.first(where: { $0.sessionId == sessionId }) {
-            chatMessages = hydrateChatMessages(from: session.messages ?? [])
-            chatMessagesByAgentSession[sessionId] = chatMessages
-            agentContextUsage = session.contextUsage
+            hydrateAgentQueue(nil)
+        }
+    }
+
+    private func hydrateAgentQueue(_ inputs: [AgentQueuedInput]?) {
+        agentQueuedInputs = (inputs ?? []).filter(\.isRestorable)
+        agentSteeringCount = agentQueuedInputs.filter { $0.mode == "steering" }.count
+        agentFollowUpCount = agentQueuedInputs.filter { $0.mode == "follow_up" }.count
+        agentQueueAcknowledgement = nil
+        pendingQueueClientMessageId = nil
+    }
+
+    func discardQueuedInput(_ item: AgentQueuedInput) {
+        guard let sessionId = selectedAgentSessionId, let bridge else { return }
+        Task {
+            do {
+                let response = try await Task.detached {
+                    try bridge.agentQueue(
+                        action: "discard", sessionId: sessionId, queueId: item.id)
+                }.value
+                guard self.selectedAgentSessionId == sessionId else { return }
+                self.agentQueuedInputs = (response.queuedInputs ?? []).filter(\.isRestorable)
+                self.agentSteeringCount = self.agentQueuedInputs
+                    .filter { $0.mode == "steering" }.count
+                self.agentFollowUpCount = self.agentQueuedInputs
+                    .filter { $0.mode == "follow_up" }.count
+            } catch {
+                self.errorMessage = "队列操作失败：\(error.localizedDescription)"
+            }
         }
     }
 

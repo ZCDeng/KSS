@@ -729,19 +729,30 @@ struct BridgeClient {
         return try agentCommand("agent-memories", payload: payload, as: AgentMemoriesResponse.self)
     }
 
+    func agentQueue(action: String = "list", sessionId: String, queueId: String? = nil) throws -> AgentQueueResponse {
+        var payload: [String: Any] = [
+            "action": action,
+            "session_id": sessionId,
+        ]
+        if let queueId { payload["queue_id"] = queueId }
+        return try agentCommand("agent-queue", payload: payload, as: AgentQueueResponse.self)
+    }
+
     func agentTurn(sessionId: String, clientTurnId: String, input: String,
+                   sourceQueueId: String? = nil,
                    onControlReady: @escaping (AgentControlChannel) -> Void,
                    onFrame: @escaping (AgentFrame) -> Void,
                    onConfirmRequired: @escaping (AgentFrame) -> Bool,
                    onEnd: @escaping (String?) -> Void) {
         ensureSidecarRunning()
-        guard var request = try? JSONSerialization.data(
-            withJSONObject: [
-                "cmd": "agent-turn",
-                "session_id": sessionId,
-                "client_turn_id": clientTurnId,
-                "input": input,
-            ]) else {
+        var payload: [String: Any] = [
+            "cmd": "agent-turn",
+            "session_id": sessionId,
+            "client_turn_id": clientTurnId,
+            "input": input,
+        ]
+        if let sourceQueueId { payload["source_queue_id"] = sourceQueueId }
+        guard var request = try? JSONSerialization.data(withJSONObject: payload) else {
             onEnd("无法编码 Agent 请求"); return
         }
         request.append(0x0A)
@@ -1010,6 +1021,52 @@ struct BridgeClient {
                 "action": "abort",
                 "run_id": runId ?? "",
             ])
+        }
+
+        func steer(
+            runId: String?,
+            clientMessageId: String,
+            input: String,
+            sourceQueueId: String? = nil
+        ) {
+            enqueue(
+                action: "steer",
+                runId: runId,
+                clientMessageId: clientMessageId,
+                input: input,
+                sourceQueueId: sourceQueueId)
+        }
+
+        func followUp(
+            runId: String?,
+            clientMessageId: String,
+            input: String,
+            sourceQueueId: String? = nil
+        ) {
+            enqueue(
+                action: "follow_up",
+                runId: runId,
+                clientMessageId: clientMessageId,
+                input: input,
+                sourceQueueId: sourceQueueId)
+        }
+
+        private func enqueue(
+            action: String,
+            runId: String?,
+            clientMessageId: String,
+            input: String,
+            sourceQueueId: String?
+        ) {
+            var payload: [String: Any] = [
+                "cmd": "agent-control",
+                "action": action,
+                "run_id": runId ?? "",
+                "client_message_id": clientMessageId,
+                "input": input,
+            ]
+            if let sourceQueueId { payload["source_queue_id"] = sourceQueueId }
+            send(payload)
         }
 
         private func send(_ object: [String: Any]) {

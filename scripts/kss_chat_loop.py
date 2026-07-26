@@ -154,6 +154,18 @@ TOOL_SPECS: list[dict[str, Any]] = [
     _spec("load_skill", "agent-load-skill",
           "加载一个已登记技能的内容片段。skill_id 为技能标识",
           {"skill_id": _STR}, ["skill_id"]),
+    _spec(
+        "read_skill_resource",
+        "agent-read-skill-resource",
+        "只读加载已启用技能目录内的文本资源；不执行脚本，不允许跨出技能目录",
+        {
+            "skill_id": _STR,
+            "path": _STR,
+            "offset": {"type": "integer", "description": "可选字符偏移，默认 0"},
+            "max_chars": {"type": "integer", "description": "可选字符上限，最多 12000"},
+        },
+        ["skill_id", "path"],
+    ),
     _spec("propose_memory", "agent-propose-memory",
           "提出一条待用户批准的记忆。**需要用户批准后才会进入记忆库**",
           {
@@ -218,6 +230,10 @@ class ToolRegistry:
         self._parameters: dict[str, dict[str, Any]] = {}
         self._handlers: dict[str, Callable[[dict[str, Any]], Any]] = {
             "load_skill": lambda args: {"error": "agent_tool_unavailable", "tool": "load_skill"},
+            "read_skill_resource": lambda args: {
+                "error": "agent_tool_unavailable",
+                "tool": "read_skill_resource",
+            },
             "propose_memory": lambda args: {"error": "approval_required", "tool": "propose_memory",
                                             "hint": "memory approval must be handled by agent sidecar"},
         }
@@ -446,6 +462,14 @@ def number_guard(assistant_text: str, tool_results_text: str) -> list[str]:
 
 EmitFn = Callable[[dict[str, Any]], Awaitable[None]]
 RequestWriteFn = Callable[..., Awaitable[dict[str, Any]]]
+TakeSteeringFn = Callable[
+    [],
+    Awaitable[list[dict[str, Any]] | None] | list[dict[str, Any]] | None,
+]
+TakeFollowUpFn = Callable[
+    [],
+    Awaitable[dict[str, Any] | None] | dict[str, Any] | None,
+]
 
 
 async def run_turn(
@@ -466,6 +490,9 @@ async def run_turn(
     should_stop_after_turn: Callable[[TurnTranscript], bool] | None = None,
     abort_token: AbortToken | None = None,
     tool_registry: ToolRegistry | None = None,
+    take_steering: TakeSteeringFn | None = None,
+    take_follow_up: TakeFollowUpFn | None = None,
+    emit_internal_boundaries: bool = False,
 ) -> TurnTranscript:
     """跑一轮多步对话。emit 逐帧(await drain by caller);写经 request_write(loop 不 dispatch 写)。
 
@@ -483,21 +510,12 @@ async def run_turn(
     convo = list(messages)
     if not convo or convo[0].get("role") != "system":          # U6:注入 system prompt
         convo.insert(0, {"role": "system", "content": load_system_prompt()})
-    if transform_context is not None:
-        try:
-            transformed = await _await_with_abort(
-                _maybe_await(transform_context(list(convo))),
-                abort_token,
-            )
-            if transformed is not None:
-                convo = list(transformed)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            await _emit_hook_error(emit, "transform_context", exc)
     deadline = time.monotonic() + turn_timeout
     tool_results_text: list[str] = []   # 本轮所有 tool 结果文本(数字守卫用)
     transcript = TurnTranscript(messages=list(convo), run_state={"status": "running"})
+    unverified_numbers: set[str] = set()
+    next_turn_kind = "initial"
+    next_message_ids: list[str] = []
 
     for step in range(max_steps):
         _check_abort(abort_token)
@@ -522,43 +540,103 @@ async def run_turn(
         had_error = False
 
         _check_abort(abort_token)
-        gen = client.stream_turn(convo, tools)
+        boundary_payload: dict[str, Any] = {"step": step, "kind": next_turn_kind}
+        if len(next_message_ids) == 1:
+            boundary_payload["message_id"] = next_message_ids[0]
+        elif next_message_ids:
+            boundary_payload["message_ids"] = list(next_message_ids)
+        await _emit_internal_boundary(
+            emit, emit_internal_boundaries, "turn_start", boundary_payload,
+        )
+        try:
+            provider_messages = await _provider_context(
+                convo,
+                transform_context=transform_context,
+                emit=emit,
+                abort_token=abort_token,
+            )
+        except asyncio.CancelledError:
+            await _emit_internal_boundary(
+                emit, emit_internal_boundaries, "turn_end",
+                {**boundary_payload, "reason": "aborted"},
+            )
+            raise
+        except Exception:
+            await _emit_internal_boundary(
+                emit, emit_internal_boundaries, "turn_end",
+                {**boundary_payload, "reason": "error"},
+            )
+            raise
+        await _emit_internal_boundary(
+            emit, emit_internal_boundaries, "message_start",
+            {**boundary_payload, "role": "assistant"},
+        )
         # 阻塞 SDK 流在线程里逐事件取出 → 每次 await 让出事件循环,reader 任务得以并发收 confirm。
         step_t0 = time.monotonic()
         event_count = 0
-        while True:
-            ev_t0 = time.monotonic()
-            ev = await asyncio.to_thread(_next_event, gen)
-            ev_wait = time.monotonic() - ev_t0
-            if ev_wait > 5.0:   # 单次取事件明显偏慢(如模型静默/网络卡顿)才记,避免刷屏
-                logger.info("[chat-loop] step=%d 取事件耗时=%.1fs (第 %d 个事件)",
-                            step, ev_wait, event_count)
-            event_count += 1
-            _check_abort(abort_token)
-            if ev is None:
-                break
-            etype = ev["type"]
-            if etype == "text":
-                assistant_text_parts.append(ev["text"])
-                await emit({"type": "chunk", "text": ev["text"]})
-            elif etype == "tool_call":
-                tool_calls.append(ev)
-            elif etype == "error":
-                had_error = True
-                await emit({"type": "error", "error": ev["error"]})
-            elif etype == "usage":
-                usage = ev.get("usage")
-                if isinstance(usage, dict):
-                    transcript.run_state["usage"] = dict(usage)
-            # finish 事件:不额外处理,循环靠 None(StopIteration)收尾
+        try:
+            gen = client.stream_turn(provider_messages, tools)
+            while True:
+                ev_t0 = time.monotonic()
+                ev = await asyncio.to_thread(_next_event, gen)
+                ev_wait = time.monotonic() - ev_t0
+                if ev_wait > 5.0:   # 单次取事件明显偏慢(如模型静默/网络卡顿)才记,避免刷屏
+                    logger.info("[chat-loop] step=%d 取事件耗时=%.1fs (第 %d 个事件)",
+                                step, ev_wait, event_count)
+                event_count += 1
+                _check_abort(abort_token)
+                if ev is None:
+                    break
+                etype = ev["type"]
+                if etype == "text":
+                    assistant_text_parts.append(ev["text"])
+                    await emit({"type": "chunk", "text": ev["text"]})
+                elif etype == "tool_call":
+                    tool_calls.append(ev)
+                elif etype == "error":
+                    had_error = True
+                    await emit({"type": "error", "error": ev["error"]})
+                elif etype == "usage":
+                    usage = ev.get("usage")
+                    if isinstance(usage, dict):
+                        transcript.run_state["usage"] = dict(usage)
+                # finish 事件:不额外处理,循环靠 None(StopIteration)收尾
+        except asyncio.CancelledError:
+            await _emit_internal_boundary(
+                emit, emit_internal_boundaries, "message_end",
+                {**boundary_payload, "role": "assistant", "reason": "aborted"},
+            )
+            await _emit_internal_boundary(
+                emit, emit_internal_boundaries, "turn_end",
+                {**boundary_payload, "reason": "aborted"},
+            )
+            raise
+        except Exception:
+            await _emit_internal_boundary(
+                emit, emit_internal_boundaries, "message_end",
+                {**boundary_payload, "role": "assistant", "reason": "error"},
+            )
+            await _emit_internal_boundary(
+                emit, emit_internal_boundaries, "turn_end",
+                {**boundary_payload, "reason": "error"},
+            )
+            raise
+        await _emit_internal_boundary(
+            emit, emit_internal_boundaries, "message_end",
+            {**boundary_payload, "role": "assistant"},
+        )
 
         if had_error:
+            await _emit_internal_boundary(
+                emit, emit_internal_boundaries, "turn_end",
+                {**boundary_payload, "reason": "error"},
+            )
             transcript.run_state.update(status="done", reason="error")
             await emit({"type": "done", "reason": "error"})
             return transcript
 
         if not tool_calls:
-            # 无工具 → 本轮终。数字守卫:loop 自产数字 vs 本轮 tool 结果。
+            # 无工具表示当前内部 turn 自然结束；steering 优先于 follow-up。
             full_text = "".join(assistant_text_parts)
             if full_text:
                 assistant_msg = {"role": "assistant", "content": full_text}
@@ -579,18 +657,59 @@ async def run_turn(
                     raise
                 except Exception as exc:  # noqa: BLE001
                     await _emit_hook_error(emit, "after_step", exc)
-            if await _should_stop_turn(
+            stop_requested = await _should_stop_turn(
                 should_stop_after_turn or should_stop,
                 transcript,
                 emit,
                 abort_token,
-            ):
+            )
+            current_unverified = number_guard(full_text, "\n".join(tool_results_text))
+            unverified_numbers.update(current_unverified)
+            if current_unverified:
+                logger.warning("[chat-loop] 未核实数字(非 tool 真值): %s", current_unverified)
+            if stop_requested:
+                await _emit_internal_boundary(
+                    emit, emit_internal_boundaries, "turn_end",
+                    {**boundary_payload, "reason": "stop_hook"},
+                )
                 transcript.run_state.update(status="done", reason="stop_hook")
                 await emit({"type": "done", "reason": "stop_hook"})
                 return transcript
-            unverified = number_guard(full_text, "\n".join(tool_results_text))
-            if unverified:
-                logger.warning("[chat-loop] 未核实数字(非 tool 真值): %s", unverified)
+
+            if _can_start_next_step(step, max_steps=max_steps, deadline=deadline):
+                steering = await _take_steering_batch(
+                    take_steering, emit=emit, abort_token=abort_token,
+                )
+                if steering:
+                    queued, next_message_ids = steering
+                    convo.extend(queued)
+                    transcript.messages = list(convo)
+                    next_turn_kind = "steering"
+                    await _emit_internal_boundary(
+                        emit, emit_internal_boundaries, "turn_end",
+                        {**boundary_payload, "reason": "steering"},
+                    )
+                    continue
+                follow_up = await _take_follow_up_message(
+                    take_follow_up, emit=emit, abort_token=abort_token,
+                )
+                if follow_up is not None:
+                    queued, message_id = follow_up
+                    convo.append(queued)
+                    transcript.messages = list(convo)
+                    next_turn_kind = "follow_up"
+                    next_message_ids = [message_id] if message_id else []
+                    await _emit_internal_boundary(
+                        emit, emit_internal_boundaries, "turn_end",
+                        {**boundary_payload, "reason": "follow_up"},
+                    )
+                    continue
+
+            await _emit_internal_boundary(
+                emit, emit_internal_boundaries, "turn_end",
+                {**boundary_payload, "reason": "stop"},
+            )
+            unverified = sorted(unverified_numbers)
             transcript.run_state.update(status="done", reason="stop",
                                         numberGuard={"unverified": unverified})
             await emit({"type": "done", "reason": "stop",
@@ -608,18 +727,25 @@ async def run_turn(
         for tc in tool_calls:
             _check_abort(abort_token)
             tool_t0 = time.monotonic()
-            execution = await _exec_tool(
-                tc,
-                read_call,
-                request_write,
-                emit,
-                registry=registry,
-                abort_token=abort_token,
-                before_tool_call=before_tool_call,
-                after_tool_call=after_tool_call,
-                transform_tool_result=transform_tool_result,
-                messages=list(convo),
-            )
+            try:
+                execution = await _exec_tool(
+                    tc,
+                    read_call,
+                    request_write,
+                    emit,
+                    registry=registry,
+                    abort_token=abort_token,
+                    before_tool_call=before_tool_call,
+                    after_tool_call=after_tool_call,
+                    transform_tool_result=transform_tool_result,
+                    messages=list(convo),
+                )
+            except asyncio.CancelledError:
+                await _emit_internal_boundary(
+                    emit, emit_internal_boundaries, "turn_end",
+                    {**boundary_payload, "reason": "aborted"},
+                )
+                raise
             logger.info("[chat-loop] tool=%s 耗时=%.1fs", tc.get("name"), time.monotonic() - tool_t0)
             tool_results_text.append(execution.content)
             tool_msg = {"role": "tool", "tool_call_id": tc.get("id") or tc.get("name") or "tool",
@@ -652,6 +778,14 @@ async def run_turn(
             abort_token,
         )
         if terminate_requested:
+            await _emit_internal_boundary(
+                emit, emit_internal_boundaries, "turn_end",
+                {
+                    **boundary_payload,
+                    "reason": "tool_terminated",
+                    "termination_reason": termination_reason,
+                },
+            )
             transcript.run_state.update(
                 status="done",
                 reason="tool_terminated",
@@ -664,15 +798,137 @@ async def run_turn(
             })
             return transcript
         if stop_requested:
+            await _emit_internal_boundary(
+                emit, emit_internal_boundaries, "turn_end",
+                {**boundary_payload, "reason": "stop_hook"},
+            )
             transcript.run_state.update(status="done", reason="stop_hook")
             await emit({"type": "done", "reason": "stop_hook"})
             return transcript
+        if _can_start_next_step(step, max_steps=max_steps, deadline=deadline):
+            steering = await _take_steering_batch(
+                take_steering, emit=emit, abort_token=abort_token,
+            )
+            if steering:
+                queued, next_message_ids = steering
+                convo.extend(queued)
+                transcript.messages = list(convo)
+                next_turn_kind = "steering"
+            else:
+                next_turn_kind = "tool_continuation"
+                next_message_ids = []
+        await _emit_internal_boundary(
+            emit, emit_internal_boundaries, "turn_end",
+            {**boundary_payload, "reason": "tool_calls"},
+        )
 
     transcript.messages = list(convo)
     transcript.run_state.update(status="done", reason="max_steps")
     await emit({"type": "done", "reason": "max_steps",
                 "note": f"已达步数上限 {max_steps},优雅终止"})
     return transcript
+
+
+async def _provider_context(
+    conversation: list[dict[str, Any]],
+    *,
+    transform_context: Callable[[list[dict[str, Any]]], Any] | None,
+    emit: EmitFn,
+    abort_token: AbortToken | None,
+) -> list[dict[str, Any]]:
+    """在每次 provider 调用前转换临时副本，不污染 canonical transcript."""
+    provider_messages = list(conversation)
+    if transform_context is None:
+        return provider_messages
+    try:
+        transformed = await _await_with_abort(
+            _maybe_await(transform_context(list(provider_messages))),
+            abort_token,
+        )
+        if transformed is not None:
+            return list(transformed)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        await _emit_hook_error(emit, "transform_context", exc)
+    return provider_messages
+
+
+def _can_start_next_step(step: int, *, max_steps: int, deadline: float) -> bool:
+    """只在确定还有 provider/time 预算时消费上层队列."""
+    return step + 1 < max_steps and time.monotonic() <= deadline
+
+
+def _normalize_queued_user_message(raw: Any) -> tuple[dict[str, Any], str | None]:
+    if not isinstance(raw, dict):
+        raise TypeError("queued message must be an object")
+    if raw.get("role") != "user":
+        raise ValueError("queued message role must be user")
+    content = raw.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("queued message content must be a non-empty string")
+    raw_id = raw.get("message_id") or raw.get("id")
+    message_id = str(raw_id) if raw_id is not None else None
+    return {"role": "user", "content": content}, message_id
+
+
+async def _take_steering_batch(
+    callback: TakeSteeringFn | None,
+    *,
+    emit: EmitFn,
+    abort_token: AbortToken | None,
+) -> tuple[list[dict[str, Any]], list[str]] | None:
+    if callback is None:
+        return None
+    try:
+        raw_batch = await _await_with_abort(_maybe_await(callback()), abort_token)
+        if raw_batch is None:
+            return None
+        if not isinstance(raw_batch, list):
+            raise TypeError("take_steering must return a list or None")
+        queued: list[dict[str, Any]] = []
+        message_ids: list[str] = []
+        for raw in raw_batch:
+            message, message_id = _normalize_queued_user_message(raw)
+            queued.append(message)
+            if message_id:
+                message_ids.append(message_id)
+        return (queued, message_ids) if queued else None
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        await _emit_hook_error(emit, "take_steering", exc)
+        return None
+
+
+async def _take_follow_up_message(
+    callback: TakeFollowUpFn | None,
+    *,
+    emit: EmitFn,
+    abort_token: AbortToken | None,
+) -> tuple[dict[str, Any], str | None] | None:
+    if callback is None:
+        return None
+    try:
+        raw = await _await_with_abort(_maybe_await(callback()), abort_token)
+        if raw is None:
+            return None
+        return _normalize_queued_user_message(raw)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        await _emit_hook_error(emit, "take_follow_up", exc)
+        return None
+
+
+async def _emit_internal_boundary(
+    emit: EmitFn,
+    enabled: bool,
+    event_type: str,
+    payload: dict[str, Any],
+) -> None:
+    if enabled:
+        await emit({"type": event_type, **payload})
 
 
 def _next_event(gen) -> dict[str, Any] | None:

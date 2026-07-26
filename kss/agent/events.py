@@ -48,6 +48,11 @@ class AbortToken:
         """返回是否已中止."""
         return self._event.is_set()
 
+    @property
+    def aborted(self) -> bool:
+        """兼容旧 loop/tests 的只读属性别名."""
+        return self.is_aborted()
+
     def raise_if_aborted(self) -> None:
         """若已中止则抛出 RuntimeError."""
         if self.is_aborted():

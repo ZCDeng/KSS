@@ -11,6 +11,8 @@ MemoryStatus = Literal["proposed", "approved", "archived", "deleted"]
 SessionStatus = Literal["running", "completed", "interrupted", "archived", "deleted"]
 RuntimeStatus = Literal["starting", "running", "completed", "failed", "aborted", "interrupted"]
 RunTerminalStatus = Literal["completed", "failed", "aborted", "interrupted"]
+QueuedInputMode = Literal["steering", "follow_up"]
+QueuedInputStatus = Literal["queued", "restored", "applied", "discarded"]
 
 
 @dataclass(frozen=True)
@@ -115,6 +117,26 @@ class RunResult:
     error: str | None = None
     usage: dict[str, Any] = field(default_factory=dict)
     termination_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class QueuedAgentInput:
+    """活跃 run 的 steering / follow-up 用户输入.
+
+    ``client_message_id`` 是 run 内幂等键；``id`` 是 append-only queue
+    生命周期的稳定标识。崩溃恢复只把 ``status`` 从 ``queued`` 更新为
+    ``restored``，不会创建第二个 queue item。
+    """
+
+    id: str
+    client_message_id: str
+    session_id: str
+    run_id: str
+    mode: QueuedInputMode
+    content: str
+    status: QueuedInputStatus = "queued"
+    created_at: float = 0.0
+    applied_at: float | None = None
 
 
 @dataclass(frozen=True)

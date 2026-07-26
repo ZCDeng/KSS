@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 /// AI 复盘助手聊天面板。x.com 主题使用 600pt 投研时间线；
@@ -10,6 +11,8 @@ struct AIChatView: View {
     @State private var showSkillDrawer = false
     @State private var showMemoryDrawer = false
     @State private var memorySearch = ""
+    @State private var pendingQueueClientMessageId: String?
+    @State private var loadedQueueInputId: String?
     /// 会话开场确定性候选建议（plan 2026-07-12-004 U9）；nil = 未加载或无候选，不显示 chip。
     @State private var indicatorSuggestion: IndicatorSuggestion?
 
@@ -59,6 +62,27 @@ struct AIChatView: View {
             .onAppear { Task { await store.preheatRealtimeContext() } }   // U4: Seesaw 加载时预温实时上下文（R3）
             .onAppear { Task { await loadIndicatorSuggestion() } }        // U9: 空态确定性候选建议 chip
             .onAppear { Task { await store.loadAgentBootstrap() } }
+            .onChange(of: store.agentQueueAcknowledgement) { _, acknowledgement in
+                guard let acknowledgement,
+                      acknowledgement.clientMessageId == pendingQueueClientMessageId
+                else { return }
+                if KSSStore.shouldClearQueuedEditor(
+                    acknowledgement: acknowledgement,
+                    pendingClientMessageId: pendingQueueClientMessageId
+                ) {
+                    input = ""
+                    loadedQueueInputId = nil
+                }
+                pendingQueueClientMessageId = nil
+            }
+            .onChange(of: store.isChatStreaming) { _, isStreaming in
+                if !isStreaming {
+                    // A stop or terminal failure may race the queue acknowledgement.
+                    // Keep the editor text, but release the local send gate so the
+                    // user can explicitly resend a restored or rejected input.
+                    pendingQueueClientMessageId = nil
+                }
+            }
         }
     }
 
@@ -398,27 +422,32 @@ struct AIChatView: View {
     }
 
     private var xcomComposer: some View {
-        HStack(alignment: .top, spacing: 12) {
-            xcomIdentityIcon(systemImage: "sparkles", accent: theme.accent)
+        VStack(alignment: .leading, spacing: 10) {
+            queuedInputPanel
 
-            VStack(alignment: .leading, spacing: 12) {
-                TextField("问问盘面…", text: $input, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(KSSFont.themed(15, theme: theme))
-                    .foregroundStyle(theme.textPrimary)
-                    .lineLimit(2...6)
-                    .disabled(store.isChatStreaming)
-                    .onSubmit(send)
+            HStack(alignment: .top, spacing: 12) {
+                xcomIdentityIcon(systemImage: "sparkles", accent: theme.accent)
 
-                HStack(spacing: 8) {
-                    Label("只解释 · 不荐买卖", systemImage: "shield.lefthalf.filled")
-                        .font(KSSFont.themed(13, theme: theme))
-                        .foregroundStyle(theme.textSecondary)
-                    Spacer()
-                    if store.isChatStreaming {
-                        xcomStopButton
-                    } else {
-                        xcomSendButton
+                VStack(alignment: .leading, spacing: 12) {
+                    TextField("问问盘面…", text: $input, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(KSSFont.themed(15, theme: theme))
+                        .foregroundStyle(theme.textPrimary)
+                        .lineLimit(2...6)
+                        .onKeyPress(.return, phases: .down, action: handleComposerReturn)
+
+                    HStack(spacing: 8) {
+                        Label("只解释 · 不荐买卖", systemImage: "shield.lefthalf.filled")
+                            .font(KSSFont.themed(13, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                        Spacer()
+                        if store.isChatStreaming {
+                            queueShortcutHint
+                            xcomSendButton
+                            xcomStopButton
+                        } else {
+                            xcomSendButton
+                        }
                     }
                 }
             }
@@ -655,19 +684,21 @@ struct AIChatView: View {
                 .padding(.top, 8)
             }
 
+            queuedInputPanel
+                .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+                .padding(.top, store.agentQueuedInputs.isEmpty ? 0 : 8)
+
             HStack(alignment: .bottom, spacing: 10) {
                 TextField("继续问…", text: $input, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(KSSFont.themed(15, theme: theme))
                     .foregroundStyle(theme.textPrimary)
                     .lineLimit(1...5)
-                    .disabled(store.isChatStreaming)
-                    .onSubmit(send)
+                    .onKeyPress(.return, phases: .down, action: handleComposerReturn)
                 if store.isChatStreaming {
                     xcomStopButton
-                } else {
-                    xcomSendButton
                 }
+                xcomSendButton
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -675,7 +706,9 @@ struct AIChatView: View {
             .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
             .padding(.vertical, 10)
 
-            Text("AI 仅解释与复盘，不给个性化买卖建议")
+            Text(store.isChatStreaming
+                 ? "↩ 引导本轮 · ⌥↩ 排到本轮结束后"
+                 : "AI 仅解释与复盘，不给个性化买卖建议")
                 .font(KSSFont.themed(11, theme: theme))
                 .foregroundStyle(theme.textSecondary)
                 .frame(maxWidth: .infinity)
@@ -688,8 +721,8 @@ struct AIChatView: View {
     }
 
     private var xcomSendButton: some View {
-        Button(action: send) {
-            Text("发送")
+        Button { submitInput(mode: "steering") } label: {
+            Text(store.isChatStreaming ? "排队" : "发送")
                 .font(KSSFont.themed(13, .bold, theme: theme))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 16)
@@ -877,8 +910,13 @@ struct AIChatView: View {
                                 Text(memory.text)
                                     .font(KSSFont.themed(15, theme: theme))
                                     .foregroundStyle(theme.textPrimary)
-                                if let source = memory.source, !source.isEmpty {
-                                    Text(source)
+                                if memory.reviewRequired == true {
+                                    Text("待复核")
+                                        .font(KSSFont.themed(11, .semibold, theme: theme))
+                                        .foregroundStyle(Color.orange)
+                                }
+                                if let metadata = memoryMetadata(memory) {
+                                    Text(metadata)
                                         .font(KSSFont.themed(12, theme: theme))
                                         .foregroundStyle(theme.textSecondary)
                                 }
@@ -904,6 +942,11 @@ struct AIChatView: View {
                             Text(recall.title)
                                 .font(KSSFont.themed(15, .bold, theme: theme))
                                 .foregroundStyle(theme.textPrimary)
+                            if let metadata = recallMetadata(recall) {
+                                Text(metadata)
+                                    .font(KSSFont.themed(11, theme: theme))
+                                    .foregroundStyle(theme.textSecondary)
+                            }
                             if let excerpt = recall.excerpt, !excerpt.isEmpty {
                                 Text(excerpt)
                                     .font(KSSFont.themed(13, theme: theme))
@@ -1177,9 +1220,21 @@ struct AIChatView: View {
                     }
                     ForEach(store.agentMemories) { memory in
                         HStack(alignment: .top) {
-                            Text(memory.text)
-                                .font(KSSFont.themed(12, theme: theme))
-                                .foregroundStyle(theme.textPrimary)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(memory.text)
+                                    .font(KSSFont.themed(12, theme: theme))
+                                    .foregroundStyle(theme.textPrimary)
+                                if memory.reviewRequired == true {
+                                    Text("待复核")
+                                        .font(KSSFont.themed(10, .semibold, theme: theme))
+                                        .foregroundStyle(Color.orange)
+                                }
+                                if let metadata = memoryMetadata(memory) {
+                                    Text(metadata)
+                                        .font(KSSFont.themed(10.5, theme: theme))
+                                        .foregroundStyle(theme.textSecondary)
+                                }
+                            }
                             Spacer()
                             Button { store.archiveAgentMemory(memory) } label: { Image(systemName: "archivebox") }
                             Button { store.deleteAgentMemory(memory) } label: { Image(systemName: "trash") }
@@ -1191,6 +1246,11 @@ struct AIChatView: View {
                     ForEach(store.agentSourceRecalls) { recall in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(recall.title).font(KSSFont.themed(12, .semibold, theme: theme))
+                            if let metadata = recallMetadata(recall) {
+                                Text(metadata)
+                                    .font(KSSFont.themed(10, theme: theme))
+                                    .foregroundStyle(theme.textSecondary)
+                            }
                             if let excerpt = recall.excerpt {
                                 Text(excerpt).font(KSSFont.themed(11, theme: theme)).foregroundStyle(theme.textSecondary)
                             }
@@ -1253,19 +1313,23 @@ struct AIChatView: View {
     /// 突出的圆角输入卡(空态)。
     private var heroInputCard: some View {
         VStack(spacing: 12) {
+            queuedInputPanel
             TextField("问问盘面…（回车发送）", text: $input, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(KSSFont.themed(15, theme: theme))
                 .lineLimit(1...4)
-                .disabled(store.isChatStreaming)
-                .onSubmit(send)
+                .onKeyPress(.return, phases: .down, action: handleComposerReturn)
             HStack(spacing: 8) {
                 Label("只解释 · 不荐买卖", systemImage: "shield.lefthalf.filled")
                     .font(KSSFont.themed(11, theme: theme)).foregroundStyle(theme.textSecondary)
                     .padding(.horizontal, 10).padding(.vertical, 5)
                     .background(theme.surface, in: Capsule())
                 Spacer()
-                if store.isChatStreaming { stopButton } else { sendButton }
+                if store.isChatStreaming {
+                    queueShortcutHint
+                    stopButton
+                }
+                sendButton
             }
         }
         .padding(16)
@@ -1275,8 +1339,8 @@ struct AIChatView: View {
     }
 
     private var sendButton: some View {
-        Button(action: send) {
-            Image(systemName: store.isChatStreaming ? "ellipsis" : "arrow.up")
+        Button { submitInput(mode: "steering") } label: {
+            Image(systemName: store.isChatStreaming ? "arrow.turn.down.right" : "arrow.up")
                 .font(KSSFont.themed(15, .bold, theme: theme))
                 .foregroundStyle(.white)
                 .frame(width: 34, height: 34)
@@ -1298,7 +1362,15 @@ struct AIChatView: View {
     }
 
     private var canSend: Bool {
-        !store.isChatStreaming && !input.trimmingCharacters(in: .whitespaces).isEmpty
+        pendingQueueClientMessageId == nil
+            && !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var queueShortcutHint: some View {
+        Text("↩ 引导 · ⌥↩ 后续")
+            .font(KSSFont.themed(10.5, theme: theme))
+            .foregroundStyle(theme.textSecondary)
+            .lineLimit(1)
     }
 
     /// U9：命令不可用/超时/无候选 → 优雅缺席，不显示 chip、不报错弹窗（KTD8 诚实空态）。
@@ -1515,12 +1587,16 @@ struct AIChatView: View {
             if let provider = latestResearchProvider {
                 researchProviderPill(provider)
             }
+            queuedInputPanel
             HStack(spacing: 10) {
                 TextField("继续问…（回车发送）", text: $input, axis: .vertical)
                     .textFieldStyle(.plain).font(KSSFont.themed(14, theme: theme)).lineLimit(1...4)
-                    .disabled(store.isChatStreaming)
-                    .onSubmit(send)
-                if store.isChatStreaming { stopButton } else { sendButton }
+                    .onKeyPress(.return, phases: .down, action: handleComposerReturn)
+                if store.isChatStreaming {
+                    queueShortcutHint
+                    stopButton
+                }
+                sendButton
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
@@ -1533,10 +1609,125 @@ struct AIChatView: View {
     }
 
     private func send() {
+        submitInput(mode: "steering")
+    }
+
+    private func handleComposerReturn(_ keyPress: KeyPress) -> KeyPress.Result {
+        let mode = keyPress.modifiers.contains(.option)
+            ? "follow_up"
+            : "steering"
+        submitInput(mode: mode)
+        return .handled
+    }
+
+    private func submitInput(mode: String) {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !store.isChatStreaming else { return }
+        guard !text.isEmpty else { return }
+        if store.isChatStreaming {
+            pendingQueueClientMessageId = store.enqueueAgentInput(
+                text,
+                mode: mode,
+                sourceQueueId: loadedQueueInputId)
+            return
+        }
         input = ""
-        store.sendChat(text)
+        store.sendChat(text, sourceQueueId: loadedQueueInputId)
+        loadedQueueInputId = nil
+    }
+
+    @ViewBuilder
+    private var queuedInputPanel: some View {
+        if !store.agentQueuedInputs.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    if store.agentSteeringCount > 0 {
+                        queueCountChip(label: "引导", count: store.agentSteeringCount)
+                    }
+                    if store.agentFollowUpCount > 0 {
+                        queueCountChip(label: "后续", count: store.agentFollowUpCount)
+                    }
+                    Spacer()
+                    Text("恢复的输入不会自动执行")
+                        .font(KSSFont.themed(10.5, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                ForEach(store.agentQueuedInputs) { item in
+                    HStack(spacing: 8) {
+                        Text(item.mode == "steering" ? "引导" : "后续")
+                            .font(KSSFont.themed(11, .semibold, theme: theme))
+                            .foregroundStyle(theme.accent)
+                        Text(item.content)
+                            .font(KSSFont.themed(12, theme: theme))
+                            .foregroundStyle(theme.textPrimary)
+                            .lineLimit(1)
+                        Text(item.status == "restored" ? "已恢复" : "待处理")
+                            .font(KSSFont.themed(10.5, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                        Spacer(minLength: 4)
+                        Button("载回") {
+                            input = item.content
+                            loadedQueueInputId = item.id
+                        }
+                        .help("载入编辑器，确认后再发送")
+                        Button {
+                            store.discardQueuedInput(item)
+                            if loadedQueueInputId == item.id {
+                                loadedQueueInputId = nil
+                            }
+                        } label: {
+                            Label("丢弃", systemImage: "xmark").labelStyle(.iconOnly)
+                        }
+                        .help("丢弃这条排队输入")
+                    }
+                    .buttonStyle(.borderless)
+                    .padding(.horizontal, 10)
+                    .frame(minHeight: 32)
+                    .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: 10))
+                }
+            }
+        }
+    }
+
+    private func queueCountChip(label: String, count: Int) -> some View {
+        Text("\(label) \(count)")
+            .font(KSSFont.themed(11, .semibold, theme: theme))
+            .foregroundStyle(theme.accent)
+            .padding(.horizontal, 8)
+            .frame(height: 24)
+            .background(theme.accentSoft, in: Capsule())
+    }
+
+    private func memoryMetadata(_ memory: AgentMemoryRecord) -> String? {
+        var parts: [String] = []
+        if let kind = memory.kind, !kind.isEmpty { parts.append(kind) }
+        let trueSource = [memory.sourceSession, memory.sourceEntry]
+            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+        if !trueSource.isEmpty {
+            parts.append(trueSource)
+        } else if let source = memory.source, !source.isEmpty {
+            parts.append(source)
+        }
+        if let expiresAt = memory.expiresAt {
+            parts.append("到期 \(Date(timeIntervalSince1970: expiresAt).formatted(date: .abbreviated, time: .omitted))")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "  ·  ")
+    }
+
+    private func recallMetadata(_ recall: AgentSourceRecall) -> String? {
+        var parts: [String] = []
+        let trueSource = [recall.sourceSession, recall.sourceEntry]
+            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+        if !trueSource.isEmpty {
+            parts.append(trueSource)
+        } else if let source = recall.source, !source.isEmpty {
+            parts.append(source)
+        }
+        if recall.reviewRequired == true { parts.append("待复核") }
+        if let score = recall.score { parts.append(String(format: "相关度 %.2f", score)) }
+        if let expiresAt = recall.expiresAt {
+            parts.append("到期 \(Date(timeIntervalSince1970: expiresAt).formatted(date: .abbreviated, time: .omitted))")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "  ·  ")
     }
 }
 

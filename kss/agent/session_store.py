@@ -9,7 +9,14 @@ from pathlib import Path
 from typing import Any
 
 from kss.agent.jsonl import read_jsonl_repair_tail, update_jsonl_locked, utc_timestamp
-from kss.agent.types import AgentMessage, AgentState, SessionStatus, ToolCall
+from kss.agent.types import (
+    AgentMessage,
+    AgentState,
+    QueuedAgentInput,
+    QueuedInputMode,
+    SessionStatus,
+    ToolCall,
+)
 
 
 @dataclass(frozen=True)
@@ -36,6 +43,10 @@ class RunAdmissionError(RuntimeError):
         self.client_turn_id = admission.client_turn_id
 
 
+class QueuedInputLimitError(RuntimeError):
+    """单个 run 的累计队列输入超过安全上限."""
+
+
 class SessionStore:
     """append-only JSONL 会话存储.
 
@@ -43,6 +54,8 @@ class SessionStore:
     ``id``、``parent_id``、``timestamp``。
     逻辑删除、完成和中断通过追加状态事件表达，不重写历史记录。
     """
+
+    MAX_QUEUED_INPUTS_PER_RUN = 8
 
     def __init__(self, state_root: str | Path) -> None:
         """初始化.
@@ -96,9 +109,329 @@ class SessionStore:
             states.append(state)
         return states
 
-    def append_message(self, session_id: str, message: AgentMessage) -> None:
-        """向会话追加消息."""
-        self._append(session_id, event_type="message_appended", payload=asdict(message))
+    def append_message(
+        self,
+        session_id: str,
+        message: AgentMessage,
+        *,
+        source_queue_id: str | None = None,
+    ) -> None:
+        """向会话追加消息；可原子消费一条 restored queue."""
+        if source_queue_id is None:
+            self._append(
+                session_id,
+                event_type="message_appended",
+                payload=asdict(message),
+            )
+            return
+
+        def append_and_consume(
+            entries: list[dict[str, Any]],
+        ) -> list[dict[str, Any]]:
+            current = self._queue_records(entries).get(source_queue_id)
+            if current is None or current.session_id != session_id:
+                raise KeyError(f"source queued input 不存在: {source_queue_id}")
+            if current.status != "restored":
+                raise ValueError("source queued input 必须处于 restored 状态")
+            discarded = QueuedAgentInput(
+                id=current.id,
+                client_message_id=current.client_message_id,
+                session_id=current.session_id,
+                run_id=current.run_id,
+                mode=current.mode,
+                content=current.content,
+                status="discarded",
+                created_at=current.created_at,
+                applied_at=None,
+            )
+            return self._build_entries(
+                session_id,
+                entries,
+                [
+                    ("message_appended", asdict(message)),
+                    (
+                        "queue_discarded",
+                        {
+                            **asdict(discarded),
+                            "consumed_by_message_id": message.id,
+                        },
+                    ),
+                ],
+            )
+
+        update_jsonl_locked(self._path(session_id), append_and_consume)
+
+    def add_queued_input(
+        self,
+        session_id: str,
+        run_id: str,
+        mode: QueuedInputMode,
+        client_message_id: str,
+        content: str,
+        *,
+        source_queue_id: str | None = None,
+        queue_id: str | None = None,
+    ) -> QueuedAgentInput:
+        """幂等追加 steering / follow-up；每个 run 累计最多八条."""
+        if mode not in {"steering", "follow_up"}:
+            raise ValueError(f"不支持的 queue mode: {mode}")
+        if not client_message_id.strip():
+            raise ValueError("client_message_id 不能为空")
+        if not content.strip():
+            raise ValueError("queued input 不能为空")
+        result: QueuedAgentInput | None = None
+
+        def add(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            nonlocal result
+            records = self._queue_records(entries)
+            duplicate = next(
+                (
+                    item
+                    for item in records.values()
+                    if item.run_id == run_id
+                    and item.client_message_id == client_message_id
+                ),
+                None,
+            )
+            if duplicate is not None:
+                result = duplicate
+                return []
+            if source_queue_id is not None:
+                source = records.get(source_queue_id)
+                if source is None or source.session_id != session_id:
+                    raise KeyError(
+                        f"source queued input 不存在: {source_queue_id}"
+                    )
+                if source.status != "restored":
+                    raise ValueError(
+                        "source queued input 必须处于 restored 状态"
+                    )
+            cumulative = sum(
+                1 for item in records.values() if item.run_id == run_id
+            )
+            if cumulative >= self.MAX_QUEUED_INPUTS_PER_RUN:
+                raise QueuedInputLimitError(
+                    f"run {run_id!r} queued input limit "
+                    f"{self.MAX_QUEUED_INPUTS_PER_RUN} reached"
+                )
+            result = QueuedAgentInput(
+                id=queue_id or uuid.uuid4().hex,
+                client_message_id=client_message_id,
+                session_id=session_id,
+                run_id=run_id,
+                mode=mode,
+                content=content,
+                status="queued",
+                created_at=utc_timestamp(),
+            )
+            payload = asdict(result)
+            if source_queue_id is not None:
+                payload["source_queue_id"] = source_queue_id
+            return self._build_entries(
+                session_id, entries, [("queue_added", payload)]
+            )
+
+        update_jsonl_locked(self._path(session_id), add)
+        assert result is not None
+        return result
+
+    def queued_inputs(
+        self,
+        *,
+        session_id: str | None = None,
+        run_id: str | None = None,
+        include_terminal: bool = False,
+    ) -> list[QueuedAgentInput]:
+        """列出队列状态；默认只返回 queued/restored 项."""
+        if session_id is None and run_id is None:
+            sessions = [path.stem for path in sorted(self.sessions_dir.glob("*.jsonl"))]
+        elif session_id is not None:
+            sessions = [session_id]
+        else:
+            sessions = [path.stem for path in sorted(self.sessions_dir.glob("*.jsonl"))]
+        items: list[QueuedAgentInput] = []
+        for sid in sessions:
+            for item in self._queue_records(self._read_entries(sid)).values():
+                if run_id is not None and item.run_id != run_id:
+                    continue
+                if not include_terminal and item.status not in {"queued", "restored"}:
+                    continue
+                items.append(item)
+        return sorted(items, key=lambda item: (item.created_at, item.id))
+
+    def apply_queued_input(
+        self,
+        session_id: str,
+        queue_id: str,
+        *,
+        target_run_id: str | None = None,
+    ) -> QueuedAgentInput:
+        """同一文件锁内追加 user message 和 ``queue_applied``."""
+        result: QueuedAgentInput | None = None
+
+        def apply(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            nonlocal result
+            records = self._queue_records(entries)
+            current = records.get(queue_id)
+            if current is None or current.session_id != session_id:
+                raise KeyError(f"queued input 不存在: {queue_id}")
+            if current.status == "applied":
+                result = current
+                return []
+            if current.status == "discarded":
+                raise ValueError("discarded queued input 不能应用")
+            applied_at = utc_timestamp()
+            result = QueuedAgentInput(
+                id=current.id,
+                client_message_id=current.client_message_id,
+                session_id=current.session_id,
+                run_id=current.run_id,
+                mode=current.mode,
+                content=current.content,
+                status="applied",
+                created_at=current.created_at,
+                applied_at=applied_at,
+            )
+            message = AgentMessage(
+                id=current.client_message_id,
+                role="user",
+                content=current.content,
+                timestamp=applied_at,
+                metadata={
+                    "run_id": target_run_id or current.run_id,
+                    "source_run_id": current.run_id,
+                    "client_message_id": current.client_message_id,
+                    "queued_input_id": current.id,
+                    "queue_mode": current.mode,
+                },
+            )
+            additions: list[tuple[str, dict[str, Any]]] = [
+                ("message_appended", asdict(message)),
+                (
+                    "queue_applied",
+                    {
+                        **asdict(result),
+                        "message_id": message.id,
+                    },
+                ),
+            ]
+            source_queue_id = self._queue_source_ids(entries).get(current.id)
+            if source_queue_id is not None:
+                source = records.get(source_queue_id)
+                if source is None or source.session_id != session_id:
+                    raise KeyError(
+                        f"source queued input 不存在: {source_queue_id}"
+                    )
+                if source.status != "restored":
+                    raise ValueError(
+                        "source queued input 必须处于 restored 状态"
+                    )
+                discarded_source = QueuedAgentInput(
+                    id=source.id,
+                    client_message_id=source.client_message_id,
+                    session_id=source.session_id,
+                    run_id=source.run_id,
+                    mode=source.mode,
+                    content=source.content,
+                    status="discarded",
+                    created_at=source.created_at,
+                    applied_at=None,
+                )
+                additions.append(
+                    (
+                        "queue_discarded",
+                        {
+                            **asdict(discarded_source),
+                            "consumed_by_queue_id": current.id,
+                        },
+                    )
+                )
+            return self._build_entries(
+                session_id,
+                entries,
+                additions,
+            )
+
+        update_jsonl_locked(self._path(session_id), apply)
+        assert result is not None
+        return result
+
+    def discard_queued_input(
+        self, session_id: str, queue_id: str
+    ) -> QueuedAgentInput:
+        """幂等丢弃尚未应用的队列输入."""
+        result: QueuedAgentInput | None = None
+
+        def discard(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            nonlocal result
+            current = self._queue_records(entries).get(queue_id)
+            if current is None or current.session_id != session_id:
+                raise KeyError(f"queued input 不存在: {queue_id}")
+            if current.status == "discarded":
+                result = current
+                return []
+            if current.status == "applied":
+                raise ValueError("applied queued input 不能丢弃")
+            result = QueuedAgentInput(
+                id=current.id,
+                client_message_id=current.client_message_id,
+                session_id=current.session_id,
+                run_id=current.run_id,
+                mode=current.mode,
+                content=current.content,
+                status="discarded",
+                created_at=current.created_at,
+                applied_at=None,
+            )
+            return self._build_entries(
+                session_id,
+                entries,
+                [("queue_discarded", asdict(result))],
+            )
+
+        update_jsonl_locked(self._path(session_id), discard)
+        assert result is not None
+        return result
+
+    def restore_queued_inputs(
+        self,
+        session_id: str,
+        *,
+        run_id: str | None = None,
+    ) -> list[QueuedAgentInput]:
+        """把 interrupted run 的 pending queue 一次性标为 restored."""
+        restored: list[QueuedAgentInput] = []
+
+        def restore(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            nonlocal restored
+            run_records = self._run_records(entries)
+            target_run_ids = {
+                rid
+                for rid, record in run_records.items()
+                if record.get("status") == "interrupted"
+                and (run_id is None or rid == run_id)
+            }
+            additions, restored = self._queue_restore_additions(
+                entries, target_run_ids
+            )
+            return self._build_entries(session_id, entries, additions)
+
+        update_jsonl_locked(self._path(session_id), restore)
+        return restored
+
+    def restore_pending_inputs(
+        self, session_id: str, run_id: str
+    ) -> list[QueuedAgentInput]:
+        """在任意 run 终态前把尚未处理的输入一次性标为 restored."""
+        restored: list[QueuedAgentInput] = []
+
+        def restore(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            nonlocal restored
+            additions, restored = self._queue_restore_additions(entries, {run_id})
+            return self._build_entries(session_id, entries, additions)
+
+        update_jsonl_locked(self._path(session_id), restore)
+        return restored
 
     def update_state(self, state: AgentState) -> AgentState:
         """追加会话状态更新."""
@@ -551,6 +884,128 @@ class SessionStore:
                 return run_id
         return None
 
+    def _queue_records(
+        self, entries: list[dict[str, Any]]
+    ) -> dict[str, QueuedAgentInput]:
+        records: dict[str, QueuedAgentInput] = {}
+        for entry in entries:
+            event_type = entry.get("type")
+            if event_type not in {
+                "queue_added",
+                "queue_applied",
+                "queue_restored",
+                "queue_discarded",
+            }:
+                continue
+            payload = entry.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            queue_id = payload.get("id")
+            if not isinstance(queue_id, str) or not queue_id:
+                continue
+            if event_type == "queue_added":
+                try:
+                    records[queue_id] = self._queued_input_from_payload(payload)
+                except (KeyError, TypeError, ValueError):
+                    continue
+                continue
+            current = records.get(queue_id)
+            if current is None:
+                continue
+            status = {
+                "queue_applied": "applied",
+                "queue_restored": "restored",
+                "queue_discarded": "discarded",
+            }[str(event_type)]
+            records[queue_id] = QueuedAgentInput(
+                id=current.id,
+                client_message_id=current.client_message_id,
+                session_id=current.session_id,
+                run_id=current.run_id,
+                mode=current.mode,
+                content=current.content,
+                status=status,  # type: ignore[arg-type]
+                created_at=current.created_at,
+                applied_at=(
+                    float(payload["applied_at"])
+                    if status == "applied" and payload.get("applied_at") is not None
+                    else current.applied_at
+                ),
+            )
+        return records
+
+    def _queue_source_ids(
+        self, entries: list[dict[str, Any]]
+    ) -> dict[str, str]:
+        sources: dict[str, str] = {}
+        for entry in entries:
+            if entry.get("type") != "queue_added":
+                continue
+            payload = entry.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            queue_id = payload.get("id")
+            source_queue_id = payload.get("source_queue_id")
+            if (
+                isinstance(queue_id, str)
+                and queue_id
+                and isinstance(source_queue_id, str)
+                and source_queue_id
+            ):
+                sources[queue_id] = source_queue_id
+        return sources
+
+    def _queued_input_from_payload(
+        self, payload: dict[str, Any]
+    ) -> QueuedAgentInput:
+        mode = str(payload["mode"])
+        status = str(payload.get("status") or "queued")
+        if mode == "steer":
+            mode = "steering"
+        if mode not in {"steering", "follow_up"}:
+            raise ValueError(f"无效 queue mode: {mode}")
+        if status not in {"queued", "restored", "applied", "discarded"}:
+            raise ValueError(f"无效 queue status: {status}")
+        applied_at = payload.get("applied_at")
+        return QueuedAgentInput(
+            id=str(payload["id"]),
+            client_message_id=str(payload["client_message_id"]),
+            session_id=str(payload["session_id"]),
+            run_id=str(payload["run_id"]),
+            mode=mode,  # type: ignore[arg-type]
+            content=str(payload["content"]),
+            status=status,  # type: ignore[arg-type]
+            created_at=float(payload.get("created_at") or 0.0),
+            applied_at=float(applied_at) if applied_at is not None else None,
+        )
+
+    def _queue_restore_additions(
+        self,
+        entries: list[dict[str, Any]],
+        run_ids: set[str],
+    ) -> tuple[list[tuple[str, dict[str, Any]]], list[QueuedAgentInput]]:
+        additions: list[tuple[str, dict[str, Any]]] = []
+        restored: list[QueuedAgentInput] = []
+        if not run_ids:
+            return additions, restored
+        for current in self._queue_records(entries).values():
+            if current.run_id not in run_ids or current.status != "queued":
+                continue
+            item = QueuedAgentInput(
+                id=current.id,
+                client_message_id=current.client_message_id,
+                session_id=current.session_id,
+                run_id=current.run_id,
+                mode=current.mode,
+                content=current.content,
+                status="restored",
+                created_at=current.created_at,
+                applied_at=None,
+            )
+            restored.append(item)
+            additions.append(("queue_restored", asdict(item)))
+        return additions, restored
+
     def _run_records(self, entries: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         runs: dict[str, dict[str, Any]] = {}
         for entry in entries:
@@ -632,21 +1087,25 @@ class SessionStore:
                 pinned_skill_ids=current.pinned_skill_ids,
                 metadata=metadata,
             )
+            lifecycle: list[tuple[str, dict[str, Any]]] = [
+                (
+                    "run_finished",
+                    {
+                        "run_id": unfinished_run,
+                        "status": "interrupted",
+                        "reason": "recovered_incomplete_run",
+                        "finished_at": utc_timestamp(),
+                    },
+                ),
+                ("status_changed", asdict(recovered)),
+            ]
+            queue_additions, _restored = self._queue_restore_additions(
+                entries, {unfinished_run}
+            )
             return self._build_entries(
                 session_id,
                 entries,
-                [
-                    (
-                        "run_finished",
-                        {
-                            "run_id": unfinished_run,
-                            "status": "interrupted",
-                            "reason": "recovered_incomplete_run",
-                            "finished_at": utc_timestamp(),
-                        },
-                    ),
-                    ("status_changed", asdict(recovered)),
-                ],
+                [*lifecycle, *queue_additions],
             )
 
         update_jsonl_locked(self._path(session_id), recover)
@@ -715,6 +1174,10 @@ class SessionStore:
                     ),
                 )
             )
+        queue_additions, _restored = self._queue_restore_additions(
+            entries, {str(record["run_id"]) for record in stale}
+        )
+        additions.extend(queue_additions)
         return additions
 
     @staticmethod
