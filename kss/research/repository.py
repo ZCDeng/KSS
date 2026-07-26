@@ -5,14 +5,14 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from kss.storage.db import connect, ensure_schema
 
-from .models import Claim, Criterion, Evidence
+from .models import Claim, Evidence
 
 
 def utc_now() -> str:
@@ -263,9 +263,9 @@ class ResearchRepository:
             conn.execute(
                 """
                 UPDATE research_goals
-                SET status=?, termination_reason=COALESCE(?, termination_reason), updated_at=?,
+                SET status=?, termination_reason=?, updated_at=?,
                     started_at=COALESCE(started_at, CASE WHEN ?='running' THEN ? ELSE started_at END),
-                    finished_at=COALESCE(?, finished_at)
+                    finished_at=?
                 WHERE goal_id=?
                 """,
                 (status, termination_reason, now, status, now, finished_at, goal_id),
@@ -315,12 +315,30 @@ class ResearchRepository:
         return out
 
     def _tasks(self, conn: sqlite3.Connection, goal_id: str) -> list[dict[str, Any]]:
-        rows = conn.execute("SELECT * FROM research_tasks WHERE goal_id=? ORDER BY sequence_index", (goal_id,)).fetchall()
+        rows = conn.execute(
+            """
+            SELECT t.*, a.attempt_no, a.error AS attempt_error,
+                   a.result_json AS attempt_result_json
+            FROM research_tasks t
+            LEFT JOIN research_attempts a
+              ON a.attempt_id=t.current_attempt_id
+            WHERE t.goal_id=?
+            ORDER BY t.sequence_index
+            """,
+            (goal_id,),
+        ).fetchall()
         out = []
         for row in rows:
             item = dict(row)
             item["required"] = bool(item["required"])
             item["payload"] = loads(item.pop("payload_json"), {})
+            attempt_result = loads(item.pop("attempt_result_json"), {})
+            item["attempt"] = item.pop("attempt_no")
+            item["detail"] = item.pop("attempt_error") or (
+                "; ".join(attempt_result.get("warnings") or [])
+                if isinstance(attempt_result, dict)
+                else None
+            )
             out.append(item)
         return out
 

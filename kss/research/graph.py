@@ -54,6 +54,7 @@ def investment_weekly_v3() -> ProfileSpec:
             "min_verified_evidence": 1,
             "validator": "metric_ledger",
             "allowed_tiers": ["deterministic_calculation"],
+            "freshness_days": 14,
         },
         {
             "label": "主题共识",
@@ -105,6 +106,10 @@ def investment_weekly_v3() -> ProfileSpec:
                         if kind == "collect_sources"
                         else ["run_recipe"]
                     ),
+                    "skill_whitelist": [],
+                    "max_steps": 8,
+                    "timeout_seconds": 240,
+                    "max_provider_tokens": 25_000,
                 },
             )
             for kind, title, deps in task_kinds
@@ -138,8 +143,30 @@ def generic_research_v1() -> ProfileSpec:
         ],
         tasks=[
             TaskSpec("freeze_snapshot", "冻结输入和范围", depends_on=[]),
-            TaskSpec("collect_sources", "采集受控证据", depends_on=["freeze_snapshot"]),
-            TaskSpec("synthesize_claims", "提出结构化主张", depends_on=["collect_sources"]),
+            TaskSpec(
+                "collect_sources",
+                "采集受控证据",
+                depends_on=["freeze_snapshot"],
+                payload={
+                    "tool_whitelist": ["research_bundle", "research_search"],
+                    "skill_whitelist": [],
+                    "max_steps": 8,
+                    "timeout_seconds": 240,
+                    "max_provider_tokens": 25_000,
+                },
+            ),
+            TaskSpec(
+                "synthesize_claims",
+                "提出结构化主张",
+                depends_on=["collect_sources"],
+                payload={
+                    "tool_whitelist": [],
+                    "skill_whitelist": [],
+                    "max_steps": 2,
+                    "timeout_seconds": 120,
+                    "max_provider_tokens": 12_000,
+                },
+            ),
             TaskSpec("delivery_audit", "执行完成审计", depends_on=["synthesize_claims"]),
         ],
     )

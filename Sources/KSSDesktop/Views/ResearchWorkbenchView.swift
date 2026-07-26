@@ -8,6 +8,8 @@ struct ResearchWorkbenchView: View {
     @State private var showingCreate = false
     @State private var objective = ""
     @State private var profileId = "investment-weekly-v3"
+    @State private var dateRange = ""
+    @State private var asOf = ""
     @State private var selectedArtifact: ResearchArtifact?
     @State private var artifactToPublish: ResearchArtifact?
     @State private var publishDestination: String?
@@ -75,6 +77,7 @@ struct ResearchWorkbenchView: View {
                 .buttonStyle(.borderless)
                 .help("刷新研究目标")
                 Button {
+                    prepareCreateForm()
                     showingCreate = true
                 } label: {
                     Image(systemName: "plus")
@@ -114,7 +117,10 @@ struct ResearchWorkbenchView: View {
                         .foregroundStyle(theme.textSecondary)
                     Text("暂无深度研究")
                         .font(KSSFont.themed(13, .semibold, theme: theme))
-                    Button("新建目标") { showingCreate = true }
+                    Button("新建目标") {
+                        prepareCreateForm()
+                        showingCreate = true
+                    }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
                 }
@@ -194,6 +200,21 @@ struct ResearchWorkbenchView: View {
                         .font(KSSFont.themed(11.5, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                     }
+                    if !goal.budget.isEmpty {
+                        HStack(spacing: 14) {
+                            Label(
+                                "\(goal.usage["nodes"] ?? 0)/\(goal.budget["max_nodes"] ?? 0) 节点",
+                                systemImage: "square.stack.3d.up")
+                            Label(
+                                "\(goal.usage["provider_tokens"] ?? 0)/\(goal.budget["max_provider_tokens"] ?? 0) tokens",
+                                systemImage: "text.word.spacing")
+                            Label(
+                                "\(goal.usage["seconds"] ?? 0)/\(goal.budget["max_seconds"] ?? 0) 秒",
+                                systemImage: "timer")
+                        }
+                        .font(KSSFont.themed(10.5, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                    }
                     if let reason = goal.terminalReason, !reason.isEmpty {
                         Text(reason)
                             .font(KSSFont.themed(12.5, theme: theme))
@@ -233,7 +254,8 @@ struct ResearchWorkbenchView: View {
                                     ResearchStatusLabel(status: task.status)
                                     Text(task.title)
                                     Spacer()
-                                    if task.status == "failed" {
+                                    if ["failed", "incomplete", "interrupted", "blocked"]
+                                        .contains(task.status.lowercased()) {
                                         Button("重试") {
                                             Task { await store.performResearchAction("retry_task", taskId: task.taskId) }
                                         }
@@ -256,9 +278,23 @@ struct ResearchWorkbenchView: View {
                                     HStack {
                                         Text(evidence.title).fontWeight(.semibold)
                                         Spacer()
+                                        if evidence.verified == true {
+                                            Label("已验证", systemImage: "checkmark.seal.fill")
+                                                .foregroundStyle(theme.accent)
+                                        }
                                         Text(evidence.source ?? "未知来源")
                                             .foregroundStyle(theme.textSecondary)
                                     }
+                                    HStack(spacing: 12) {
+                                        if let tier = evidence.sourceTier {
+                                            Text("来源等级：\(tier)")
+                                        }
+                                        if let asOf = evidence.dataAsOf {
+                                            Text("数据时点：\(asOf)")
+                                        }
+                                    }
+                                    .font(KSSFont.themed(10.5, theme: theme))
+                                    .foregroundStyle(theme.textSecondary)
                                     if let snippet = evidence.snippet {
                                         Text(snippet)
                                             .font(KSSFont.themed(12, theme: theme))
@@ -317,10 +353,16 @@ struct ResearchWorkbenchView: View {
             case "paused":
                 actionButton("继续", icon: "play.fill", action: "resume", prominent: true)
                 actionButton("取消", icon: "xmark", action: "cancel")
-            case "failed", "interrupted":
-                actionButton("重新开始", icon: "arrow.clockwise", action: "start", prominent: true)
+            case "interrupted":
+                actionButton("继续", icon: "play.fill", action: "resume", prominent: true)
             default:
                 EmptyView()
+            }
+            if goal.status.lowercased() != "running" {
+                actionButton(
+                    "刷新数据",
+                    icon: "arrow.triangle.2.circlepath",
+                    action: "refresh_snapshot")
             }
             actionButton("审计", icon: "checkmark.shield", action: "audit")
         }
@@ -399,6 +441,11 @@ struct ResearchWorkbenchView: View {
                         Button("发布") { choosePublishDestination(for: artifact) }
                             .buttonStyle(.borderedProminent)
                             .controlSize(.small)
+                            .disabled(
+                                artifact.auditStatus?.lowercased() != "pass"
+                                    || store.selectedResearchGoal?.status.lowercased()
+                                        != "completed"
+                            )
                     }
                 }
                 if let artifact = selectedArtifact ?? artifacts.first {
@@ -452,21 +499,64 @@ struct ResearchWorkbenchView: View {
                     }
                 }
             }
+            if profileId == "investment-weekly-v3" {
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                    GridRow {
+                        Text("研究区间")
+                            .foregroundStyle(theme.textSecondary)
+                        TextField("YYYY-MM-DD_to_YYYY-MM-DD", text: $dateRange)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    GridRow {
+                        Text("统一时点")
+                            .foregroundStyle(theme.textSecondary)
+                        TextField("YYYY-MM-DD", text: $asOf)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                }
+            }
             HStack {
                 Spacer()
                 Button("取消") { showingCreate = false }
                 Button("创建目标") {
                     let text = objective
+                    let inputs = profileId == "investment-weekly-v3"
+                        ? ["date_range": dateRange, "as_of": asOf]
+                        : [:]
                     objective = ""
                     showingCreate = false
-                    Task { await store.createResearchGoal(objective: text, profileId: profileId) }
+                    Task {
+                        await store.createResearchGoal(
+                            objective: text,
+                            profileId: profileId,
+                            inputs: inputs)
+                    }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(objective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(
+                    objective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || (
+                            profileId == "investment-weekly-v3"
+                                && (
+                                    dateRange.trimmingCharacters(
+                                        in: .whitespacesAndNewlines
+                                    ).isEmpty
+                                        || asOf.trimmingCharacters(
+                                            in: .whitespacesAndNewlines
+                                        ).isEmpty
+                                )
+                        )
+                )
             }
         }
         .padding(22)
         .frame(width: 520)
+    }
+
+    private func prepareCreateForm() {
+        let defaults = KSSStore.defaultResearchInputs()
+        dateRange = defaults["date_range"] ?? ""
+        asOf = defaults["as_of"] ?? ""
     }
 
     private func chooseDraftDestination(for artifact: ResearchArtifact) {
@@ -520,6 +610,11 @@ private struct ResearchStatusLabel: View {
         case "paused": "已暂停"
         case "completed", "succeeded", "met", "passed": "已完成"
         case "failed": "失败"
+        case "incomplete", "insufficient_evidence": "证据不足"
+        case "blocked": "已阻塞"
+        case "interrupted": "已中断"
+        case "budget_limited": "预算已用尽"
+        case "needs_refresh": "需要刷新"
         case "cancelled", "aborted": "已取消"
         default: status
         }
@@ -528,8 +623,9 @@ private struct ResearchStatusLabel: View {
     private var color: Color {
         switch status.lowercased() {
         case "running", "completed", "succeeded", "met", "passed": theme.accent
-        case "failed": .red
-        case "paused", "pending": .orange
+        case "failed", "blocked": .red
+        case "paused", "pending", "incomplete", "insufficient_evidence",
+             "interrupted", "budget_limited", "needs_refresh": .orange
         default: theme.textSecondary
         }
     }

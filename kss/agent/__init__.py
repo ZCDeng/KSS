@@ -14,7 +14,7 @@ from kss.agent.provider import (
     ProviderUsage,
 )
 from kss.agent.runtime import AgentRuntime, RunAdmission, RuntimeBusyError, RuntimeTurn
-from kss.agent.service import DuplicateTurn, KSSAgentService
+from kss.agent.service import DuplicateTurn, KSSAgentService, RuntimeRunOptions
 from kss.agent.session_store import RunAdmissionError, SessionStore
 from kss.agent.skills import (
     SkillDiagnostic,
@@ -48,6 +48,7 @@ __all__ = [
     "MemoryRecall",
     "MemoryStore",
     "KSSAgentService",
+    "RuntimeRunOptions",
     "ModelCapabilities",
     "OpenAICompatibleProvider",
     "ProviderConfig",

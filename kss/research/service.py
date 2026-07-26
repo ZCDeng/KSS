@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
+import re
 import sqlite3
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -18,13 +20,24 @@ from .graph import get_profile as get_graph_profile
 from .models import Claim, Evidence
 from .profiles import get_profile as get_packaged_profile
 from .profiles import list_profiles as list_packaged_profiles
+from .report_models import (
+    EvidenceReference,
+    MetricEntry,
+    MetricLedger,
+    NarrativeClaim,
+    ReportBlock,
+    ReportDocument,
+    ReportSection,
+)
 from .repository import ResearchRepository, dumps, loads, new_id, utc_now
 from .runner import AgentResearchTaskRunner
-
 
 TERMINAL_GOAL = {"completed", "cancelled", "failed", "blocked", "budget_limited", "insufficient_evidence", "needs_refresh"}
 TERMINAL_TASK = {"succeeded", "incomplete", "failed", "interrupted", "cancelled", "blocked"}
 ALLOWED_EXPORT_ROOTS = ("Downloads", "Desktop", "Documents", "projects")
+DATE_RANGE_RE = re.compile(
+    r"^(?P<start>\d{4}-\d{2}-\d{2})_to_(?P<end>\d{4}-\d{2}-\d{2})$"
+)
 
 
 class ResearchService:
@@ -66,9 +79,26 @@ class ResearchService:
     def create_goal(self, payload: dict[str, Any] | None = None, goal: str | None = None, **_: Any) -> dict[str, Any]:
         payload = payload or {}
         profile_id = str(payload.get("profile_id") or "investment-weekly-v3")
-        profile = get_graph_profile(profile_id)
+        try:
+            profile = get_graph_profile(profile_id)
+        except ValueError:
+            return {
+                "protocol_version": 1,
+                "ok": False,
+                "error": "profile_not_found",
+                "profile_id": profile_id,
+            }
         objective = str(payload.get("objective") or goal or payload.get("goal") or profile.title)
         inputs = dict(payload.get("inputs") or {})
+        input_errors = self._validate_inputs(profile_id, inputs)
+        if input_errors:
+            return {
+                "protocol_version": 1,
+                "ok": False,
+                "error": "invalid_research_inputs",
+                "details": input_errors,
+                "profile_id": profile_id,
+            }
         budget = dict(profile.budget)
         budget.update(payload.get("budget_overrides") or {})
         goal_id = new_id("goal")
@@ -150,17 +180,54 @@ class ResearchService:
             return {"protocol_version": 1, "ok": False, "error": "goal_not_found", "goal": goal_id, "goal_id": goal_id}
         if goal["status"] in TERMINAL_GOAL:
             return {"protocol_version": 1, "ok": False, "error": "goal_terminal", "goal": goal_id, "goal_id": goal_id, "status": goal["status"]}
+        active_goal_id, active_attempt_id = self._active_attempt()
+        if active_attempt_id:
+            if active_goal_id == goal_id:
+                return {
+                    "protocol_version": 1,
+                    "ok": True,
+                    "event": "already_running",
+                    "goal": self._wire_goal(goal),
+                    "detail": self._wire_goal(goal),
+                    "goal_id": goal_id,
+                    "attempt_id": active_attempt_id,
+                }
+            self.repo.update_goal_status(
+                goal_id,
+                "queued",
+                termination_reason="global_research_slot_busy",
+            )
+            return {
+                "protocol_version": 1,
+                "ok": True,
+                "event": "queued",
+                "goal": self._wire_goal(self.repo.get_goal(goal_id) or {}),
+                "detail": self._wire_goal(self.repo.get_goal(goal_id) or {}),
+                "goal_id": goal_id,
+                "existing_goal_id": active_goal_id,
+            }
         self.repo.update_goal_status(goal_id, "running")
         self._emit(goal_id, "research_start", {"status": "running"})
         try:
-            self._run_ready_loop(goal_id)
+            exhausted = self._run_ready_loop(goal_id)
             settled = self.repo.get_goal(goal_id) or {}
-            may_settle = settled.get("status") == "running"
-            audit = self.audit_goal(
-                goal_id=goal_id,
-                complete_if_pass=may_settle,
-            )
-            self._emit(goal_id, "research_end", {"status": (self.repo.get_goal(goal_id) or {}).get("status"), "audit_status": audit.get("status")})
+            may_settle = exhausted and settled.get("status") == "running"
+            audit: dict[str, Any] | None = None
+            if exhausted:
+                audit = self.audit_goal(
+                    goal_id=goal_id,
+                    complete_if_pass=may_settle,
+                )
+                self._emit(
+                    goal_id,
+                    "research_end",
+                    {
+                        "status": (self.repo.get_goal(goal_id) or {}).get(
+                            "status"
+                        ),
+                        "audit_status": audit.get("status"),
+                    },
+                )
             return {
                 "protocol_version": 1,
                 "ok": True,
@@ -203,6 +270,44 @@ class ResearchService:
             return {"protocol_version": 1, "ok": False, "error": "goal_and_task_required"}
         with connect(self.db_path) as conn:
             ensure_schema(conn)
+            task = conn.execute(
+                "SELECT status FROM research_tasks WHERE goal_id=? AND task_id=?",
+                (goal_id, task_id),
+            ).fetchone()
+            if not task:
+                return {
+                    "protocol_version": 1,
+                    "ok": False,
+                    "error": "task_not_found",
+                    "goal_id": goal_id,
+                }
+            if str(task["status"]) not in {"failed", "incomplete", "interrupted"}:
+                return {
+                    "protocol_version": 1,
+                    "ok": False,
+                    "error": "task_not_retryable",
+                    "status": str(task["status"]),
+                    "goal_id": goal_id,
+                }
+            missing_dependencies = conn.execute(
+                """
+                SELECT d.depends_on_task_id, t.status
+                FROM research_task_dependencies d
+                JOIN research_tasks t ON t.task_id=d.depends_on_task_id
+                WHERE d.goal_id=? AND d.task_id=? AND d.required=1
+                  AND t.status!='succeeded'
+                ORDER BY t.sequence_index
+                """,
+                (goal_id, task_id),
+            ).fetchall()
+            if missing_dependencies:
+                return {
+                    "protocol_version": 1,
+                    "ok": False,
+                    "error": "dependencies_not_satisfied",
+                    "dependencies": [dict(row) for row in missing_dependencies],
+                    "goal_id": goal_id,
+                }
             now = utc_now()
             conn.execute("UPDATE research_tasks SET status='ready', current_attempt_id=NULL, updated_at=?, finished_at=NULL WHERE goal_id=? AND task_id=?", (now, goal_id, task_id))
             conn.execute(
@@ -220,18 +325,83 @@ class ResearchService:
         self._emit(goal_id, "task_ready", {"task_id": task_id, "retry": True}, task_id=task_id)
         return self.start_goal(goal_id=goal_id)
 
-    def refresh_snapshot(self, goal_id: str | None = None, **_: Any) -> dict[str, Any]:
+    def refresh_snapshot(
+        self,
+        goal_id: str | None = None,
+        payload: dict[str, Any] | None = None,
+        **_: Any,
+    ) -> dict[str, Any]:
         if not goal_id:
             return {"protocol_version": 1, "ok": False, "error": "goal_id_required"}
         goal = self.repo.get_goal(goal_id)
         if not goal:
             return {"protocol_version": 1, "ok": False, "error": "goal_not_found", "goal": goal_id, "goal_id": goal_id}
-        snapshot = self._snapshot(profile_id=goal["profile_id"], inputs=goal.get("inputs") or {}, refresh_of=goal.get("snapshot", {}).get("snapshot_id"))
+        refreshed_inputs = dict(goal.get("inputs") or {})
+        requested_inputs = (payload or {}).get("inputs")
+        if isinstance(requested_inputs, dict):
+            refreshed_inputs.update(requested_inputs)
+        input_errors = self._validate_inputs(goal["profile_id"], refreshed_inputs)
+        if input_errors:
+            return {
+                "protocol_version": 1,
+                "ok": False,
+                "error": "invalid_research_inputs",
+                "details": input_errors,
+                "goal_id": goal_id,
+            }
+        snapshot = self._snapshot(
+            profile_id=goal["profile_id"],
+            inputs=refreshed_inputs,
+            refresh_of=goal.get("snapshot", {}).get("snapshot_id"),
+        )
         with connect(self.db_path) as conn:
             ensure_schema(conn)
-            conn.execute("UPDATE research_goals SET snapshot_json=?, status='needs_refresh', updated_at=? WHERE goal_id=?", (dumps(snapshot), utc_now(), goal_id))
-        self._emit(goal_id, "goal_status", {"status": "needs_refresh", "snapshot": snapshot})
-        return {"protocol_version": 1, "ok": True, "event": "snapshot_refreshed", "goal": goal_id, "goal_id": goal_id, "snapshot": snapshot}
+            now = utc_now()
+            conn.execute(
+                """
+                UPDATE research_goals
+                SET inputs_json=?, snapshot_json=?, status='draft',
+                    termination_reason=NULL, finished_at=NULL, updated_at=?
+                WHERE goal_id=?
+                """,
+                (dumps(refreshed_inputs), dumps(snapshot), now, goal_id),
+            )
+            conn.execute(
+                """
+                UPDATE research_criteria
+                SET status='pending', updated_at=?
+                WHERE goal_id=?
+                """,
+                (now, goal_id),
+            )
+            conn.execute(
+                """
+                UPDATE research_tasks
+                SET status=CASE WHEN sequence_index=1 THEN 'ready' ELSE 'pending' END,
+                    current_attempt_id=NULL, lease_owner=NULL,
+                    lease_expires_at=NULL, started_at=NULL, finished_at=NULL,
+                    updated_at=?
+                WHERE goal_id=?
+                """,
+                (now, goal_id),
+            )
+            self.repo.append_event(
+                conn,
+                goal_id=goal_id,
+                event_type="goal_status",
+                payload={"status": "draft", "snapshot": snapshot, "refreshed": True},
+            )
+        self.repo.mirror_unmirrored(goal_id)
+        refreshed = self.repo.get_goal(goal_id) or {}
+        return {
+            "protocol_version": 1,
+            "ok": True,
+            "event": "snapshot_refreshed",
+            "goal": self._wire_goal(refreshed),
+            "detail": self._wire_goal(refreshed),
+            "goal_id": goal_id,
+            "snapshot": snapshot,
+        }
 
     def audit_goal(self, goal_id: str | None = None, complete_if_pass: bool = False, **_: Any) -> dict[str, Any]:
         if not goal_id:
@@ -243,15 +413,30 @@ class ResearchService:
         claims = self.repo.claims_for_goal(goal_id)
         artifacts = self.artifacts.list_goal(goal_id)
         findings: list[dict[str, Any]] = []
+        criterion_statuses: dict[str, str] = {}
+        snapshot_id = str((goal.get("snapshot") or {}).get("snapshot_id") or "")
         coverage: dict[str, Any] = {"criteria": {}, "tasks": {}, "artifact_count": len(artifacts)}
         for criterion in goal.get("criteria", []):
             allowed_tiers = set(criterion.get("allowed_tiers") or [])
             verified = [
                 item for item in evidence
-                if item.get("criterion_id") == criterion["criterion_id"] and item.get("verified")
+                if item.get("criterion_id") == criterion["criterion_id"]
+                and item.get("verified")
+                and str((item.get("metadata") or {}).get("snapshot_id") or "")
+                == snapshot_id
             ]
             allowed = [item for item in verified if not allowed_tiers or item.get("source_tier") in allowed_tiers]
-            fresh = [item for item in allowed if self._is_fresh(item, criterion)]
+            fresh = [
+                item
+                for item in allowed
+                if self._is_fresh(
+                    item,
+                    criterion,
+                    reference_as_of=str(
+                        (goal.get("snapshot") or {}).get("as_of") or ""
+                    ),
+                )
+            ]
             coverage["criteria"][criterion["criterion_id"]] = {
                 "verified": len(verified),
                 "allowed_tier": len(allowed),
@@ -259,6 +444,11 @@ class ResearchService:
                 "required": bool(criterion["required"]),
                 "allowed_tiers": sorted(allowed_tiers),
             }
+            criterion_statuses[criterion["criterion_id"]] = (
+                "met"
+                if len(fresh) >= int(criterion["min_verified_evidence"])
+                else "unmet"
+            )
             if (
                 criterion.get("validator") != "delivery_audit"
                 and criterion["required"]
@@ -330,6 +520,10 @@ class ResearchService:
                     == audit_criterion["criterion_id"]
                     and item.get("method") == "research_audit"
                     and item.get("verified")
+                    and str(
+                        (item.get("metadata") or {}).get("snapshot_id") or ""
+                    )
+                    == snapshot_id
                 ),
                 None,
             )
@@ -350,6 +544,7 @@ class ResearchService:
                     method="research_audit",
                     scope="delivery_gate",
                     hash=manifest_hash,
+                    metadata={"snapshot_id": snapshot_id},
                 )
                 self.repo.register_evidence(audit_evidence)
                 self.repo.verify_evidence(
@@ -364,15 +559,28 @@ class ResearchService:
                 "required": True,
                 "allowed_tiers": audit_criterion.get("allowed_tiers") or [],
             }
+            criterion_statuses[audit_criterion["criterion_id"]] = "met"
+        elif audit_criterion:
+            criterion_statuses[audit_criterion["criterion_id"]] = "unmet"
         status = "fail" if any(f["severity"] == "block" for f in findings) else "pass"
         audit = {"status": status, "coverage": coverage, "findings": findings, "generated_at": utc_now()}
         audit_id = new_id("audit")
         with connect(self.db_path) as conn:
             ensure_schema(conn)
+            now = utc_now()
             conn.execute(
                 "INSERT INTO research_audits (audit_id, goal_id, status, coverage_json, findings_json, artifact_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (audit_id, goal_id, status, dumps(coverage), dumps(findings), report_artifacts[-1]["artifact_id"] if report_artifacts else None, utc_now()),
+                (audit_id, goal_id, status, dumps(coverage), dumps(findings), report_artifacts[-1]["artifact_id"] if report_artifacts else None, now),
             )
+            for criterion_id, criterion_status in criterion_statuses.items():
+                conn.execute(
+                    """
+                    UPDATE research_criteria
+                    SET status=?, updated_at=?
+                    WHERE criterion_id=? AND goal_id=?
+                    """,
+                    (criterion_status, now, criterion_id, goal_id),
+                )
         self._emit(goal_id, "audit_result", {"audit_id": audit_id, "status": status, "coverage": coverage, "findings": findings})
         if complete_if_pass:
             self.repo.update_goal_status(goal_id, "completed" if status == "pass" else "insufficient_evidence", termination_reason=None if status == "pass" else "audit_failed")
@@ -399,24 +607,29 @@ class ResearchService:
     # Execution internals
     # ------------------------------------------------------------------
 
-    def _run_ready_loop(self, goal_id: str) -> None:
+    def _run_ready_loop(self, goal_id: str) -> bool:
         while True:
             goal = self.repo.get_goal(goal_id) or {}
             if goal.get("status") != "running":
-                return
+                return False
             if self._budget_exceeded(goal):
                 self.repo.update_goal_status(
                     goal_id,
                     "budget_limited",
                     termination_reason="research_budget_exhausted",
                 )
-                return
+                return False
             task = self._next_ready_task(goal_id)
             if not task:
-                return
+                return True
             attempt_id = self._start_attempt(goal_id, task)
             if attempt_id is None:
-                return
+                self.repo.update_goal_status(
+                    goal_id,
+                    "queued",
+                    termination_reason="global_research_slot_busy",
+                )
+                return False
             self._run_task(goal_id, task, attempt_id)
             self._promote_ready_tasks(goal_id)
 
@@ -432,14 +645,57 @@ class ResearchService:
             if kind == "freeze_snapshot":
                 self._register_task_evidence(goal_id, task, attempt_id, "snapshot", "冻结快照证据")
             elif kind == "compile_report":
-                if not self.allow_synthetic_fixture:
+                compiled = self._compile_report(goal_id, task, attempt_id)
+                compile_status = (
+                    "succeeded"
+                    if compiled["audit"]["status"] == "pass"
+                    else "incomplete"
+                )
+                compile_result = {
+                    "status": compile_status,
+                    "claims": [],
+                    "evidence_refs": [],
+                    "artifact_refs": compiled["artifact_refs"],
+                    "open_questions": [],
+                    "warnings": [
+                        str(finding.get("code") or "compiler_audit_failed")
+                        for finding in compiled["audit"].get("findings") or []
+                    ],
+                }
+                self._finish_attempt(
+                    goal_id,
+                    task["task_id"],
+                    attempt_id,
+                    compile_status,
+                    compile_result,
+                )
+                self._record_usage(goal_id, {})
+                self._emit(
+                    goal_id,
+                    "task_end",
+                    {
+                        "status": compile_status,
+                        "task_id": task["task_id"],
+                        "audit_status": compiled["audit"]["status"],
+                    },
+                    task_id=task["task_id"],
+                    attempt_id=attempt_id,
+                )
+                return
+            elif kind == "delivery_audit":
+                # A task marker or assistant statement is never itself audit
+                # evidence. This node only checks the compiler's durable
+                # audit sidecar; ResearchAuditService creates the final
+                # completion evidence after every required task has settled.
+                compiler_audit = self._latest_compiler_audit(goal_id)
+                if not compiler_audit or compiler_audit.get("status") != "pass":
                     result = {
                         "status": "incomplete",
                         "claims": [],
                         "evidence_refs": [],
                         "artifact_refs": [],
-                        "open_questions": ["缺少可编译的结构化 ReportDocument"],
-                        "warnings": ["report_ir_missing"],
+                        "open_questions": ["编译器审计尚未通过"],
+                        "warnings": ["compiler_audit_not_passed"],
                     }
                     self._finish_attempt(
                         goal_id,
@@ -448,29 +704,19 @@ class ResearchService:
                         "incomplete",
                         result,
                     )
+                    self._record_usage(goal_id, {})
                     self._emit(
                         goal_id,
                         "task_end",
                         {
                             "status": "incomplete",
                             "task_id": task["task_id"],
-                            "reason": "report_ir_missing",
+                            "reason": "compiler_audit_not_passed",
                         },
                         task_id=task["task_id"],
                         attempt_id=attempt_id,
                     )
                     return
-                self._compile_report(goal_id, task, attempt_id)
-            elif kind == "delivery_audit":
-                # Only audit_goal may certify the delivery; a task marker or
-                # assistant statement is never itself audit evidence.
-                self._register_task_evidence(
-                    goal_id,
-                    task,
-                    attempt_id,
-                    "delivery_audit",
-                    "交付审计证据",
-                )
             elif kind == "preview_publish_gate":
                 self._emit(goal_id, "artifact_ready", {"preview": True}, task_id=task["task_id"], attempt_id=attempt_id)
             elif self.allow_synthetic_fixture:
@@ -505,10 +751,21 @@ class ResearchService:
                     },
                 )
                 self._record_usage(goal_id, result.get("usage") or {})
+                retry_scheduled = self._schedule_transient_retry(
+                    goal_id,
+                    task["task_id"],
+                    attempt_id,
+                    status,
+                    result,
+                )
                 self._emit(
                     goal_id,
                     "task_end",
-                    {"status": status, "task_id": task["task_id"]},
+                    {
+                        "status": status,
+                        "task_id": task["task_id"],
+                        "retry_scheduled": retry_scheduled,
+                    },
                     task_id=task["task_id"],
                     attempt_id=attempt_id,
                 )
@@ -580,9 +837,18 @@ class ResearchService:
             f"{task['title']}证据",
         )
 
-    def _compile_report(self, goal_id: str, task: dict[str, Any], attempt_id: str) -> None:
+    def _compile_report(
+        self,
+        goal_id: str,
+        task: dict[str, Any],
+        attempt_id: str,
+    ) -> dict[str, Any]:
         self._emit(goal_id, "compile_start", {"task_id": task["task_id"]}, task_id=task["task_id"], attempt_id=attempt_id)
-        document = make_investment_weekly_fixture()
+        document = (
+            make_investment_weekly_fixture()
+            if self.allow_synthetic_fixture
+            else self._build_report_document(goal_id)
+        )
         compiled = self.compiler.compile(document)
         artifact_refs = []
         kind_map = {
@@ -604,49 +870,450 @@ class ResearchService:
                 name=name,
                 data=data,
                 media_type="text/html; charset=utf-8" if name.endswith(".html") else ("image/png" if name.endswith(".png") else "application/json"),
-                metadata={"audit_status": compiled["audit"]["status"], "draft": compiled["draft"], "logical_name": name},
+                metadata={
+                    "audit_status": compiled["audit"]["status"],
+                    "draft": compiled["draft"],
+                    "logical_name": name,
+                    "snapshot_id": self._snapshot_id(goal_id),
+                },
             )
             artifact_refs.append(artifact["artifact_id"])
-        compiled_evidence_ids: list[str] = []
-        for validator in (
-            "metric_ledger",
-            "theme_consensus",
-            "risk_radar",
-            "precision_cards",
-        ):
-            criterion = self._criterion_for_validator(goal_id, validator)
-            if not criterion:
-                continue
-            evidence = Evidence(
-                evidence_id=new_id("ev"),
-                goal_id=goal_id,
-                criterion_id=criterion["criterion_id"],
-                task_id=task["task_id"],
-                attempt_id=attempt_id,
-                source_tool="delivery_compiler",
-                source_tier="deterministic_calculation",
-                artifact_id=artifact_refs[0] if artifact_refs else None,
-                data_as_of=self._goal_as_of(goal_id),
-                method="ReportCompiler.compile",
-                scope=validator,
-                hash=compiled["manifest"]["object_hashes"].get("report.html"),
-                metadata={"audit_status": compiled["audit"]["status"], "artifact_refs": artifact_refs},
+        if compiled["audit"]["status"] == "pass":
+            compiled_evidence_ids: list[str] = []
+            for validator in (
+                "metric_ledger",
+                "theme_consensus",
+                "risk_radar",
+                "precision_cards",
+            ):
+                criterion = self._criterion_for_validator(goal_id, validator)
+                if not criterion:
+                    continue
+                evidence = Evidence(
+                    evidence_id=new_id("ev"),
+                    goal_id=goal_id,
+                    criterion_id=criterion["criterion_id"],
+                    task_id=task["task_id"],
+                    attempt_id=attempt_id,
+                    source_tool="delivery_compiler",
+                    source_tier="deterministic_calculation",
+                    artifact_id=artifact_refs[0] if artifact_refs else None,
+                    data_as_of=self._goal_as_of(goal_id),
+                    method="ReportCompiler.compile",
+                    scope=validator,
+                    hash=compiled["manifest"]["object_hashes"].get(
+                        "report.html"
+                    ),
+                    metadata={
+                        "audit_status": compiled["audit"]["status"],
+                        "artifact_refs": artifact_refs,
+                        "snapshot_id": self._snapshot_id(goal_id),
+                    },
+                )
+                self.repo.register_evidence(evidence)
+                self.repo.verify_evidence(
+                    evidence.evidence_id, checker="delivery_compiler"
+                )
+                compiled_evidence_ids.append(evidence.evidence_id)
+            self.repo.register_claim(
+                Claim(
+                    claim_id=new_id("claim"),
+                    goal_id=goal_id,
+                    content="投资分析周报 V3 已由结构化 IR 编译并通过确定性审计。",
+                    status="supported",
+                    task_id=task["task_id"],
+                    evidence_ids=compiled_evidence_ids,
+                )
             )
-            self.repo.register_evidence(evidence)
-            self.repo.verify_evidence(evidence.evidence_id, checker="delivery_compiler")
-            compiled_evidence_ids.append(evidence.evidence_id)
-        self.repo.register_claim(
-            Claim(
-                claim_id=new_id("claim"),
-                goal_id=goal_id,
-                content="投资分析周报 V3 已由结构化 IR 编译并通过确定性审计。",
-                status="supported",
-                task_id=task["task_id"],
-                evidence_ids=compiled_evidence_ids,
-            )
-        )
         self.repo.mirror_unmirrored(goal_id)
         self._emit(goal_id, "compile_end", {"status": compiled["audit"]["status"], "artifact_refs": artifact_refs}, task_id=task["task_id"], attempt_id=attempt_id)
+        compiled["artifact_refs"] = artifact_refs
+        return compiled
+
+    def _build_report_document(self, goal_id: str) -> ReportDocument:
+        """Build an honest typed draft from the current snapshot ledger.
+
+        Missing market metrics remain explicit ``N/A`` values. The compiler
+        turns those into blocking audit findings and a watermarked draft
+        instead of inventing numbers or stopping before a preview exists.
+        """
+
+        goal = self.repo.get_goal(goal_id) or {}
+        snapshot = goal.get("snapshot") or {}
+        snapshot_id = str(snapshot.get("snapshot_id") or "")
+        raw_evidence = [
+            item
+            for item in self.repo.evidence_for_goal(goal_id)
+            if item.get("verified")
+            and str((item.get("metadata") or {}).get("snapshot_id") or "")
+            == snapshot_id
+            and item.get("hash")
+            and item.get("data_as_of")
+        ]
+        evidence = [
+            EvidenceReference(
+                evidence_id=str(item["evidence_id"]),
+                source_tier=str(item.get("source_tier") or "unknown"),
+                title=str(
+                    (item.get("metadata") or {}).get("title")
+                    or item.get("scope")
+                    or item.get("source_tool")
+                    or "研究证据"
+                ),
+                uri=item.get("uri"),
+                data_as_of=str(item.get("data_as_of") or ""),
+                hash=str(item.get("hash") or ""),
+                caveat=item.get("caveat"),
+            )
+            for item in raw_evidence
+        ]
+        evidence_ids = {item.evidence_id for item in evidence}
+        evidence_numeric_values = {
+            str(item["evidence_id"]): [
+                float(value)
+                for value in (item.get("metadata") or {}).get(
+                    "numeric_values", []
+                )
+                if isinstance(value, (int, float)) and not isinstance(value, bool)
+            ]
+            for item in raw_evidence
+        }
+        task_results = self._current_task_results(goal_id)
+        claims = [
+            NarrativeClaim(
+                claim_id=str(item["claim_id"]),
+                text=str(item.get("content") or ""),
+                evidence_refs=[
+                    str(ref)
+                    for ref in item.get("evidence_ids") or []
+                    if str(ref) in evidence_ids
+                ],
+                review_required=True,
+            )
+            for item in self.repo.claims_for_goal(goal_id)
+            if item.get("status") == "supported"
+            and any(str(ref) in evidence_ids for ref in item.get("evidence_ids") or [])
+        ]
+        card_rows = [
+            {
+                "card_id": f"claim_{index:04d}",
+                "title": f"证据卡 {index:04d}",
+                "summary": claim.text,
+                "metric_refs": ["m_card_count"],
+                "evidence_refs": list(claim.evidence_refs),
+                "source_group": claim.evidence_refs[0],
+            }
+            for index, claim in enumerate(claims, start=1)
+        ]
+        if not card_rows:
+            card_rows = [
+                {
+                    "card_id": f"evidence_{index:04d}",
+                    "title": item.title,
+                    "summary": item.caveat or "已验证证据条目，尚待形成研究主张。",
+                    "metric_refs": ["m_card_count"],
+                    "evidence_refs": [item.evidence_id],
+                    "source_group": item.source_tier,
+                }
+                for index, item in enumerate(evidence, start=1)
+            ]
+        metric_specs = {
+            "compute_temperature": {
+                "metric_id": "m_temperature",
+                "label": "市场温度",
+                "formula_id": "temperature_index",
+            },
+            "theme_consensus": {
+                "metric_id": "m_consensus",
+                "label": "主题共识强度",
+                "formula_id": "theme_consensus",
+            },
+            "risk_radar": {
+                "metric_id": "m_risk",
+                "label": "风险雷达均值",
+                "formula_id": "risk_radar",
+            },
+        }
+        derived_metrics: dict[str, MetricEntry] = {}
+        formula_inputs: dict[str, list[float]] = {}
+        for task_kind, expected in metric_specs.items():
+            task_result = task_results.get(task_kind) or {}
+            for raw_claim in task_result.get("claims") or []:
+                if not isinstance(raw_claim, dict):
+                    continue
+                metric = raw_claim.get("metric")
+                if not isinstance(metric, dict):
+                    continue
+                metric_id = str(metric.get("metric_id") or "")
+                input_refs = [
+                    str(value) for value in metric.get("input_refs") or []
+                ]
+                values = metric.get("formula_inputs")
+                if (
+                    metric_id != expected["metric_id"]
+                    or str(metric.get("formula_id") or "")
+                    != expected["formula_id"]
+                    or metric.get("formula_version") != "v1"
+                    or not input_refs
+                    or any(value not in evidence_ids for value in input_refs)
+                    or not isinstance(values, list)
+                    or not values
+                    or any(
+                        isinstance(value, bool)
+                        or not isinstance(value, (int, float))
+                        or not math.isfinite(float(value))
+                        for value in values
+                    )
+                ):
+                    continue
+                source_numbers = [
+                    number
+                    for evidence_id in input_refs
+                    for number in evidence_numeric_values.get(evidence_id, [])
+                ]
+                normalized_values = [float(value) for value in values]
+                if not source_numbers or any(
+                    not any(
+                        abs(value - source) <= max(1e-9, abs(source) * 1e-9)
+                        for source in source_numbers
+                    )
+                    for value in normalized_values
+                ):
+                    continue
+                value = metric.get("value")
+                if (
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not math.isfinite(float(value))
+                ):
+                    continue
+                try:
+                    precision = int(metric.get("precision") or 1)
+                except (TypeError, ValueError):
+                    continue
+                if not 0 <= precision <= 8:
+                    continue
+                metric_as_of = str(metric.get("as_of") or "")
+                if metric_as_of != self._goal_as_of(goal_id):
+                    continue
+                derived_metrics[metric_id] = MetricEntry(
+                    metric_id,
+                    str(expected["label"]),
+                    float(value),
+                    str(metric.get("unit") or "%"),
+                    precision,
+                    str(expected["formula_id"]),
+                    "v1",
+                    input_refs,
+                    metric_as_of,
+                )
+                formula_inputs[metric_id] = normalized_values
+                break
+        all_refs = [item.evidence_id for item in evidence]
+        metrics = MetricLedger(
+            [
+                derived_metrics.get("m_temperature")
+                or MetricEntry(
+                    "m_temperature",
+                    "市场温度",
+                    "N/A",
+                    "",
+                    1,
+                    "temperature_index",
+                    "v1",
+                    all_refs,
+                    self._goal_as_of(goal_id),
+                ),
+                derived_metrics.get("m_consensus")
+                or MetricEntry(
+                    "m_consensus",
+                    "主题共识强度",
+                    "N/A",
+                    "",
+                    1,
+                    "theme_consensus",
+                    "v1",
+                    all_refs,
+                    self._goal_as_of(goal_id),
+                ),
+                derived_metrics.get("m_risk")
+                or MetricEntry(
+                    "m_risk",
+                    "风险雷达均值",
+                    "N/A",
+                    "",
+                    1,
+                    "risk_radar",
+                    "v1",
+                    all_refs,
+                    self._goal_as_of(goal_id),
+                ),
+                MetricEntry(
+                    "m_card_count",
+                    "证据卡数量",
+                    len(card_rows),
+                    "张",
+                    0,
+                    "card_count",
+                    "v1",
+                    all_refs,
+                    self._goal_as_of(goal_id),
+                ),
+            ]
+        )
+        objective = str(goal.get("objective") or "深度研究")
+        sections = [
+            ReportSection(
+                "sec_overview",
+                "总览",
+                "overview",
+                [
+                    ReportBlock(
+                        "b_overview",
+                        "paragraph",
+                        text=objective,
+                        evidence_refs=all_refs,
+                    )
+                ],
+            ),
+            ReportSection(
+                "sec_temperature",
+                "市场温度",
+                "temperature",
+                [
+                    ReportBlock(
+                        "b_temperature",
+                        "metric_group",
+                        metric_refs=["m_temperature", "m_card_count"],
+                        evidence_refs=all_refs,
+                    )
+                ],
+            ),
+            ReportSection(
+                "sec_theme",
+                "主题共识",
+                "theme-consensus",
+                [
+                    ReportBlock(
+                        "b_theme",
+                        "metric_group",
+                        metric_refs=["m_consensus"],
+                        evidence_refs=all_refs,
+                    )
+                ],
+            ),
+            ReportSection(
+                "sec_risk",
+                "风险雷达",
+                "risk-radar",
+                [
+                    ReportBlock(
+                        "b_risk",
+                        "metric_group",
+                        metric_refs=["m_risk"],
+                        evidence_refs=all_refs,
+                    )
+                ],
+            ),
+            ReportSection(
+                "sec_analyst",
+                "分析师分区",
+                "analyst-sections",
+                [
+                    ReportBlock(
+                        "b_analysts",
+                        "table",
+                        rows=[
+                            {
+                                "来源": item.title,
+                                "等级": item.source_tier,
+                                "evidence_refs": [item.evidence_id],
+                            }
+                            for item in evidence
+                        ],
+                        evidence_refs=all_refs,
+                    )
+                ],
+            ),
+            ReportSection(
+                "sec_cards",
+                "精判卡",
+                "precision-cards",
+                [
+                    ReportBlock(
+                        "b_cards",
+                        "precision_cards",
+                        rows=card_rows,
+                        metric_refs=["m_card_count"],
+                        evidence_refs=all_refs,
+                    )
+                ],
+            ),
+            ReportSection(
+                "sec_method",
+                "方法论",
+                "methodology",
+                [
+                    ReportBlock(
+                        "b_method",
+                        "methodology",
+                        text="仅工具结果和确定性计算可进入证据账本；缺失指标保持空缺。",
+                        evidence_refs=all_refs,
+                    )
+                ],
+            ),
+            ReportSection(
+                "sec_audit",
+                "审计",
+                "audit",
+                [
+                    ReportBlock(
+                        "b_audit",
+                        "audit",
+                        text="正式发布需通过证据、数字、矛盾、锚点和对象哈希门禁。",
+                        metric_refs=["m_card_count"],
+                        evidence_refs=all_refs,
+                    )
+                ],
+            ),
+        ]
+        return ReportDocument(
+            document_id=f"{goal_id}-{snapshot_id or 'snapshot'}",
+            profile_id=str(goal.get("profile_id") or "investment-weekly-v3"),
+            title="投资分析周报 V3",
+            subtitle="结构化证据草稿",
+            date_range=str(
+                (goal.get("inputs") or {}).get("date_range") or "未指定"
+            ),
+            as_of=self._goal_as_of(goal_id),
+            sections=sections,
+            metric_ledger=metrics,
+            claims=claims,
+            evidence=evidence,
+            metadata={
+                "snapshot_id": snapshot_id,
+                "card_count": len(card_rows),
+                "formula_inputs": formula_inputs,
+            },
+        )
+
+    def _current_task_results(self, goal_id: str) -> dict[str, dict[str, Any]]:
+        with connect(self.db_path) as conn:
+            ensure_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT t.kind, a.result_json
+                FROM research_tasks t
+                JOIN research_attempts a ON a.attempt_id=t.current_attempt_id
+                WHERE t.goal_id=? AND t.status='succeeded'
+                  AND a.status='succeeded'
+                """,
+                (goal_id,),
+            ).fetchall()
+        return {
+            str(row["kind"]): loads(row["result_json"], {})
+            for row in rows
+        }
 
     def _start_attempt(
         self,
@@ -698,6 +1365,86 @@ class ResearchService:
                 (status, now, now, task_id),
             )
         self._emit(goal_id, "attempt_end", {"attempt_id": attempt_id, "task_id": task_id, "status": status, "error": error}, task_id=task_id, attempt_id=attempt_id)
+
+    def _schedule_transient_retry(
+        self,
+        goal_id: str,
+        task_id: str,
+        attempt_id: str,
+        status: str,
+        result: dict[str, Any],
+    ) -> bool:
+        if status != "incomplete" or not self._is_transient_result(result):
+            return False
+        with connect(self.db_path) as conn:
+            ensure_schema(conn)
+            attempt = conn.execute(
+                "SELECT attempt_no FROM research_attempts WHERE attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
+            goal = conn.execute(
+                "SELECT status FROM research_goals WHERE goal_id=?",
+                (goal_id,),
+            ).fetchone()
+            if (
+                not attempt
+                or int(attempt["attempt_no"]) >= 3
+                or not goal
+                or goal["status"] != "running"
+            ):
+                return False
+            now = utc_now()
+            conn.execute(
+                """
+                UPDATE research_tasks
+                SET status='ready', finished_at=NULL, updated_at=?
+                WHERE task_id=? AND current_attempt_id=?
+                """,
+                (now, task_id, attempt_id),
+            )
+        self._emit(
+            goal_id,
+            "task_update",
+            {
+                "task_id": task_id,
+                "status": "ready",
+                "operation": "retry_scheduled",
+                "previous_attempt_id": attempt_id,
+            },
+            task_id=task_id,
+            attempt_id=attempt_id,
+        )
+        return True
+
+    @staticmethod
+    def _is_transient_result(result: dict[str, Any]) -> bool:
+        text = " ".join(
+            str(item) for item in (result.get("warnings") or [])
+        ).lower()
+        non_retryable = (
+            "api key",
+            "credential",
+            "unauthorized",
+            "forbidden",
+            "401",
+            "403",
+            "schema",
+            "path",
+            "security",
+        )
+        if any(marker in text for marker in non_retryable):
+            return False
+        return any(
+            marker in text
+            for marker in (
+                "timeout",
+                "temporar",
+                "connection",
+                "network",
+                "rate limit",
+                "provider stream",
+            )
+        )
 
     def _next_ready_task(self, goal_id: str) -> dict[str, Any] | None:
         with connect(self.db_path) as conn:
@@ -756,7 +1503,11 @@ class ResearchService:
             hash=hashlib.sha256(f"{goal_id}:{task['task_id']}:{attempt_id}:{title}".encode()).hexdigest(),
             verified=True,
             check_count=1,
-            metadata={"title": title, "validator": validator},
+            metadata={
+                "title": title,
+                "validator": validator,
+                "snapshot_id": self._snapshot_id(goal_id),
+            },
         )
         self.repo.register_evidence(evidence)
         self.repo.verify_evidence(evidence.evidence_id, checker="research_deterministic_runner")
@@ -783,9 +1534,14 @@ class ResearchService:
                 }
             ).encode("utf-8"),
             media_type="application/json",
-            metadata={"task_kind": task["kind"], "status": result.get("status")},
+            metadata={
+                "task_kind": task["kind"],
+                "status": result.get("status"),
+                "snapshot_id": self._snapshot_id(goal_id),
+            },
         )
         captured_ids: list[str] = []
+        tool_artifact_ids: list[str] = []
         criterion = self._criterion_for_validator(
             goal_id,
             "source_coverage" if task["kind"] == "collect_sources" else "evidence",
@@ -824,6 +1580,7 @@ class ResearchService:
                 metadata={
                     "title": source.get("title"),
                     "used_for": source.get("usedFor"),
+                    "snapshot_id": self._snapshot_id(goal_id),
                 },
             )
             self.repo.register_evidence(evidence)
@@ -837,27 +1594,141 @@ class ResearchService:
             )
             captured_ids.append(evidence_id)
 
-        existing_ids = {
-            item["evidence_id"] for item in self.repo.evidence_for_goal(goal_id)
+        validator_by_task = {
+            "compute_temperature": "metric_ledger",
+            "theme_consensus": "theme_consensus",
+            "risk_radar": "risk_radar",
+            "analyst_cards": "precision_cards",
         }
+        local_criterion = self._criterion_for_validator(
+            goal_id,
+            validator_by_task.get(task["kind"], "evidence"),
+        )
+        for tool_result in result.get("_tool_results") or []:
+            if not isinstance(tool_result, dict):
+                continue
+            tool_name = str(tool_result.get("tool_name") or "research_tool")
+            raw_payload = tool_result.get("result")
+            if (
+                tool_name in {
+                    "research_search",
+                    "research_fetch",
+                    "research_bundle",
+                }
+                or not isinstance(raw_payload, dict)
+                or raw_payload.get("error")
+                or raw_payload.get("is_error")
+            ):
+                continue
+            encoded = stable_json(raw_payload).encode("utf-8")
+            tool_artifact = self.artifacts.put_bytes(
+                goal_id=goal_id,
+                task_id=task["task_id"],
+                attempt_id=attempt_id,
+                kind="tool_result",
+                name=f"{tool_name}-{tool_result.get('tool_call_id') or new_id('call')}.json",
+                data=encoded,
+                media_type="application/json",
+                metadata={
+                    "tool_name": tool_name,
+                    "snapshot_id": self._snapshot_id(goal_id),
+                },
+            )
+            tool_artifact_ids.append(tool_artifact["artifact_id"])
+            evidence_id = new_id("ev")
+            numeric_values = self._numeric_values(raw_payload)
+            evidence = Evidence(
+                evidence_id=evidence_id,
+                goal_id=goal_id,
+                criterion_id=(
+                    local_criterion["criterion_id"] if local_criterion else None
+                ),
+                task_id=task["task_id"],
+                attempt_id=attempt_id,
+                run_id=result.get("run_id"),
+                tool_call_id=str(
+                    tool_result.get("tool_call_id") or ""
+                )
+                or None,
+                source_tool=tool_name,
+                uri=(
+                    f"kss-tool://{tool_name}/"
+                    f"{tool_result.get('tool_call_id') or evidence_id}"
+                ),
+                artifact_id=tool_artifact["artifact_id"],
+                data_as_of=self._goal_as_of(goal_id),
+                method="successful_tool_result",
+                scope=task["title"],
+                hash=hashlib.sha256(encoded).hexdigest(),
+                source_tier="deterministic_calculation",
+                metadata={
+                    "title": f"{task['title']} · {tool_name}",
+                    "numeric_values": numeric_values,
+                    "snapshot_id": self._snapshot_id(goal_id),
+                },
+            )
+            self.repo.register_evidence(evidence)
+            self.repo.verify_evidence(
+                evidence_id,
+                checker="tool_result_integrity",
+                detail={"object_hash": tool_artifact["object_hash"]},
+            )
+            captured_ids.append(evidence_id)
+
+        ledger_evidence = self.repo.evidence_for_goal(goal_id)
+        existing_ids = {item["evidence_id"] for item in ledger_evidence}
+        reference_map: dict[str, str] = {}
+        for item in ledger_evidence:
+            evidence_id = str(item["evidence_id"])
+            for reference in (
+                evidence_id,
+                item.get("uri"),
+                item.get("tool_call_id"),
+                item.get("source_tool"),
+            ):
+                if reference:
+                    reference_map[str(reference)] = evidence_id
+
+        normalized_claims: list[Any] = []
         for raw_claim in result.get("claims") or []:
             if isinstance(raw_claim, str):
                 content = raw_claim
                 requested_refs: list[str] = []
                 confidence = None
+                normalized_claim: Any = raw_claim
             elif isinstance(raw_claim, dict):
                 content = str(raw_claim.get("content") or raw_claim.get("text") or "")
                 requested_refs = [
                     str(value) for value in raw_claim.get("evidence_refs") or []
                 ]
                 confidence = raw_claim.get("confidence")
+                normalized_claim = dict(raw_claim)
             else:
                 continue
+            resolved = list(
+                dict.fromkeys(
+                    reference_map.get(value, value)
+                    for value in requested_refs
+                    if reference_map.get(value, value) in existing_ids
+                )
+            )
+            if isinstance(normalized_claim, dict):
+                normalized_claim["evidence_refs"] = resolved
+                metric = normalized_claim.get("metric")
+                if isinstance(metric, dict):
+                    normalized_metric = dict(metric)
+                    normalized_metric["input_refs"] = list(
+                        dict.fromkeys(
+                            reference_map.get(str(value), str(value))
+                            for value in metric.get("input_refs") or []
+                            if reference_map.get(str(value), str(value))
+                            in existing_ids
+                        )
+                    )
+                    normalized_claim["metric"] = normalized_metric
+            normalized_claims.append(normalized_claim)
             if not content.strip():
                 continue
-            resolved = [
-                value for value in requested_refs if value in existing_ids
-            ]
             self.repo.register_claim(
                 Claim(
                     claim_id=new_id("claim"),
@@ -870,8 +1741,34 @@ class ResearchService:
                 )
             )
 
-        result.setdefault("artifact_refs", []).append(artifact["artifact_id"])
+        result["claims"] = normalized_claims
+        result.setdefault("artifact_refs", []).extend(
+            [artifact["artifact_id"], *tool_artifact_ids]
+        )
         result.setdefault("evidence_refs", []).extend(captured_ids)
+
+    @staticmethod
+    def _numeric_values(value: Any, *, limit: int = 200) -> list[float]:
+        values: list[float] = []
+
+        def visit(item: Any) -> None:
+            if len(values) >= limit:
+                return
+            if isinstance(item, bool) or item is None:
+                return
+            if isinstance(item, (int, float)):
+                number = float(item)
+                if math.isfinite(number):
+                    values.append(number)
+            elif isinstance(item, list):
+                for child in item:
+                    visit(child)
+            elif isinstance(item, dict):
+                for child in item.values():
+                    visit(child)
+
+        visit(value)
+        return values
 
     def _dependency_summaries(self, task_id: str) -> list[dict[str, Any]]:
         with connect(self.db_path) as conn:
@@ -952,6 +1849,22 @@ class ResearchService:
             for limit, used in checks
         )
 
+    def _active_attempt(self) -> tuple[str | None, str | None]:
+        with connect(self.db_path) as conn:
+            ensure_schema(conn)
+            row = conn.execute(
+                """
+                SELECT goal_id, attempt_id
+                FROM research_attempts
+                WHERE status='running'
+                ORDER BY started_at
+                LIMIT 1
+                """
+            ).fetchone()
+        if not row:
+            return None, None
+        return str(row["goal_id"]), str(row["attempt_id"])
+
     def _criterion_for_validator(self, goal_id: str, validator: str) -> dict[str, Any] | None:
         goal = self.repo.get_goal(goal_id)
         for criterion in (goal or {}).get("criteria", []):
@@ -966,7 +1879,11 @@ class ResearchService:
     def _goal_as_of(self, goal_id: str) -> str:
         goal = self.repo.get_goal(goal_id) or {}
         snapshot = goal.get("snapshot") or {}
-        return str(snapshot.get("as_of") or "2026-07-17")
+        return str(snapshot.get("as_of") or date.today().isoformat())
+
+    def _snapshot_id(self, goal_id: str) -> str:
+        goal = self.repo.get_goal(goal_id) or {}
+        return str((goal.get("snapshot") or {}).get("snapshot_id") or "")
 
     # ------------------------------------------------------------------
     # Export/publication
@@ -980,11 +1897,38 @@ class ResearchService:
             return {"protocol_version": 1, "ok": False, "error": "artifact_not_found", "goal": goal_id, "goal_id": goal_id}
         if require_pass and not self._latest_audit_pass(goal_id):
             return {"protocol_version": 1, "ok": False, "error": "audit_not_passed", "goal": goal_id, "goal_id": goal_id}
+        if require_pass:
+            goal = self.repo.get_goal(goal_id) or {}
+            artifact_metadata = artifact.get("metadata") or {}
+            artifact_snapshot = str(
+                artifact_metadata.get("snapshot_id") or ""
+            )
+            current_snapshot = str(
+                (goal.get("snapshot") or {}).get("snapshot_id") or ""
+            )
+            if (
+                goal.get("status") != "completed"
+                or not artifact_snapshot
+                or artifact_snapshot != current_snapshot
+                or bool(artifact_metadata.get("draft"))
+                or artifact_metadata.get("audit_status") != "pass"
+            ):
+                return {
+                    "protocol_version": 1,
+                    "ok": False,
+                    "error": "artifact_not_current_completed_snapshot",
+                    "goal": goal_id,
+                    "goal_id": goal_id,
+                }
         destination = payload.get("destination")
         if not destination:
             destination = str(self.state_root / "storage" / "agent" / "research" / "exports" / goal_id / artifact["name"])
         dest = self._safe_destination(destination)
-        result = self.artifacts.export_object(object_hash=artifact["object_hash"], destination=dest, allow_overwrite=bool(payload.get("overwrite", True)))
+        result = self.artifacts.export_object(
+            object_hash=artifact["object_hash"],
+            destination=dest,
+            allow_overwrite=bool(payload.get("overwrite", False)),
+        )
         if require_pass:
             pub_id = new_id("pub")
             with connect(self.db_path) as conn:
@@ -1020,8 +1964,36 @@ class ResearchService:
     def _latest_audit_pass(self, goal_id: str) -> bool:
         with connect(self.db_path) as conn:
             ensure_schema(conn)
-            row = conn.execute("SELECT status FROM research_audits WHERE goal_id=? ORDER BY created_at DESC LIMIT 1", (goal_id,)).fetchone()
+            row = conn.execute(
+                """
+                SELECT status
+                FROM research_audits
+                WHERE goal_id=?
+                ORDER BY created_at DESC, rowid DESC
+                LIMIT 1
+                """,
+                (goal_id,),
+            ).fetchone()
         return bool(row and row["status"] == "pass")
+
+    def _latest_compiler_audit(self, goal_id: str) -> dict[str, Any] | None:
+        current_snapshot = self._snapshot_id(goal_id)
+        artifacts = [
+            artifact
+            for artifact in self.artifacts.list_goal(goal_id)
+            if artifact.get("kind") == "audit_json"
+            and str((artifact.get("metadata") or {}).get("snapshot_id") or "")
+            == current_snapshot
+        ]
+        if not artifacts:
+            return None
+        try:
+            value = json.loads(
+                self.artifacts.read_bytes(str(artifacts[-1]["object_hash"]))
+            )
+        except (OSError, ValueError, json.JSONDecodeError):
+            return None
+        return value if isinstance(value, dict) else None
 
     # ------------------------------------------------------------------
     # Wire helpers
@@ -1079,6 +2051,8 @@ class ResearchService:
     def _wire_goal(self, goal: dict[str, Any]) -> dict[str, Any]:
         if not goal:
             return {}
+        evidence = self.repo.evidence_for_goal(goal["goal_id"])
+        claims = self.repo.claims_for_goal(goal["goal_id"])
         return {
             **self._summary(goal),
             "inputs": goal.get("inputs") or {},
@@ -1088,8 +2062,64 @@ class ResearchService:
             "criteria": goal.get("criteria") or [],
             "tasks": goal.get("tasks") or [],
             "artifacts": [self._wire_artifact(a) for a in goal.get("artifacts") or []],
+            "evidence": [self._wire_evidence(item) for item in evidence],
+            "claims": claims,
+            "audit": self._wire_audits(goal["goal_id"]),
             "events": self.repo.list_events(goal["goal_id"], 0)[-200:],
         }
+
+    def _wire_evidence(self, evidence: dict[str, Any]) -> dict[str, Any]:
+        metadata = evidence.get("metadata") or {}
+        return {
+            "evidence_id": evidence["evidence_id"],
+            "id": evidence["evidence_id"],
+            "criterion_id": evidence.get("criterion_id"),
+            "title": metadata.get("title")
+            or evidence.get("scope")
+            or evidence.get("source_tool")
+            or "研究证据",
+            "source": evidence.get("source_tool"),
+            "source_tier": evidence.get("source_tier"),
+            "url": evidence.get("uri"),
+            "uri": evidence.get("uri"),
+            "status": "verified" if evidence.get("verified") else "unverified",
+            "verified": bool(evidence.get("verified")),
+            "data_as_of": evidence.get("data_as_of"),
+            "method": evidence.get("method"),
+            "hash": evidence.get("hash"),
+            "caveat": evidence.get("caveat"),
+            "created_at": evidence.get("created_at"),
+        }
+
+    def _wire_audits(self, goal_id: str) -> list[dict[str, Any]]:
+        with connect(self.db_path) as conn:
+            ensure_schema(conn)
+            rows = conn.execute(
+                """
+                SELECT audit_id, status, coverage_json, findings_json, created_at
+                FROM research_audits
+                WHERE goal_id=?
+                ORDER BY created_at
+                """,
+                (goal_id,),
+            ).fetchall()
+        return [
+            {
+                "event_id": row["audit_id"],
+                "id": row["audit_id"],
+                "type": "research_audit",
+                "status": row["status"],
+                "timestamp": row["created_at"],
+                "message": (
+                    "审计通过"
+                    if row["status"] == "pass"
+                    else f"审计阻断：{len(loads(row['findings_json'], []))} 项"
+                ),
+                "coverage": loads(row["coverage_json"], {}),
+                "findings": loads(row["findings_json"], []),
+            }
+            for row in rows
+        ]
 
     def _wire_artifact(self, artifact: dict[str, Any]) -> dict[str, Any]:
         metadata = artifact.get("metadata") or {}
@@ -1121,18 +2151,35 @@ class ResearchService:
         return item
 
     def _snapshot(self, *, profile_id: str, inputs: dict[str, Any], refresh_of: str | None = None) -> dict[str, Any]:
-        as_of = str(inputs.get("as_of") or "2026-07-17")
-        raw = stable_json({"profile_id": profile_id, "inputs": inputs, "as_of": as_of, "refresh_of": refresh_of})
+        as_of = str(inputs.get("as_of") or date.today().isoformat())
+        frozen_inputs = dict(inputs)
+        if profile_id == "investment-weekly-v3":
+            match = DATE_RANGE_RE.fullmatch(str(inputs.get("date_range") or ""))
+            if match and not frozen_inputs.get("trading_calendar"):
+                start = date.fromisoformat(match.group("start"))
+                end = date.fromisoformat(match.group("end"))
+                frozen_inputs["trading_calendar"] = [
+                    (start + timedelta(days=offset)).isoformat()
+                    for offset in range((end - start).days + 1)
+                    if (start + timedelta(days=offset)).weekday() < 5
+                ]
+        raw = stable_json({"profile_id": profile_id, "inputs": frozen_inputs, "as_of": as_of, "refresh_of": refresh_of})
         return {
             "snapshot_id": "snap_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24],
             "profile_id": profile_id,
-            "inputs": inputs,
+            "inputs": frozen_inputs,
             "as_of": as_of,
             "created_at": utc_now(),
             "refresh_of": refresh_of,
         }
 
-    def _is_fresh(self, evidence: dict[str, Any], criterion: dict[str, Any]) -> bool:
+    def _is_fresh(
+        self,
+        evidence: dict[str, Any],
+        criterion: dict[str, Any],
+        *,
+        reference_as_of: str | None = None,
+    ) -> bool:
         freshness_days = criterion.get("freshness_days")
         if not freshness_days:
             return True
@@ -1140,10 +2187,65 @@ class ResearchService:
         if not raw:
             return False
         try:
-            data_date = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            data_date = datetime.fromisoformat(
+                str(raw).replace("Z", "+00:00")
+            ).date()
+            reference_date = date.fromisoformat(
+                str(reference_as_of or date.today().isoformat())[:10]
+            )
         except ValueError:
             return False
-        return (datetime.now(timezone.utc) - data_date.astimezone(timezone.utc)).days <= int(freshness_days)
+        age = (reference_date - data_date).days
+        return 0 <= age <= int(freshness_days)
+
+    def _validate_inputs(
+        self,
+        profile_id: str,
+        inputs: dict[str, Any],
+    ) -> list[dict[str, str]]:
+        if profile_id != "investment-weekly-v3":
+            return []
+        findings: list[dict[str, str]] = []
+        date_range = str(inputs.get("date_range") or "")
+        match = DATE_RANGE_RE.fullmatch(date_range)
+        if not match:
+            findings.append(
+                {
+                    "field": "date_range",
+                    "reason": "expected_YYYY-MM-DD_to_YYYY-MM-DD",
+                }
+            )
+        else:
+            try:
+                start = date.fromisoformat(match.group("start"))
+                end = date.fromisoformat(match.group("end"))
+                if start > end:
+                    findings.append(
+                        {"field": "date_range", "reason": "start_after_end"}
+                    )
+            except ValueError:
+                findings.append(
+                    {"field": "date_range", "reason": "invalid_calendar_date"}
+                )
+        raw_as_of = str(inputs.get("as_of") or "")
+        try:
+            as_of = date.fromisoformat(raw_as_of)
+        except ValueError:
+            findings.append({"field": "as_of", "reason": "invalid_iso_date"})
+        else:
+            if match:
+                try:
+                    end = date.fromisoformat(match.group("end"))
+                    if as_of < end:
+                        findings.append(
+                            {
+                                "field": "as_of",
+                                "reason": "before_date_range_end",
+                            }
+                        )
+                except ValueError:
+                    pass
+        return findings
 
     def _lease_expiry(self) -> str:
         return datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + 900, timezone.utc).isoformat(timespec="seconds")

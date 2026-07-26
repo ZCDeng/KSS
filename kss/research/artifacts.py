@@ -29,11 +29,23 @@ class ArtifactStore:
         self.orphans_root = self.root / "orphans"
         self.objects_root.mkdir(parents=True, exist_ok=True)
         self.staging_root.mkdir(parents=True, exist_ok=True)
+        self._assert_inside_root(self.objects_root)
+        self._assert_inside_root(self.staging_root)
+
+    def _assert_inside_root(self, path: Path) -> Path:
+        resolved = path.resolve()
+        try:
+            resolved.relative_to(self.root)
+        except ValueError as exc:
+            raise ArtifactSafetyError("artifact path escapes research root") from exc
+        return resolved
 
     def _object_path(self, digest: str) -> Path:
         if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
             raise ArtifactSafetyError("invalid sha256 digest")
-        return self.objects_root / digest[:2] / digest
+        path = self.objects_root / digest[:2] / digest
+        self._assert_inside_root(path)
+        return path
 
     def put_bytes(
         self,

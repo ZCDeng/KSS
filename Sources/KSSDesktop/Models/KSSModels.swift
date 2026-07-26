@@ -2405,6 +2405,10 @@ struct ResearchEvidence: Decodable, Equatable, Identifiable {
     var snippet: String?
     var status: String?
     var createdAt: String?
+    var sourceTier: String?
+    var dataAsOf: String?
+    var evidenceHash: String?
+    var verified: Bool?
 
     var id: String { evidenceId }
 
@@ -2414,6 +2418,10 @@ struct ResearchEvidence: Decodable, Equatable, Identifiable {
         case title, source, url, snippet, status
         case sourceTool = "source_tool"
         case uri, caveat
+        case sourceTier = "source_tier"
+        case dataAsOf = "data_as_of"
+        case evidenceHash = "hash"
+        case verified
         case createdAt = "created_at"
     }
 
@@ -2432,6 +2440,10 @@ struct ResearchEvidence: Decodable, Equatable, Identifiable {
         snippet = (try? c.decode(String.self, forKey: .snippet))
             ?? (try? c.decode(String.self, forKey: .caveat))
         status = try? c.decode(String.self, forKey: .status)
+        sourceTier = try? c.decode(String.self, forKey: .sourceTier)
+        dataAsOf = try? c.decode(String.self, forKey: .dataAsOf)
+        evidenceHash = try? c.decode(String.self, forKey: .evidenceHash)
+        verified = try? c.decode(Bool.self, forKey: .verified)
         createdAt = try? c.decode(String.self, forKey: .createdAt)
     }
 }
@@ -2552,6 +2564,8 @@ struct ResearchGoalDetail: Decodable, Equatable, Identifiable {
     var artifacts: [ResearchArtifact]
     var events: [ResearchEvent]
     var snapshot: ResearchSnapshot?
+    var budget: [String: Int]
+    var usage: [String: Int]
 
     var id: String { goalId }
     var summary: ResearchGoalSummary {
@@ -2571,6 +2585,7 @@ struct ResearchGoalDetail: Decodable, Equatable, Identifiable {
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case criteria, tasks, evidence, audit, artifacts, events, snapshot
+        case budget, usage
     }
 
     init(from decoder: Decoder) throws {
@@ -2593,6 +2608,8 @@ struct ResearchGoalDetail: Decodable, Equatable, Identifiable {
         artifacts = (try? c.decode([ResearchArtifact].self, forKey: .artifacts)) ?? []
         events = (try? c.decode([ResearchEvent].self, forKey: .events)) ?? []
         snapshot = try? c.decode(ResearchSnapshot.self, forKey: .snapshot)
+        budget = (try? c.decode([String: Int].self, forKey: .budget)) ?? [:]
+        usage = (try? c.decode([String: Int].self, forKey: .usage)) ?? [:]
     }
 }
 
@@ -2683,6 +2700,9 @@ struct ResearchEvent: Decodable, Equatable, Identifiable {
     var runId: String?
     var status: String?
     var payload: ResearchEventPayload?
+    /// Non-durable hydration frame sent before durable replay. Its sequence is
+    /// only a replay cursor and must not participate in event deduplication.
+    var snapshot: ResearchGoalDetail?
 
     var id: String { eventId }
     var displayMessage: String {
@@ -2699,7 +2719,7 @@ struct ResearchEvent: Decodable, Equatable, Identifiable {
         case taskId = "task_id"
         case attemptId = "attempt_id"
         case runId = "run_id"
-        case status, payload
+        case status, payload, snapshot
     }
 
     init(from decoder: Decoder) throws {
@@ -2720,6 +2740,7 @@ struct ResearchEvent: Decodable, Equatable, Identifiable {
         runId = try? c.decode(String.self, forKey: .runId)
         status = try? c.decode(String.self, forKey: .status)
         payload = try? c.decode(ResearchEventPayload.self, forKey: .payload)
+        snapshot = try? c.decode(ResearchGoalDetail.self, forKey: .snapshot)
     }
 }
 

@@ -37,6 +37,33 @@ class DuplicateTurn:
     existing_run_id: str
 
 
+@dataclass(frozen=True)
+class RuntimeRunOptions:
+    """Per-run capability and budget envelope for controlled callers.
+
+    Normal Seesaw turns use the unrestricted defaults. Research nodes provide
+    an explicit envelope so a prompt-level whitelist cannot accidentally
+    expand into the full desktop tool and Skill surface.
+    """
+
+    allowed_tools: frozenset[str] | None = None
+    allowed_skills: frozenset[str] | None = None
+    allowed_memory_kinds: frozenset[str] | None = None
+    max_steps: int = 8
+    timeout_seconds: float = 240.0
+    max_provider_tokens: int | None = None
+    allow_write_tools: bool = True
+    trusted_internal_input: bool = False
+
+    def __post_init__(self) -> None:
+        if self.max_steps < 1:
+            raise ValueError("max_steps must be positive")
+        if self.timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if self.max_provider_tokens is not None and self.max_provider_tokens < 1:
+            raise ValueError("max_provider_tokens must be positive")
+
+
 class KSSAgentService:
     """Own sessions, context, Skills, memories and the model/tool loop.
 
@@ -57,6 +84,7 @@ class KSSAgentService:
         )
         self._request_writes: dict[tuple[str, str], RequestWrite] = {}
         self._source_queue_ids: dict[tuple[str, str], str] = {}
+        self._run_options: dict[tuple[str, str], RuntimeRunOptions] = {}
         self._transcripts: dict[str, Any] = {}
         self.runtime = AgentRuntime(
             self._execute_turn,
@@ -102,22 +130,32 @@ class KSSAgentService:
         emit: EmitEvent,
         request_write: RequestWrite,
         source_queue_id: str | None = None,
+        *,
+        run_options: RuntimeRunOptions | None = None,
     ) -> RunResult:
         """Run one idempotency-checked turn through the shared Runtime."""
         key = (session_id, client_turn_id)
         self._request_writes[key] = request_write
         if source_queue_id:
             self._source_queue_ids[key] = source_queue_id
+        if run_options is not None:
+            self._run_options[key] = run_options
         try:
+            turn_input = input
+            if run_options is None or not run_options.trusted_internal_input:
+                turn_input = sanitize_user_text(input)
+            elif len(turn_input) > 24_000:
+                raise ValueError("trusted internal input exceeds 24000 characters")
             return await self.runtime.run_turn(
                 session_id,
                 client_turn_id,
-                sanitize_user_text(input),
+                turn_input,
                 emit,
             )
         finally:
             self._request_writes.pop(key, None)
             self._source_queue_ids.pop(key, None)
+            self._run_options.pop(key, None)
 
     def steer(
         self,
@@ -281,6 +319,9 @@ class KSSAgentService:
         session_id = turn.state.session_id
         run_id = turn.state.run_id
         client_turn_id = turn.state.client_turn_id
+        run_options = self._run_options.get(
+            (session_id, client_turn_id), RuntimeRunOptions()
+        )
         request_write = self._request_writes[(session_id, client_turn_id)]
 
         had_user = any(message.role == "user" for message in turn.messages[:-1])
@@ -307,6 +348,12 @@ class KSSAgentService:
         recall_items = self.memories.recall(
             turn.input, now_ms=int(time.time() * 1000), limit=5
         )
+        if run_options.allowed_memory_kinds is not None:
+            recall_items = [
+                item
+                for item in recall_items
+                if item.kind in run_options.allowed_memory_kinds
+            ]
         if recall_items:
             recall_payloads = _recall_wire(recall_items)
             self.sessions.append_entry(
@@ -324,6 +371,13 @@ class KSSAgentService:
             session_id, "skill_index", {"run_id": run_id, "status": skill_status}
         )
         discovered = self.skills.discover()[0]
+        if run_options.allowed_skills is not None:
+            discovered = [
+                skill
+                for skill in discovered
+                if skill.id in run_options.allowed_skills
+                or skill.name in run_options.allowed_skills
+            ]
         skill_summaries = [
             f"{item.name}: {item.description}" for item in discovered if item.enabled
         ]
@@ -344,9 +398,50 @@ class KSSAgentService:
             "context_usage",
             {"context_usage": _usage_wire(assembly.usage.to_dict())},
         )
-        registry = chat_loop.ToolRegistry()
+        all_specs = {
+            str(spec.get("name") or ""): spec for spec in chat_loop.TOOL_SPECS
+        }
+        if run_options.allowed_tools is None:
+            selected_specs = list(chat_loop.TOOL_SPECS)
+        else:
+            unknown_tools = set(run_options.allowed_tools) - set(all_specs)
+            if unknown_tools:
+                raise ValueError(
+                    f"unsupported run tool whitelist: {sorted(unknown_tools)}"
+                )
+            selected_specs = [
+                all_specs[name] for name in run_options.allowed_tools
+            ]
+        if not run_options.allow_write_tools:
+            write_tools = [
+                str(spec["name"])
+                for spec in selected_specs
+                if chat_loop.is_write_command(str(spec.get("command") or ""))
+            ]
+            if write_tools:
+                raise ValueError(
+                    f"write tools are forbidden for this run: {sorted(write_tools)}"
+                )
+        registry = chat_loop.ToolRegistry(selected_specs)
+
+        def skill_is_allowed(skill_id: str) -> bool:
+            allowed = run_options.allowed_skills
+            if allowed is None:
+                return True
+            return skill_id in allowed or any(
+                skill.name == skill_id and skill.id in allowed
+                for skill in discovered
+            )
+
         def load_skill(args: dict[str, Any]) -> dict[str, Any]:
             skill_id = str(args.get("skill_id") or "")
+            if not skill_is_allowed(skill_id):
+                return {
+                    "error": "skill_not_allowed",
+                    "skill_id": skill_id,
+                    "is_error": True,
+                    "provenance": "skill",
+                }
             try:
                 return {
                     "skill_id": skill_id,
@@ -360,11 +455,20 @@ class KSSAgentService:
                     "provenance": "skill",
                 }
 
-        registry.register_handler("load_skill", load_skill)
+        if registry.has_tool("load_skill"):
+            registry.register_handler("load_skill", load_skill)
 
         def read_skill_resource(args: dict[str, Any]) -> dict[str, Any]:
             skill_id = str(args.get("skill_id") or "")
             path = str(args.get("path") or "")
+            if not skill_is_allowed(skill_id):
+                return {
+                    "error": "skill_not_allowed",
+                    "skill_id": skill_id,
+                    "path": path,
+                    "is_error": True,
+                    "provenance": "skill_resource",
+                }
             try:
                 resource = self.skills.read_resource_info(
                     skill_id,
@@ -389,7 +493,8 @@ class KSSAgentService:
                     "provenance": "skill_resource",
                 }
 
-        registry.register_handler("read_skill_resource", read_skill_resource)
+        if registry.has_tool("read_skill_resource"):
+            registry.register_handler("read_skill_resource", read_skill_resource)
 
         source_user_entry = current_user.id
 
@@ -413,7 +518,8 @@ class KSSAgentService:
             await turn.emit("memory_candidate", {"memory_candidate": payload})
             return {"memory": payload, "pending_approval": True}
 
-        registry.register_handler("propose_memory", propose_memory)
+        if registry.has_tool("propose_memory"):
+            registry.register_handler("propose_memory", propose_memory)
         async def runtime_write_gate(**kwargs: Any) -> dict[str, Any]:
             return await request_write(**kwargs, emit_event=turn.emit)
 
@@ -573,6 +679,8 @@ class KSSAgentService:
                 take_steering=take_steering,
                 take_follow_up=take_follow_up,
                 emit_internal_boundaries=True,
+                max_steps=run_options.max_steps,
+                turn_timeout=run_options.timeout_seconds,
             )
         except BaseException:
             if message_open:
@@ -589,6 +697,11 @@ class KSSAgentService:
         usage = transcript.run_state.get("usage")
         if isinstance(usage, dict):
             turn.add_usage(**usage)
+        provider_tokens = _provider_token_total(turn.state.usage)
+        provider_budget_exceeded = bool(
+            run_options.max_provider_tokens
+            and provider_tokens > run_options.max_provider_tokens
+        )
         new_messages = _new_transcript_messages(
             transcript.messages,
             current_user.content,
@@ -597,14 +710,20 @@ class KSSAgentService:
         for message in new_messages:
             turn.append_message(message)
         reason = str(transcript.run_state.get("reason") or "completed")
-        failed = reason == "error"
+        failed = reason == "error" or provider_budget_exceeded
+        if provider_budget_exceeded:
+            reason = "provider_token_budget_exceeded"
         return RunResult(
             run_id=run_id,
             session_id=session_id,
             client_turn_id=client_turn_id,
             status="failed" if failed else "completed",
             messages=tuple(turn.messages),
-            error="provider stream failed" if failed else None,
+            error=(
+                "provider token budget exceeded"
+                if provider_budget_exceeded
+                else "provider stream failed" if failed else None
+            ),
             usage=dict(turn.state.usage),
             termination_reason=reason,
         )
@@ -867,6 +986,21 @@ def _usage_wire(usage: Mapping[str, Any]) -> dict[str, Any]:
     return output
 
 
+def _provider_token_total(usage: Mapping[str, Any]) -> int:
+    return int(
+        usage.get("total_tokens")
+        or usage.get("provider_tokens")
+        or (
+            int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+            + int(
+                usage.get("output_tokens")
+                or usage.get("completion_tokens")
+                or 0
+            )
+        )
+    )
+
+
 def _recall_wire(items: list[MemoryRecall]) -> list[dict[str, Any]]:
     """Serialize the exact structured objects used for model injection."""
     return [item.as_dict() for item in items]
@@ -892,4 +1026,4 @@ def _memory_wire(record: Any) -> dict[str, Any]:
     }
 
 
-__all__ = ["DuplicateTurn", "KSSAgentService"]
+__all__ = ["DuplicateTurn", "KSSAgentService", "RuntimeRunOptions"]

@@ -12,7 +12,16 @@ import zlib
 from datetime import datetime, timezone
 from typing import Any
 
-from .report_models import EvidenceReference, MetricEntry, MetricLedger, NarrativeClaim, ReportBlock, ReportDocument, ReportManifest, ReportSection
+from .report_models import (
+    EvidenceReference,
+    MetricEntry,
+    MetricLedger,
+    NarrativeClaim,
+    ReportBlock,
+    ReportDocument,
+    ReportManifest,
+    ReportSection,
+)
 
 FINANCIAL_NUMBER_RE = re.compile(
     r"(?<![\w-])(?:[+-]?\d+(?:\.\d+)?\s*(?:%|bp|bps|亿|万|倍|元|点|家|张|只)|[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?)"
@@ -83,6 +92,8 @@ class ReportCompiler:
         metric_ids = set(document.metric_ledger.by_id())
         evidence_ids = {e.evidence_id for e in document.evidence}
         anchors = [section.anchor for section in document.sections]
+        formula_inputs = document.metadata.get("formula_inputs")
+        formula_inputs = formula_inputs if isinstance(formula_inputs, dict) else {}
         missing_anchors = [a for a in self.required_anchors if a not in anchors]
         if missing_anchors:
             findings.append({"severity": "block", "code": "missing_anchor", "detail": missing_anchors})
@@ -90,31 +101,110 @@ class ReportCompiler:
             findings.append({"severity": "block", "code": "duplicate_anchor", "detail": anchors})
 
         for metric in document.metric_ledger.metrics:
+            metric_numeric = isinstance(metric.value, (int, float)) and not isinstance(
+                metric.value, bool
+            )
+            if not metric_numeric:
+                findings.append(
+                    {
+                        "severity": "block",
+                        "code": "metric_value_not_numeric",
+                        "metric_id": metric.metric_id,
+                    }
+                )
             if not metric.input_refs:
                 findings.append({"severity": "block", "code": "metric_without_inputs", "metric_id": metric.metric_id})
+            missing_inputs = [
+                ref for ref in metric.input_refs if ref not in evidence_ids
+            ]
+            if missing_inputs:
+                findings.append(
+                    {
+                        "severity": "block",
+                        "code": "metric_missing_evidence_inputs",
+                        "metric_id": metric.metric_id,
+                        "detail": missing_inputs,
+                    }
+                )
             if not metric.as_of:
                 findings.append({"severity": "block", "code": "metric_without_as_of", "metric_id": metric.metric_id})
             if metric.formula_version != "v1":
                 findings.append({"severity": "block", "code": "unsupported_formula_version", "metric_id": metric.metric_id, "version": metric.formula_version})
-            expected_values = (document.metadata.get("formula_results") or {}) if isinstance(document.metadata.get("formula_results"), dict) else {}
-            if metric.metric_id in expected_values and str(expected_values[metric.metric_id]) != str(metric.value):
+            recomputed = self._recompute_metric(
+                metric,
+                formula_inputs=formula_inputs,
+                precision_card_count=len(self._precision_card_rows(document)),
+            )
+            if recomputed is None:
+                findings.append(
+                    {
+                        "severity": "block",
+                        "code": "metric_formula_inputs_missing",
+                        "metric_id": metric.metric_id,
+                    }
+                )
+            elif metric_numeric and round(
+                float(recomputed), metric.precision
+            ) != round(float(metric.value), metric.precision):
                 findings.append({"severity": "block", "code": "metric_recompute_mismatch", "metric_id": metric.metric_id})
 
+        for evidence in document.evidence:
+            if not evidence.data_as_of:
+                findings.append(
+                    {
+                        "severity": "block",
+                        "code": "evidence_without_as_of",
+                        "evidence_id": evidence.evidence_id,
+                    }
+                )
+            if not evidence.hash or not re.fullmatch(
+                r"[0-9a-f]{64}", evidence.hash
+            ):
+                findings.append(
+                    {
+                        "severity": "block",
+                        "code": "evidence_hash_invalid",
+                        "evidence_id": evidence.evidence_id,
+                    }
+                )
+
         for claim in document.claims:
+            if not claim.evidence_refs:
+                findings.append({"severity": "block", "code": "claim_without_evidence", "claim_id": claim.claim_id})
             missing = [eid for eid in claim.evidence_refs if eid not in evidence_ids]
             if missing:
                 findings.append({"severity": "block", "code": "claim_missing_evidence", "claim_id": claim.claim_id, "detail": missing})
-            if claim.confidence is not None and (not claim.rubric_id or not claim.rubric_version):
-                findings.append({"severity": "block", "code": "claim_score_missing_rubric", "claim_id": claim.claim_id})
+            if claim.confidence is not None:
+                if not claim.rubric_id or not claim.rubric_version:
+                    findings.append({"severity": "block", "code": "claim_score_missing_rubric", "claim_id": claim.claim_id})
+                if not claim.review_required:
+                    findings.append({"severity": "block", "code": "claim_score_missing_review_flag", "claim_id": claim.claim_id})
 
         for section in document.sections:
             for block in section.blocks:
                 unknown_metrics = [m for m in block.metric_refs if m not in metric_ids]
                 unknown_evidence = [e for e in block.evidence_refs if e not in evidence_ids]
+                chart_metrics = (
+                    block.chart.metric_refs if block.chart is not None else []
+                )
+                unknown_chart_metrics = [
+                    metric_id
+                    for metric_id in chart_metrics
+                    if metric_id not in metric_ids
+                ]
                 if unknown_metrics:
                     findings.append({"severity": "block", "code": "unknown_metric_ref", "block_id": block.block_id, "detail": unknown_metrics})
                 if unknown_evidence:
                     findings.append({"severity": "block", "code": "unknown_evidence_ref", "block_id": block.block_id, "detail": unknown_evidence})
+                if unknown_chart_metrics:
+                    findings.append(
+                        {
+                            "severity": "block",
+                            "code": "chart_unknown_metric_ref",
+                            "block_id": block.block_id,
+                            "detail": unknown_chart_metrics,
+                        }
+                    )
                 for row in block.rows:
                     row_metrics = [str(m) for m in row.get("metric_refs", [])]
                     row_evidence = [str(e) for e in row.get("evidence_refs", [])]
@@ -133,6 +223,32 @@ class ReportCompiler:
                     findings.append({"severity": "block", "code": "unbound_financial_number", "block_id": block.block_id, "numbers": bad_numbers[:5]})
 
         cards = self._precision_card_rows(document)
+        card_ids = [str(row.get("card_id") or "") for row in cards]
+        if any(not card_id for card_id in card_ids):
+            findings.append({"severity": "block", "code": "precision_card_missing_id"})
+        if len(card_ids) != len(set(card_ids)):
+            findings.append({"severity": "block", "code": "duplicate_precision_card_id"})
+        expected_cards = document.metadata.get("card_count")
+        try:
+            expected_card_count = int(expected_cards)
+        except (TypeError, ValueError, OverflowError):
+            expected_card_count = None
+            findings.append(
+                {
+                    "severity": "block",
+                    "code": "precision_card_count_invalid",
+                    "expected": expected_cards,
+                }
+            )
+        if expected_card_count is None or expected_card_count != len(cards):
+            findings.append(
+                {
+                    "severity": "block",
+                    "code": "precision_card_count_mismatch",
+                    "expected": expected_card_count,
+                    "actual": len(cards),
+                }
+            )
         sample = self._sample_cards(document, cards)
         for row in sample:
             if not row.get("metric_refs") or not row.get("evidence_refs"):
@@ -216,6 +332,34 @@ class ReportCompiler:
                     "</div>"
                 )
             return f"{title}<div class=\"cards\">{''.join(cards)}</div>"
+        if block.type == "svg_chart" and block.chart:
+            values = [
+                metric
+                for metric_id in block.chart.metric_refs
+                if (metric := metrics.get(metric_id))
+                and isinstance(metric.value, (int, float))
+            ]
+            maximum = max(
+                (abs(float(metric.value)) for metric in values),
+                default=1.0,
+            )
+            bars = []
+            for index, metric in enumerate(values):
+                height = 120 * abs(float(metric.value)) / maximum
+                x = 30 + index * 76
+                y = 150 - height
+                bars.append(
+                    f'<rect x="{x}" y="{y:.2f}" width="42" '
+                    f'height="{height:.2f}" rx="6" fill="#1d9bf0">'
+                    f"<title>{html.escape(metric.label)}: "
+                    f"{html.escape(self._format_metric(metric))}</title></rect>"
+                )
+            return (
+                f"{title}<svg role=\"img\" aria-label=\""
+                f"{html.escape(block.chart.title)}\" viewBox=\"0 0 640 180\" "
+                f"xmlns=\"http://www.w3.org/2000/svg\">"
+                f"{''.join(bars)}</svg>"
+            )
         if block.rows:
             columns = sorted({key for row in block.rows for key in row.keys() if key not in {"metric_refs", "evidence_refs"}})
             head = "".join(f"<th>{html.escape(col)}</th>" for col in columns)
@@ -252,6 +396,27 @@ class ReportCompiler:
                 if block.type == "precision_cards":
                     rows.extend(block.rows)
         return rows
+
+    def _recompute_metric(
+        self,
+        metric: MetricEntry,
+        *,
+        formula_inputs: dict[str, Any],
+        precision_card_count: int,
+    ) -> float | int | None:
+        if metric.formula_id == "card_count":
+            return precision_card_count
+        values = formula_inputs.get(metric.metric_id)
+        if not isinstance(values, list) or not values:
+            return None
+        numeric = [
+            float(value)
+            for value in values
+            if isinstance(value, (int, float))
+        ]
+        if len(numeric) != len(values):
+            return None
+        return sum(numeric) / len(numeric)
 
     def _sample_cards(self, document: ReportDocument, cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not cards:
@@ -360,7 +525,15 @@ def make_investment_weekly_fixture(*, cards: int = 1143) -> ReportDocument:
         ReportSection("sec_audit", "审计", "audit", [ReportBlock("b_audit", "audit", text="交付审计覆盖锚点、证据、数字和抽样卡片。", metric_refs=["m_card_count"], evidence_refs=["ev_source_1"])]),
     ]
     claims = [
-        NarrativeClaim("claim_temperature", "市场温度处于中性偏热区间。", ["ev_source_1", "ev_source_2"], confidence=0.74, rubric_id="market_temperature_judgment", rubric_version="v1"),
+        NarrativeClaim(
+            "claim_temperature",
+            "市场温度处于中性偏热区间。",
+            ["ev_source_1", "ev_source_2"],
+            confidence=0.74,
+            review_required=True,
+            rubric_id="market_temperature_judgment",
+            rubric_version="v1",
+        ),
     ]
     return ReportDocument(
         document_id="investment-weekly-v3-fixture-2026-07-13-2026-07-17",
@@ -373,10 +546,13 @@ def make_investment_weekly_fixture(*, cards: int = 1143) -> ReportDocument:
         metric_ledger=MetricLedger(metrics),
         claims=claims,
         evidence=evidence,
-        metadata={"fixture": True, "card_count": cards, "formula_results": {
-            "m_temperature": 63.4,
-            "m_consensus": 72.0,
-            "m_risk": 41.0,
-            "m_card_count": cards,
-        }},
+        metadata={
+            "fixture": True,
+            "card_count": cards,
+            "formula_inputs": {
+                "m_temperature": [62.0, 64.8],
+                "m_consensus": [70.0, 74.0],
+                "m_risk": [40.0, 42.0],
+            },
+        },
     )

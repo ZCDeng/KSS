@@ -93,11 +93,10 @@ def _research_service() -> Any | None:
         _RESEARCH_SERVICE = None
         _RESEARCH_SERVICE_ROOTS = roots
         return None
-        _RESEARCH_SERVICE = ResearchService(
-            state_root=bridge.STATE_ROOT,
-            project_root=bridge.PROJECT_ROOT,
-            allow_synthetic_fixture=True,
-        )
+    _RESEARCH_SERVICE = ResearchService(
+        state_root=bridge.STATE_ROOT,
+        project_root=bridge.PROJECT_ROOT,
+    )
     _RESEARCH_SERVICE_ROOTS = roots
     return _RESEARCH_SERVICE
 
@@ -756,6 +755,23 @@ def _research_events_iter(service: Any, *, goal_id: str, after_sequence: int) ->
     )
 
 
+def _research_goal_snapshot(service: Any, *, goal_id: str) -> dict[str, Any] | None:
+    method = _find_method(service, ("open_goal", "get_goal"))
+    if method is None:
+        return None
+    result = _call_with_supported_kwargs(
+        method,
+        goal_id=goal_id,
+        goal=goal_id,
+    )
+    if inspect.isawaitable(result):
+        return None
+    if not isinstance(result, dict):
+        return None
+    detail = result.get("detail") or result.get("goal")
+    return detail if isinstance(detail, dict) else None
+
+
 async def _handle_agent_research_events(
     writer: asyncio.StreamWriter,
     req: dict[str, Any],
@@ -785,6 +801,23 @@ async def _handle_agent_research_events(
         }, ensure_ascii=False) + "\n").encode("utf-8"))
         await writer.drain()
         return
+    snapshot = _research_goal_snapshot(service, goal_id=goal_id)
+    if snapshot is not None:
+        snapshot_frame = {
+            "protocol_version": 1,
+            "goal": goal_id,
+            "goal_id": goal_id,
+            "event": "research_snapshot",
+            "type": "research_snapshot",
+            "event_id": f"snapshot:{goal_id}:{after_sequence}",
+            "sequence": after_sequence,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "snapshot": snapshot,
+        }
+        writer.write(
+            (json.dumps(snapshot_frame, ensure_ascii=False) + "\n").encode("utf-8")
+        )
+        await writer.drain()
     stream = _research_events_iter(service, goal_id=goal_id, after_sequence=after_sequence)
     if inspect.isawaitable(stream):
         stream = await stream

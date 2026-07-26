@@ -102,15 +102,53 @@ final class ResearchProtocolTests: XCTestCase {
             #"{"protocol_version":1,"goal_id":"g1","event_id":"e1","sequence":1,"timestamp":"now","type":"task_started","task_id":"t1","status":"running"}"#)
         let duplicate = try decodeEvent(
             #"{"protocol_version":1,"goal_id":"g1","event_id":"e1b","sequence":1,"timestamp":"now","type":"task_started"}"#)
+        let duplicateId = try decodeEvent(
+            #"{"protocol_version":1,"goal_id":"g1","event_id":"e1","sequence":2,"timestamp":"now","type":"task_started"}"#)
         let gap = try decodeEvent(
             #"{"protocol_version":1,"goal_id":"g1","event_id":"e3","sequence":3,"timestamp":"later","type":"evidence_added"}"#)
 
         let store = KSSStore(testBridge: nil)
         XCTAssertTrue(store.applyResearchEvent(first))
         XCTAssertFalse(store.applyResearchEvent(duplicate))
+        XCTAssertFalse(store.applyResearchEvent(duplicateId))
         XCTAssertTrue(store.applyResearchEvent(gap))
         XCTAssertEqual(store.researchEventsByGoal["g1"]?.map(\.sequence), [1, 3])
         XCTAssertEqual(store.researchSequenceIssues["g1"], "研究事件丢帧：预期 2，收到 3")
+    }
+
+    func testResearchSnapshotHydratesBeforeReplayAndTaskEventsReduceState() throws {
+        let snapshot = try decodeEvent(#"""
+        {
+          "protocol_version": 1,
+          "goal_id": "g-live",
+          "event_id": "snapshot:g-live:0",
+          "sequence": 0,
+          "timestamp": "now",
+          "type": "research_snapshot",
+          "snapshot": {
+            "goal_id": "g-live",
+            "profile_id": "investment-weekly-v3",
+            "objective": "实时归约",
+            "status": "running",
+            "tasks": [
+              {"task_id": "t-live", "title": "采集", "status": "running"},
+              {"task_id": "t-next", "title": "编译", "status": "pending"}
+            ]
+          }
+        }
+        """#)
+        let ended = try decodeEvent(
+            #"{"protocol_version":1,"goal_id":"g-live","event_id":"e1","sequence":1,"timestamp":"later","type":"task_end","task_id":"t-live","status":"succeeded"}"#)
+
+        let store = KSSStore(testBridge: nil)
+        XCTAssertTrue(store.applyResearchEvent(snapshot))
+        XCTAssertEqual(store.selectedResearchGoal?.status, "running")
+        XCTAssertEqual(store.researchEventsByGoal["g-live"], nil)
+
+        XCTAssertTrue(store.applyResearchEvent(ended))
+        XCTAssertEqual(store.selectedResearchGoal?.tasks.first?.status, "succeeded")
+        XCTAssertEqual(store.selectedResearchGoal?.progress, 0.5)
+        XCTAssertEqual(store.researchGoals.first?.progress, 0.5)
     }
 
     func testAgentFrameDecodesResearchCandidateWithoutStartingGoal() throws {
@@ -155,6 +193,21 @@ final class ResearchProtocolTests: XCTestCase {
             ResearchArtifactPreviewLoader.load(relativePath: "../secret.md", under: root))
         XCTAssertNil(
             ResearchArtifactPreviewLoader.load(relativePath: "script.js", under: root))
+    }
+
+    func testDefaultWeeklyInputsFreezeASevenDayWindowAndAsOf() throws {
+        var components = DateComponents()
+        components.calendar = Calendar(identifier: .gregorian)
+        components.timeZone = TimeZone(secondsFromGMT: 0)
+        components.year = 2026
+        components.month = 7
+        components.day = 26
+        let reference = try XCTUnwrap(components.date)
+
+        let inputs = KSSStore.defaultResearchInputs(referenceDate: reference)
+
+        XCTAssertEqual(inputs["date_range"], "2026-07-20_to_2026-07-26")
+        XCTAssertEqual(inputs["as_of"], "2026-07-26")
     }
 
     private func decodeEvent(_ json: String) throws -> ResearchEvent {

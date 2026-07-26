@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from kss.research.compiler import ReportCompiler, make_investment_weekly_fixture
-from kss.research.report_models import ReportBlock
+from kss.research.report_models import MetricEntry, MetricLedger, ReportBlock
 
 
 def _json(data: bytes):
@@ -109,10 +109,97 @@ def test_metric_recompute_mismatch_blocks_audit():
         doc.metric_ledger,
         doc.claims,
         doc.evidence,
-        {**doc.metadata, "formula_results": {"m_temperature": 1}},
+        {
+            **doc.metadata,
+            "formula_inputs": {
+                **doc.metadata["formula_inputs"],
+                "m_temperature": [1],
+            },
+        },
     )
 
     result = ReportCompiler().compile(bad_doc)
 
     assert result["status"] == "fail"
     assert any(f["code"] == "metric_recompute_mismatch" for f in result["audit"]["findings"])
+
+
+def test_invalid_evidence_hash_and_unreviewed_model_score_block_audit():
+    doc = make_investment_weekly_fixture(cards=30)
+    evidence = list(doc.evidence)
+    evidence[0] = type(evidence[0])(
+        evidence[0].evidence_id,
+        evidence[0].source_tier,
+        evidence[0].title,
+        evidence[0].uri,
+        evidence[0].data_as_of,
+        "not-a-sha256",
+        evidence[0].caveat,
+    )
+    claims = list(doc.claims)
+    claims[0] = type(claims[0])(
+        claims[0].claim_id,
+        claims[0].text,
+        claims[0].evidence_refs,
+        claims[0].confidence,
+        False,
+        claims[0].rubric_id,
+        claims[0].rubric_version,
+    )
+    bad_doc = type(doc)(
+        doc.document_id + "-integrity",
+        doc.profile_id,
+        doc.title,
+        doc.subtitle,
+        doc.date_range,
+        doc.as_of,
+        doc.sections,
+        doc.metric_ledger,
+        claims,
+        evidence,
+        doc.metadata,
+    )
+
+    result = ReportCompiler().compile(bad_doc)
+    codes = {finding["code"] for finding in result["audit"]["findings"]}
+
+    assert result["status"] == "fail"
+    assert "evidence_hash_invalid" in codes
+    assert "claim_score_missing_review_flag" in codes
+
+
+def test_malformed_numeric_metadata_becomes_audit_finding_instead_of_crash():
+    doc = make_investment_weekly_fixture(cards=30)
+    metrics = list(doc.metric_ledger.metrics)
+    original = metrics[0]
+    metrics[0] = MetricEntry(
+        original.metric_id,
+        original.label,
+        "not-a-number",
+        original.unit,
+        original.precision,
+        original.formula_id,
+        original.formula_version,
+        original.input_refs,
+        original.as_of,
+    )
+    bad_doc = type(doc)(
+        doc.document_id + "-numeric",
+        doc.profile_id,
+        doc.title,
+        doc.subtitle,
+        doc.date_range,
+        doc.as_of,
+        doc.sections,
+        MetricLedger(metrics),
+        doc.claims,
+        doc.evidence,
+        {**doc.metadata, "card_count": "invalid"},
+    )
+
+    result = ReportCompiler().compile(bad_doc)
+    codes = {finding["code"] for finding in result["audit"]["findings"]}
+
+    assert result["status"] == "fail"
+    assert "metric_value_not_numeric" in codes
+    assert "precision_card_count_invalid" in codes

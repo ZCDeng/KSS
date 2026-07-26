@@ -214,6 +214,7 @@ final class KSSStore: ObservableObject {
     private var agentMessageStartCounts: [String: Int] = [:]
     private var agentCurrentAssistantMessageIds: [String: UUID] = [:]
     private var researchSeenSequences: [String: Set<Int>] = [:]
+    private var researchSeenEventIds: [String: Set<String>] = [:]
     private var researchExpectedSequence: [String: Int] = [:]
     private var researchEventEpoch: [String: UUID] = [:]
 
@@ -609,10 +610,19 @@ final class KSSStore: ObservableObject {
     @discardableResult
     func applyResearchEvent(_ event: ResearchEvent) -> Bool {
         let goalId = event.goalId
+        if event.type == "research_snapshot", let snapshot = event.snapshot {
+            ingestResearchDetail(snapshot)
+            return true
+        }
         var seen = researchSeenSequences[goalId] ?? []
-        if seen.contains(event.sequence) { return false }
+        var seenEventIds = researchSeenEventIds[goalId] ?? []
+        if seen.contains(event.sequence) || seenEventIds.contains(event.eventId) {
+            return false
+        }
         seen.insert(event.sequence)
+        seenEventIds.insert(event.eventId)
         researchSeenSequences[goalId] = seen
+        researchSeenEventIds[goalId] = seenEventIds
 
         let expected = researchExpectedSequence[goalId] ?? 1
         if event.sequence > expected {
@@ -627,7 +637,40 @@ final class KSSStore: ObservableObject {
             return $0.sequence < $1.sequence
         }
         researchEventsByGoal[goalId] = events
+        reduceResearchState(with: event)
         return true
+    }
+
+    private func reduceResearchState(with event: ResearchEvent) {
+        guard var goal = selectedResearchGoal, goal.goalId == event.goalId else { return }
+        switch event.type {
+        case "goal_status", "research_start", "research_end":
+            if let status = event.status, !status.isEmpty {
+                goal.status = status
+            }
+        case "research_error":
+            goal.status = "failed"
+        case "task_ready", "task_start", "task_end":
+            if let taskId = event.taskId,
+               let index = goal.tasks.firstIndex(where: { $0.taskId == taskId }) {
+                switch event.type {
+                case "task_ready":
+                    goal.tasks[index].status = "ready"
+                case "task_start":
+                    goal.tasks[index].status = "running"
+                default:
+                    goal.tasks[index].status = event.status ?? "incomplete"
+                }
+            }
+        default:
+            break
+        }
+        let succeeded = goal.tasks.filter { $0.status == "succeeded" }.count
+        goal.progress = goal.tasks.isEmpty
+            ? 0
+            : Double(succeeded) / Double(goal.tasks.count)
+        selectedResearchGoal = goal
+        upsertResearchGoal(goal.summary)
     }
 
     private func applyAgentQueueUpdate(_ frame: AgentFrame) {
@@ -2019,7 +2062,11 @@ final class KSSStore: ObservableObject {
         isLoadingResearch = false
     }
 
-    func createResearchGoal(objective: String, profileId: String = "investment-weekly-v3") async {
+    func createResearchGoal(
+        objective: String,
+        profileId: String = "investment-weekly-v3",
+        inputs: [String: String]? = nil
+    ) async {
         guard let bridge else {
             errorMessage = "Cannot locate KSS project root"
             return
@@ -2028,13 +2075,15 @@ final class KSSStore: ObservableObject {
         guard !trimmed.isEmpty else { return }
         isLoadingResearch = true
         errorMessage = nil
+        let resolvedInputs = inputs ?? Self.defaultResearchInputs()
         do {
             let response = try await Task.detached {
                 try bridge.agentResearch(
                     action: "create",
                     clientRequestId: UUID().uuidString,
                     profileId: profileId,
-                    objective: trimmed)
+                    objective: trimmed,
+                    inputs: resolvedInputs)
             }.value
             if let error = response.error, !error.isEmpty {
                 errorMessage = "创建研究目标失败：\(error)"
@@ -2055,6 +2104,21 @@ final class KSSStore: ObservableObject {
             errorMessage = "创建研究目标失败：\(error.localizedDescription)"
         }
         isLoadingResearch = false
+    }
+
+    static func defaultResearchInputs(referenceDate: Date = Date()) -> [String: String] {
+        let calendar = Calendar(identifier: .gregorian)
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd"
+        let start = calendar.date(byAdding: .day, value: -6, to: referenceDate)
+            ?? referenceDate
+        return [
+            "date_range": "\(formatter.string(from: start))_to_\(formatter.string(from: referenceDate))",
+            "as_of": formatter.string(from: referenceDate),
+        ]
     }
 
     func openResearchGoal(_ goalId: String) async {
@@ -2080,8 +2144,16 @@ final class KSSStore: ObservableObject {
 
     func performResearchAction(_ action: String, taskId: String? = nil) async {
         guard let bridge, let goalId = selectedResearchGoalId else { return }
-        isLoadingResearch = true
+        let keepsControlsAvailable = action == "start" || action == "resume"
+        if !keepsControlsAvailable {
+            isLoadingResearch = true
+        }
         errorMessage = nil
+        if keepsControlsAvailable, var goal = selectedResearchGoal {
+            goal.status = "running"
+            selectedResearchGoal = goal
+            upsertResearchGoal(goal.summary)
+        }
         do {
             let response = try await Task.detached {
                 try bridge.agentResearch(
@@ -2095,11 +2167,15 @@ final class KSSStore: ObservableObject {
             } else if let goal = response.goal {
                 ingestResearchDetail(goal)
             }
-            isLoadingResearch = false
+            if !keepsControlsAvailable {
+                isLoadingResearch = false
+            }
             await openResearchGoal(goalId)
         } catch {
             errorMessage = "研究操作失败：\(error.localizedDescription)"
-            isLoadingResearch = false
+            if !keepsControlsAvailable {
+                isLoadingResearch = false
+            }
         }
     }
 

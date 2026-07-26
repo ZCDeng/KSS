@@ -125,6 +125,16 @@ def test_agent_research_supports_all_required_actions(monkeypatch, tmp_path):
 
 def test_agent_research_events_replay_after_sequence(monkeypatch, tmp_path):
     class Service:
+        def open_goal(self, goal_id=None):
+            return {
+                "detail": {
+                    "goal_id": goal_id,
+                    "profile_id": "investment-weekly-v3",
+                    "objective": "研究快照",
+                    "status": "running",
+                }
+            }
+
         def events(self, goal_id=None, after_sequence=0):
             return [
                 {"goal": goal_id, "event": "old", "sequence": 1},
@@ -143,13 +153,16 @@ def test_agent_research_events_replay_after_sequence(monkeypatch, tmp_path):
         reader.feed_eof()
         await sc._on_connection(reader, writer)
         frames = writer.frames()
-        assert len(frames) == 1
-        assert frames[0]["protocol_version"] == 1
-        assert frames[0]["goal"] == "g1"
-        assert frames[0]["event"] == "new"
-        assert frames[0]["sequence"] == 3
-        assert frames[0]["event_id"] == "g1:3"
-        assert frames[0]["timestamp"]
+        assert len(frames) == 2
+        assert frames[0]["event"] == "research_snapshot"
+        assert frames[0]["sequence"] == 1
+        assert frames[0]["snapshot"]["status"] == "running"
+        assert frames[1]["protocol_version"] == 1
+        assert frames[1]["goal"] == "g1"
+        assert frames[1]["event"] == "new"
+        assert frames[1]["sequence"] == 3
+        assert frames[1]["event_id"] == "g1:3"
+        assert frames[1]["timestamp"]
 
     asyncio.run(go())
 
@@ -197,3 +210,43 @@ def test_research_protocol_fails_soft_when_core_unavailable(monkeypatch, tmp_pat
     assert payload["protocol_version"] == 1
     assert payload["ok"] is False
     assert payload["error"] in {"research_unavailable", "research_action_unavailable"}
+
+
+def test_sidecar_constructs_real_research_service_and_lists_profiles(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", _ROOT)
+    monkeypatch.setattr(sc, "_RESEARCH_SERVICE", None)
+    monkeypatch.setattr(sc, "_RESEARCH_SERVICE_ROOTS", None)
+
+    payload = _payload(sc._handle_agent_json_command({
+        "cmd": "agent-research",
+        "action": "list",
+    }))
+
+    assert payload["ok"] is True
+    assert {
+        profile["profile_id"] for profile in payload["profiles"]
+    } >= {"investment-weekly-v3", "generic-research-v1"}
+
+    created = _payload(sc._handle_agent_json_command({
+        "cmd": "agent-research",
+        "action": "create",
+        "client_request_id": "real-sidecar-create",
+        "profile_id": "investment-weekly-v3",
+        "objective": "真实 sidecar 协议创建",
+        "inputs": {
+            "date_range": "2026-07-13_to_2026-07-17",
+            "as_of": "2026-07-17",
+        },
+    }))
+    opened = _payload(sc._handle_agent_json_command({
+        "cmd": "agent-research",
+        "action": "open",
+        "goal_id": created["goal_id"],
+    }))
+
+    assert created["goal"]["goal_id"] == created["goal_id"]
+    assert opened["goal"]["snapshot"]["as_of"] == "2026-07-17"

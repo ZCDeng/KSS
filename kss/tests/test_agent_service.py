@@ -4,12 +4,164 @@ import asyncio
 import sys
 from pathlib import Path
 
-from kss.agent import AgentMessage, KSSAgentService
+from kss.agent import AgentMessage, KSSAgentService, RuntimeRunOptions
 from kss.agent.context import ContextAssembler
 
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT / "scripts"))
 import kss_chat_loop as chat_loop  # noqa: E402
+
+
+def test_service_enforces_per_run_capability_and_budget_envelope(
+    monkeypatch, tmp_path
+):
+    async def scenario():
+        service = KSSAgentService(tmp_path, tmp_path)
+        preference = service.memories.propose(
+            "preference",
+            "偏好结构化输出",
+            source_session="source",
+            source_entry="pref-entry",
+        )
+        thesis = service.memories.propose(
+            "thesis",
+            "旧判断",
+            source_session="source",
+            source_entry="thesis-entry",
+        )
+        service.memories.approve(preference.id)
+        service.memories.approve(thesis.id)
+        captured = {}
+
+        async def fake_run_turn(messages, emit, request_write, **kwargs):
+            registry = kwargs["tool_registry"]
+            captured["tool_names"] = [
+                item["function"]["name"] for item in registry.build_schema()
+            ]
+            captured["max_steps"] = kwargs["max_steps"]
+            captured["timeout"] = kwargs["turn_timeout"]
+            assert registry.has_tool("load_skill") is False
+            await emit({"type": "chunk", "text": "完成"})
+            await emit({"type": "done", "reason": "stop"})
+            return chat_loop.TurnTranscript(
+                messages=[*messages, {"role": "assistant", "content": "完成"}],
+                run_state={
+                    "status": "done",
+                    "reason": "stop",
+                    "usage": {"total_tokens": 30},
+                },
+            )
+
+        monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+        events = []
+
+        async def no_write(**kwargs):
+            raise AssertionError("write gate should not be used")
+
+        result = await service.run_turn(
+            "restricted",
+            "client-restricted",
+            "按偏好完成研究",
+            events.append,
+            no_write,
+            run_options=RuntimeRunOptions(
+                allowed_tools=frozenset({"research_search"}),
+                allowed_skills=frozenset(),
+                allowed_memory_kinds=frozenset({"preference"}),
+                max_steps=3,
+                timeout_seconds=12,
+                max_provider_tokens=100,
+                allow_write_tools=False,
+            ),
+        )
+
+        assert result.status == "completed", result
+        assert captured == {
+            "tool_names": ["research_search"],
+            "max_steps": 3,
+            "timeout": 12,
+        }
+        recalls = next(
+            event.payload["recalls"] for event in events if event.type == "recall"
+        )
+        assert [item["kind"] for item in recalls] == ["preference"]
+
+    asyncio.run(scenario())
+
+
+def test_service_rejects_write_tool_in_read_only_envelope(monkeypatch, tmp_path):
+    async def scenario():
+        service = KSSAgentService(tmp_path, tmp_path)
+        called = False
+
+        async def fake_run_turn(*args, **kwargs):
+            nonlocal called
+            called = True
+            raise AssertionError("provider must not run with forbidden write tool")
+
+        monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+
+        async def no_write(**kwargs):
+            raise AssertionError("write gate should not be used")
+
+        result = await service.run_turn(
+            "restricted-write",
+            "client-restricted-write",
+            "执行",
+            lambda event: asyncio.sleep(0),
+            no_write,
+            run_options=RuntimeRunOptions(
+                allowed_tools=frozenset({"run_task"}),
+                allow_write_tools=False,
+            ),
+        )
+
+        assert result.status == "failed"
+        assert "write tools are forbidden" in str(result.error)
+        assert called is False
+
+    asyncio.run(scenario())
+
+
+def test_service_preserves_bounded_trusted_internal_contract(monkeypatch, tmp_path):
+    async def scenario():
+        service = KSSAgentService(tmp_path, tmp_path)
+        contract = '{"contract":"' + ("证据" * 400) + '"}'
+        captured = {}
+
+        async def fake_run_turn(messages, emit, request_write, **kwargs):
+            captured["input"] = messages[-1]["content"]
+            await emit({"type": "done", "reason": "stop"})
+            return chat_loop.TurnTranscript(
+                messages=[*messages, {"role": "assistant", "content": "完成"}],
+                run_state={"status": "done", "reason": "stop"},
+            )
+
+        monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+
+        async def no_write(**kwargs):
+            raise AssertionError("write gate should not be used")
+
+        result = await service.run_turn(
+            "trusted-contract",
+            "trusted-contract-client",
+            contract,
+            lambda event: asyncio.sleep(0),
+            no_write,
+            run_options=RuntimeRunOptions(
+                allowed_tools=frozenset(),
+                allowed_skills=frozenset(),
+                allowed_memory_kinds=frozenset(),
+                trusted_internal_input=True,
+                allow_write_tools=False,
+            ),
+        )
+
+        assert result.status == "completed"
+        assert len(captured["input"]) > 500
+        assert captured["input"] == contract
+
+    asyncio.run(scenario())
 
 
 def test_service_persists_compaction_before_terminal_events(monkeypatch, tmp_path):
