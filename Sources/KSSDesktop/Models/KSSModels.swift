@@ -2283,6 +2283,458 @@ struct AgentMemoriesResponse: Codable, Equatable {
     var recalls: [AgentSourceRecall]?
 }
 
+// MARK: - Deep Research protocol
+
+/// `agent-research` intentionally remains tolerant: the Python research service may
+/// add richer budget/usage/snapshot fields without forcing an app release.
+struct ResearchGoalSummary: Decodable, Equatable, Identifiable {
+    var goalId: String
+    var sessionId: String?
+    var profileId: String
+    var objective: String
+    var status: String
+    var progress: Double?
+    var terminalReason: String?
+    var createdAt: String?
+    var updatedAt: String?
+
+    var id: String { goalId }
+
+    enum CodingKeys: String, CodingKey {
+        case goalId = "goal_id"
+        case legacyId = "id"
+        case sessionId = "session_id"
+        case profileId = "profile_id"
+        case objective, status, progress
+        case terminalReason = "terminal_reason"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        goalId = (try? c.decode(String.self, forKey: .goalId))
+            ?? (try? c.decode(String.self, forKey: .legacyId))
+            ?? ""
+        sessionId = try? c.decode(String.self, forKey: .sessionId)
+        profileId = (try? c.decode(String.self, forKey: .profileId)) ?? "investment-weekly-v3"
+        objective = (try? c.decode(String.self, forKey: .objective)) ?? "未命名研究"
+        status = (try? c.decode(String.self, forKey: .status)) ?? "created"
+        progress = try? c.decode(Double.self, forKey: .progress)
+        terminalReason = try? c.decode(String.self, forKey: .terminalReason)
+        createdAt = try? c.decode(String.self, forKey: .createdAt)
+        updatedAt = try? c.decode(String.self, forKey: .updatedAt)
+    }
+
+    init(goalId: String, sessionId: String? = nil, profileId: String = "investment-weekly-v3",
+         objective: String, status: String, progress: Double? = nil,
+         terminalReason: String? = nil, createdAt: String? = nil, updatedAt: String? = nil) {
+        self.goalId = goalId
+        self.sessionId = sessionId
+        self.profileId = profileId
+        self.objective = objective
+        self.status = status
+        self.progress = progress
+        self.terminalReason = terminalReason
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
+struct ResearchCriterion: Decodable, Equatable, Identifiable {
+    var criterionId: String
+    var title: String
+    var status: String?
+    var detail: String?
+
+    var id: String { criterionId }
+
+    enum CodingKeys: String, CodingKey {
+        case criterionId = "criterion_id"
+        case legacyId = "id"
+        case title, label, status, detail
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = (try? c.decode(String.self, forKey: .title))
+            ?? (try? c.decode(String.self, forKey: .label))
+            ?? "验收条件"
+        criterionId = (try? c.decode(String.self, forKey: .criterionId))
+            ?? (try? c.decode(String.self, forKey: .legacyId))
+            ?? "criterion:\(title)"
+        status = try? c.decode(String.self, forKey: .status)
+        detail = try? c.decode(String.self, forKey: .detail)
+    }
+}
+
+struct ResearchTask: Decodable, Equatable, Identifiable {
+    var taskId: String
+    var title: String
+    var status: String
+    var attempt: Int?
+    var detail: String?
+
+    var id: String { taskId }
+
+    enum CodingKeys: String, CodingKey {
+        case taskId = "task_id"
+        case legacyId = "id"
+        case title, objective, status, attempt, detail
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = (try? c.decode(String.self, forKey: .title))
+            ?? (try? c.decode(String.self, forKey: .objective))
+            ?? "研究任务"
+        taskId = (try? c.decode(String.self, forKey: .taskId))
+            ?? (try? c.decode(String.self, forKey: .legacyId))
+            ?? "task:\(title)"
+        status = (try? c.decode(String.self, forKey: .status)) ?? "pending"
+        attempt = try? c.decode(Int.self, forKey: .attempt)
+        detail = try? c.decode(String.self, forKey: .detail)
+    }
+}
+
+struct ResearchEvidence: Decodable, Equatable, Identifiable {
+    var evidenceId: String
+    var title: String
+    var source: String?
+    var url: String?
+    var snippet: String?
+    var status: String?
+    var createdAt: String?
+
+    var id: String { evidenceId }
+
+    enum CodingKeys: String, CodingKey {
+        case evidenceId = "evidence_id"
+        case legacyId = "id"
+        case title, source, url, snippet, status
+        case sourceTool = "source_tool"
+        case uri, caveat
+        case createdAt = "created_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        source = (try? c.decode(String.self, forKey: .source))
+            ?? (try? c.decode(String.self, forKey: .sourceTool))
+        url = (try? c.decode(String.self, forKey: .url))
+            ?? (try? c.decode(String.self, forKey: .uri))
+        title = (try? c.decode(String.self, forKey: .title))
+            ?? source
+            ?? "研究证据"
+        evidenceId = (try? c.decode(String.self, forKey: .evidenceId))
+            ?? (try? c.decode(String.self, forKey: .legacyId))
+            ?? "evidence:\(source ?? ""):\(url ?? ""):\(title)"
+        snippet = (try? c.decode(String.self, forKey: .snippet))
+            ?? (try? c.decode(String.self, forKey: .caveat))
+        status = try? c.decode(String.self, forKey: .status)
+        createdAt = try? c.decode(String.self, forKey: .createdAt)
+    }
+}
+
+struct ResearchArtifact: Decodable, Equatable, Identifiable {
+    var artifactId: String
+    var kind: String
+    var logicalName: String
+    var mediaType: String?
+    var sizeBytes: Int?
+    var sha256: String?
+    var relativePath: String?
+    var createdAt: String?
+    var auditStatus: String?
+    var isDraft: Bool?
+    /// Optional inline preview returned by newer sidecars. It is never interpreted
+    /// as a URL and is rendered in a network-disabled WKWebView.
+    var content: String?
+
+    var id: String { artifactId }
+
+    enum CodingKeys: String, CodingKey {
+        case artifactId = "artifact_id"
+        case legacyId = "id"
+        case kind
+        case logicalName = "logical_name"
+        case legacyName = "name"
+        case mediaType = "media_type"
+        case sizeBytes = "size_bytes"
+        case sha256
+        case relativePath = "relative_path"
+        case createdAt = "created_at"
+        case auditStatus = "audit_status"
+        case isDraft = "draft"
+        case content
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = (try? c.decode(String.self, forKey: .kind)) ?? "artifact"
+        logicalName = (try? c.decode(String.self, forKey: .logicalName))
+            ?? (try? c.decode(String.self, forKey: .legacyName))
+            ?? "研究产物"
+        artifactId = (try? c.decode(String.self, forKey: .artifactId))
+            ?? (try? c.decode(String.self, forKey: .legacyId))
+            ?? "artifact:\(kind):\(logicalName)"
+        mediaType = try? c.decode(String.self, forKey: .mediaType)
+        sizeBytes = try? c.decode(Int.self, forKey: .sizeBytes)
+        sha256 = try? c.decode(String.self, forKey: .sha256)
+        relativePath = try? c.decode(String.self, forKey: .relativePath)
+        createdAt = try? c.decode(String.self, forKey: .createdAt)
+        auditStatus = try? c.decode(String.self, forKey: .auditStatus)
+        isDraft = try? c.decode(Bool.self, forKey: .isDraft)
+        content = try? c.decode(String.self, forKey: .content)
+    }
+}
+
+struct ResearchAuditEntry: Decodable, Equatable, Identifiable {
+    var eventId: String
+    var type: String
+    var timestamp: String?
+    var status: String?
+    var message: String?
+
+    var id: String { eventId }
+
+    enum CodingKeys: String, CodingKey {
+        case eventId = "event_id"
+        case legacyId = "id"
+        case type, event, timestamp, status, message, detail
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        type = (try? c.decode(String.self, forKey: .type))
+            ?? (try? c.decode(String.self, forKey: .event))
+            ?? "research_event"
+        timestamp = try? c.decode(String.self, forKey: .timestamp)
+        eventId = (try? c.decode(String.self, forKey: .eventId))
+            ?? (try? c.decode(String.self, forKey: .legacyId))
+            ?? "audit:\(type):\(timestamp ?? "")"
+        status = try? c.decode(String.self, forKey: .status)
+        message = (try? c.decode(String.self, forKey: .message))
+            ?? (try? c.decode(String.self, forKey: .detail))
+    }
+}
+
+struct ResearchSnapshot: Decodable, Equatable {
+    var snapshotId: String?
+    var profileId: String?
+    var asOf: String?
+    var createdAt: String?
+    var refreshOf: String?
+
+    enum CodingKeys: String, CodingKey {
+        case snapshotId = "snapshot_id"
+        case profileId = "profile_id"
+        case asOf = "as_of"
+        case createdAt = "created_at"
+        case refreshOf = "refresh_of"
+    }
+}
+
+struct ResearchGoalDetail: Decodable, Equatable, Identifiable {
+    var goalId: String
+    var sessionId: String?
+    var profileId: String
+    var objective: String
+    var status: String
+    var progress: Double?
+    var terminalReason: String?
+    var createdAt: String?
+    var updatedAt: String?
+    var criteria: [ResearchCriterion]
+    var tasks: [ResearchTask]
+    var evidence: [ResearchEvidence]
+    var audit: [ResearchAuditEntry]
+    var artifacts: [ResearchArtifact]
+    var events: [ResearchEvent]
+    var snapshot: ResearchSnapshot?
+
+    var id: String { goalId }
+    var summary: ResearchGoalSummary {
+        ResearchGoalSummary(
+            goalId: goalId, sessionId: sessionId, profileId: profileId,
+            objective: objective, status: status, progress: progress,
+            terminalReason: terminalReason, createdAt: createdAt, updatedAt: updatedAt)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case goalId = "goal_id"
+        case legacyId = "id"
+        case sessionId = "session_id"
+        case profileId = "profile_id"
+        case objective, status, progress
+        case terminalReason = "terminal_reason"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case criteria, tasks, evidence, audit, artifacts, events, snapshot
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        goalId = (try? c.decode(String.self, forKey: .goalId))
+            ?? (try? c.decode(String.self, forKey: .legacyId))
+            ?? ""
+        sessionId = try? c.decode(String.self, forKey: .sessionId)
+        profileId = (try? c.decode(String.self, forKey: .profileId)) ?? "investment-weekly-v3"
+        objective = (try? c.decode(String.self, forKey: .objective)) ?? "未命名研究"
+        status = (try? c.decode(String.self, forKey: .status)) ?? "created"
+        progress = try? c.decode(Double.self, forKey: .progress)
+        terminalReason = try? c.decode(String.self, forKey: .terminalReason)
+        createdAt = try? c.decode(String.self, forKey: .createdAt)
+        updatedAt = try? c.decode(String.self, forKey: .updatedAt)
+        criteria = (try? c.decode([ResearchCriterion].self, forKey: .criteria)) ?? []
+        tasks = (try? c.decode([ResearchTask].self, forKey: .tasks)) ?? []
+        evidence = (try? c.decode([ResearchEvidence].self, forKey: .evidence)) ?? []
+        audit = (try? c.decode([ResearchAuditEntry].self, forKey: .audit)) ?? []
+        artifacts = (try? c.decode([ResearchArtifact].self, forKey: .artifacts)) ?? []
+        events = (try? c.decode([ResearchEvent].self, forKey: .events)) ?? []
+        snapshot = try? c.decode(ResearchSnapshot.self, forKey: .snapshot)
+    }
+}
+
+struct ResearchProfileSummary: Decodable, Equatable, Identifiable {
+    var profileId: String
+    var name: String
+    var description: String?
+    var id: String { profileId }
+
+    enum CodingKeys: String, CodingKey {
+        case profileId = "profile_id"
+        case legacyId = "id"
+        case name, title, description
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        profileId = (try? c.decode(String.self, forKey: .profileId))
+            ?? (try? c.decode(String.self, forKey: .legacyId))
+            ?? "investment-weekly-v3"
+        name = (try? c.decode(String.self, forKey: .name))
+            ?? (try? c.decode(String.self, forKey: .title))
+            ?? profileId
+        description = try? c.decode(String.self, forKey: .description)
+    }
+}
+
+struct ResearchResponse: Decodable, Equatable {
+    var goals: [ResearchGoalSummary]
+    var goal: ResearchGoalDetail?
+    var profiles: [ResearchProfileSummary]?
+    var error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case goals, goal, detail, profiles, error
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        goals = (try? c.decode([ResearchGoalSummary].self, forKey: .goals)) ?? []
+        goal = (try? c.decode(ResearchGoalDetail.self, forKey: .detail))
+            ?? (try? c.decode(ResearchGoalDetail.self, forKey: .goal))
+        profiles = try? c.decode([ResearchProfileSummary].self, forKey: .profiles)
+        error = try? c.decode(String.self, forKey: .error)
+    }
+}
+
+struct ResearchArtifactResponse: Decodable, Equatable {
+    var artifacts: [ResearchArtifact]
+    var artifact: ResearchArtifact?
+    var content: String?
+    var destination: String?
+    var published: Bool?
+    var error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case artifacts, artifact, content, destination, published, error
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        artifacts = (try? c.decode([ResearchArtifact].self, forKey: .artifacts)) ?? []
+        artifact = try? c.decode(ResearchArtifact.self, forKey: .artifact)
+        content = try? c.decode(String.self, forKey: .content)
+        destination = try? c.decode(String.self, forKey: .destination)
+        published = try? c.decode(Bool.self, forKey: .published)
+        error = try? c.decode(String.self, forKey: .error)
+    }
+}
+
+struct ResearchEventPayload: Codable, Equatable {
+    var title: String?
+    var message: String?
+    var detail: String?
+    var reason: String?
+    var progress: Double?
+}
+
+struct ResearchEvent: Decodable, Equatable, Identifiable {
+    var protocolVersion: Int?
+    var goalId: String
+    var eventId: String
+    var sequence: Int
+    var timestamp: String
+    var type: String
+    var taskId: String?
+    var attemptId: String?
+    var runId: String?
+    var status: String?
+    var payload: ResearchEventPayload?
+
+    var id: String { eventId }
+    var displayMessage: String {
+        payload?.message ?? payload?.detail ?? payload?.title ?? status ?? type
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case protocolVersion = "protocol_version"
+        case goalId = "goal_id"
+        case legacyGoal = "goal"
+        case eventId = "event_id"
+        case sequence, timestamp, type
+        case legacyType = "event"
+        case taskId = "task_id"
+        case attemptId = "attempt_id"
+        case runId = "run_id"
+        case status, payload
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        protocolVersion = try? c.decode(Int.self, forKey: .protocolVersion)
+        goalId = (try? c.decode(String.self, forKey: .goalId))
+            ?? (try? c.decode(String.self, forKey: .legacyGoal))
+            ?? ""
+        sequence = (try? c.decode(Int.self, forKey: .sequence)) ?? 0
+        eventId = (try? c.decode(String.self, forKey: .eventId))
+            ?? "\(goalId):\(sequence)"
+        timestamp = (try? c.decode(String.self, forKey: .timestamp)) ?? ""
+        type = (try? c.decode(String.self, forKey: .type))
+            ?? (try? c.decode(String.self, forKey: .legacyType))
+            ?? "research_event"
+        taskId = try? c.decode(String.self, forKey: .taskId)
+        attemptId = try? c.decode(String.self, forKey: .attemptId)
+        runId = try? c.decode(String.self, forKey: .runId)
+        status = try? c.decode(String.self, forKey: .status)
+        payload = try? c.decode(ResearchEventPayload.self, forKey: .payload)
+    }
+}
+
+struct ResearchCandidate: Codable, Equatable {
+    var objective: String
+    var profileId: String?
+    var sessionId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case objective
+        case profileId = "profile_id"
+        case sessionId = "session_id"
+    }
+}
+
 struct AgentFrame: Decodable, Equatable {
     let protocolVersion: Int?
     let sessionId: String?
@@ -2318,6 +2770,7 @@ struct AgentFrame: Decodable, Equatable {
     let queuedInputs: [AgentQueuedInput]?
     let steeringCount: Int?
     let followUpCount: Int?
+    let researchCandidate: ResearchCandidate?
 
     enum CodingKeys: String, CodingKey {
         case type, sequence, text, delta, name, tool, command, effect, reason, error, model, usage, numberGuard
@@ -2345,6 +2798,7 @@ struct AgentFrame: Decodable, Equatable {
         case queuedInputs = "queued_inputs"
         case steeringCount = "steering_count"
         case followUpCount = "follow_up_count"
+        case researchCandidate = "research_candidate"
     }
 
     init(from decoder: Decoder) throws {
@@ -2390,6 +2844,7 @@ struct AgentFrame: Decodable, Equatable {
         queuedInputs = try? c.decode([AgentQueuedInput].self, forKey: .queuedInputs)
         steeringCount = try? c.decode(Int.self, forKey: .steeringCount)
         followUpCount = try? c.decode(Int.self, forKey: .followUpCount)
+        researchCandidate = try? c.decode(ResearchCandidate.self, forKey: .researchCandidate)
     }
 
     var duplicateReason: String? {

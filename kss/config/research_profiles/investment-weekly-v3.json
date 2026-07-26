@@ -1,0 +1,75 @@
+{
+  "profile_id": "investment-weekly-v3",
+  "title": "投资分析周报 V3",
+  "version": 1,
+  "inputs_schema": {
+    "type": "object",
+    "required": ["date_range", "as_of"],
+    "properties": {
+      "date_range": {"type": "string", "description": "YYYY-MM-DD_to_YYYY-MM-DD"},
+      "trading_calendar": {"type": "array", "items": {"type": "string"}},
+      "scope": {"type": "string"},
+      "analysis_sources": {"type": "array", "items": {"type": "string"}},
+      "as_of": {"type": "string"},
+      "notes": {"type": "string"}
+    }
+  },
+  "criteria": [
+    {"label": "冻结输入快照", "required": true, "min_verified_evidence": 1, "allowed_tiers": ["deterministic_calculation"], "freshness_days": null, "validator": "snapshot"},
+    {"label": "分析源覆盖", "required": true, "min_verified_evidence": 6, "allowed_tiers": ["official_or_primary", "reputable_secondary"], "freshness_days": 14, "validator": "source_coverage"},
+    {"label": "市场温度指标", "required": true, "min_verified_evidence": 1, "allowed_tiers": ["deterministic_calculation"], "freshness_days": 14, "validator": "metric_ledger"},
+    {"label": "主题共识", "required": true, "min_verified_evidence": 1, "allowed_tiers": ["reputable_secondary", "deterministic_calculation"], "freshness_days": 14, "validator": "theme_consensus"},
+    {"label": "共同风险", "required": true, "min_verified_evidence": 1, "allowed_tiers": ["reputable_secondary", "deterministic_calculation"], "freshness_days": 14, "validator": "risk_radar"},
+    {"label": "精判卡结构", "required": true, "min_verified_evidence": 1, "allowed_tiers": ["deterministic_calculation", "reputable_secondary"], "freshness_days": 14, "validator": "precision_cards"},
+    {"label": "交付审计", "required": true, "min_verified_evidence": 1, "allowed_tiers": ["deterministic_calculation"], "freshness_days": null, "validator": "delivery_audit"}
+  ],
+  "task_graph": [
+    {"kind": "freeze_snapshot", "title": "冻结输入和数据时点", "required": true, "depends_on": [], "protected": true},
+    {"kind": "collect_sources", "title": "采集分析源、市场数据和卡片原始数据", "required": true, "depends_on": ["freeze_snapshot"]},
+    {"kind": "normalize_fields", "title": "规范化字段与来源", "required": true, "depends_on": ["collect_sources"]},
+    {"kind": "compute_temperature", "title": "计算市场温度指标", "required": true, "depends_on": ["normalize_fields"]},
+    {"kind": "theme_consensus", "title": "汇总主题共识", "required": true, "depends_on": ["normalize_fields"]},
+    {"kind": "risk_radar", "title": "汇总共同风险", "required": true, "depends_on": ["normalize_fields"]},
+    {"kind": "analyst_cards", "title": "生成分析师及精判卡结构", "required": true, "depends_on": ["compute_temperature", "theme_consensus", "risk_radar"]},
+    {"kind": "verify_data", "title": "验证数据、指标与证据引用", "required": true, "depends_on": ["analyst_cards"]},
+    {"kind": "narrative", "title": "生成结构化叙事", "required": true, "depends_on": ["verify_data"]},
+    {"kind": "compile_report", "title": "编译报告", "required": true, "depends_on": ["narrative"], "protected": true},
+    {"kind": "delivery_audit", "title": "执行交付审计", "required": true, "depends_on": ["compile_report"], "protected": true},
+    {"kind": "preview_publish_gate", "title": "生成预览，等待发布确认", "required": true, "depends_on": ["delivery_audit"], "protected": true}
+  ],
+  "tool_whitelist": ["research-bundle", "research-fetch", "research-search", "read_skill_resource"],
+  "skill_whitelist": ["kss-review", "kss-orientation", "kss-indicator-pipeline"],
+  "freshness": {
+    "market_data_days": 14,
+    "analysis_source_days": 14,
+    "snapshot_refresh_required_on_new_as_of": true
+  },
+  "budget": {
+    "max_nodes": 24,
+    "max_seconds": 3600,
+    "max_provider_tokens": 200000,
+    "per_node_steps": 8,
+    "per_node_seconds": 240
+  },
+  "sections": [
+    {"anchor": "overview", "required": true},
+    {"anchor": "temperature", "required": true},
+    {"anchor": "theme-consensus", "required": true},
+    {"anchor": "risk-radar", "required": true},
+    {"anchor": "analyst-sections", "required": true},
+    {"anchor": "precision-cards", "required": true},
+    {"anchor": "methodology", "required": true},
+    {"anchor": "audit", "required": true}
+  ],
+  "audit_rules": {
+    "no_javascript": true,
+    "no_remote_resources": true,
+    "strict_csp": true,
+    "html_escape_model_text": true,
+    "all_financial_numbers_require_metric_refs": true,
+    "metric_formula_version": "v1",
+    "sample": {"mode": "stratified", "ratio": 0.15, "min": 30, "max": 200},
+    "publish_requires_audit_pass": true
+  },
+  "allow_model_to_extend_dag": false
+}

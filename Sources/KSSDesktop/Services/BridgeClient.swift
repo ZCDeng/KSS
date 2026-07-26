@@ -738,6 +738,72 @@ struct BridgeClient {
         return try agentCommand("agent-queue", payload: payload, as: AgentQueueResponse.self)
     }
 
+    func agentResearch(
+        action: String = "list",
+        clientRequestId: String? = nil,
+        sessionId: String? = nil,
+        goalId: String? = nil,
+        taskId: String? = nil,
+        profileId: String? = nil,
+        objective: String? = nil,
+        inputs: [String: String]? = nil,
+        budgetOverrides: [String: Int]? = nil
+    ) throws -> ResearchResponse {
+        var payload: [String: Any] = ["action": action]
+        if let clientRequestId { payload["client_request_id"] = clientRequestId }
+        if let sessionId { payload["session_id"] = sessionId }
+        if let goalId { payload["goal_id"] = goalId }
+        if let taskId { payload["task_id"] = taskId }
+        if let profileId { payload["profile_id"] = profileId }
+        if let objective { payload["objective"] = objective }
+        if let inputs { payload["inputs"] = inputs }
+        if let budgetOverrides { payload["budget_overrides"] = budgetOverrides }
+        return try agentCommand("agent-research", payload: payload, as: ResearchResponse.self)
+    }
+
+    func agentArtifacts(
+        action: String = "list",
+        goalId: String,
+        artifactId: String? = nil,
+        destination: String? = nil,
+        overwrite: Bool? = nil
+    ) throws -> ResearchArtifactResponse {
+        var payload: [String: Any] = [
+            "action": action,
+            "goal_id": goalId,
+        ]
+        if let artifactId { payload["artifact_id"] = artifactId }
+        if let destination { payload["destination"] = destination }
+        if let overwrite { payload["overwrite"] = overwrite }
+        return try agentCommand("agent-artifacts", payload: payload, as: ResearchArtifactResponse.self)
+    }
+
+    /// Replays research events after a durable sequence. The server may return a
+    /// finite replay or keep the socket open for live events; callers therefore run
+    /// this method off the main actor.
+    func agentResearchEvents(
+        goalId: String,
+        afterSequence: Int = 0,
+        onEvent: @escaping (ResearchEvent) -> Void,
+        onEnd: @escaping (String?) -> Void
+    ) {
+        ensureSidecarRunning()
+        guard var request = try? JSONSerialization.data(withJSONObject: [
+            "cmd": "agent-research-events",
+            "goal_id": goalId,
+            "after_sequence": afterSequence,
+        ]) else {
+            onEnd("无法编码研究事件请求")
+            return
+        }
+        request.append(0x0A)
+        guard let fd = Self.connectToSidecar(path: socketPath) else {
+            onEnd("无法连接 Agent sidecar")
+            return
+        }
+        Self.runResearchEventStream(fd: fd, request: request, onEvent: onEvent, onEnd: onEnd)
+    }
+
     func agentTurn(sessionId: String, clientTurnId: String, input: String,
                    sourceQueueId: String? = nil,
                    onControlReady: @escaping (AgentControlChannel) -> Void,
@@ -968,6 +1034,58 @@ struct BridgeClient {
                     continue
                 }
                 onEnd("Agent 读取错误 errno=\(e)"); return
+            }
+        }
+    }
+
+    private static func runResearchEventStream(
+        fd: Int32,
+        request: Data,
+        onEvent: @escaping (ResearchEvent) -> Void,
+        onEnd: @escaping (String?) -> Void
+    ) {
+        defer { close(fd) }
+        let requestBytes = [UInt8](request)
+        var sent = 0
+        while sent < requestBytes.count {
+            let written = requestBytes.withUnsafeBytes { raw in
+                send(fd, raw.baseAddress!.advanced(by: sent), requestBytes.count - sent, 0)
+            }
+            if written <= 0 {
+                onEnd("发送研究事件请求失败")
+                return
+            }
+            sent += written
+        }
+
+        var accumulator = Data()
+        var buffer = [UInt8](repeating: 0, count: 65_536)
+        var idleTicks = 0
+        while true {
+            let readCount = read(fd, &buffer, buffer.count)
+            if readCount > 0 {
+                idleTicks = 0
+                accumulator.append(contentsOf: buffer[0..<readCount])
+                while let newline = accumulator.firstIndex(of: 0x0A) {
+                    let line = accumulator.subdata(in: accumulator.startIndex..<newline)
+                    accumulator.removeSubrange(accumulator.startIndex...newline)
+                    guard !line.isEmpty else { continue }
+                    if let event = try? JSONDecoder().decode(ResearchEvent.self, from: line) {
+                        onEvent(event)
+                    }
+                }
+            } else if readCount == 0 {
+                onEnd(nil)
+                return
+            } else if errno == EAGAIN || errno == EWOULDBLOCK {
+                idleTicks += 1
+                if idleTicks >= 300 {
+                    onEnd("研究事件响应超时")
+                    return
+                }
+            } else {
+                onEnd("研究事件读取错误 errno=\(errno)")
+                return
             }
         }
     }

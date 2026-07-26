@@ -1,5 +1,5 @@
-"""Read-only external research evidence adapter for KSS."""
+"""KSS durable research execution stack."""
 
-from .adapter import research_bundle, research_fetch, research_search, research_status
+from .service import ResearchService
 
-__all__ = ["research_bundle", "research_fetch", "research_search", "research_status"]
+__all__ = ["ResearchService"]

@@ -287,6 +287,7 @@ struct ContentView: View {
                 )
             case .runbook:
                 RunbookView(
+                    store: store,
                     pythonEnvironment: snapshot.pythonEnvironment,
                     isRunning: store.isRunningTask,
                     results: store.taskResults,

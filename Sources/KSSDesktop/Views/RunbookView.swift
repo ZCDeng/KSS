@@ -2,10 +2,18 @@ import SwiftUI
 
 struct RunbookView: View {
     @Environment(\.kssTheme) private var theme
+    @ObservedObject var store: KSSStore
     var pythonEnvironment: PythonEnvironment?
     var isRunning: Bool
     var results: [TaskRunResult]
     var onRun: (KSSTask) -> Void
+    @State private var mode: Mode = .local
+
+    enum Mode: String, CaseIterable, Identifiable {
+        case local = "本地任务"
+        case research = "深度研究"
+        var id: String { rawValue }
+    }
 
     private var quickTasks: [KSSTask] {
         KSSTask.allCases.filter { $0.lane == "轻量" }
@@ -16,41 +24,72 @@ struct RunbookView: View {
     }
 
     var body: some View {
-        // M3：内容封顶 1080 居中，统一外边距（与总览一致）。
         GeometryReader { geo in
             let w = min(geo.size.width - 48, 1080)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    PageTitle("任务台", subtitle: "本地数据 / 正式脚本运行台")
-                    PythonEnvironmentBanner(environment: pythonEnvironment)
-
-                    SectionHeader("轻量任务")
-                    TaskGrid(tasks: quickTasks, isRunning: isRunning, onRun: onRun)
-
-                    SectionHeader("正式任务")
-                    TaskGrid(tasks: fullTasks, isRunning: isRunning, onRun: onRun)
-
-                    SectionHeader("任务记录")
-                    if results.isEmpty {
-                        Text("暂无任务运行记录")
-                            .font(KSSFont.themed(13.5, theme: theme))
-                            .foregroundStyle(theme.textSecondary)
-                    } else {
-                        VStack(spacing: 10) {
-                            ForEach(results) { result in
-                                TaskResultCard(result: result)
-                            }
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .bottom) {
+                    PageTitle(
+                        "任务台",
+                        subtitle: mode == .local
+                            ? "本地数据 / 正式脚本运行台"
+                            : "可暂停、可审计的长期研究目标")
+                    Spacer()
+                    Picker("任务类型", selection: $mode) {
+                        ForEach(Mode.allCases) { item in
+                            Text(item.rawValue).tag(item)
                         }
                     }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 260)
                 }
-                .frame(width: w, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.vertical, 24)
+
+                if mode == .local {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            PythonEnvironmentBanner(environment: pythonEnvironment)
+
+                            SectionHeader("轻量任务")
+                            TaskGrid(tasks: quickTasks, isRunning: isRunning, onRun: onRun)
+
+                            SectionHeader("正式任务")
+                            TaskGrid(tasks: fullTasks, isRunning: isRunning, onRun: onRun)
+
+                            SectionHeader("任务记录")
+                            if results.isEmpty {
+                                Text("暂无任务运行记录")
+                                    .font(KSSFont.themed(13.5, theme: theme))
+                                    .foregroundStyle(theme.textSecondary)
+                            } else {
+                                VStack(spacing: 10) {
+                                    ForEach(results) { result in
+                                        TaskResultCard(result: result)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.bottom, 24)
+                    }
+                    .scrollContentBackground(.hidden)
+                } else {
+                    ResearchWorkbenchView(store: store)
+                }
             }
-            .scrollContentBackground(.hidden)
-            .background(theme.canvas)
+            .frame(width: w, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.vertical, 24)
         }
         .background(theme.canvas)
+        .task(id: mode) {
+            if mode == .research, store.researchGoals.isEmpty {
+                await store.loadResearchGoals()
+            }
+        }
+        .onAppear {
+            if store.researchCandidate != nil {
+                mode = .research
+            }
+        }
     }
 }
 

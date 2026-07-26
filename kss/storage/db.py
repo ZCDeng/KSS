@@ -60,6 +60,7 @@ def connect(db_path: str | Path | None = None) -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(path, timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA foreign_keys=ON")
     for attempt in range(5):
         current_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
         if str(current_mode).lower() == "wal":
@@ -401,6 +402,219 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             extractor    TEXT,
             fetched_at   TEXT
         ) STRICT;
+        """,
+    ),
+    (
+        3,
+        """
+        -- ---------------------------------------------------------------
+        -- Deep Research execution stack (plan 2026-07-26):
+        -- contract + evidence ledger + durable DAG + artifact/publication audit.
+        -- Large content stays in storage/agent/research/objects; SQLite holds
+        -- indexes, state, immutable evidence metadata and durable events.
+        -- ---------------------------------------------------------------
+        CREATE TABLE IF NOT EXISTS research_goals (
+            goal_id             TEXT PRIMARY KEY,
+            session_id          TEXT,
+            profile_id          TEXT NOT NULL,
+            objective           TEXT NOT NULL,
+            status              TEXT NOT NULL,
+            inputs_json         TEXT NOT NULL,
+            snapshot_json       TEXT,
+            budget_json         TEXT NOT NULL,
+            usage_json          TEXT NOT NULL,
+            termination_reason  TEXT,
+            client_request_id   TEXT UNIQUE,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL,
+            started_at          TEXT,
+            finished_at         TEXT
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS idx_research_goals_status ON research_goals(status);
+        CREATE INDEX IF NOT EXISTS idx_research_goals_session ON research_goals(session_id);
+
+        CREATE TABLE IF NOT EXISTS research_criteria (
+            criterion_id        TEXT PRIMARY KEY,
+            goal_id             TEXT NOT NULL,
+            label               TEXT NOT NULL,
+            required            INTEGER NOT NULL,
+            min_verified_evidence INTEGER NOT NULL,
+            allowed_tiers_json  TEXT NOT NULL,
+            freshness_days      INTEGER,
+            validator           TEXT,
+            status              TEXT NOT NULL,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL,
+            FOREIGN KEY(goal_id) REFERENCES research_goals(goal_id)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS idx_research_criteria_goal ON research_criteria(goal_id);
+
+        CREATE TABLE IF NOT EXISTS research_claims (
+            claim_id            TEXT PRIMARY KEY,
+            goal_id             TEXT NOT NULL,
+            task_id             TEXT,
+            criterion_id        TEXT,
+            content             TEXT NOT NULL,
+            status              TEXT NOT NULL,
+            confidence          REAL,
+            evidence_ids_json   TEXT NOT NULL,
+            contradiction_ids_json TEXT NOT NULL,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL,
+            FOREIGN KEY(goal_id) REFERENCES research_goals(goal_id)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS idx_research_claims_goal ON research_claims(goal_id);
+        CREATE INDEX IF NOT EXISTS idx_research_claims_status ON research_claims(status);
+
+        CREATE TABLE IF NOT EXISTS research_evidence (
+            evidence_id         TEXT PRIMARY KEY,
+            goal_id             TEXT NOT NULL,
+            criterion_id        TEXT,
+            task_id             TEXT,
+            attempt_id          TEXT,
+            run_id              TEXT,
+            tool_call_id        TEXT,
+            source_tool         TEXT NOT NULL,
+            provider            TEXT,
+            uri                 TEXT,
+            artifact_id         TEXT,
+            data_as_of          TEXT,
+            method              TEXT,
+            scope               TEXT,
+            hash                TEXT,
+            source_tier         TEXT NOT NULL,
+            caveat              TEXT,
+            verified            INTEGER NOT NULL,
+            check_count         INTEGER NOT NULL,
+            metadata_json       TEXT NOT NULL,
+            created_at          TEXT NOT NULL,
+            FOREIGN KEY(goal_id) REFERENCES research_goals(goal_id)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS idx_research_evidence_goal ON research_evidence(goal_id);
+        CREATE INDEX IF NOT EXISTS idx_research_evidence_criterion ON research_evidence(criterion_id);
+        CREATE INDEX IF NOT EXISTS idx_research_evidence_freshness ON research_evidence(data_as_of);
+
+        CREATE TABLE IF NOT EXISTS research_evidence_checks (
+            check_id            TEXT PRIMARY KEY,
+            evidence_id         TEXT NOT NULL,
+            goal_id             TEXT NOT NULL,
+            status              TEXT NOT NULL,
+            checker             TEXT NOT NULL,
+            detail_json         TEXT NOT NULL,
+            created_at          TEXT NOT NULL,
+            FOREIGN KEY(evidence_id) REFERENCES research_evidence(evidence_id)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS idx_research_checks_evidence ON research_evidence_checks(evidence_id);
+
+        CREATE TABLE IF NOT EXISTS research_tasks (
+            task_id             TEXT PRIMARY KEY,
+            goal_id             TEXT NOT NULL,
+            profile_id          TEXT NOT NULL,
+            kind                TEXT NOT NULL,
+            title               TEXT NOT NULL,
+            status              TEXT NOT NULL,
+            required            INTEGER NOT NULL,
+            sequence_index      INTEGER NOT NULL,
+            payload_json        TEXT NOT NULL,
+            lease_owner         TEXT,
+            lease_expires_at    TEXT,
+            current_attempt_id  TEXT,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL,
+            started_at          TEXT,
+            finished_at         TEXT,
+            FOREIGN KEY(goal_id) REFERENCES research_goals(goal_id)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS idx_research_tasks_goal ON research_tasks(goal_id);
+        CREATE INDEX IF NOT EXISTS idx_research_tasks_status ON research_tasks(status);
+
+        CREATE TABLE IF NOT EXISTS research_task_dependencies (
+            goal_id             TEXT NOT NULL,
+            task_id             TEXT NOT NULL,
+            depends_on_task_id  TEXT NOT NULL,
+            required            INTEGER NOT NULL,
+            PRIMARY KEY (goal_id, task_id, depends_on_task_id)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS idx_research_deps_task ON research_task_dependencies(task_id);
+
+        CREATE TABLE IF NOT EXISTS research_attempts (
+            attempt_id          TEXT PRIMARY KEY,
+            goal_id             TEXT NOT NULL,
+            task_id             TEXT NOT NULL,
+            run_id              TEXT,
+            status              TEXT NOT NULL,
+            attempt_no          INTEGER NOT NULL,
+            trigger             TEXT NOT NULL,
+            usage_json          TEXT NOT NULL,
+            result_json         TEXT,
+            error               TEXT,
+            lease_owner         TEXT,
+            lease_expires_at    TEXT,
+            created_at          TEXT NOT NULL,
+            started_at          TEXT,
+            finished_at         TEXT,
+            FOREIGN KEY(goal_id) REFERENCES research_goals(goal_id),
+            FOREIGN KEY(task_id) REFERENCES research_tasks(task_id)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS idx_research_attempts_task ON research_attempts(task_id);
+        CREATE INDEX IF NOT EXISTS idx_research_attempts_status ON research_attempts(status);
+
+        CREATE TABLE IF NOT EXISTS research_artifacts (
+            artifact_id         TEXT PRIMARY KEY,
+            goal_id             TEXT NOT NULL,
+            task_id             TEXT,
+            attempt_id          TEXT,
+            kind                TEXT NOT NULL,
+            name                TEXT NOT NULL,
+            object_hash         TEXT NOT NULL,
+            size_bytes          INTEGER NOT NULL,
+            media_type          TEXT NOT NULL,
+            metadata_json       TEXT NOT NULL,
+            created_at          TEXT NOT NULL,
+            FOREIGN KEY(goal_id) REFERENCES research_goals(goal_id)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS idx_research_artifacts_goal ON research_artifacts(goal_id);
+
+        CREATE TABLE IF NOT EXISTS research_audits (
+            audit_id            TEXT PRIMARY KEY,
+            goal_id             TEXT NOT NULL,
+            status              TEXT NOT NULL,
+            coverage_json       TEXT NOT NULL,
+            findings_json       TEXT NOT NULL,
+            artifact_id         TEXT,
+            created_at          TEXT NOT NULL,
+            FOREIGN KEY(goal_id) REFERENCES research_goals(goal_id)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS idx_research_audits_goal ON research_audits(goal_id);
+
+        CREATE TABLE IF NOT EXISTS research_publications (
+            publication_id      TEXT PRIMARY KEY,
+            goal_id             TEXT NOT NULL,
+            artifact_id         TEXT NOT NULL,
+            destination         TEXT NOT NULL,
+            object_hash         TEXT NOT NULL,
+            status              TEXT NOT NULL,
+            created_at          TEXT NOT NULL,
+            FOREIGN KEY(goal_id) REFERENCES research_goals(goal_id)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS idx_research_publications_goal ON research_publications(goal_id);
+
+        CREATE TABLE IF NOT EXISTS research_events (
+            event_id            TEXT PRIMARY KEY,
+            goal_id             TEXT NOT NULL,
+            sequence            INTEGER NOT NULL,
+            event_type          TEXT NOT NULL,
+            task_id             TEXT,
+            attempt_id          TEXT,
+            run_id              TEXT,
+            payload_json        TEXT NOT NULL,
+            mirrored_at         TEXT,
+            created_at          TEXT NOT NULL,
+            UNIQUE(goal_id, sequence),
+            FOREIGN KEY(goal_id) REFERENCES research_goals(goal_id)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS idx_research_events_goal_seq ON research_events(goal_id, sequence);
+        CREATE INDEX IF NOT EXISTS idx_research_events_mirror ON research_events(mirrored_at);
         """,
     ),
 )

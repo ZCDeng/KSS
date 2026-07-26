@@ -191,6 +191,15 @@ final class KSSStore: ObservableObject {
     @Published var agentFollowUpCount = 0
     @Published var agentQueueAcknowledgement: AgentQueueAcknowledgement?
     @Published var agentProtocolUnavailable = false
+    // MARK: Deep Research workbench
+    @Published var researchGoals: [ResearchGoalSummary] = []
+    @Published var selectedResearchGoalId: String?
+    @Published var selectedResearchGoal: ResearchGoalDetail?
+    @Published var researchProfiles: [ResearchProfileSummary] = []
+    @Published var researchEventsByGoal: [String: [ResearchEvent]] = [:]
+    @Published var researchSequenceIssues: [String: String] = [:]
+    @Published var isLoadingResearch = false
+    @Published var researchCandidate: ResearchCandidate?
     /// 当前阻塞中的 confirm 闸（后台流式线程持，UI tap 后 resolve）。
     private var activeConfirmGate: ChatConfirmGate?
     private var activeAgentControl: BridgeClient.AgentControlChannel?
@@ -204,6 +213,9 @@ final class KSSStore: ObservableObject {
     private var pendingQueueClientMessageId: String?
     private var agentMessageStartCounts: [String: Int] = [:]
     private var agentCurrentAssistantMessageIds: [String: UUID] = [:]
+    private var researchSeenSequences: [String: Set<Int>] = [:]
+    private var researchExpectedSequence: [String: Int] = [:]
+    private var researchEventEpoch: [String: UUID] = [:]
 
     let bridge: BridgeClient?
 
@@ -558,6 +570,10 @@ final class KSSStore: ObservableObject {
             }
         case "queue_update":
             applyAgentQueueUpdate(frame)
+        case "research_candidate":
+            // A candidate is only an affordance for the user. Receiving it must
+            // never create or start a durable research goal.
+            researchCandidate = frame.researchCandidate
         case "compaction_start":
             agentContextUsage = frame.contextUsage ?? AgentContextUsage(used: nil, limit: nil, percent: nil, label: "压缩中")
         case "compaction_end":
@@ -587,6 +603,30 @@ final class KSSStore: ObservableObject {
         if let sessionId = selectedAgentSessionId {
             chatMessagesByAgentSession[sessionId] = chatMessages
         }
+        return true
+    }
+
+    @discardableResult
+    func applyResearchEvent(_ event: ResearchEvent) -> Bool {
+        let goalId = event.goalId
+        var seen = researchSeenSequences[goalId] ?? []
+        if seen.contains(event.sequence) { return false }
+        seen.insert(event.sequence)
+        researchSeenSequences[goalId] = seen
+
+        let expected = researchExpectedSequence[goalId] ?? 1
+        if event.sequence > expected {
+            researchSequenceIssues[goalId] = "研究事件丢帧：预期 \(expected)，收到 \(event.sequence)"
+        }
+        researchExpectedSequence[goalId] = max(expected, event.sequence + 1)
+
+        var events = researchEventsByGoal[goalId] ?? []
+        events.append(event)
+        events.sort {
+            if $0.sequence == $1.sequence { return $0.eventId < $1.eventId }
+            return $0.sequence < $1.sequence
+        }
+        researchEventsByGoal[goalId] = events
         return true
     }
 
@@ -1944,6 +1984,237 @@ final class KSSStore: ObservableObject {
             // 完成回调可能在主线程外触发——防御性 hop 回 MainActor 改 @Published（已在主线程亦安全）。
             Task { @MainActor in
                 if let err { self?.errorMessage = err.errorDescription }
+            }
+        }
+    }
+
+    // MARK: - Deep Research
+
+    func loadResearchGoals(selecting goalId: String? = nil) async {
+        guard let bridge else {
+            errorMessage = "Cannot locate KSS project root"
+            return
+        }
+        isLoadingResearch = true
+        errorMessage = nil
+        do {
+            let response = try await Task.detached {
+                try bridge.agentResearch(action: "list")
+            }.value
+            if let error = response.error, !error.isEmpty {
+                errorMessage = "读取深度研究失败：\(error)"
+            } else {
+                researchGoals = response.goals
+                if let profiles = response.profiles { researchProfiles = profiles }
+                let target = goalId
+                    ?? selectedResearchGoalId
+                    ?? response.goals.first?.goalId
+                if let target {
+                    await openResearchGoal(target)
+                }
+            }
+        } catch {
+            errorMessage = "读取深度研究失败：\(error.localizedDescription)"
+        }
+        isLoadingResearch = false
+    }
+
+    func createResearchGoal(objective: String, profileId: String = "investment-weekly-v3") async {
+        guard let bridge else {
+            errorMessage = "Cannot locate KSS project root"
+            return
+        }
+        let trimmed = objective.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        isLoadingResearch = true
+        errorMessage = nil
+        do {
+            let response = try await Task.detached {
+                try bridge.agentResearch(
+                    action: "create",
+                    clientRequestId: UUID().uuidString,
+                    profileId: profileId,
+                    objective: trimmed)
+            }.value
+            if let error = response.error, !error.isEmpty {
+                errorMessage = "创建研究目标失败：\(error)"
+            } else if let goal = response.goal {
+                selectedResearchGoalId = goal.goalId
+                ingestResearchDetail(goal)
+                beginResearchEventReplay(goalId: goal.goalId)
+            } else {
+                researchGoals = response.goals.isEmpty ? researchGoals : response.goals
+                let goalId = response.goals.first?.goalId
+                isLoadingResearch = false
+                await loadResearchGoals(selecting: goalId)
+                return
+            }
+        } catch {
+            errorMessage = "创建研究目标失败：\(error.localizedDescription)"
+        }
+        isLoadingResearch = false
+    }
+
+    func openResearchGoal(_ goalId: String) async {
+        guard let bridge else { return }
+        selectedResearchGoalId = goalId
+        isLoadingResearch = true
+        do {
+            let response = try await Task.detached {
+                try bridge.agentResearch(action: "open", goalId: goalId)
+            }.value
+            if let error = response.error, !error.isEmpty {
+                errorMessage = "打开研究目标失败：\(error)"
+            } else if let goal = response.goal {
+                ingestResearchDetail(goal)
+                if let profiles = response.profiles { researchProfiles = profiles }
+                beginResearchEventReplay(goalId: goalId)
+            }
+        } catch {
+            errorMessage = "打开研究目标失败：\(error.localizedDescription)"
+        }
+        isLoadingResearch = false
+    }
+
+    func performResearchAction(_ action: String, taskId: String? = nil) async {
+        guard let bridge, let goalId = selectedResearchGoalId else { return }
+        isLoadingResearch = true
+        errorMessage = nil
+        do {
+            let response = try await Task.detached {
+                try bridge.agentResearch(
+                    action: action,
+                    clientRequestId: UUID().uuidString,
+                    goalId: goalId,
+                    taskId: taskId)
+            }.value
+            if let error = response.error, !error.isEmpty {
+                errorMessage = "研究操作失败：\(error)"
+            } else if let goal = response.goal {
+                ingestResearchDetail(goal)
+            }
+            isLoadingResearch = false
+            await openResearchGoal(goalId)
+        } catch {
+            errorMessage = "研究操作失败：\(error.localizedDescription)"
+            isLoadingResearch = false
+        }
+    }
+
+    func exportResearchDraft(
+        _ artifact: ResearchArtifact,
+        destination: String,
+        overwrite: Bool = false
+    ) async -> Bool {
+        guard let bridge, let goalId = selectedResearchGoalId else { return false }
+        do {
+            let response = try await Task.detached {
+                try bridge.agentArtifacts(
+                    action: "export_draft",
+                    goalId: goalId,
+                    artifactId: artifact.artifactId,
+                    destination: destination,
+                    overwrite: overwrite)
+            }.value
+            if let error = response.error, !error.isEmpty {
+                errorMessage = "导出草稿失败：\(error)"
+                return false
+            }
+            return true
+        } catch {
+            errorMessage = "导出草稿失败：\(error.localizedDescription)"
+            return false
+        }
+    }
+
+    func publishResearchArtifact(
+        _ artifact: ResearchArtifact,
+        destination: String,
+        overwrite: Bool = true
+    ) async -> Bool {
+        guard let bridge, let goalId = selectedResearchGoalId else { return false }
+        do {
+            let response = try await Task.detached {
+                try bridge.agentArtifacts(
+                    action: "publish",
+                    goalId: goalId,
+                    artifactId: artifact.artifactId,
+                    destination: destination,
+                    overwrite: overwrite)
+            }.value
+            if let error = response.error, !error.isEmpty {
+                errorMessage = "发布研究产物失败：\(error)"
+                return false
+            }
+            await openResearchGoal(goalId)
+            return true
+        } catch {
+            errorMessage = "发布研究产物失败：\(error.localizedDescription)"
+            return false
+        }
+    }
+
+    private func upsertResearchGoal(_ goal: ResearchGoalSummary) {
+        if let index = researchGoals.firstIndex(where: { $0.goalId == goal.goalId }) {
+            researchGoals[index] = goal
+        } else {
+            researchGoals.insert(goal, at: 0)
+        }
+    }
+
+    private func ingestResearchDetail(_ goal: ResearchGoalDetail) {
+        selectedResearchGoal = goal
+        upsertResearchGoal(goal.summary)
+        for event in goal.events {
+            _ = applyResearchEvent(event)
+        }
+    }
+
+    private func beginResearchEventReplay(goalId: String) {
+        guard let bridge else { return }
+        let epoch = UUID()
+        researchEventEpoch[goalId] = epoch
+        Task.detached { [weak self] in
+            guard let self else { return }
+            var backoffNanoseconds: UInt64 = 750_000_000
+            while !Task.isCancelled {
+                let after = await MainActor.run {
+                    self.researchEventsByGoal[goalId]?.last?.sequence ?? 0
+                }
+                var streamError: String?
+                bridge.agentResearchEvents(
+                    goalId: goalId,
+                    afterSequence: after,
+                    onEvent: { [weak self] event in
+                        Task { @MainActor [weak self] in
+                            guard self?.researchEventEpoch[goalId] == epoch else { return }
+                            _ = self?.applyResearchEvent(event)
+                        }
+                    },
+                    onEnd: { error in streamError = error })
+
+                let shouldContinue = await MainActor.run { [weak self] in
+                    guard let self,
+                          self.researchEventEpoch[goalId] == epoch,
+                          self.selectedResearchGoalId == goalId
+                    else { return false }
+                    let terminal = [
+                        "completed", "failed", "cancelled", "aborted", "blocked",
+                        "budget_limited", "insufficient_evidence", "needs_refresh",
+                    ]
+                    return !terminal.contains(self.selectedResearchGoal?.status.lowercased() ?? "")
+                }
+                guard shouldContinue else { return }
+                if let streamError {
+                    await MainActor.run { [weak self] in
+                        guard self?.researchEventEpoch[goalId] == epoch else { return }
+                        self?.errorMessage = streamError
+                    }
+                    backoffNanoseconds = min(backoffNanoseconds * 2, 5_000_000_000)
+                } else {
+                    backoffNanoseconds = 750_000_000
+                }
+                try? await Task.sleep(nanoseconds: backoffNanoseconds)
             }
         }
     }

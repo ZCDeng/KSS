@@ -397,6 +397,9 @@ struct AIChatView: View {
                 if indicatorSuggestion?.family != nil {
                     xcomIndicatorSuggestion
                 }
+                if store.researchCandidate != nil {
+                    xcomResearchCandidate
+                }
 
                 HStack {
                     Text("开始研究")
@@ -501,6 +504,38 @@ struct AIChatView: View {
             }
             .buttonStyle(.plain)
             .disabled(store.isChatStreaming)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(theme.hairline).frame(height: 1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var xcomResearchCandidate: some View {
+        if let candidate = store.researchCandidate {
+            Button {
+                store.selectedSection = .runbook
+            } label: {
+                HStack(alignment: .top, spacing: 12) {
+                    xcomIdentityIcon(systemImage: "scope", accent: theme.accent)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("转为深度研究")
+                            .font(KSSFont.themed(15, .bold, theme: theme))
+                            .foregroundStyle(theme.textPrimary)
+                        Text(candidate.objective)
+                            .font(KSSFont.themed(13, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Image(systemName: "arrow.right")
+                        .foregroundStyle(theme.textSecondary)
+                }
+                .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+                .padding(.vertical, SeesawXcomChrome.rowVerticalPadding)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
             .overlay(alignment: .bottom) {
                 Rectangle().fill(theme.hairline).frame(height: 1)
             }
@@ -1297,6 +1332,20 @@ struct AIChatView: View {
                     indicatorSuggestionChip
                         .frame(width: width)
                         .padding(.bottom, 18)
+                }
+                if let candidate = store.researchCandidate {
+                    Button {
+                        store.selectedSection = .runbook
+                    } label: {
+                        Label("转为深度研究：\(candidate.objective)", systemImage: "scope")
+                            .lineLimit(2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(14)
+                            .background(theme.accentSoft, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+                    }
+                    .buttonStyle(.plain)
+                    .frame(width: width)
+                    .padding(.bottom, 18)
                 }
 
                 capabilityCards(width: width)

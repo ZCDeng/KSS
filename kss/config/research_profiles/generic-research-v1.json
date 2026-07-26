@@ -1,0 +1,46 @@
+{
+  "profile_id": "generic-research-v1",
+  "title": "通用深度研究骨架",
+  "version": 1,
+  "inputs_schema": {
+    "type": "object",
+    "required": ["objective"],
+    "properties": {
+      "objective": {"type": "string"},
+      "scope": {"type": "string"},
+      "as_of": {"type": "string"}
+    }
+  },
+  "criteria": [
+    {"label": "问题定义", "required": true, "min_verified_evidence": 1, "allowed_tiers": ["deterministic_calculation", "official_or_primary"], "freshness_days": null, "validator": "scope"},
+    {"label": "证据覆盖", "required": true, "min_verified_evidence": 2, "allowed_tiers": ["official_or_primary", "reputable_secondary"], "freshness_days": 30, "validator": "evidence"},
+    {"label": "结论审计", "required": true, "min_verified_evidence": 1, "allowed_tiers": ["deterministic_calculation"], "freshness_days": null, "validator": "audit"}
+  ],
+  "task_graph": [
+    {"kind": "freeze_snapshot", "title": "冻结输入和范围", "required": true, "depends_on": [], "protected": true},
+    {"kind": "collect_sources", "title": "采集受控证据", "required": true, "depends_on": ["freeze_snapshot"]},
+    {"kind": "synthesize_claims", "title": "提出结构化主张", "required": true, "depends_on": ["collect_sources"]},
+    {"kind": "delivery_audit", "title": "执行完成审计", "required": true, "depends_on": ["synthesize_claims"], "protected": true}
+  ],
+  "tool_whitelist": ["research-bundle", "research-fetch", "research-search", "read_skill_resource"],
+  "skill_whitelist": [],
+  "freshness": {"default_days": 30},
+  "budget": {
+    "max_nodes": 24,
+    "max_seconds": 3600,
+    "max_provider_tokens": 200000,
+    "per_node_steps": 8,
+    "per_node_seconds": 240
+  },
+  "sections": [
+    {"anchor": "overview", "required": true},
+    {"anchor": "methodology", "required": true},
+    {"anchor": "audit", "required": true}
+  ],
+  "audit_rules": {
+    "strict_csp": true,
+    "html_escape_model_text": true,
+    "publish_requires_audit_pass": true
+  },
+  "allow_model_to_extend_dag": false
+}

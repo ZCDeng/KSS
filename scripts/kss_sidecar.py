@@ -18,6 +18,7 @@ import signal
 import sys
 import time
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 import inspect
 from typing import Any, Callable
@@ -65,6 +66,8 @@ _CONFIRM_TIMEOUT = 300.0
 _AGENT_ABORTS: dict[str, Any] = {}
 _AGENT_SERVICE: KSSAgentService | None = None
 _AGENT_SERVICE_ROOTS: tuple[Path, Path] | None = None
+_RESEARCH_SERVICE: Any | None = None
+_RESEARCH_SERVICE_ROOTS: tuple[Path, Path] | None = None
 
 
 def _agent_service() -> KSSAgentService:
@@ -75,6 +78,28 @@ def _agent_service() -> KSSAgentService:
         _AGENT_SERVICE = KSSAgentService(*roots)
         _AGENT_SERVICE_ROOTS = roots
     return _AGENT_SERVICE
+
+
+def _research_service() -> Any | None:
+    """Return optional ResearchService via lazy import; tests may monkeypatch."""
+    global _RESEARCH_SERVICE, _RESEARCH_SERVICE_ROOTS
+    roots = (Path(bridge.STATE_ROOT), Path(bridge.PROJECT_ROOT))
+    if _RESEARCH_SERVICE is not None and _RESEARCH_SERVICE_ROOTS == roots:
+        return _RESEARCH_SERVICE
+    try:
+        from kss.research.service import ResearchService  # type: ignore  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001 - protocol must remain available before core lands.
+        logger.info("[research] ResearchService unavailable: %s", exc)
+        _RESEARCH_SERVICE = None
+        _RESEARCH_SERVICE_ROOTS = roots
+        return None
+        _RESEARCH_SERVICE = ResearchService(
+            state_root=bridge.STATE_ROOT,
+            project_root=bridge.PROJECT_ROOT,
+            allow_synthetic_fixture=True,
+        )
+    _RESEARCH_SERVICE_ROOTS = roots
+    return _RESEARCH_SERVICE
 
 def _session_store() -> SessionStore:
     return SessionStore(bridge.STATE_ROOT)
@@ -566,6 +591,222 @@ def _service_queue_discard_sync(
     return True, {"item": _queue_item_wire(result)}
 
 
+_RESEARCH_ACTION_METHODS: dict[str, tuple[str, ...]] = {
+    "create": ("create", "create_goal", "create_research"),
+    "list": ("list", "list_goals", "list_research"),
+    "open": ("open", "open_goal", "get", "get_goal"),
+    "start": ("start", "start_goal", "start_research"),
+    "pause": ("pause", "pause_goal"),
+    "resume": ("resume", "resume_goal"),
+    "cancel": ("cancel", "cancel_goal"),
+    "retry_task": ("retry_task", "retry", "retry_research_task"),
+    "refresh_snapshot": ("refresh_snapshot", "snapshot", "get_snapshot"),
+    "audit": ("audit", "audit_goal"),
+}
+
+_ARTIFACT_ACTION_METHODS: dict[str, tuple[str, ...]] = {
+    "list": ("list_artifacts", "artifacts"),
+    "export_draft": ("export_draft", "export_artifact_draft"),
+    "publish": ("publish", "publish_artifact"),
+}
+
+
+def _research_unavailable_payload() -> dict[str, Any]:
+    return {
+        "protocol_version": 1,
+        "ok": False,
+        "error": "research_unavailable",
+        "hint": "kss.research.service.ResearchService is not available",
+    }
+
+
+def _find_method(service: Any, candidates: tuple[str, ...]) -> Callable[..., Any] | None:
+    for name in candidates:
+        method = getattr(service, name, None)
+        if callable(method):
+            return method
+    return None
+
+
+def _research_action_payload(req: dict[str, Any]) -> dict[str, Any]:
+    service = _research_service()
+    if service is None:
+        return _research_unavailable_payload()
+    action = str(req.get("action") or "list")
+    candidates = _RESEARCH_ACTION_METHODS.get(action)
+    if candidates is None:
+        return {"protocol_version": 1, "ok": False, "error": f"unknown agent-research action: {action}"}
+    method = _find_method(service, candidates)
+    if method is None:
+        return {
+            "protocol_version": 1,
+            "ok": False,
+            "error": "research_action_unavailable",
+            "action": action,
+        }
+    result = _call_with_supported_kwargs(
+        method,
+        action=action,
+        goal=req.get("goal"),
+        goal_id=req.get("goal_id") or req.get("id"),
+        task_id=req.get("task_id"),
+        artifact_id=req.get("artifact_id"),
+        input=req.get("input"),
+        query=req.get("query"),
+        payload=req,
+    )
+    if inspect.isawaitable(result):
+        if hasattr(result, "close"):
+            result.close()
+        return {
+            "protocol_version": 1,
+            "ok": False,
+            "error": "research_async_unavailable",
+            "action": action,
+        }
+    payload = result if isinstance(result, dict) else {"result": result}
+    payload.setdefault("ok", not bool(payload.get("error")))
+    payload.setdefault("protocol_version", 1)
+    payload.setdefault("event", action)
+    if "goal" not in payload and (req.get("goal") or req.get("goal_id")):
+        payload["goal"] = req.get("goal") or req.get("goal_id")
+    return payload
+
+
+def _artifact_action_payload(req: dict[str, Any]) -> dict[str, Any]:
+    service = _research_service()
+    if service is None:
+        return _research_unavailable_payload()
+    action = str(req.get("action") or "list")
+    candidates = _ARTIFACT_ACTION_METHODS.get(action)
+    if candidates is None:
+        return {"protocol_version": 1, "ok": False, "error": f"unknown agent-artifacts action: {action}"}
+    method = _find_method(service, candidates)
+    if method is None:
+        return {
+            "protocol_version": 1,
+            "ok": False,
+            "error": "artifact_action_unavailable",
+            "action": action,
+        }
+    result = _call_with_supported_kwargs(
+        method,
+        action=action,
+        goal_id=req.get("goal_id") or req.get("id"),
+        artifact_id=req.get("artifact_id"),
+        format=req.get("format"),
+        payload=req,
+    )
+    if inspect.isawaitable(result):
+        if hasattr(result, "close"):
+            result.close()
+        return {
+            "protocol_version": 1,
+            "ok": False,
+            "error": "research_async_unavailable",
+            "action": action,
+        }
+    payload = result if isinstance(result, dict) else {"result": result}
+    payload.setdefault("ok", not bool(payload.get("error")))
+    payload.setdefault("protocol_version", 1)
+    payload.setdefault("event", action)
+    if "goal" not in payload and (req.get("goal_id") or req.get("id")):
+        payload["goal"] = req.get("goal_id") or req.get("id")
+    return payload
+
+
+def _normalize_research_frame(raw: Any, *, goal_id: str, sequence: int) -> dict[str, Any]:
+    payload = dict(raw) if isinstance(raw, dict) else {"data": raw}
+    resolved_sequence = int(payload.get("sequence") or sequence)
+    frame = {
+        "protocol_version": 1,
+        "goal": payload.get("goal") or payload.get("goal_id") or goal_id,
+        "goal_id": payload.get("goal_id") or payload.get("goal") or goal_id,
+        "event_id": payload.get("event_id") or f"{goal_id}:{resolved_sequence}",
+        "event": payload.get("event") or payload.get("type") or "research_event",
+        "type": payload.get("type") or payload.get("event") or "research_event",
+        "sequence": resolved_sequence,
+        "timestamp": payload.get("timestamp") or payload.get("created_at")
+        or datetime.now(UTC).isoformat(),
+    }
+    frame.update(payload)
+    frame["protocol_version"] = 1
+    frame.setdefault("goal", goal_id)
+    frame.setdefault("goal_id", goal_id)
+    frame.setdefault("event_id", f"{goal_id}:{resolved_sequence}")
+    frame.setdefault("event", frame.get("type") or "research_event")
+    frame.setdefault("type", frame.get("event") or "research_event")
+    frame["sequence"] = int(frame.get("sequence") or sequence)
+    frame.setdefault("timestamp", datetime.now(UTC).isoformat())
+    return frame
+
+
+def _research_events_iter(service: Any, *, goal_id: str, after_sequence: int) -> Any:
+    method = _find_method(
+        service,
+        ("events", "replay_events", "list_events", "event_stream", "subscribe_events"),
+    )
+    if method is None:
+        return []
+    return _call_with_supported_kwargs(
+        method,
+        goal_id=goal_id,
+        goal=goal_id,
+        after_sequence=after_sequence,
+    )
+
+
+async def _handle_agent_research_events(
+    writer: asyncio.StreamWriter,
+    req: dict[str, Any],
+) -> None:
+    goal_id = req.get("goal_id") or req.get("goal")
+    if not isinstance(goal_id, str) or not goal_id:
+        writer.write((json.dumps({
+            "protocol_version": 1,
+            "goal": "",
+            "event": "error",
+            "type": "error",
+            "sequence": 1,
+            "error": "agent-research-events requires goal_id",
+        }, ensure_ascii=False) + "\n").encode("utf-8"))
+        await writer.drain()
+        return
+    after_sequence = int(req.get("after_sequence") or 0)
+    service = _research_service()
+    if service is None:
+        writer.write((json.dumps({
+            **_research_unavailable_payload(),
+            "goal": goal_id,
+            "goal_id": goal_id,
+            "event": "error",
+            "type": "error",
+            "sequence": after_sequence + 1,
+        }, ensure_ascii=False) + "\n").encode("utf-8"))
+        await writer.drain()
+        return
+    stream = _research_events_iter(service, goal_id=goal_id, after_sequence=after_sequence)
+    if inspect.isawaitable(stream):
+        stream = await stream
+    sequence = after_sequence
+    if hasattr(stream, "__aiter__"):
+        async for item in stream:
+            sequence += 1
+            frame = _normalize_research_frame(item, goal_id=goal_id, sequence=sequence)
+            sequence = int(frame["sequence"])
+            writer.write((json.dumps(frame, ensure_ascii=False) + "\n").encode("utf-8"))
+            await writer.drain()
+        return
+    for item in list(stream or []):
+        sequence += 1
+        frame = _normalize_research_frame(item, goal_id=goal_id, sequence=sequence)
+        sequence = int(frame["sequence"])
+        if sequence <= after_sequence:
+            continue
+        writer.write((json.dumps(frame, ensure_ascii=False) + "\n").encode("utf-8"))
+        await writer.drain()
+
+
 async def _agent_control_reader(
     reader: asyncio.StreamReader,
     pending: dict,
@@ -897,6 +1138,10 @@ def _handle_agent_json_command(req: dict) -> str | None:
     """Agent v1 非流式 JSON 命令；返回标准 sidecar response。"""
     cmd = req.get("cmd")
     try:
+        if cmd == "agent-research":
+            return _sidecar_ok(_research_action_payload(req))
+        if cmd == "agent-artifacts":
+            return _sidecar_ok(_artifact_action_payload(req))
         if cmd == "agent-session":
             store = _session_store()
             action = req.get("action") or "open"
@@ -1123,6 +1368,21 @@ async def _on_connection(reader: asyncio.StreamReader, writer: asyncio.StreamWri
             return
         if cmd == "agent-turn":
             await _handle_agent_turn(reader, writer, req if isinstance(req, dict) else {})
+            return
+        if cmd == "agent-research-events":
+            await _handle_agent_research_events(writer, req if isinstance(req, dict) else {})
+            return
+        if cmd in {"agent-research", "agent-artifacts"}:
+            # Research compilation and local audits can be CPU/disk heavy. Keep
+            # them off the asyncio accept loop so event replay and pause/cancel
+            # control connections remain responsive.
+            agent_resp = await asyncio.to_thread(
+                _handle_agent_json_command,
+                req if isinstance(req, dict) else {},
+            )
+            if agent_resp is not None:
+                writer.write((agent_resp + "\n").encode("utf-8"))
+                await writer.drain()
             return
         agent_resp = _handle_agent_json_command(req) if isinstance(req, dict) else None
         if agent_resp is not None:
