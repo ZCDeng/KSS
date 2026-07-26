@@ -10,7 +10,6 @@ clicks a task button in the app.
 from __future__ import annotations
 
 import csv
-import glob
 import hashlib
 import json
 import math
@@ -1469,10 +1468,15 @@ def _run_update_cs_data() -> dict[str, Any]:
     python = _full_python()
     if python is None:
         return _missing_full_env_result("update-cs-data", "同步股票池日线", started)
+    # 只拉取“应有日线日”。周末、节假日和交易日收盘前若把自然日直接传给
+    # 115+ 个标的，每只都会向 Tushare 请求一个必然为空的窗口；数据源变慢时，
+    # 整批会在 600 秒总闸处超时。统一 reference 还能确保任务页刷新与自检的
+    # 新鲜度口径完全一致。
+    reference_date = _reference_trade_date()
     return _run_process_task(
         "update-cs-data",
         "同步股票池日线",
-        [str(python), "scripts/update_cs_data.py"],
+        [str(python), "scripts/update_cs_data.py", "--end", reference_date],
         started,
         artifacts=["cs_data_*.csv"],
         timeout=600,
@@ -5876,7 +5880,10 @@ def _persist_page_pull(symbol: str, provider: str, interval_minutes: int,
         return
     try:
         from kss.config.paths import INTRADAY_DB  # noqa: PLC0415
-        import sqlite3, json as _json, uuid, time as _t
+        import json as _json
+        import sqlite3
+        import time as _t
+        import uuid
 
         db = INTRADAY_DB
         conn = sqlite3.connect(str(db), timeout=5)

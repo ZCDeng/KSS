@@ -152,6 +152,35 @@ def test_self_check_includes_cs_data_item(state_root: Path) -> None:
     assert "cs_data" in {item["item"] for item in result["items"]}
 
 
+def test_update_task_uses_same_reference_date_as_freshness(
+    state_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict = {}
+    monkeypatch.setattr(b, "_full_python", lambda: Path("/fake/python"))
+
+    def fake_run(task_id, title, command, started, **kwargs):  # noqa: ANN001, ANN202
+        captured.update(
+            task_id=task_id,
+            title=title,
+            command=command,
+            started=started,
+            kwargs=kwargs,
+        )
+        return {"status": "success"}
+
+    monkeypatch.setattr(b, "_run_process_task", fake_run)
+
+    assert b._run_update_cs_data()["status"] == "success"
+    assert captured["task_id"] == "update-cs-data"
+    assert captured["command"] == [
+        "/fake/python",
+        "scripts/update_cs_data.py",
+        "--end",
+        _REFERENCE,
+    ]
+    assert captured["kwargs"]["timeout"] == 600
+
+
 # --------------------------------------------------------------------------- #
 # ④ cs-freshness 命令（看门狗 Telegram 路径）
 # --------------------------------------------------------------------------- #
