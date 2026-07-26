@@ -480,7 +480,8 @@ class ResearchRepository:
         return out
 
     def mark_stale_running_attempts(self, *, lease_seconds: int = 900) -> int:
-        cutoff = datetime.now(timezone.utc) - timedelta(seconds=lease_seconds)
+        del lease_seconds  # lease_expires_at already encodes the timeout.
+        cutoff = datetime.now(timezone.utc)
         cutoff_text = cutoff.isoformat(timespec="seconds")
         with connect(self.db_path) as conn:
             ensure_schema(conn)
@@ -496,6 +497,15 @@ class ResearchRepository:
                 conn.execute(
                     "UPDATE research_tasks SET status='interrupted', updated_at=? WHERE task_id=? AND status='running'",
                     (utc_now(), row["task_id"]),
+                )
+                conn.execute(
+                    """
+                    UPDATE research_goals
+                    SET status='paused', termination_reason='interrupted',
+                        updated_at=?
+                    WHERE goal_id=? AND status='running'
+                    """,
+                    (utc_now(), row["goal_id"]),
                 )
                 self.append_event(
                     conn,

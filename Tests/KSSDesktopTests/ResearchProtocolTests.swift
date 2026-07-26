@@ -140,6 +140,23 @@ final class ResearchProtocolTests: XCTestCase {
         XCTAssertFalse(ResearchArtifactNavigationPolicy.allows(URL(string: "data:text/html,hello")!))
     }
 
+    func testArtifactPreviewLoaderRejectsTraversalAndReadsBoundedText() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kss-research-preview-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let report = root.appendingPathComponent("report.md")
+        try "safe preview".write(to: report, atomically: true, encoding: .utf8)
+
+        XCTAssertEqual(
+            ResearchArtifactPreviewLoader.load(relativePath: "report.md", under: root),
+            "safe preview")
+        XCTAssertNil(
+            ResearchArtifactPreviewLoader.load(relativePath: "../secret.md", under: root))
+        XCTAssertNil(
+            ResearchArtifactPreviewLoader.load(relativePath: "script.js", under: root))
+    }
+
     private func decodeEvent(_ json: String) throws -> ResearchEvent {
         try JSONDecoder().decode(ResearchEvent.self, from: Data(json.utf8))
     }

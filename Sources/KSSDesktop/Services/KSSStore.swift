@@ -2039,10 +2039,12 @@ final class KSSStore: ObservableObject {
             if let error = response.error, !error.isEmpty {
                 errorMessage = "创建研究目标失败：\(error)"
             } else if let goal = response.goal {
+                researchCandidate = nil
                 selectedResearchGoalId = goal.goalId
                 ingestResearchDetail(goal)
                 beginResearchEventReplay(goalId: goal.goalId)
             } else {
+                researchCandidate = nil
                 researchGoals = response.goals.isEmpty ? researchGoals : response.goals
                 let goalId = response.goals.first?.goalId
                 isLoadingResearch = false

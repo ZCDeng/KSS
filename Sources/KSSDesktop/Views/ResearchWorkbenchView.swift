@@ -95,7 +95,6 @@ struct ResearchWorkbenchView: View {
                         .foregroundStyle(theme.textPrimary)
                         .lineLimit(4)
                     Button("创建为研究目标") {
-                        store.researchCandidate = nil
                         Task {
                             await store.createResearchGoal(
                                 objective: candidate.objective,
@@ -403,7 +402,9 @@ struct ResearchWorkbenchView: View {
                     }
                 }
                 if let artifact = selectedArtifact ?? artifacts.first {
-                    ResearchArtifactPreview(artifact: artifact)
+                    ResearchArtifactPreview(
+                        artifact: artifact,
+                        stateRoot: store.bridge?.stateRoot)
                         .frame(minHeight: 260)
                         .clipShape(RoundedRectangle(cornerRadius: 9))
                         .overlay(
@@ -475,7 +476,13 @@ struct ResearchWorkbenchView: View {
         panel.canCreateDirectories = true
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            Task { _ = await store.exportResearchDraft(artifact, destination: url.path) }
+            // NSSavePanel already owns the user's replace confirmation.
+            Task {
+                _ = await store.exportResearchDraft(
+                    artifact,
+                    destination: url.path,
+                    overwrite: true)
+            }
         }
     }
 
@@ -535,8 +542,33 @@ enum ResearchArtifactNavigationPolicy {
     }
 }
 
+enum ResearchArtifactPreviewLoader {
+    static func load(relativePath: String?, under root: URL?) -> String? {
+        guard let root, let relativePath, !relativePath.isEmpty,
+              !relativePath.hasPrefix("/"),
+              !relativePath.split(separator: "/").contains("..")
+        else { return nil }
+        let allowedExtensions = ["html", "htm", "md", "markdown", "txt", "json"]
+        guard allowedExtensions.contains(URL(fileURLWithPath: relativePath).pathExtension.lowercased())
+        else { return nil }
+        let normalizedRoot = root.standardizedFileURL.resolvingSymlinksInPath()
+        let candidate = normalizedRoot
+            .appendingPathComponent(relativePath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        guard candidate.path == normalizedRoot.path
+                || candidate.path.hasPrefix(normalizedRoot.path + "/"),
+              let attributes = try? FileManager.default.attributesOfItem(atPath: candidate.path),
+              let size = attributes[.size] as? NSNumber,
+              size.intValue <= 2_000_000
+        else { return nil }
+        return try? String(contentsOf: candidate, encoding: .utf8)
+    }
+}
+
 private struct ResearchArtifactPreview: NSViewRepresentable {
     let artifact: ResearchArtifact
+    let stateRoot: URL?
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -546,16 +578,20 @@ private struct ResearchArtifactPreview: NSViewRepresentable {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
-        webView.setValue(false, forKey: "drawsBackground")
+        webView.underPageBackgroundColor = .clear
         return webView
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         let body: String
-        if artifact.mediaType == "text/html", let content = artifact.content {
+        let loadedContent = artifact.content
+            ?? ResearchArtifactPreviewLoader.load(
+                relativePath: artifact.relativePath,
+                under: stateRoot)
+        if artifact.mediaType == "text/html", let content = loadedContent {
             body = content
         } else {
-            let preview = artifact.content
+            let preview = loadedContent
                 ?? "尚无内嵌预览。\n\n文件：\(artifact.logicalName)\n类型：\(artifact.mediaType ?? artifact.kind)\n路径：\(artifact.relativePath ?? "由后端管理")"
             body = "<pre>\(Self.escape(preview))</pre>"
         }
