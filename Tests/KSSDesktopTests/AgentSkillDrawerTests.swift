@@ -68,8 +68,9 @@ final class AgentSkillDrawerTests: XCTestCase {
         let palette = String(source[skillsStart.lowerBound..<contextStart.lowerBound])
 
         XCTAssertTrue(palette.contains("\\(enabledSkillCount) 个启用"))
-        XCTAssertTrue(palette.contains("\\(sessionSkills.count) / 3 已加入"))
+        XCTAssertTrue(palette.contains("\\(sessionSkills.count) 个本会话"))
         XCTAssertTrue(palette.contains("\\(filteredSkills.count) 项 · 来源"))
+        XCTAssertFalse(palette.contains("选择本会话技能"), "纯状态说明不应占用一整行标题")
         XCTAssertFalse(palette.contains("text: \"(enabledSkillCount) 个启用\""))
         XCTAssertFalse(palette.contains("SettingsStatusCapsule(text: \"(sessionSkills.count)"))
         XCTAssertFalse(palette.contains("status: \"(filteredSkills.count) 项可见\""))

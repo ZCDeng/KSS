@@ -1636,12 +1636,6 @@ struct AIChatView: View {
                     focusSkillFilterTabs
 
                     focusSkillListHeader(
-                        title: "选择本会话技能",
-                        detail: "加入后会在当前会话的后续回复中使用；启用状态在所有会话中共享。",
-                        trailing: "\(sessionSkills.count) / 3 已加入"
-                    )
-
-                    focusSkillListHeader(
                         title: "技能目录",
                         trailing: "\(filteredSkills.count) 项 · 来源 · 信任 · 所需工具",
                         compact: true
