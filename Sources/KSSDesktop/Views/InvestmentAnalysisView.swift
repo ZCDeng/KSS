@@ -29,16 +29,25 @@ struct InvestmentAnalysisView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
+        // The divider expands this workspace to the available height.  Without
+        // explicit top alignment, SwiftUI centers the intrinsic-height list
+        // column beside it and leaves the cadence tabs in the middle of tall
+        // windows.
+        HStack(alignment: .top, spacing: 0) {
             VStack(spacing: 0) {
                 tabBar
                 reportList
+                    // The empty/loading state owns the space below the tabs;
+                    // it must not influence the position of the tab bar.
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .frame(width: XcomListChrome.listColumnWidth(theme.system))
+            .frame(maxHeight: .infinity, alignment: .top)
             Divider().overlay(theme.hairline)
             detailPane
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(theme.canvas)
         .task { await refresh(selecting: nil) }
         .onChange(of: cadence) { _, _ in

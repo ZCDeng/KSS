@@ -32,4 +32,18 @@ final class WorkspaceSectionTests: XCTestCase {
         let encoded = WorkspaceSection.encode(ordered)
         XCTAssertFalse(encoded.contains("Settings"))
     }
+
+    func testInvestmentAnalysisKeepsCadenceTabsAtTheTopOfTheArchiveColumn() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: root.appending(path: "Sources/KSSDesktop/Views/InvestmentAnalysisView.swift"),
+            encoding: .utf8)
+
+        XCTAssertTrue(source.contains("HStack(alignment: .top, spacing: 0)"))
+        XCTAssertTrue(source.contains("alignment: .topLeading"))
+        XCTAssertTrue(source.contains(".frame(maxHeight: .infinity, alignment: .top)"))
+    }
 }
