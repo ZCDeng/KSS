@@ -195,6 +195,10 @@ final class KSSStore: ObservableObject {
     @Published var agentMemories: [AgentMemoryRecord] = []
     @Published var agentMemoryCandidates: [AgentMemoryCandidate] = []
     @Published var agentSourceRecalls: [AgentSourceRecall] = []
+    /// Last explicitly requested Longbridge context. This is presentation
+    /// metadata only; the immutable full payload stays in the Agent JSONL
+    /// transcript/evidence ledger.
+    @Published var agentLiveMarketContexts: [AgentLiveMarketContext] = []
     @Published var agentContextUsage: AgentContextUsage?
     @Published var agentModel: String?
     @Published var agentProvider: String?
@@ -208,6 +212,10 @@ final class KSSStore: ObservableObject {
     @Published var agentProviderTestOK: Bool?
     @Published var agentProviderTestError: String?
     @Published var agentProviderTestHint: String?
+    /// Composer 只显示用户明确启用的模型。此偏好不含密钥，和 Provider
+    /// route 一样是 Seesaw 的本地非秘密状态；空集合表示尚未做过筛选，
+    /// 因而保守地展示目录中的全部模型，避免升级后把 Composer 变成空列表。
+    @Published private(set) var seesawVisibleModelRouteIDs: Set<String>
     @Published var agentUsage: AgentUsage?
     @Published var agentExistingRunId: String?
     @Published var agentLastEventIsError: Bool?
@@ -248,17 +256,111 @@ final class KSSStore: ObservableObject {
     private var researchExpectedSequence: [String: Int] = [:]
     private var researchEventEpoch: [String: UUID] = [:]
 
+    private static let seesawVisibleModelRouteIDsKey = "kss.seesaw.visibleModelRoutes.v1"
+
     let bridge: BridgeClient?
 
     init() {
         self.bridge = try? BridgeClient()
+        self.seesawVisibleModelRouteIDs = Set(
+            UserDefaults.standard.stringArray(forKey: Self.seesawVisibleModelRouteIDsKey) ?? []
+        )
         restoreLastAgentSession()
         refreshLLMCredentialsStatus()
     }
 
     init(testBridge bridge: BridgeClient?) {
         self.bridge = bridge
+        self.seesawVisibleModelRouteIDs = Set(
+            UserDefaults.standard.stringArray(forKey: Self.seesawVisibleModelRouteIDsKey) ?? []
+        )
         restoreLastAgentSession()
+    }
+
+    nonisolated static func seesawModelRouteID(providerID: String, modelID: String) -> String {
+        "\(providerID)::\(modelID)"
+    }
+
+    func isSeesawModelVisible(providerID: String, modelID: String) -> Bool {
+        seesawVisibleModelRouteIDs.isEmpty
+            || seesawVisibleModelRouteIDs.contains(Self.seesawModelRouteID(providerID: providerID, modelID: modelID))
+    }
+
+    func setSeesawModelVisible(providerID: String, modelID: String, visible: Bool) {
+        let routeID = Self.seesawModelRouteID(providerID: providerID, modelID: modelID)
+        if visible {
+            seesawVisibleModelRouteIDs.insert(routeID)
+        } else {
+            // Persist an explicit selection the first time a user hides a
+            // model; keep every other discovered model visible by seeding the
+            // current catalog before removing the requested route.
+            if seesawVisibleModelRouteIDs.isEmpty {
+                seesawVisibleModelRouteIDs = Set(agentProviders.flatMap { provider in
+                    (provider.models ?? []).map {
+                        Self.seesawModelRouteID(providerID: provider.id, modelID: $0.id)
+                    }
+                })
+            }
+            seesawVisibleModelRouteIDs.remove(routeID)
+        }
+        UserDefaults.standard.set(
+            seesawVisibleModelRouteIDs.sorted(),
+            forKey: Self.seesawVisibleModelRouteIDsKey
+        )
+    }
+
+    func liveContextScope(for input: String) -> [String: String]? {
+        Self.liveContextScope(for: input, watchlistSymbols: watchlistSymbols)
+    }
+
+    nonisolated static func liveContextScope(
+        for input: String,
+        watchlistSymbols: [String]
+    ) -> [String: String]? {
+        let normalized = input.lowercased()
+        let realtimeTerms = ["实时", "盘中", "此刻", "当前", "报价", "分时", "分钟", "现价", "最新价"]
+        guard realtimeTerms.contains(where: { normalized.contains($0) })
+            || normalized.contains("今天大盘")
+        else { return nil }
+        let symbols: [String]
+        let scope: String
+        let explicitlyNamedSymbols = Self.marketSymbols(in: input)
+        if !explicitlyNamedSymbols.isEmpty {
+            scope = "symbols"
+            symbols = Array(explicitlyNamedSymbols.prefix(12))
+        } else if normalized.contains("自选") || normalized.contains("watchlist") {
+            scope = "watchlist"
+            symbols = watchlistSymbols.isEmpty
+                ? Self.defaultLiveMarketSymbols()
+                : Array(watchlistSymbols.prefix(12))
+        } else {
+            scope = "market"
+            symbols = Self.defaultLiveMarketSymbols()
+        }
+        return [
+            "scope": scope,
+            "symbols": symbols.joined(separator: ","),
+            "reason": "explicit_current_market_intent",
+            "intent": "explain",
+        ]
+    }
+
+    nonisolated private static func defaultLiveMarketSymbols() -> [String] {
+        ["000001.SH", "399001.SZ", "399006.SZ", "000300.SH"]
+    }
+
+    nonisolated private static func marketSymbols(in input: String) -> [String] {
+        let pattern = #"\b[0345689][0-9]{5}(?:\.(?:SH|SZ|BJ))?\b"#
+        guard let expression = try? NSRegularExpression(
+            pattern: pattern,
+            options: [.caseInsensitive]
+        ) else { return [] }
+        let range = NSRange(input.startIndex..., in: input)
+        return expression.matches(in: input, range: range).compactMap { match in
+            Range(match.range, in: input).map { String(input[$0]).uppercased() }
+        }.reduce(into: []) { result, symbol in
+            if !result.contains(symbol) { result.append(symbol) }
+        }
     }
 
     // MARK: - 聊天一轮（流式 + 人在环内写闸）
@@ -319,9 +421,14 @@ final class KSSStore: ObservableObject {
         agentLastEventIsError = nil
         agentTerminationReason = nil
         agentSequenceIssue = nil
+        agentLiveMarketContexts = []
         agentDuplicateHydrationKeys.removeAll()
         agentMessageStartCounts.removeAll()
         let clientTurnId = UUID().uuidString
+        // Do not warm Longbridge on every conversation open or historical
+        // question. The sidecar receives an explicit scope only for a
+        // current-market request and emits the resulting provenance visibly.
+        let liveContextScope = liveContextScope(for: trimmed)
         Task.detached { [weak self] in
             bridge.agentTurn(
                 sessionId: sessionId,
@@ -329,6 +436,7 @@ final class KSSStore: ObservableObject {
                 input: trimmed,
                 sourceQueueId: sourceQueueId,
                 attachmentIds: attachments.map(\.id),
+                liveContextScope: liveContextScope,
                 onControlReady: { control in
                     Task { @MainActor [weak self] in
                         guard self?.activeAgentStreamId == streamId else { return }
@@ -670,6 +778,8 @@ final class KSSStore: ObservableObject {
             if let recall = frame.recall, !agentSourceRecalls.contains(where: { $0.id == recall.id }) {
                 agentSourceRecalls.append(recall)
             }
+        case "live_context":
+            agentLiveMarketContexts = frame.liveContexts ?? []
         case "queue_update":
             applyAgentQueueUpdate(frame)
         case "research_candidate":
@@ -1097,9 +1207,9 @@ final class KSSStore: ObservableObject {
         return .configuredUntested
     }
 
-    func testAgentProviderConnection() async {
+    func testAgentProviderConnection(route: AgentProviderRoute? = nil) async {
         guard let bridge else { return }
-        let activeRoute = agentPrimaryRoute
+        let activeRoute = route ?? agentPrimaryRoute
         let activeFallback = agentFallbackRoute
         agentProviderTestOK = nil
         agentProviderTestError = nil
@@ -1341,6 +1451,34 @@ final class KSSStore: ObservableObject {
                 }.value
                 self.agentGlobalPrimaryRoute = response.primary ?? route
                 self.agentFallbackRoute = response.fallback
+                self.agentProviderStatus = response.status
+                self.agentProviderTestOK = nil
+                self.agentProviderTestError = nil
+                self.agentProviderTestHint = nil
+            } catch {
+                self.agentProviderTestOK = false
+                self.agentProviderTestError = error.localizedDescription
+            }
+        }
+    }
+
+    /// The fallback is deliberately global: it is a recovery policy for a
+    /// brand-new provider stream, not another per-session preference. Runtime
+    /// will only use it before the primary route has emitted content.
+    func setAgentFallbackRoute(_ route: AgentProviderRoute) {
+        guard !isChatStreaming, let bridge else { return }
+        let primary = agentGlobalPrimaryRoute ?? agentPrimaryRoute
+        Task {
+            do {
+                let response = try await Task.detached {
+                    try bridge.agentProviders(
+                        action: "set_route",
+                        primary: primary,
+                        fallback: route
+                    )
+                }.value
+                self.agentGlobalPrimaryRoute = response.primary ?? primary
+                self.agentFallbackRoute = response.fallback ?? route
                 self.agentProviderStatus = response.status
                 self.agentProviderTestOK = nil
                 self.agentProviderTestError = nil

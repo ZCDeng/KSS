@@ -888,6 +888,7 @@ struct BridgeClient {
     func agentTurn(sessionId: String, clientTurnId: String, input: String,
                    sourceQueueId: String? = nil,
                    attachmentIds: [String] = [],
+                   liveContextScope: [String: String]? = nil,
                    onControlReady: @escaping (AgentControlChannel) -> Void,
                    onFrame: @escaping (AgentFrame) -> Void,
                    onConfirmRequired: @escaping (AgentFrame) -> Bool,
@@ -901,6 +902,7 @@ struct BridgeClient {
         ]
         if let sourceQueueId { payload["source_queue_id"] = sourceQueueId }
         if !attachmentIds.isEmpty { payload["attachment_ids"] = attachmentIds }
+        if let liveContextScope { payload["live_context_scope"] = liveContextScope }
         guard var request = try? JSONSerialization.data(withJSONObject: payload) else {
             onEnd("无法编码 Agent 请求"); return
         }

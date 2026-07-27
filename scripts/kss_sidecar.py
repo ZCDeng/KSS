@@ -286,6 +286,7 @@ def _validate_agent_turn_request(
         "input",
         "source_queue_id",
         "attachment_ids",
+        "live_context_scope",
     }
     extra = set(req) - allowed
     if extra:
@@ -1243,6 +1244,7 @@ async def _handle_agent_turn(reader: asyncio.StreamReader,
                 emit=emit_runtime,
                 request_write=request_write,
                 attachment_ids=attachment_ids,
+                live_context_scope=req.get("live_context_scope"),
                 **kwargs,
             )
         )

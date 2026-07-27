@@ -460,13 +460,19 @@ def test_number_guard():
 def test_longbridge_tools_schema_and_resolve():
     """U5:两只读实时工具进 schema、resolve 正确、判为只读(非写)。"""
     names = {t["function"]["name"] for t in loop.build_tools_schema()}
-    assert {"get_longbridge_quote", "get_intraday_snapshot"} <= names
+    assert {"get_longbridge_quote", "get_market_live_context", "get_intraday_snapshot"} <= names
     cmd, pos = loop.resolve_tool("get_longbridge_quote", {"symbol": "688008.SH"})
     assert cmd == "longbridge-quote" and pos == ["688008.SH"]
+    cmd, pos = loop.resolve_tool(
+        "get_market_live_context",
+        {"symbols": "688008.SH,000001.SH", "intent": "explain"},
+    )
+    assert cmd == "market-live-context" and pos == ["688008.SH,000001.SH", "explain"]
     cmd, pos = loop.resolve_tool("get_intraday_snapshot", {"symbol": "688008.SH"})
     assert cmd == "intraday-snapshot" and pos == ["688008.SH"]
     # 只读路径:命令 ∉ WRITE_COMMANDS。
     assert loop.is_write_command("longbridge-quote") is False
+    assert loop.is_write_command("market-live-context") is False
     assert loop.is_write_command("intraday-snapshot") is False
 
 
@@ -486,6 +492,40 @@ def test_longbridge_quote_read_path_no_write(monkeypatch):
     assert any(f["type"] == "tool_done" for f in frames)
     second = chat.calls[1]
     assert any(m["role"] == "tool" and "253.2" in m["content"] for m in second)
+
+
+def test_market_live_context_tool_event_has_evidence_and_policy(monkeypatch):
+    """实时上下文工具事件保留结构化政策/provenance，仍按 KSS truth 暴露证据."""
+    monkeypatch.setattr(
+        bridge,
+        "dispatch",
+        lambda cmd, args: {
+            "kind": "market_live_context",
+            "rows": [{"symbol": "688008.SH", "quote": {"last_done": 253.2}}],
+            "eligibility": "forward_observed",
+            "provenance": "kss_live_market_context",
+            "policy": {
+                "read_only": True,
+                "pit_backtest_eligible": False,
+                "trade_execution_allowed": False,
+                "source_precedence": "kss_tool_truth",
+            },
+        },
+    )
+    scripts = [
+        [_toolcall("get_market_live_context", {"symbols": "688008.SH", "intent": "explain"}),
+         {"type": "finish", "reason": "tool_calls"}],
+        [_text("已读取"), {"type": "finish", "reason": "stop"}],
+    ]
+
+    frames, chat = _drive(scripts)
+
+    done = next(frame for frame in frames if frame["type"] == "tool_done")
+    assert done["evidenceSummary"]["kssTruthCount"] == 1
+    second = chat.calls[1]
+    tool_content = next(message["content"] for message in second if message["role"] == "tool")
+    assert "kss_live_market_context" in tool_content
+    assert "pit_backtest_eligible" in tool_content
 
 
 def test_system_prompt_has_realtime_vs_stored_guidance():

@@ -52,6 +52,8 @@ final class SeesawXcomDesignTests: XCTestCase {
         XCTAssertTrue(source.contains("focusInspector"))
         XCTAssertTrue(source.contains("showInspectorDrawer"))
         XCTAssertTrue(source.contains("DisclosureGroup("))
+        XCTAssertTrue(source.contains("case liveMarket"))
+        XCTAssertTrue(source.contains("agentLiveMarketContexts"))
         XCTAssertTrue(source.contains("private var focusEmptyConversation"))
         XCTAssertTrue(source.contains("focusComposer\n                .frame(maxWidth: SeesawXcomChrome.feedColumnWidth)"))
     }
@@ -61,8 +63,11 @@ final class SeesawXcomDesignTests: XCTestCase {
         XCTAssertTrue(source.contains("private var seesawModelsPage"))
         XCTAssertTrue(source.contains("case providerDetail(String)"))
         XCTAssertTrue(source.contains("private func seesawProviderDetail"))
-        XCTAssertTrue(source.contains("SettingsCredentialsSection("))
-        XCTAssertTrue(source.contains("focusSource: .llm"))
+        XCTAssertTrue(source.contains("private func providerCatalogCard"))
+        XCTAssertTrue(source.contains("private func providerModelRow"))
+        XCTAssertTrue(source.contains("saveProviderCredential"))
+        XCTAssertFalse(source.contains("SettingsCredentialsSection("))
+        XCTAssertFalse(source.contains("focusSource: .llm"))
     }
 
     func testFocusComposerIsSharedAndSkillsRemainExplicit() throws {

@@ -5,6 +5,7 @@ from __future__ import annotations
 from kss.agent.attachments import AttachmentError, AttachmentRecord, AttachmentStore
 from kss.agent.context import ContextAssembler
 from kss.agent.events import AbortToken, EventSequencer
+from kss.agent.live_market_context import LiveContextScope, LiveMarketContextService
 from kss.agent.memory_store import MemoryRecall, MemoryRecord, MemoryStore
 from kss.agent.pi_ai_provider import PiAIHelperClient, PiAIHelperError, PiAIProvider
 from kss.agent.provider import (
@@ -64,6 +65,8 @@ __all__ = [
     "MemoryRecall",
     "MemoryStore",
     "KSSAgentService",
+    "LiveContextScope",
+    "LiveMarketContextService",
     "RuntimeRunOptions",
     "ModelCapabilities",
     "OpenAICompatibleProvider",

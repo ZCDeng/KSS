@@ -2,6 +2,13 @@ import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
 
+private extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
 /// AI 复盘助手聊天面板。所有主题共用 Focus Layout；会话状态归 KSSStore，
 /// 视觉切换不重建 Agent runtime。
 struct AIChatView: View {
@@ -26,8 +33,14 @@ struct AIChatView: View {
     @State private var seesawPage: SeesawPage = .conversation
     @State private var showInspectorDrawer = false
     @State private var expandedInspectorSections: Set<InspectorSection> = Set(InspectorSection.allCases)
-    @State private var providerConfigResults: [String: DataSourceTestResult] = [:]
-    @State private var providerConfigDirty: Set<String> = []
+    @State private var providerAPIKeyDraft = ""
+    @State private var providerBaseURLDraft = ""
+    @State private var providerManualModelDraft = ""
+    @State private var providerThinkingDraft = "off"
+    @State private var providerDetailMessage: String?
+    @State private var providerDetailIsSaving = false
+    @State private var providerDetailIsTesting = false
+    @State private var showProviderAdvanced = false
     /// 会话开场确定性候选建议（plan 2026-07-12-004 U9）；nil = 未加载或无候选，不显示 chip。
     @State private var indicatorSuggestion: IndicatorSuggestion?
     @FocusState private var isComposerFocused: Bool
@@ -46,6 +59,7 @@ struct AIChatView: View {
 
     private enum InspectorSection: String, CaseIterable, Hashable {
         case progress
+        case liveMarket
         case evidence
         case skills
         case context
@@ -53,6 +67,7 @@ struct AIChatView: View {
         var title: String {
             switch self {
             case .progress: return "Progress"
+            case .liveMarket: return "实时市场"
             case .evidence: return "Evidence & Artifacts"
             case .skills: return "Skills"
             case .context: return "Context & Memory"
@@ -75,6 +90,17 @@ struct AIChatView: View {
         let prompt: String
 
         var id: String { skillId }
+    }
+
+    private struct ComposerModelOption {
+        let provider: AgentProviderDescriptor
+        let model: AgentModelDescriptor
+
+        var routeID: String {
+            KSSStore.seesawModelRouteID(providerID: provider.id, modelID: model.id)
+        }
+
+        var label: String { "\(provider.name ?? provider.id) · \(model.name ?? model.id)" }
     }
 
     /// family → 人话标签（bridge 只给基元族枚举名，不给展示文案）。
@@ -123,7 +149,6 @@ struct AIChatView: View {
     var body: some View {
         GeometryReader { geo in
             focusSeesawShell(size: geo.size)
-            .onAppear { Task { await store.preheatRealtimeContext() } }   // U4: Seesaw 加载时预温实时上下文（R3）
             .onAppear { Task { await loadIndicatorSuggestion() } }        // U9: 空态确定性候选建议 chip
             .onAppear { Task { await store.loadAgentBootstrap() } }
             .onAppear { applySeesawDestination() }
@@ -418,6 +443,51 @@ struct AIChatView: View {
                     }
                 }
 
+                inspectorSection(.liveMarket, systemImage: "waveform.path.ecg") {
+                    if let live = store.agentLiveMarketContexts.last {
+                        Text(live.coverageText)
+                            .foregroundStyle(theme.textSecondary)
+                        if let snapshotID = live.snapshotID {
+                            Text("快照 · \(snapshotID)")
+                                .font(.system(size: 10.5, design: .monospaced))
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                        ForEach(live.rows.prefix(4)) { row in
+                            HStack(spacing: 8) {
+                                Text(row.symbol)
+                                    .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                                Spacer(minLength: 0)
+                                if let last = row.quote?.lastDone {
+                                    Text(String(format: "%.2f", last))
+                                        .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                                } else {
+                                    Text(row.quote?.error ?? "未覆盖")
+                                        .font(KSSFont.themed(11, theme: theme))
+                                        .foregroundStyle(Color.orange)
+                                }
+                            }
+                            .foregroundStyle(theme.textPrimary)
+                        }
+                        if let asOf = live.sourceAsOf {
+                            Text("数据时点 · \(asOf)")
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                        if let received = live.retrievedAt {
+                            Text("接收于 · \(received)")
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                        Text("Longbridge 只读 · forward-observed · 北交所不覆盖")
+                            .foregroundStyle(theme.textSecondary)
+                        if !live.errors.isEmpty {
+                            Text("部分失败：\(live.errors.map(\.symbol).joined(separator: "、"))")
+                                .foregroundStyle(Color.orange)
+                        }
+                    } else {
+                        Text("仅在明确询问实时、盘中、当前报价或“今日盘面”时拉取；历史问题不会隐式请求。")
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                }
+
                 inspectorSection(.evidence, systemImage: "paperclip") {
                     if store.pendingAgentAttachments.isEmpty && !store.chatMessages.contains(where: { $0.evidenceSummary.hasEvidence }) {
                         Text("暂无可预览的证据或附件。")
@@ -534,12 +604,20 @@ struct AIChatView: View {
                     }
                 }
 
-                SettingsCredentialsSection(
-                    results: $providerConfigResults,
-                    dirtySources: $providerConfigDirty,
-                    focusSource: .llm
-                )
-                .id("seesaw-provider-configuration")
+                VStack(alignment: .leading, spacing: 9) {
+                    Text("路由规则")
+                        .font(KSSFont.themed(14, .bold, theme: theme))
+                    Text("全局默认只影响新会话；当前会话的模型选择独立保存。全局备用模型只会在主模型尚未输出正文、Thinking 或工具调用时接管。")
+                        .font(KSSFont.themed(12.5, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                    HStack(spacing: 12) {
+                        routeSummary(title: "全局默认", route: store.agentGlobalPrimaryRoute)
+                        routeSummary(title: "全局备用", route: store.agentFallbackRoute)
+                    }
+                }
+                .padding(16)
+                .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(theme.hairline))
             }
             .frame(maxWidth: 840, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .center)
@@ -570,10 +648,10 @@ struct AIChatView: View {
             }
 
             Menu {
-                ForEach(store.agentProviders) { provider in
+                ForEach(store.agentProviders.filter(providerHasCredential)) { provider in
                     if let models = provider.models, !models.isEmpty {
                         Section(provider.name ?? provider.id) {
-                            ForEach(models) { model in
+                            ForEach(models.filter { store.isSeesawModelVisible(providerID: provider.id, modelID: $0.id) }) { model in
                                 Button(model.name ?? model.id) {
                                     selectSessionRoute(provider: provider, model: model)
                                 }
@@ -613,6 +691,28 @@ struct AIChatView: View {
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(theme.hairline))
     }
 
+    private func routeSummary(title: String, route: AgentProviderRoute?) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(KSSFont.themed(11.5, .semibold, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+            Text(routeDisplayName(route))
+                .font(KSSFont.themed(12.5, .semibold, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func routeDisplayName(_ route: AgentProviderRoute?) -> String {
+        guard let route else { return "尚未配置" }
+        let label = [route.providerId, route.modelId]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+        return label.isEmpty ? "尚未配置" : label
+    }
+
     private func providerCatalogCard(_ provider: AgentProviderDescriptor) -> some View {
         let isCurrent = provider.id == store.agentPrimaryRoute?.providerId
         return Button {
@@ -627,7 +727,7 @@ struct AIChatView: View {
                     Spacer()
                     if isCurrent { Text("当前") .font(KSSFont.themed(10.5, .semibold, theme: theme)).foregroundStyle(theme.accent) }
                 }
-                Text(provider.authenticated == true ? "已保存凭据" : "尚未验证或未配置")
+                Text(providerConnectionLabel(provider))
                     .font(KSSFont.themed(11, theme: theme))
                     .foregroundStyle(theme.textSecondary)
                 Text("\(provider.models?.count ?? 0) 个可用模型")
@@ -641,6 +741,20 @@ struct AIChatView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("配置 \(provider.name ?? provider.id)")
+    }
+
+    private func providerConnectionLabel(_ provider: AgentProviderDescriptor) -> String {
+        if provider.id == store.agentPrimaryRoute?.providerId {
+            switch store.seesawProviderReadiness {
+            case .ready: return "已连接"
+            case .configuredUntested: return "已保存 · 待测试"
+            case .brokerLoading: return "读取凭据中"
+            case .missingCredential: return "未配置"
+            case .missingRoute: return "未选择模型"
+            case .failed: return "最近测试失败"
+            }
+        }
+        return provider.authenticated == true ? "已保存凭据" : "未配置"
     }
 
     private func seesawProviderDetail(_ providerID: String) -> some View {
@@ -666,60 +780,81 @@ struct AIChatView: View {
                         .foregroundStyle(theme.textPrimary)
                     Text(provider?.authenticated == true
                          ? "凭据已载入 Credential Broker；可选择模型后测试。"
-                         : "尚未发现此 Provider 的凭据。请在下方主/备用路由配置中录入 API Key。")
+                         : "在此安全保存 API Key。密钥只写入 macOS Keychain，不会进入聊天记录、日志或 Python 环境。")
                         .font(KSSFont.themed(13.5, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                 }
 
-                if let baseURL = provider?.baseURL, !baseURL.isEmpty {
-                    detailFact("Base URL", value: baseURL)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("连接")
+                        .font(KSSFont.themed(14, .bold, theme: theme))
+                    HStack(spacing: 10) {
+                        SecureField(
+                            KeychainStore.readProviderAPIKey(providerID) == nil ? "API Key" : "已保存的 API Key（输入可替换）",
+                            text: $providerAPIKeyDraft
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        Button(providerDetailIsSaving ? "保存中…" : "保存 Key") {
+                            saveProviderCredential(providerID)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(providerDetailIsSaving || providerAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    if let providerDetailMessage {
+                        Text(providerDetailMessage)
+                            .font(KSSFont.themed(11.5, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                    DisclosureGroup("高级端点", isExpanded: $showProviderAdvanced) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            TextField("Base URL（仅自定义 OpenAI-compatible 网关需要）", text: $providerBaseURLDraft)
+                                .textFieldStyle(.roundedBorder)
+                            Text("默认保持 Provider 目录的端点。修改端点仅改变此 Provider 路由，不会复制或暴露 API Key。")
+                                .font(KSSFont.themed(11.5, theme: theme))
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                        .padding(.top, 4)
+                    }
+                    .font(KSSFont.themed(12.5, .semibold, theme: theme))
                 }
-                detailFact("状态", value: isCurrent ? "当前会话正在使用此 Provider" : "可用于当前会话或新会话默认")
+                .padding(16)
+                .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(theme.hairline))
+
+                detailFact("当前状态", value: isCurrent ? "此会话正在使用此 Provider" : "可设为本会话、新会话默认或全局备用")
 
                 VStack(alignment: .leading, spacing: 10) {
                     Text("模型")
                         .font(KSSFont.themed(14, .bold, theme: theme))
                     if models.isEmpty {
-                        Text("尚未收到模型目录。可在主/备用路由中手工填写模型 ID。")
-                            .font(KSSFont.themed(12.5, theme: theme))
-                            .foregroundStyle(theme.textSecondary)
+                        manualModelRouteControls(providerID: providerID, provider: provider)
                     } else {
                         ForEach(models) { model in
-                            Button {
-                                if let provider {
-                                    selectSessionRoute(provider: provider, model: model)
-                                }
-                            } label: {
-                                HStack(spacing: 10) {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(model.name ?? model.id)
-                                            .font(KSSFont.themed(13, .semibold, theme: theme))
-                                        Text(model.id)
-                                            .font(.system(size: 11, design: .monospaced))
-                                            .foregroundStyle(theme.textSecondary)
-                                    }
-                                    Spacer()
-                                    if model.id == store.agentPrimaryRoute?.modelId && isCurrent {
-                                        Text("当前")
-                                            .font(KSSFont.themed(11, .semibold, theme: theme))
-                                            .foregroundStyle(theme.accent)
-                                    }
-                                }
-                                .padding(.vertical, 9)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(store.isChatStreaming)
+                            providerModelRow(provider: provider, model: model, isCurrent: isCurrent)
                             Divider().overlay(theme.hairline)
                         }
+
+                        manualModelRouteControls(providerID: providerID, provider: provider)
                     }
                 }
 
                 HStack(spacing: 10) {
-                    Button("测试当前路由") { Task { await store.testAgentProviderConnection() } }
+                    Button(providerDetailIsTesting ? "测试中…" : "测试当前路由") {
+                        providerDetailIsTesting = true
+                        Task {
+                            await store.testAgentProviderConnection(route: providerDetailTestRoute(providerID))
+                            providerDetailIsTesting = false
+                        }
+                    }
                         .buttonStyle(.bordered)
-                    Button("编辑主/备用路由") { seesawPage = .models }
+                    .disabled(providerDetailIsTesting || store.isChatStreaming || providerDetailTestRoute(providerID) == nil)
+                    Button("设为新会话默认") {
+                        if let route = routeForProvider(providerID, modelID: store.agentPrimaryRoute?.modelId) {
+                            store.setAgentGlobalDefaultRoute(route)
+                        }
+                    }
                         .buttonStyle(.bordered)
+                    .disabled(store.isChatStreaming || !hasSelectableModel(providerID: providerID))
                 }
 
                 if KeychainStore.readProviderAPIKey(providerID) != nil {
@@ -740,6 +875,157 @@ struct AIChatView: View {
         }
         .scrollContentBackground(.hidden)
         .background(theme.canvas)
+        .onAppear { hydrateProviderDetail(providerID, provider: provider) }
+    }
+
+    @ViewBuilder
+    private func providerModelRow(
+        provider: AgentProviderDescriptor?,
+        model: AgentModelDescriptor,
+        isCurrent: Bool
+    ) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(model.name ?? model.id)
+                    .font(KSSFont.themed(13, .semibold, theme: theme))
+                Text(model.id)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary)
+            }
+            Spacer()
+            if model.id == store.agentPrimaryRoute?.modelId && isCurrent {
+                Text("当前")
+                    .font(KSSFont.themed(11, .semibold, theme: theme))
+                    .foregroundStyle(theme.accent)
+            }
+            Toggle(
+                "在 Composer 中显示",
+                isOn: Binding(
+                    get: {
+                        guard let provider else { return false }
+                        return store.isSeesawModelVisible(providerID: provider.id, modelID: model.id)
+                    },
+                    set: { visible in
+                        if let provider {
+                            store.setSeesawModelVisible(providerID: provider.id, modelID: model.id, visible: visible)
+                        }
+                    }
+                )
+            )
+            .toggleStyle(.checkbox)
+            .font(KSSFont.themed(11.5, theme: theme))
+            Menu {
+                Button("用于此会话") {
+                    if let provider { selectSessionRoute(provider: provider, model: model) }
+                }
+                Button("设为新会话默认") {
+                    if let provider { store.setAgentGlobalDefaultRoute(routeFor(provider: provider, model: model)) }
+                }
+                Button("设为全局备用") {
+                    if let provider { store.setAgentFallbackRoute(routeFor(provider: provider, model: model)) }
+                }
+            } label: {
+                Label("使用", systemImage: "chevron.down")
+                    .font(KSSFont.themed(11.5, .semibold, theme: theme))
+            }
+            .menuStyle(.borderlessButton)
+            .disabled(store.isChatStreaming)
+        }
+        .padding(.vertical, 9)
+    }
+
+    @ViewBuilder
+    private func manualModelRouteControls(providerID: String, provider: AgentProviderDescriptor?) -> some View {
+        HStack(spacing: 10) {
+            TextField("手动模型 ID", text: $providerManualModelDraft)
+                .textFieldStyle(.roundedBorder)
+            Button("用于此会话") {
+                if let route = routeForProvider(providerID, modelID: providerManualModelDraft) {
+                    store.setAgentSessionProviderRoute(route)
+                }
+            }
+            .buttonStyle(.bordered)
+            .disabled(store.isChatStreaming || providerManualModelDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        Text(provider == nil ? "自定义 OpenAI-compatible 端点可填写模型 ID 后保存给当前会话。" : "也可填写目录之外、由该 Provider 明确支持的模型 ID。")
+            .font(KSSFont.themed(11.5, theme: theme))
+            .foregroundStyle(theme.textSecondary)
+    }
+
+    private func routeFor(provider: AgentProviderDescriptor, model: AgentModelDescriptor) -> AgentProviderRoute {
+        AgentProviderRoute(
+            providerId: provider.id,
+            modelId: model.id,
+            baseURL: providerBaseURLDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? provider.baseURL : providerBaseURLDraft,
+            thinkingLevel: providerThinkingDraft,
+            contextWindow: model.contextWindow,
+            maxOutputTokens: model.maxOutputTokens,
+            supportsImages: model.supportsImages,
+            supportsTools: model.supportsTools,
+            supportsThinking: model.supportsThinking
+        )
+    }
+
+    private func providerHasCredential(_ provider: AgentProviderDescriptor) -> Bool {
+        provider.authenticated == true
+            || KeychainStore.hasLLMCredential(forProviderID: provider.id)
+    }
+
+    private func providerDetailTestRoute(_ providerID: String) -> AgentProviderRoute? {
+        let selectedModelID = store.agentPrimaryRoute?.providerId == providerID
+            ? store.agentPrimaryRoute?.modelId
+            : store.agentProviders.first(where: { $0.id == providerID })?.models?.first?.id
+        return routeForProvider(providerID, modelID: selectedModelID)
+    }
+
+    private func routeForProvider(_ providerID: String, modelID: String?) -> AgentProviderRoute? {
+        let resolvedModelID = (modelID ?? providerManualModelDraft).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !resolvedModelID.isEmpty else { return nil }
+        if let provider = store.agentProviders.first(where: { $0.id == providerID }),
+           let model = provider.models?.first(where: { $0.id == resolvedModelID }) {
+            return routeFor(provider: provider, model: model)
+        }
+        return AgentProviderRoute(
+            providerId: providerID,
+            modelId: resolvedModelID,
+            baseURL: providerBaseURLDraft.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank,
+            thinkingLevel: providerThinkingDraft
+        )
+    }
+
+    private func hasSelectableModel(providerID: String) -> Bool {
+        !(store.agentProviders.first(where: { $0.id == providerID })?.models ?? []).isEmpty
+            || !providerManualModelDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func hydrateProviderDetail(_ providerID: String, provider: AgentProviderDescriptor?) {
+        providerAPIKeyDraft = ""
+        providerBaseURLDraft = store.agentPrimaryRoute?.providerId == providerID
+            ? (store.agentPrimaryRoute?.baseURL ?? provider?.baseURL ?? "")
+            : (provider?.baseURL ?? "")
+        providerManualModelDraft = ""
+        providerThinkingDraft = store.agentPrimaryRoute?.providerId == providerID
+            ? (store.agentPrimaryRoute?.thinkingLevel ?? "off")
+            : "off"
+        providerDetailMessage = KeychainStore.readProviderAPIKey(providerID) == nil ? nil : "此 Provider 已保存 Key；重新输入可替换。"
+        showProviderAdvanced = false
+    }
+
+    private func saveProviderCredential(_ providerID: String) {
+        let key = providerAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return }
+        providerDetailIsSaving = true
+        guard KeychainStore.writeProviderAPIKey(providerID, key) else {
+            providerDetailMessage = "无法写入 macOS Keychain。请检查钥匙串访问权限。"
+            providerDetailIsSaving = false
+            return
+        }
+        providerAPIKeyDraft = ""
+        Task {
+            await store.loadAgentProviders(reloadCredentials: true)
+            providerDetailIsSaving = false
+            providerDetailMessage = "已安全保存到 Keychain；可选择模型并运行连接测试。"
+        }
     }
 
     private func detailFact(_ label: String, value: String) -> some View {
@@ -772,17 +1058,25 @@ struct AIChatView: View {
     }
 
     private func selectSessionRoute(provider: AgentProviderDescriptor, model: AgentModelDescriptor) {
-        let route = AgentProviderRoute(
-            providerId: provider.id,
-            modelId: model.id,
-            baseURL: provider.baseURL,
-            thinkingLevel: store.agentPrimaryRoute?.thinkingLevel ?? "off",
-            contextWindow: model.contextWindow,
-            maxOutputTokens: model.maxOutputTokens,
-            supportsImages: model.supportsImages,
-            supportsTools: model.supportsTools,
-            supportsThinking: model.supportsThinking
-        )
+        let isEditingProvider: Bool
+        if case let .providerDetail(providerID) = seesawPage {
+            isEditingProvider = providerID == provider.id
+        } else {
+            isEditingProvider = false
+        }
+        let route = isEditingProvider
+            ? routeFor(provider: provider, model: model)
+            : AgentProviderRoute(
+                providerId: provider.id,
+                modelId: model.id,
+                baseURL: provider.baseURL,
+                thinkingLevel: store.agentPrimaryRoute?.thinkingLevel ?? "off",
+                contextWindow: model.contextWindow,
+                maxOutputTokens: model.maxOutputTokens,
+                supportsImages: model.supportsImages,
+                supportsTools: model.supportsTools,
+                supportsThinking: model.supportsThinking
+            )
         store.setAgentSessionProviderRoute(route)
     }
 
@@ -975,10 +1269,7 @@ struct AIChatView: View {
 
             HStack(spacing: 8) {
                 attachmentPickerButton
-                Text(providerComposerLabel)
-                    .font(KSSFont.themed(11, theme: theme))
-                    .foregroundStyle(theme.textSecondary)
-                    .lineLimit(1)
+                composerModelMenu
                 Spacer(minLength: 8)
                 if store.isChatStreaming {
                     queueShortcutHint
@@ -993,6 +1284,32 @@ struct AIChatView: View {
             RoundedRectangle(cornerRadius: 18).stroke(theme.hairline)
         }
         .accessibilityElement(children: .contain)
+    }
+
+    private var composerModelMenu: some View {
+        Menu {
+            let visible = visibleProviderModels
+            if visible.isEmpty {
+                Button("在模型中心启用模型") { seesawPage = .models }
+            } else {
+                ForEach(visible, id: \.routeID) { item in
+                    Button(item.label) {
+                        selectSessionRoute(provider: item.provider, model: item.model)
+                    }
+                    .disabled(store.isChatStreaming)
+                }
+                Divider()
+                Button("管理模型…") { seesawPage = .models }
+            }
+        } label: {
+            Label(providerComposerLabel, systemImage: "cpu")
+                .font(KSSFont.themed(11, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+                .lineLimit(1)
+        }
+        .menuStyle(.borderlessButton)
+        .disabled(store.isChatStreaming)
+        .help("本会话模型；管理可见模型与 Provider")
     }
 
     @ViewBuilder
@@ -1512,6 +1829,18 @@ struct AIChatView: View {
         }
     }
 
+    private var visibleProviderModels: [ComposerModelOption] {
+        store.agentProviders
+            .filter(providerHasCredential)
+            .flatMap { provider in
+            (provider.models ?? []).compactMap { model in
+                store.isSeesawModelVisible(providerID: provider.id, modelID: model.id)
+                    ? ComposerModelOption(provider: provider, model: model)
+                    : nil
+            }
+        }
+    }
+
     private var filteredSessions: [AgentSession] {
         let query = sessionSearch.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return store.agentSessions }
@@ -1555,7 +1884,10 @@ struct AIChatView: View {
     }
 
     private var providerComposerLabel: String {
-        let route = [store.agentProvider, store.agentModel]
+        let route = [
+            store.agentPrimaryRoute?.providerId ?? store.agentProvider,
+            store.agentPrimaryRoute?.modelId ?? store.agentModel,
+        ]
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: " · ")

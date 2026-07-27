@@ -16,6 +16,11 @@ from uuid import uuid4
 from kss.agent.attachments import AttachmentRecord, AttachmentStore
 from kss.agent.context import ContextAssembler, ContextAssembly
 from kss.agent.jsonl import utc_timestamp
+from kss.agent.live_market_context import (
+    LiveContextScope,
+    LiveMarketContextService,
+    scope_context_text,
+)
 from kss.agent.memory_store import MemoryRecall, MemoryStore
 from kss.agent.pi_ai_provider import PiAIProvider
 from kss.agent.provider import ModelCapabilities, ProviderConfig
@@ -112,6 +117,7 @@ class KSSAgentService:
         self._source_queue_ids: dict[tuple[str, str], str] = {}
         self._run_options: dict[tuple[str, str], RuntimeRunOptions] = {}
         self._turn_attachment_ids: dict[tuple[str, str], tuple[str, ...]] = {}
+        self._live_context_scopes: dict[tuple[str, str], Any] = {}
         self._transcripts: dict[str, Any] = {}
         # Compaction can run concurrently for different sessions. A ContextVar
         # carries the route into the summarizer without making an old test or
@@ -494,6 +500,7 @@ class KSSAgentService:
         request_write: RequestWrite,
         source_queue_id: str | None = None,
         attachment_ids: list[str] | tuple[str, ...] | None = None,
+        live_context_scope: Any = None,
         *,
         run_options: RuntimeRunOptions | None = None,
     ) -> RunResult:
@@ -506,6 +513,8 @@ class KSSAgentService:
             self._run_options[key] = run_options
         if attachment_ids:
             self._turn_attachment_ids[key] = tuple(str(value) for value in attachment_ids)
+        if live_context_scope is not None:
+            self._live_context_scopes[key] = live_context_scope
         try:
             turn_input = input
             if run_options is None or not run_options.trusted_internal_input:
@@ -523,6 +532,7 @@ class KSSAgentService:
             self._source_queue_ids.pop(key, None)
             self._run_options.pop(key, None)
             self._turn_attachment_ids.pop(key, None)
+            self._live_context_scopes.pop(key, None)
 
     def steer(
         self,
@@ -769,6 +779,17 @@ class KSSAgentService:
                 {"items": recall_payloads, "recalls": recall_payloads},
             )
 
+        live_context_payloads = await self._preload_live_context(
+            turn,
+            raw_scope=self._live_context_scopes.get((session_id, client_turn_id)),
+            user_text=current_user.content,
+        )
+        live_context_evidence = [
+            scope_context_text(payload)
+            for payload in live_context_payloads
+            if isinstance(payload, Mapping) and not payload.get("error")
+        ]
+
         skill_status = self.skills.status()
         self.sessions.append_entry(
             session_id, "skill_index", {"run_id": run_id, "status": skill_status}
@@ -802,6 +823,7 @@ class KSSAgentService:
             turn,
             skills=skill_summaries,
             memories=recall_items,
+            evidence=live_context_evidence,
             route=active_route,
             route_set=session_routes,
         )
@@ -1059,6 +1081,7 @@ class KSSAgentService:
                 turn,
                 skills=skill_summaries,
                 memories=follow_up_recalls,
+                evidence=live_context_evidence,
                 goal=item.content,
                 route=active_route,
                 route_set=session_routes,
@@ -1172,6 +1195,56 @@ class KSSAgentService:
             termination_reason=reason,
         )
 
+    async def _preload_live_context(
+        self,
+        turn: RuntimeTurn,
+        *,
+        raw_scope: Any,
+        user_text: str,
+    ) -> list[dict[str, Any]]:
+        scope = LiveContextScope.from_payload(raw_scope, user_text=user_text)
+        if scope is None:
+            return []
+        payloads: list[dict[str, Any]] = []
+        if scope.rejected:
+            payload = {
+                "kind": "market_live_context",
+                "scope": scope.to_payload(),
+                "error": scope.rejection_reason or "live_context_scope_rejected",
+                "is_error": True,
+                "eligibility": "forward_observed",
+                "provenance": "kss_live_market_context",
+            }
+            payloads.append(payload)
+        elif scope.symbols:
+            import kss_app_bridge as bridge  # noqa: PLC0415
+
+            service = LiveMarketContextService(bridge._make_read_only_call(bridge.dispatch))
+            payload = await asyncio.to_thread(
+                service.get_context,
+                symbols=scope.symbols,
+                intent=scope.intent,
+                reason=f"agent_preflight:{scope.reason}",
+                include_intraday_snapshot=scope.include_intraday_snapshot,
+                max_symbols=scope.max_symbols,
+            )
+            payload["scope"] = scope.to_payload()
+            payloads.append(payload)
+        if payloads:
+            self.sessions.append_entry(
+                turn.state.session_id,
+                "live_context",
+                {"run_id": turn.state.run_id, "items": payloads},
+            )
+            await turn.emit(
+                "live_context",
+                {
+                    "items": payloads,
+                    "live_context": payloads[0] if len(payloads) == 1 else payloads,
+                },
+            )
+        return payloads
+
     def _prepare_provider_messages(
         self,
         messages: list[dict[str, Any]],
@@ -1238,6 +1311,7 @@ class KSSAgentService:
         goal: str | None = None,
         route: ProviderRoute | None = None,
         route_set: ProviderRouteSet | None = None,
+        evidence: list[str] | None = None,
     ) -> ContextAssembly:
         active_route = route or self._session_primary_route(turn.state.session_id)
         active_routes = route_set or self._session_routes(turn.state.session_id)
@@ -1248,6 +1322,7 @@ class KSSAgentService:
             "skills": skills,
             "memories": memories,
             "goal": turn.input if goal is None else goal,
+            "evidence": evidence or [],
             "model": active_route.model_id,
             "model_capabilities": self._route_capabilities(active_route),
             "previous_compaction": previous,

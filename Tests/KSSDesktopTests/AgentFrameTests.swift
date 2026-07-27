@@ -109,6 +109,24 @@ final class AgentFrameTests: XCTestCase {
         XCTAssertEqual(frame.attachments?.first?.isReady, true)
     }
 
+    func testLiveMarketContextFrameKeepsQuoteProvenanceForRightRail() throws {
+        let frame = try decodeFrame("""
+        {"type":"live_context","run_id":"r1","sequence":5,"items":[{
+          "kind":"market_live_context","snapshot_id":"lmc-1234",
+          "symbols":["000001.SH"],"source_asof_ts":"2026-07-27T10:31:00+08:00",
+          "retrieved_at":"2026-07-27T10:31:02+08:00","eligibility":"forward_observed",
+          "provenance":"kss_live_market_context","rows":[{
+            "symbol":"000001.SH","routed_provider":"longbridge",
+            "quote":{"symbol":"000001.SH","last_done":3421.5,"source_asof_ts":"2026-07-27T10:31:00+08:00"}
+          }],"warnings":["forward_observed_non_pit"],"errors":[]
+        }]}
+        """)
+
+        XCTAssertEqual(frame.liveContexts?.first?.snapshotID, "lmc-1234")
+        XCTAssertEqual(frame.liveContexts?.first?.rows.first?.quote?.lastDone, 3421.5)
+        XCTAssertEqual(frame.liveContexts?.first?.rows.first?.routedProvider, "longbridge")
+    }
+
     func testAdditiveProviderAndAttachmentResponsesAllowSparsePayloads() throws {
         let providerResponse = try JSONDecoder().decode(
             AgentProvidersResponse.self,

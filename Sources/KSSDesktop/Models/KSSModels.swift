@@ -2338,6 +2338,80 @@ struct AgentProvidersResponse: Codable, Equatable {
     }
 }
 
+/// Compact, display-safe projection of a persisted `live_context` event.
+/// Quote rows remain in the sidecar transcript/evidence ledger; Swift only
+/// needs freshness, scope and coverage information for the Right Rail.
+struct AgentLiveMarketContext: Decodable, Equatable, Identifiable {
+    let kind: String?
+    let snapshotID: String?
+    let symbols: [String]
+    let rows: [AgentLiveMarketRow]
+    let sourceAsOf: String?
+    let retrievedAt: String?
+    let warnings: [String]
+    let errors: [AgentLiveMarketContextError]
+    let eligibility: String?
+    let provenance: String?
+
+    var id: String {
+        "\(retrievedAt ?? "unknown")::\(symbols.joined(separator: ","))"
+    }
+
+    var coverageText: String {
+        if errors.isEmpty { return "覆盖 \(symbols.count) 个标的" }
+        return "覆盖 \(symbols.count) 个标的 · \(errors.count) 项未完整返回"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case kind, symbols, rows, warnings, errors, eligibility, provenance
+        case snapshotID = "snapshot_id"
+        case sourceAsOf = "source_asof_ts"
+        case retrievedAt = "retrieved_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try? c.decode(String.self, forKey: .kind)
+        snapshotID = try? c.decode(String.self, forKey: .snapshotID)
+        symbols = (try? c.decode([String].self, forKey: .symbols)) ?? []
+        rows = (try? c.decode([AgentLiveMarketRow].self, forKey: .rows)) ?? []
+        sourceAsOf = try? c.decode(String.self, forKey: .sourceAsOf)
+        retrievedAt = try? c.decode(String.self, forKey: .retrievedAt)
+        warnings = (try? c.decode([String].self, forKey: .warnings)) ?? []
+        errors = (try? c.decode([AgentLiveMarketContextError].self, forKey: .errors)) ?? []
+        eligibility = try? c.decode(String.self, forKey: .eligibility)
+        provenance = try? c.decode(String.self, forKey: .provenance)
+    }
+}
+
+struct AgentLiveMarketRow: Decodable, Equatable, Identifiable {
+    let symbol: String
+    let quote: LongbridgeQuote?
+    let routedProvider: String?
+    let eligibility: String?
+
+    var id: String { symbol }
+
+    enum CodingKeys: String, CodingKey {
+        case symbol, quote, eligibility
+        case routedProvider = "routed_provider"
+    }
+}
+
+struct AgentLiveMarketContextError: Decodable, Equatable, Identifiable {
+    let symbol: String
+    let quoteError: String?
+    let snapshotError: String?
+
+    var id: String { symbol }
+
+    enum CodingKeys: String, CodingKey {
+        case symbol
+        case quoteError = "quote_error"
+        case snapshotError = "snapshot_error"
+    }
+}
+
 struct AgentAttachmentsResponse: Codable, Equatable {
     var attachments: [AgentAttachment]
     var attachment: AgentAttachment?
@@ -3237,6 +3311,7 @@ struct AgentFrame: Decodable, Equatable {
     let steeringCount: Int?
     let followUpCount: Int?
     let researchCandidate: ResearchCandidate?
+    let liveContexts: [AgentLiveMarketContext]?
 
     enum CodingKeys: String, CodingKey {
         case type, sequence, text, delta, name, tool, command, effect, reason, error, model, provider, usage, numberGuard
@@ -3266,6 +3341,7 @@ struct AgentFrame: Decodable, Equatable {
         case steeringCount = "steering_count"
         case followUpCount = "follow_up_count"
         case researchCandidate = "research_candidate"
+        case liveContexts = "items"
         case contentIndex = "content_index"
         case contentIndexCamel = "contentIndex"
         case contentBlocks = "content_blocks"
@@ -3325,6 +3401,7 @@ struct AgentFrame: Decodable, Equatable {
         steeringCount = try? c.decode(Int.self, forKey: .steeringCount)
         followUpCount = try? c.decode(Int.self, forKey: .followUpCount)
         researchCandidate = try? c.decode(ResearchCandidate.self, forKey: .researchCandidate)
+        liveContexts = try? c.decode([AgentLiveMarketContext].self, forKey: .liveContexts)
     }
 
     var duplicateReason: String? {

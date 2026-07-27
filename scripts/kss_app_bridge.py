@@ -4991,6 +4991,10 @@ COMMANDS = {
     "intel-rewrite-run": {"desc": "资讯雷达Top-K改写worker(JSON_PAYLOAD可选)", "args": ["[JSON_PAYLOAD]"]},
     "longbridge-quote": {"desc": "Longbridge 实时快照(ChinaConnect LV1,仅陆股通标的)", "args": ["SYMBOL"]},
     "longbridge-quotes": {"desc": "Longbridge 批量实时快照(单次 SDK 调用,逗号分隔)", "args": ["SYMBOLS"]},
+    "market-live-context": {
+        "desc": "Agent 只读实时盘面上下文(复用 Longbridge quote + intraday freshness)",
+        "args": ["SYMBOLS", "[INTENT]", "[REASON]"],
+    },
     "intraday-snapshot": {"desc": "最新分钟 bar 快照(按覆盖路由 longbridge/东财,前向-only)", "args": ["SYMBOL", "[INTERVAL]"]},
     "intraday-bars": {"desc": "完整日内 bar 序列(K线图渲染,前向-only)", "args": ["SYMBOL", "[INTERVAL]"]},
     "trading-hours": {"desc": "交易时段查询(是否交易日/交易时段,门控实时拉取)", "args": []},
@@ -5426,6 +5430,22 @@ def _intraday_snapshot_inner(symbol: str, interval_minutes: int = 1, asset_kind:
     _persist_page_pull(meta["normalized_symbol"], provider.name, interval_minutes,
                        asset_kind, res.rows)
     return result
+
+
+def _market_live_context(
+    symbols_arg: str,
+    intent: str = "explain",
+    reason: str = "bridge",
+) -> dict[str, Any]:
+    """Agent 共享实时上下文：只读聚合，不新增数据源/权限语义."""
+    from kss.agent.live_market_context import LiveMarketContextService  # noqa: PLC0415
+
+    service = LiveMarketContextService(_make_read_only_call(dispatch))
+    return service.get_context(
+        symbols=symbols_arg,
+        intent=intent or "explain",
+        reason=reason or "bridge",
+    )
 
 
 def _intraday_bars(symbol: str, interval_minutes: int = 1, asset_kind: str = "stock") -> dict[str, Any]:
@@ -6074,6 +6094,12 @@ def dispatch(command: str, args: list[str]) -> Any:
         return _longbridge_quote(args[0] if args else "")
     if command == "longbridge-quotes":
         return _longbridge_quotes(args[0] if args else "")
+    if command == "market-live-context":
+        return _market_live_context(
+            args[0] if args else "",
+            args[1] if len(args) > 1 else "explain",
+            args[2] if len(args) > 2 else "bridge",
+        )
     if command == "intraday-snapshot":
         return _intraday_snapshot(
             args[0] if args else "",
