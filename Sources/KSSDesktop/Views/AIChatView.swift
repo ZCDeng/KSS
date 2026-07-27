@@ -473,7 +473,7 @@ struct AIChatView: View {
     private func inspectorSection<Content: View>(
         _ section: InspectorSection,
         systemImage: String,
-        @ViewBuilder content: () -> Content
+        @ViewBuilder content: @escaping () -> Content
     ) -> some View {
         DisclosureGroup(
             isExpanded: Binding(
