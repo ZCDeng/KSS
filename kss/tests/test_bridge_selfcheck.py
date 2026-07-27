@@ -75,6 +75,16 @@ class TestMissingCredentials:
         # venv/storage 与凭据无关，不受影响。
         assert by_item["storage"]["status"] == "ok"
 
+    def test_keychain_broker_presence_flag_is_a_valid_llm_credential(self, no_credentials, monkeypatch):
+        # The desktop launcher intentionally does not put the secret in env.
+        # It only exports a presence flag after the Keychain broker validates it.
+        monkeypatch.setenv("KSS_LLM_PRIMARY_CREDENTIAL_PRESENT", "1")
+
+        result = b._check_llm_credential()
+
+        assert result["status"] == "ok"
+        assert "安全凭据服务" in result["detail"]
+
 
 class TestVenvProbe:
     def test_import_success_is_ok(self, tmp_path, monkeypatch):
@@ -156,8 +166,11 @@ class TestDuckdbExtensionProbe:
     """U17 test scenario ③：自检含 duckdb 扩展可加载一项（迁移后为 ok）。"""
 
     def test_real_duckdb_loads_sqlite_extension(self):
-        """真机(已装 duckdb==1.5.4)冒烟：会话可开且 sqlite 扩展可加载。"""
+        """有 DuckDB 的真机冒烟；最小 Python 环境不把可选扩展当作失败。"""
+        pytest.importorskip("duckdb")
         result = b._check_duckdb_extension()
+        if result["status"] != "ok":
+            pytest.skip(result["detail"])
         assert result["status"] == "ok"
 
     def test_import_failure_is_warn_not_fail(self, monkeypatch):

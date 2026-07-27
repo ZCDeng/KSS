@@ -556,7 +556,7 @@ class PiAIProvider:
             if self._uses_legacy_environment:
                 routes, legacy_credentials = legacy_routes_from_environment()
             else:
-                routes = self._require_route_resolver()()
+                routes = effective.route_set or self._require_route_resolver()()
                 legacy_credentials = None
             with self._credential_lock:
                 credentials_loaded = (
@@ -589,7 +589,11 @@ class PiAIProvider:
         ordered = routes.ordered()
         for candidate_index, raw_route in enumerate(ordered):
             route = raw_route
-            if effective.model:
+            # A route-set override deliberately preserves each candidate's
+            # model. Applying a primary model to every candidate made a
+            # settings probe succeed while a real fallback retried the wrong
+            # model ID.
+            if effective.model and effective.route_set is None:
                 route = replace(route, model_id=effective.model)
             if effective.thinking_level:
                 route = replace(

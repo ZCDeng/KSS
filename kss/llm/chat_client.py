@@ -16,7 +16,7 @@ DeepSeek 坑(R1/R-spike):流式时 `delta.tool_calls[].function.arguments` **跨
 from __future__ import annotations
 
 import logging
-from typing import Any, Iterator
+from typing import TYPE_CHECKING, Any, Iterator
 
 from kss.agent.provider import (
     LLMProvider,
@@ -31,6 +31,9 @@ from kss.llm.openai_client import (
 from kss.llm.sanitizer import sanitize_llm_input
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from kss.agent.provider_route import ProviderRouteSet
 
 _DEFAULT_TEMPERATURE = 0.4          # 复盘问答比生成更要稳,略低于 commentary 的 0.6
 _DEFAULT_TIMEOUT_SEC = 90.0         # 多轮放宽,与 openai_client 量级一致(KTD-6)
@@ -55,6 +58,7 @@ class ChatClient:
         temperature: float = _DEFAULT_TEMPERATURE,
         client: Any | None = None,
         provider: LLMProvider | None = None,
+        route_set: "ProviderRouteSet | None" = None,
     ) -> None:
         import os
 
@@ -62,6 +66,7 @@ class ChatClient:
         self._temperature = temperature
         self._timeout = timeout
         self._client = client  # Kept for compatibility with existing injected-client tests.
+        self._route_set = route_set
         if provider is not None:
             self._provider = provider
             self._model = model or os.getenv("KSS_LLM_MODEL") or "gpt-4o-mini"
@@ -94,6 +99,7 @@ class ChatClient:
             temperature=self._temperature,
             timeout=self._timeout,
             include_usage=True,
+            route_set=self._route_set,
         )
         for event in self._provider.stream_sync(messages, tools, config):
             yield _legacy_event(event)

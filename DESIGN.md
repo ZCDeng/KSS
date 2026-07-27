@@ -22,13 +22,13 @@
 - Key contexts of use: wide desktop window, information-dense research, repeated multi-turn sessions, and packaged `/Applications` builds.
 
 ## Information architecture
-- Primary navigation: global KSS workspace rail temporarily collapses while Seesaw is active; the Seesaw header opens sessions, Skills and context as on-demand overlays.
-- Core routes/screens: empty conversation, active conversation, Session Palette, Skill Palette, Context Popover, evidence attachment, and write confirmation.
+- Primary navigation: global KSS workspace rail temporarily collapses while Seesaw is active; the Seesaw header opens sessions, Skills, context and the Seesaw-local Models page.
+- Core routes/screens: empty conversation, active conversation, Models, Provider detail, Session Palette, Skill Palette, Context Popover, evidence attachment, and write confirmation.
 - Content hierarchy: 53pt conversation header → centered Focus column → shared composer with pinned Skills → tool and evidence attachments → explicit safety context.
 
 ## Design principles
-- Focus, not dashboard: the active prompt is the visual center; session, memory and provider management are transient overlays.
-- Skills before settings: pinned Skills sit beside the composer, while provider configuration is shown only as compact status or actionable error copy.
+- Focus, not dashboard: the active prompt is the visual center. On wide windows, a compact Inspector keeps execution, evidence, Skills and context visible without competing with the conversation; narrow windows use a trailing drawer.
+- Skills before settings: pinned Skills sit beside the composer. Provider configuration belongs to Seesaw's Models page, not global KSS Settings.
 - Flat by design: hairlines establish structure; cards and shadows are reserved for the Composer and content attachments.
 - Preserve agency: stop, archive, enable, pin, approve, and reject controls remain explicit and close to their effects.
 - Tradeoffs: every theme shares a 760pt maximum Focus column and the same information architecture; themes may only vary visual tokens.
@@ -43,7 +43,7 @@
 
 ## Components
 - Existing components to reuse: `KSSFont`, `KSSThemeTokens`, `XcomListChrome`, `EvidenceDrawerView`, `ChartWebView`, and existing confirmation views.
-- New/changed components: shared Focus shell, Session Palette, Skill Palette, Context Popover, shared Composer, Skill starters, and compact message/tool rows.
+- New/changed components: shared Focus shell, responsive Inspector, Models page, Provider detail, Session Palette, Skill Palette, Context Popover, shared Composer, Skill starters, and compact message/tool rows.
 - Variants and states: x.com and classic share one rendering hierarchy over the same store/runtime state; only their visual tokens differ.
 - Token/component ownership: palette and typography remain under `ThemeCatalog`; Seesaw-specific geometry belongs with the shared Seesaw chrome.
 
@@ -56,13 +56,13 @@
 
 ## Responsive behavior
 - Supported breakpoints/devices: macOS 14+, resizable desktop window.
-- Layout adaptations: retain a centered 760pt maximum feed at all widths; auxiliary operations use popovers rather than persistent rails; labels compact before the conversation width is reduced.
+- Layout adaptations: retain a centered 720–760pt maximum feed at all widths. The Inspector is persistent at 1180pt and above, becomes a trailing drawer below that threshold, and never squeezes the Composer below its readable width.
 - Touch/hover differences: pointer hover uses a 7–10% ink tint; all actions retain at least 36pt hit areas.
 
 ## Interaction states
 - Loading: a compact assistant-adjacent tool row with progress and tool name.
 - Empty: brief prompt, shared Composer, enabled Skill starters, then optional suggestions; no hero or capability-card grid.
-- Error: actionable provider/credential copy next to the Composer without destroying prior messages.
+- Error: actionable provider/credential copy next to the Composer without destroying prior messages. Configuration readiness may only use the route, Keychain/Credential Broker and explicit connection-test state; a prior chat failure is a separate diagnostic.
 - Success: evidence/tool completion remains attached to the relevant message.
 - Disabled: muted controls with preserved labels.
 - Offline/slow network: keep existing Agent fallback and sequence-warning copy visible.
@@ -76,7 +76,7 @@
 - Framework/styling system: native SwiftUI; no new dependencies.
 - Design-token constraints: use existing semantic tokens and font cascade; no hard-coded duplicate x.com palette.
 - Performance constraints: lazy timeline rendering; do not recreate the Agent/runtime layer for visual changes.
-- Compatibility constraints: session, Skill and memory protocol schemas stay unchanged; temporary Seesaw navigation collapse must not mutate the user's persisted sidebar preference; all safety/evidence/write-confirmation behavior must remain intact.
+- Compatibility constraints: session, Skill and memory protocol schemas stay unchanged; provider route is an optional append-only session state so every session can select a primary model while global settings retain the default/fallback route. Temporary Seesaw navigation collapse must not mutate the user's persisted sidebar preference; all safety/evidence/write-confirmation behavior must remain intact.
 - Test/screenshot expectations: Swift tests, Release build, and installed-app screenshots for empty conversation, active conversation, streaming/tool state, Session Palette, Skill Palette and Context Popover.
 
 ## Open questions

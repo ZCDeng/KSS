@@ -337,6 +337,7 @@ def _agent_wire_message(message: AgentMessage) -> dict[str, Any]:
 def _session_summary(state: Any, messages: list[AgentMessage] | None = None) -> dict[str, Any]:
     meta = dict(getattr(state, "metadata", {}) or {})
     status = getattr(state, "status", "running")
+    route = meta.get("provider_route")
     return {
         "session_id": state.session_id,
         "title": meta.get("title") or state.session_id,
@@ -344,6 +345,7 @@ def _session_summary(state: Any, messages: list[AgentMessage] | None = None) -> 
         "updated_at": str(meta.get("updated_at") or 0),
         "messages": [_agent_wire_message(m) for m in (messages or [])],
         "queued_inputs": _queued_inputs_wire(session_id=state.session_id),
+        "provider_route": route if isinstance(route, dict) else None,
     }
 
 
@@ -421,7 +423,13 @@ def _providers_action_payload(req: dict[str, Any]) -> dict[str, Any]:
             nonce=nonce if isinstance(nonce, str) else None,
         )
     elif action == "test":
-        payload = service.test_provider_connection()
+        primary = req.get("primary")
+        fallback = req.get("fallback")
+        if primary is not None and not isinstance(primary, dict):
+            return {"status": "error", "error": "agent-providers test primary must be an object"}
+        if fallback is not None and not isinstance(fallback, dict):
+            return {"status": "error", "error": "agent-providers test fallback must be an object"}
+        payload = service.test_provider_connection(primary=primary, fallback=fallback)
     else:
         return {"status": "error", "error": f"unknown agent-providers action: {action}"}
     if not isinstance(payload.get("providers"), list):
@@ -1332,9 +1340,13 @@ def _handle_agent_json_command(req: dict) -> str | None:
             store = _session_store()
             action = req.get("action") or "open"
             if action == "create":
+                route = _agent_service().route_store.load().primary.as_dict()
                 state = store.create_session(
                     session_id=req.get("session_id"),
-                    metadata={"title": req.get("title") or req.get("session_id") or ""},
+                    metadata={
+                        "title": req.get("title") or req.get("session_id") or "",
+                        "provider_route": route,
+                    },
                 )
                 return _sidecar_ok(_session_response(
                     store, selected_session_id=state.session_id,
@@ -1366,6 +1378,20 @@ def _handle_agent_json_command(req: dict) -> str | None:
                     return _sidecar_err("agent-session archive requires session_id")
                 store.archive_session(sid)
                 return _sidecar_ok(_session_response(store))
+            if action == "set_provider_route":
+                sid = req.get("session_id")
+                raw_route = req.get("provider_route")
+                if not isinstance(sid, str) or not sid:
+                    return _sidecar_err("agent-session set_provider_route requires session_id")
+                if not isinstance(raw_route, dict):
+                    return _sidecar_err("agent-session set_provider_route requires provider_route")
+                from kss.agent.provider_route import ProviderRoute  # noqa: PLC0415
+
+                route = ProviderRoute.from_dict(raw_route)
+                state = store.set_provider_route(sid, route.as_dict())
+                return _sidecar_ok(_session_response(
+                    store, selected_session_id=state.session_id,
+                ))
             return _sidecar_err(f"unknown agent-session action: {action}")
         if cmd == "agent-skills":
             manager = _skill_manager()

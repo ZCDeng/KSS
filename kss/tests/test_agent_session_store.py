@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -48,6 +49,40 @@ def test_session_store_marks_only_unfinished_run_interrupted(tmp_path):
     assert recovered.status == "interrupted"
     assert recovered.metadata["reason"] == "recovered_incomplete_run"
     assert recovered.metadata["run_id"] == run_id
+
+
+def test_current_state_reads_live_run_without_triggering_crash_recovery(tmp_path):
+    store = SessionStore(tmp_path)
+    store.create_session(
+        session_id="live-route",
+        metadata={"provider_route": {"provider_id": "deepseek", "model_id": "chat"}},
+    )
+    store.start_run("live-route", run_id="active", client_turn_id="turn-1", owner_pid=os.getpid())
+
+    state = store.current_state("live-route")
+
+    assert state is not None
+    assert state.metadata["provider_route"]["model_id"] == "chat"
+    # current_state is a runtime-only metadata read, not the public restart
+    # recovery path; the active run remains durable and live.
+    assert store.find_run_by_client_turn_id("live-route", "turn-1")["status"] == "running"
+
+
+def test_session_provider_route_is_append_only_and_replaces_effective_metadata(tmp_path):
+    store = SessionStore(tmp_path)
+    store.create_session(session_id="route", metadata={"title": "Route"})
+
+    updated = store.set_provider_route("route", {
+        "provider_id": "openai",
+        "model_id": "gpt-test",
+        "thinking_level": "medium",
+    })
+
+    assert updated.metadata["provider_route"]["model_id"] == "gpt-test"
+    path = tmp_path / "storage" / "agent" / "sessions" / "route.jsonl"
+    entries = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert entries[-1]["type"] == "state_updated"
+    assert entries[-1]["payload"]["metadata"]["provider_route"]["provider_id"] == "openai"
 
 
 def test_session_store_recovery_appends_run_terminal_only_once(tmp_path):

@@ -46,6 +46,25 @@ final class SeesawXcomDesignTests: XCTestCase {
         XCTAssertFalse(focus.contains("xcomUtilityPanel"))
     }
 
+    func testFocusShellUsesResponsiveOpenWorkerStyleInspector() throws {
+        let source = try source
+        XCTAssertTrue(source.contains("let persistentInspector = size.width >= 1180"))
+        XCTAssertTrue(source.contains("focusInspector"))
+        XCTAssertTrue(source.contains("showInspectorDrawer"))
+        XCTAssertTrue(source.contains("DisclosureGroup("))
+        XCTAssertTrue(source.contains("private var focusEmptyConversation"))
+        XCTAssertTrue(source.contains("focusComposer\n                .frame(maxWidth: SeesawXcomChrome.feedColumnWidth)"))
+    }
+
+    func testModelsBelongToSeesawRatherThanGlobalSettings() throws {
+        let source = try source
+        XCTAssertTrue(source.contains("private var seesawModelsPage"))
+        XCTAssertTrue(source.contains("case providerDetail(String)"))
+        XCTAssertTrue(source.contains("private func seesawProviderDetail"))
+        XCTAssertTrue(source.contains("SettingsCredentialsSection("))
+        XCTAssertTrue(source.contains("focusSource: .llm"))
+    }
+
     func testFocusComposerIsSharedAndSkillsRemainExplicit() throws {
         let source = try source
         XCTAssertTrue(source.contains("private var focusComposer"))

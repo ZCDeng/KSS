@@ -125,6 +125,25 @@ enum KeychainStore {
         llmSecretKeys.contains { read($0) != nil } || !providerCredentialIds().isEmpty
     }
 
+    /// The Composer must validate the credential for its selected route, not
+    /// merely any LLM key on this Mac. This mirrors the broker's alias rules
+    /// without returning the secret to the caller.
+    static func hasLLMCredential(forProviderID providerId: String?) -> Bool {
+        guard let providerId = providerId?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !providerId.isEmpty
+        else { return false }
+        if readProviderAPIKey(providerId) != nil { return true }
+        switch providerId {
+        case "kss-primary": return read("KSS_LLM_PRIMARY_KEY") != nil
+        case "kss-fallback": return read("KSS_LLM_FALLBACK_KEY") != nil
+        case "deepseek": return read("DEEPSEEK_API_KEY") != nil
+        case "openai": return read("OPENAI_API_KEY") != nil
+        case "openrouter": return read("OPENROUTER_API_KEY") != nil
+        default: return false
+        }
+    }
+
     static func readProviderAPIKey(_ providerId: String) -> String? {
         read(providerAccountPrefix + providerId)
     }

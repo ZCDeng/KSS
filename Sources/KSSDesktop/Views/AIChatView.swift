@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 struct AIChatView: View {
     @EnvironmentObject private var store: KSSStore
     @Environment(\.kssTheme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding private var globalNavigationExpanded: Bool
     @State private var input = ""
     @State private var hovered: String?
@@ -22,6 +23,11 @@ struct AIChatView: View {
     @State private var pendingQueueClientMessageId: String?
     @State private var loadedQueueInputId: String?
     @State private var showAttachmentImporter = false
+    @State private var seesawPage: SeesawPage = .conversation
+    @State private var showInspectorDrawer = false
+    @State private var expandedInspectorSections: Set<InspectorSection> = Set(InspectorSection.allCases)
+    @State private var providerConfigResults: [String: DataSourceTestResult] = [:]
+    @State private var providerConfigDirty: Set<String> = []
     /// 会话开场确定性候选建议（plan 2026-07-12-004 U9）；nil = 未加载或无候选，不显示 chip。
     @State private var indicatorSuggestion: IndicatorSuggestion?
     @FocusState private var isComposerFocused: Bool
@@ -30,6 +36,28 @@ struct AIChatView: View {
         case sessions
         case skills
         case context
+    }
+
+    private enum SeesawPage: Equatable {
+        case conversation
+        case models
+        case providerDetail(String)
+    }
+
+    private enum InspectorSection: String, CaseIterable, Hashable {
+        case progress
+        case evidence
+        case skills
+        case context
+
+        var title: String {
+            switch self {
+            case .progress: return "Progress"
+            case .evidence: return "Evidence & Artifacts"
+            case .skills: return "Skills"
+            case .context: return "Context & Memory"
+            }
+        }
     }
 
     private enum SkillFilter: String, CaseIterable, Identifiable {
@@ -98,6 +126,7 @@ struct AIChatView: View {
             .onAppear { Task { await store.preheatRealtimeContext() } }   // U4: Seesaw 加载时预温实时上下文（R3）
             .onAppear { Task { await loadIndicatorSuggestion() } }        // U9: 空态确定性候选建议 chip
             .onAppear { Task { await store.loadAgentBootstrap() } }
+            .onAppear { applySeesawDestination() }
             .onAppear { globalNavigationExpanded = false }
             .onDisappear {
                 activeOverlay = nil
@@ -106,6 +135,9 @@ struct AIChatView: View {
             .onChange(of: store.selectedAgentSessionId) { _, _ in
                 activeOverlay = nil
                 isComposerFocused = true
+            }
+            .onChange(of: store.seesawDestination) { _, _ in
+                applySeesawDestination()
             }
             .onChange(of: store.agentQueueAcknowledgement) { _, acknowledgement in
                 guard let acknowledgement,
@@ -157,29 +189,78 @@ struct AIChatView: View {
     /// are overlays so they never compete with the active prompt for horizontal space.
     private func focusSeesawShell(size: CGSize) -> some View {
         let compact = size.width < SeesawXcomChrome.compactContentWidth
+        let persistentInspector = size.width >= 1180
 
         return ZStack {
             theme.canvas.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                focusHeader(compact: compact)
+                focusHeader(compact: compact, persistentInspector: persistentInspector)
 
-                Group {
-                    if store.chatMessages.isEmpty {
-                        focusEmptyConversation
-                    } else {
-                        focusConversation
+                switch seesawPage {
+                case .conversation:
+                    HStack(spacing: 0) {
+                        Group {
+                            if store.chatMessages.isEmpty {
+                                focusEmptyConversation
+                            } else {
+                                focusConversation
+                            }
+                        }
+                        .frame(maxWidth: SeesawXcomChrome.feedColumnWidth)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                        if persistentInspector {
+                            Divider().overlay(theme.hairline)
+                            focusInspector
+                                .frame(width: 340)
+                                .transition(inspectorTransition)
+                        }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .models:
+                    seesawModelsPage
+                case .providerDetail(let providerID):
+                    seesawProviderDetail(providerID)
                 }
-                .frame(maxWidth: SeesawXcomChrome.feedColumnWidth)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+
+            if !isInModelsWorkspace, !persistentInspector, showInspectorDrawer {
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    focusInspector
+                        .frame(width: min(360, max(300, size.width * 0.82)))
+                        .transition(inspectorTransition)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+                .background(alignment: .trailing) {
+                    Rectangle()
+                        .fill(theme.canvas.opacity(0.94))
+                        .frame(width: min(360, max(300, size.width * 0.82)))
+                        .shadow(color: .black.opacity(0.14), radius: 14, x: -4)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onExitCommand { activeOverlay = nil }
+        .animation(reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.28, dampingFraction: 0.9), value: showInspectorDrawer)
+        .onExitCommand {
+            if showInspectorDrawer { showInspectorDrawer = false }
+            else if case .providerDetail = seesawPage { seesawPage = .models }
+            else if seesawPage == .models { seesawPage = .conversation }
+            else { activeOverlay = nil }
+        }
     }
 
-    private func focusHeader(compact: Bool) -> some View {
+    private var inspectorTransition: AnyTransition {
+        reduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity)
+    }
+
+    private var isInModelsWorkspace: Bool {
+        if case .conversation = seesawPage { return false }
+        return true
+    }
+
+    private func focusHeader(compact: Bool, persistentInspector: Bool) -> some View {
         HStack(spacing: 8) {
             Button {
                 withAnimation(.easeOut(duration: 0.16)) {
@@ -255,6 +336,32 @@ struct AIChatView: View {
                     .frame(width: 440, height: 600)
             }
 
+            Button {
+                activeOverlay = nil
+                showInspectorDrawer = false
+                seesawPage = isInModelsWorkspace ? .conversation : .models
+            } label: {
+                Label(isInModelsWorkspace ? "返回对话" : "模型", systemImage: isInModelsWorkspace ? "chevron.left" : "cpu")
+                    .font(KSSFont.themed(12.5, .semibold, theme: theme))
+                    .padding(.horizontal, compact ? 0 : 9)
+                    .frame(height: 36)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(isInModelsWorkspace ? theme.accent : theme.textSecondary)
+            .help(isInModelsWorkspace ? "返回对话" : "管理 Seesaw 模型与凭据")
+
+            if !isInModelsWorkspace, !persistentInspector {
+                Button { showInspectorDrawer.toggle() } label: {
+                    Label("执行面板", systemImage: "rectangle.rightthird.inset.filled")
+                        .labelStyle(.iconOnly)
+                        .frame(width: 36, height: 36)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(showInspectorDrawer ? theme.accent : theme.textSecondary)
+                .help("执行面板")
+            }
+
             if store.isChatStreaming {
                 Button { store.stopChatGeneration() } label: {
                     Label("停止", systemImage: "stop.fill")
@@ -275,36 +382,453 @@ struct AIChatView: View {
         }
     }
 
-    private var focusEmptyConversation: some View {
+    // MARK: - OpenWorker-style inspector and Models workspace
+
+    private var focusInspector: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                Spacer(minLength: 54)
-
-                Text("今天想研究什么？")
-                    .font(KSSFont.themed(24, .bold, theme: theme))
-                    .foregroundStyle(theme.textPrimary)
-
-                Text("从一个市场问题开始；Seesaw 会将结论与可验证证据放在一起。")
-                    .font(KSSFont.themed(14, theme: theme))
-                    .foregroundStyle(theme.textSecondary)
-
-                focusComposer
-
-                focusSkillStarters
-
-                if indicatorSuggestion?.family != nil {
-                    focusIndicatorSuggestion
-                }
-                if store.researchCandidate != nil {
-                    focusResearchCandidate
+            VStack(alignment: .leading, spacing: 0) {
+                if showInspectorDrawer {
+                    HStack {
+                        Text("执行面板")
+                            .font(KSSFont.themed(15, .bold, theme: theme))
+                        Spacer()
+                        Button { showInspectorDrawer = false } label: {
+                            Label("关闭", systemImage: "xmark")
+                                .labelStyle(.iconOnly)
+                                .frame(width: 30, height: 30)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(theme.textSecondary)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
                 }
 
-                Spacer(minLength: 32)
+                inspectorSection(.progress, systemImage: "chevron.down") {
+                    if store.isChatStreaming {
+                        Label(store.chatToolInProgress.map { "正在调用 \($0)" } ?? "模型正在生成", systemImage: "circle.dotted.circle")
+                            .foregroundStyle(theme.accent)
+                    } else {
+                        Text("长任务、工具调用与确认会在这里显示。")
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                    if store.agentSteeringCount + store.agentFollowUpCount > 0 {
+                        Text("队列：\(store.agentSteeringCount) 条补充 · \(store.agentFollowUpCount) 条追问")
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                }
+
+                inspectorSection(.evidence, systemImage: "paperclip") {
+                    if store.pendingAgentAttachments.isEmpty && !store.chatMessages.contains(where: { $0.evidenceSummary.hasEvidence }) {
+                        Text("暂无可预览的证据或附件。")
+                            .foregroundStyle(theme.textSecondary)
+                    } else {
+                        if !store.pendingAgentAttachments.isEmpty {
+                            Text("附件 \(store.pendingAgentAttachments.count) 个")
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                        let evidenceCount = store.chatMessages.filter { $0.evidenceSummary.hasEvidence }.count
+                        if evidenceCount > 0 {
+                            Text("\(evidenceCount) 条回复包含可展开的证据来源")
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                    }
+                }
+
+                inspectorSection(.skills, systemImage: "slider.horizontal.3") {
+                    Text("\(pinnedSkills.count) 个置顶 · \(enabledSkillCount) 个启用")
+                        .foregroundStyle(theme.textSecondary)
+                    if !pinnedSkills.isEmpty {
+                        ForEach(pinnedSkills) { skill in
+                            Text(skill.name)
+                                .font(KSSFont.themed(12, .semibold, theme: theme))
+                                .foregroundStyle(theme.textPrimary)
+                        }
+                    }
+                    Button("管理 Skills…") { toggleOverlay(.skills) }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(theme.accent)
+                }
+
+                inspectorSection(.context, systemImage: "circle.dotted.circle") {
+                    Text(contextUsageShort)
+                        .foregroundStyle(theme.textSecondary)
+                    Text(providerComposerLabel)
+                        .foregroundStyle(theme.textSecondary)
+                    if !store.agentSourceRecalls.isEmpty {
+                        Text("本轮召回 \(store.agentSourceRecalls.count) 条记忆")
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                    Button("查看上下文与记忆…") { toggleOverlay(.context) }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(theme.accent)
+                }
             }
-            .frame(maxWidth: SeesawXcomChrome.feedColumnWidth, alignment: .leading)
-            .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
-            .padding(.bottom, 28)
+            .padding(.bottom, 18)
+        }
+        .font(KSSFont.themed(12, theme: theme))
+        .background(theme.canvas)
+    }
+
+    private func inspectorSection<Content: View>(
+        _ section: InspectorSection,
+        systemImage: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        DisclosureGroup(
+            isExpanded: Binding(
+                get: { expandedInspectorSections.contains(section) },
+                set: { isExpanded in
+                    if isExpanded {
+                        expandedInspectorSections.insert(section)
+                    } else {
+                        expandedInspectorSections.remove(section)
+                    }
+                }
+            )
+        ) {
+            content()
+                .padding(.top, 8)
+                .font(KSSFont.themed(11.5, theme: theme))
+                .fixedSize(horizontal: false, vertical: true)
+        } label: {
+            Label(section.title, systemImage: systemImage)
+                .font(KSSFont.themed(13, .bold, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 15)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(theme.hairline).frame(height: 1)
+        }
+    }
+
+    private var seesawModelsPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("Models")
+                        .font(KSSFont.themed(25, .bold, theme: theme))
+                        .foregroundStyle(theme.textPrimary)
+                    Text("配置只影响 Seesaw。密钥保存在本机 Keychain，当前会话可单独选择模型。")
+                        .font(KSSFont.themed(13.5, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                }
+
+                sessionModelCard
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("可用 Provider")
+                        .font(KSSFont.themed(14, .bold, theme: theme))
+                    if store.agentProviders.isEmpty {
+                        Text("正在读取本机凭据与模型目录…")
+                            .font(KSSFont.themed(12.5, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                    } else {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 205), spacing: 12)], spacing: 12) {
+                            ForEach(store.agentProviders) { provider in
+                                providerCatalogCard(provider)
+                            }
+                        }
+                    }
+                }
+
+                SettingsCredentialsSection(
+                    results: $providerConfigResults,
+                    dirtySources: $providerConfigDirty,
+                    focusSource: .llm
+                )
+                .id("seesaw-provider-configuration")
+            }
+            .frame(maxWidth: 840, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.horizontal, 32)
+            .padding(.vertical, 30)
+        }
+        .scrollContentBackground(.hidden)
+        .background(theme.canvas)
+        .task { await store.loadAgentProviders(reloadCredentials: true) }
+    }
+
+    private var sessionModelCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("本会话模型")
+                        .font(KSSFont.themed(14, .bold, theme: theme))
+                    Text("新会话继承全局默认；切换仅会在下一次发送时生效。")
+                        .font(KSSFont.themed(12, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                Spacer()
+                if store.isChatStreaming {
+                    Text("生成中不可切换")
+                        .font(KSSFont.themed(11.5, .semibold, theme: theme))
+                        .foregroundStyle(Color.orange)
+                }
+            }
+
+            Menu {
+                ForEach(store.agentProviders) { provider in
+                    if let models = provider.models, !models.isEmpty {
+                        Section(provider.name ?? provider.id) {
+                            ForEach(models) { model in
+                                Button(model.name ?? model.id) {
+                                    selectSessionRoute(provider: provider, model: model)
+                                }
+                                .disabled(store.isChatStreaming)
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack {
+                    Text(providerComposerLabel.isEmpty ? "选择模型" : providerComposerLabel)
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                }
+                .font(KSSFont.themed(13, .semibold, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+                .padding(.horizontal, 12)
+                .frame(height: 38)
+                .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: 10))
+            }
+            .menuStyle(.borderlessButton)
+            .disabled(store.isChatStreaming || store.agentProviders.isEmpty)
+
+            HStack(spacing: 10) {
+                Button("设为新会话默认") {
+                    if let route = store.agentPrimaryRoute { store.setAgentGlobalDefaultRoute(route) }
+                }
+                .buttonStyle(.bordered)
+                .disabled(store.isChatStreaming || store.agentPrimaryRoute == nil)
+                Button("测试当前连接") { Task { await store.testAgentProviderConnection() } }
+                    .buttonStyle(.bordered)
+                readinessBadge
+            }
+        }
+        .padding(16)
+        .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(theme.hairline))
+    }
+
+    private func providerCatalogCard(_ provider: AgentProviderDescriptor) -> some View {
+        let isCurrent = provider.id == store.agentPrimaryRoute?.providerId
+        return Button {
+            seesawPage = .providerDetail(provider.id)
+        } label: {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 8) {
+                    Circle().fill(provider.authenticated == true ? theme.accent : theme.textSecondary.opacity(0.45))
+                        .frame(width: 8, height: 8)
+                    Text(provider.name ?? provider.id)
+                        .font(KSSFont.themed(13, .bold, theme: theme))
+                    Spacer()
+                    if isCurrent { Text("当前") .font(KSSFont.themed(10.5, .semibold, theme: theme)).foregroundStyle(theme.accent) }
+                }
+                Text(provider.authenticated == true ? "已保存凭据" : "尚未验证或未配置")
+                    .font(KSSFont.themed(11, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                Text("\(provider.models?.count ?? 0) 个可用模型")
+                    .font(KSSFont.themed(11, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+            }
+            .frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
+            .padding(13)
+            .background(isCurrent ? theme.accentSoft : theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(theme.hairline))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("配置 \(provider.name ?? provider.id)")
+    }
+
+    private func seesawProviderDetail(_ providerID: String) -> some View {
+        let provider = store.agentProviders.first(where: { $0.id == providerID })
+        let models = provider?.models ?? []
+        let title = provider?.name ?? providerID
+        let isCurrent = providerID == store.agentPrimaryRoute?.providerId
+
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                Button {
+                    seesawPage = .models
+                } label: {
+                    Label("所有 Provider", systemImage: "chevron.left")
+                        .font(KSSFont.themed(13, .semibold, theme: theme))
+                        .foregroundStyle(theme.accent)
+                }
+                .buttonStyle(.plain)
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(title)
+                        .font(KSSFont.themed(25, .bold, theme: theme))
+                        .foregroundStyle(theme.textPrimary)
+                    Text(provider?.authenticated == true
+                         ? "凭据已载入 Credential Broker；可选择模型后测试。"
+                         : "尚未发现此 Provider 的凭据。请在下方主/备用路由配置中录入 API Key。")
+                        .font(KSSFont.themed(13.5, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                }
+
+                if let baseURL = provider?.baseURL, !baseURL.isEmpty {
+                    detailFact("Base URL", value: baseURL)
+                }
+                detailFact("状态", value: isCurrent ? "当前会话正在使用此 Provider" : "可用于当前会话或新会话默认")
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("模型")
+                        .font(KSSFont.themed(14, .bold, theme: theme))
+                    if models.isEmpty {
+                        Text("尚未收到模型目录。可在主/备用路由中手工填写模型 ID。")
+                            .font(KSSFont.themed(12.5, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                    } else {
+                        ForEach(models) { model in
+                            Button {
+                                if let provider {
+                                    selectSessionRoute(provider: provider, model: model)
+                                }
+                            } label: {
+                                HStack(spacing: 10) {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(model.name ?? model.id)
+                                            .font(KSSFont.themed(13, .semibold, theme: theme))
+                                        Text(model.id)
+                                            .font(.system(size: 11, design: .monospaced))
+                                            .foregroundStyle(theme.textSecondary)
+                                    }
+                                    Spacer()
+                                    if model.id == store.agentPrimaryRoute?.modelId && isCurrent {
+                                        Text("当前")
+                                            .font(KSSFont.themed(11, .semibold, theme: theme))
+                                            .foregroundStyle(theme.accent)
+                                    }
+                                }
+                                .padding(.vertical, 9)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(store.isChatStreaming)
+                            Divider().overlay(theme.hairline)
+                        }
+                    }
+                }
+
+                HStack(spacing: 10) {
+                    Button("测试当前路由") { Task { await store.testAgentProviderConnection() } }
+                        .buttonStyle(.bordered)
+                    Button("编辑主/备用路由") { seesawPage = .models }
+                        .buttonStyle(.bordered)
+                }
+
+                if KeychainStore.readProviderAPIKey(providerID) != nil {
+                    Button(role: .destructive) {
+                        _ = KeychainStore.writeProviderAPIKey(providerID, "")
+                        Task { await store.loadAgentProviders(reloadCredentials: true) }
+                    } label: {
+                        Label("移除已保存的 \(title) API Key", systemImage: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("只移除此 Provider 的 scoped Key；不会删除其他 Provider 或历史 Keychain 项")
+                }
+            }
+            .frame(maxWidth: 760, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.horizontal, 32)
+            .padding(.vertical, 30)
+        }
+        .scrollContentBackground(.hidden)
+        .background(theme.canvas)
+    }
+
+    private func detailFact(_ label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(label)
+                .font(KSSFont.themed(12, .semibold, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+                .frame(width: 78, alignment: .leading)
+            Text(value)
+                .font(KSSFont.themed(12.5, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+                .textSelection(.enabled)
+        }
+    }
+
+    private var readinessBadge: some View {
+        let text: String
+        let tint: Color
+        switch store.seesawProviderReadiness {
+        case .ready: text = "已连接"; tint = theme.accent
+        case .configuredUntested: text = "待测试"; tint = theme.textSecondary
+        case .brokerLoading: text = "读取中"; tint = theme.textSecondary
+        case .missingCredential: text = "缺少密钥"; tint = Color.orange
+        case .missingRoute: text = "未选模型"; tint = Color.orange
+        case .failed: text = "连接失败"; tint = Color.red
+        }
+        return Text(text)
+            .font(KSSFont.themed(11.5, .semibold, theme: theme))
+            .foregroundStyle(tint)
+    }
+
+    private func selectSessionRoute(provider: AgentProviderDescriptor, model: AgentModelDescriptor) {
+        let route = AgentProviderRoute(
+            providerId: provider.id,
+            modelId: model.id,
+            baseURL: provider.baseURL,
+            thinkingLevel: store.agentPrimaryRoute?.thinkingLevel ?? "off",
+            contextWindow: model.contextWindow,
+            maxOutputTokens: model.maxOutputTokens,
+            supportsImages: model.supportsImages,
+            supportsTools: model.supportsTools,
+            supportsThinking: model.supportsThinking
+        )
+        store.setAgentSessionProviderRoute(route)
+    }
+
+    private func applySeesawDestination() {
+        switch store.consumeSeesawDestination() {
+        case .models?: seesawPage = .models
+        case .conversation?: seesawPage = .conversation
+        case nil: break
+        }
+    }
+
+    private var focusEmptyConversation: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Spacer(minLength: 54)
+
+                    Text("今天想研究什么？")
+                        .font(KSSFont.themed(24, .bold, theme: theme))
+                        .foregroundStyle(theme.textPrimary)
+
+                    Text("从一个市场问题开始；Seesaw 会将结论与可验证证据放在一起。")
+                        .font(KSSFont.themed(14, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+
+                    focusSkillStarters
+
+                    if indicatorSuggestion?.family != nil {
+                        focusIndicatorSuggestion
+                    }
+                    if store.researchCandidate != nil {
+                        focusResearchCandidate
+                    }
+
+                    Spacer(minLength: 32)
+                }
+                .frame(maxWidth: SeesawXcomChrome.feedColumnWidth, alignment: .leading)
+                .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+                .padding(.bottom, 28)
+                .frame(maxWidth: .infinity, alignment: .center)
+            }
+
+            focusComposer
+                .frame(maxWidth: SeesawXcomChrome.feedColumnWidth)
+                .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+                .padding(.vertical, 12)
         }
     }
 
@@ -475,7 +999,8 @@ struct AIChatView: View {
     private var focusProviderIssue: some View {
         if let issue = providerIssueDescription {
             Button {
-                store.openSettings(category: .llm)
+                activeOverlay = nil
+                seesawPage = .models
             } label: {
                 Label(issue, systemImage: "exclamationmark.triangle")
                     .font(KSSFont.themed(12.5, .medium, theme: theme))
@@ -486,7 +1011,7 @@ struct AIChatView: View {
                     .background(Color.orange.opacity(0.09), in: RoundedRectangle(cornerRadius: 10))
             }
             .buttonStyle(.plain)
-            .help("打开 Seesaw LLM 设置")
+            .help("打开 Seesaw 模型设置")
         }
     }
 
@@ -1038,25 +1563,22 @@ struct AIChatView: View {
     }
 
     private var providerIssueDescription: String? {
-        if store.isCredentialConfigured("llm") != true {
-            return "尚未配置 Seesaw LLM。打开设置完成 API Key、模型与端点配置。"
-        }
-
-        let raw = store.agentTerminationReason ?? store.agentProviderStatus
-        guard store.agentLastEventIsError == true || (store.agentProviderStatus != nil && store.agentProviderStatus != "ready") else {
+        switch store.seesawProviderReadiness {
+        case .ready:
             return nil
+        case .missingRoute:
+            return "先选择一个模型。Seesaw 会为本会话保存该选择。"
+        case .missingCredential:
+            return "还没有可用的 API Key。打开模型页面安全保存并测试连接。"
+        case .brokerLoading:
+            return "正在读取本机凭据与模型目录…"
+        case .configuredUntested:
+            // A saved Keychain record is usable even before an explicit test;
+            // communicate the state without blocking a normal first send.
+            return "模型已配置，建议先运行一次连接测试。"
+        case let .failed(reason):
+            return "模型连接失败：\(reason)。打开模型页面查看 Provider、模型与端点。"
         }
-        let lowercased = (raw ?? "").lowercased()
-        if lowercased.contains("stream") {
-            return "模型服务未能开始响应。请检查模型、端点与 API Key，然后在设置中测试连接。"
-        }
-        if lowercased.contains("auth") || lowercased.contains("key") || lowercased.contains("401") || lowercased.contains("403") {
-            return "API Key 未通过验证。请检查 Seesaw LLM 的密钥与服务商设置。"
-        }
-        if let raw, !raw.isEmpty {
-            return "模型连接异常：\(raw)。打开设置检查连接。"
-        }
-        return "模型连接异常。打开设置检查连接。"
     }
 
     private func skillMetadata(_ skill: AgentSkill) -> String {
@@ -1393,7 +1915,7 @@ struct AIChatView: View {
                 if store.isCredentialConfigured("llm") == false {
                     VStack(spacing: 0) {
                         MissingCredentialCard(sourceDisplayName: "LLM key") {
-                            store.openSettings(category: .llm)
+                            store.openSeesawModels()
                         }
                         .padding(SeesawXcomChrome.rowHorizontalPadding)
                         Rectangle().fill(theme.hairline).frame(height: 1)
@@ -2371,7 +2893,7 @@ struct AIChatView: View {
                 if store.isCredentialConfigured("llm") == false {
                     MissingCredentialCard(sourceDisplayName: "LLM key") {
                         // R3：AIChat 入口落到 Seesaw LLM 分类（经典投影 credentials tab）。
-                        store.openSettings(category: .llm)
+                        store.openSeesawModels()
                     }
                     .frame(width: width)
                     .padding(.bottom, 18)
@@ -2466,6 +2988,7 @@ struct AIChatView: View {
 
     private var canSend: Bool {
         pendingQueueClientMessageId == nil
+            && store.seesawProviderReadiness.isReadyForComposer
             && (!input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || (!store.isChatStreaming && !store.pendingAgentAttachments.isEmpty))
     }

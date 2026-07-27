@@ -13,7 +13,7 @@ import logging
 import os
 import threading
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Callable, Iterator, Literal, Protocol
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Iterator, Literal, Protocol
 
 from kss.llm.openai_client import (
     LLMUnavailable,
@@ -22,6 +22,9 @@ from kss.llm.openai_client import (
 )
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from kss.agent.provider_route import ProviderRouteSet
 
 ProviderEventType = Literal[
     "text_start",
@@ -164,6 +167,9 @@ class ProviderConfig:
     timeout: float | None = None
     include_usage: bool = False
     thinking_level: str | None = None
+    # A session may choose a non-secret route for one stream without mutating
+    # the process-wide default. Legacy providers intentionally ignore it.
+    route_set: "ProviderRouteSet | None" = None
 
 
 class AbortSignal(Protocol):

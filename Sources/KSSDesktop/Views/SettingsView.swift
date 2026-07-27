@@ -22,7 +22,6 @@ struct SettingsView: View {
             store.isCredentialConfigured("tushare"),
             store.isCredentialConfigured("longbridge"),
             store.isCredentialConfigured("telegram"),
-            store.isCredentialConfigured("llm"),
         ].map { $0 ?? true }   // 尚未自检（nil）时不误判为「未配置」而乱亮点
     }
 
@@ -214,7 +213,7 @@ struct SettingsView: View {
                             tab = cat.tab
                         }
                     })
-                case .tushare, .longbridge, .telegram, .llm:
+                case .tushare, .longbridge, .telegram:
                     // 固定 id：四源共享同一份 @State，切换分类不丢未保存编辑（plan KTD3）。
                     SettingsCredentialsSection(
                         results: $dataSourceResults,
@@ -302,15 +301,19 @@ struct SettingsCredentialsSection: View {
 
     private var visibleSources: [SettingsDataSource] {
         if let focusSource { return [focusSource] }
-        return SettingsDataSource.allCases
+        return SettingsDataSource.allCases.filter { $0 != .llm }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: isXcomFlat ? SettingsFormStyle.blockSpacing : 14) {
-            if isXcomFlat {
-                SettingsHintText(text: "KSS 会自动继承现有 LLM 配置。只有切换服务或密钥时才需要修改；凭据仅存于 macOS Keychain。")
+            if focusSource == .llm, isXcomFlat {
+                SettingsHintText(text: "在 Seesaw 中配置主用与备用模型。已有 KSS 凭据会安全回填；保存并测试后即可用于对话，凭据仅存于 macOS Keychain。")
+            } else if focusSource == .llm {
+                Text("在 Seesaw 中配置主用与备用模型。已有 KSS 凭据会安全回填；保存并测试后即可用于对话，凭据仅存于 macOS Keychain。")
+                    .font(KSSFont.themed(12.5, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
             } else {
-                Text("KSS 会自动继承现有 LLM 配置。只有切换服务或密钥时才需要修改；凭据仅存于 macOS Keychain。")
+                Text("凭据仅存于 macOS Keychain。Seesaw 的模型与 API Key 请在 Seesaw 页面中管理。")
                     .font(KSSFont.themed(12.5, theme: theme))
                     .foregroundStyle(theme.textSecondary)
             }
@@ -423,13 +426,14 @@ struct SettingsCredentialsSection: View {
     }
 
     private var providerRuntimeSummary: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let defaultRoute = store.agentGlobalPrimaryRoute ?? store.agentPrimaryRoute
+        return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 SettingsStatusCapsule(
                     text: store.agentProviderStatus ?? "provider —",
                     tint: (store.agentProviderStatus == "ready") ? theme.accent : theme.textSecondary
                 )
-                if let route = store.agentPrimaryRoute {
+                if let route = defaultRoute {
                     Text("主用 \(route.providerId ?? "provider") / \(route.modelId ?? "model")")
                         .font(.system(size: 11.5, design: .monospaced))
                         .foregroundStyle(theme.textSecondary)
@@ -449,7 +453,7 @@ struct SettingsCredentialsSection: View {
                     }
                 )
             }
-            if let route = store.agentPrimaryRoute,
+            if let route = defaultRoute,
                let provider = store.agentProviders.first(where: { $0.id == route.providerId }) {
                 HStack(spacing: 8) {
                     Text(provider.authenticated == true ? "已继承 KSS 凭据" : "等待凭据验证")
@@ -464,7 +468,7 @@ struct SettingsCredentialsSection: View {
                         .foregroundStyle(theme.textSecondary)
                 }
             }
-            if let route = store.agentPrimaryRoute,
+            if let route = defaultRoute,
                let providerId = route.providerId,
                let modelId = route.modelId,
                let model = store.agentProviders
@@ -617,10 +621,11 @@ struct SettingsCredentialsSection: View {
     ) -> some View {
         let titleSize: CGFloat = isXcomFlat ? SettingsFormStyle.itemTitle : 16
         let noteSize: CGFloat = isXcomFlat ? SettingsFormStyle.bodyHint : 12.5
+        let isConfigured = sourceConfigured(source)
         VStack(alignment: .leading, spacing: isXcomFlat ? SettingsFormStyle.cardInnerSpacing : 12) {
             HStack(spacing: isXcomFlat ? SettingsFormStyle.rowHSpacing : 10) {
                 Circle()
-                    .fill(source.isConfigured ? theme.accent : theme.textSecondary.opacity(0.4))
+                    .fill(isConfigured ? theme.accent : theme.textSecondary.opacity(0.4))
                     .frame(width: 8, height: 8)
                 Text(source.displayName)
                     // xcom：与任务行标题 14.5 bold 对齐；经典拉丁源名仍 16 光学对齐 CJK
@@ -628,11 +633,11 @@ struct SettingsCredentialsSection: View {
                     .foregroundStyle(theme.textPrimary)
                 if isXcomFlat {
                     SettingsStatusCapsule(
-                        text: source.isConfigured ? "已配置" : "未配置",
-                        tint: source.isConfigured ? theme.accent : theme.textSecondary
+                        text: isConfigured ? "已配置" : "未配置",
+                        tint: isConfigured ? theme.accent : theme.textSecondary
                     )
                 } else {
-                    Text(source.isConfigured ? "已配置" : "未配置")
+                    Text(isConfigured ? "已配置" : "未配置")
                         .font(KSSFont.themed(11.5, .semibold, theme: theme))
                         .foregroundStyle(theme.textSecondary)
                         .padding(.horizontal, 7).padding(.vertical, 1.5)
@@ -736,6 +741,16 @@ struct SettingsCredentialsSection: View {
         }
     }
 
+    private func sourceConfigured(_ source: SettingsDataSource) -> Bool {
+        guard source == .llm else { return source.isConfigured }
+        switch store.seesawProviderReadiness {
+        case .missingCredential, .missingRoute, .brokerLoading:
+            return false
+        case .configuredUntested, .ready, .failed:
+            return true
+        }
+    }
+
     @ViewBuilder
     private func resultDetail(_ result: DataSourceTestResult) -> some View {
         if let candidates = result.candidates, !candidates.isEmpty {
@@ -805,13 +820,14 @@ struct SettingsCredentialsSection: View {
         telegramBotToken = KeychainStore.read("TELEGRAM_BOT_TOKEN") ?? ""
         telegramChatId = KeychainStore.read("TELEGRAM_CHAT_ID") ?? ""
         telegramApiUrl = KeychainStore.read("TELEGRAM_API_URL") ?? ""
-        llmPrimaryProvider = store.agentPrimaryRoute?.providerId ?? "kss-primary"
+        let defaultRoute = store.agentGlobalPrimaryRoute ?? store.agentPrimaryRoute
+        llmPrimaryProvider = defaultRoute?.providerId ?? "kss-primary"
         llmPrimaryBaseUrl = KeychainStore.read("KSS_LLM_PRIMARY_BASE_URL") ?? ""
         llmPrimaryKey = KeychainStore.readProviderAPIKey(llmPrimaryProvider)
             ?? KeychainStore.read("KSS_LLM_PRIMARY_KEY") ?? ""
-        llmPrimaryModel = store.agentPrimaryRoute?.modelId
+        llmPrimaryModel = defaultRoute?.modelId
             ?? KeychainStore.read("KSS_LLM_PRIMARY_MODEL") ?? ""
-        llmPrimaryThinking = store.agentPrimaryRoute?.thinkingLevel ?? "off"
+        llmPrimaryThinking = defaultRoute?.thinkingLevel ?? "off"
         llmFallbackProvider = store.agentFallbackRoute?.providerId ?? "kss-fallback"
         llmFallbackBaseUrl = KeychainStore.read("KSS_LLM_FALLBACK_BASE_URL") ?? ""
         llmFallbackKey = KeychainStore.readProviderAPIKey(llmFallbackProvider)
@@ -892,14 +908,19 @@ struct SettingsCredentialsSection: View {
             baseURL: nilIfEmpty(llmPrimaryBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines)),
             thinkingLevel: llmPrimaryThinking
         )
-        let fallback = llmFallbackKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? nil
-            : AgentProviderRoute(
+        let fallbackHasSavedCredential = KeychainStore.hasLLMCredential(
+            forProviderID: fallbackRouteProviderId
+        )
+        let fallbackConfigured = !llmFallbackKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !fallbackModel.isEmpty
+            || !llmFallbackBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || fallbackHasSavedCredential
+        let fallback = !fallbackConfigured ? nil : AgentProviderRoute(
                 providerId: fallbackRouteProviderId,
                 modelId: fallbackModel.isEmpty ? "gpt-4o-mini" : fallbackModel,
                 baseURL: nilIfEmpty(llmFallbackBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines)),
                 thinkingLevel: llmFallbackThinking
-        )
+            )
         let writesSucceeded = [
             KeychainStore.write("KSS_LLM_PRIMARY_BASE_URL", llmPrimaryBaseUrl),
             KeychainStore.write("KSS_LLM_PRIMARY_KEY", llmPrimaryKey),
@@ -935,6 +956,7 @@ struct SettingsCredentialsSection: View {
             )
             results[source.rawValue] = testResult
             await store.loadAgentProviders()
+            store.recordAgentProviderTest(response)
             store.refreshLLMCredentialsStatus()
             await store.runSelfCheck()
             if testResult.ok {
@@ -1039,7 +1061,7 @@ enum SettingsDataSource: String, CaseIterable, Identifiable {
         case .tushare: return .tushare
         case .longbridge: return .longbridge
         case .telegram: return .telegram
-        case .llm: return .llm
+        case .llm: return .selfCheck
         }
     }
 }
@@ -1056,7 +1078,6 @@ extension SettingsCategory {
         case .tushare: return .tushare
         case .longbridge: return .longbridge
         case .telegram: return .telegram
-        case .llm: return .llm
         default: return nil
         }
     }
@@ -1763,6 +1784,13 @@ struct SelfCheckStatusStrip: View {
         .contentShape(Rectangle())
         .modifier(SelfCheckRowChromeModifier(useTasksStyle: useTasks))
 
+        if item.item == "llm", !item.isOK {
+            return AnyView(
+                Button { store.openSeesawModels() } label: { row }
+                    .buttonStyle(.plain)
+                    .help("在 Seesaw 中配置模型")
+            )
+        }
         if let onJump, !item.isOK {
             return AnyView(
                 Button { onJump(cat) } label: { row }

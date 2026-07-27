@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from contextvars import ContextVar
 import json
 import os
 import time
@@ -17,7 +18,7 @@ from kss.agent.context import ContextAssembler, ContextAssembly
 from kss.agent.jsonl import utc_timestamp
 from kss.agent.memory_store import MemoryRecall, MemoryStore
 from kss.agent.pi_ai_provider import PiAIProvider
-from kss.agent.provider import OpenAICompatibleProvider, ProviderConfig
+from kss.agent.provider import ModelCapabilities, ProviderConfig
 from kss.agent.provider_route import (
     ProviderRoute,
     ProviderRouteSet,
@@ -112,6 +113,12 @@ class KSSAgentService:
         self._run_options: dict[tuple[str, str], RuntimeRunOptions] = {}
         self._turn_attachment_ids: dict[tuple[str, str], tuple[str, ...]] = {}
         self._transcripts: dict[str, Any] = {}
+        # Compaction can run concurrently for different sessions. A ContextVar
+        # carries the route into the summarizer without making an old test or
+        # extension hook accept a new positional argument.
+        self._summary_route_set: ContextVar[ProviderRouteSet | None] = ContextVar(
+            "summary_route_set", default=None
+        )
         self.runtime = AgentRuntime(
             self._execute_turn,
             model=self.model or None,
@@ -124,6 +131,7 @@ class KSSAgentService:
         )
 
     def _build_provider(self, *, start_provider: bool) -> Any:
+        self._provider_start_error: str | None = None
         socket_path = os.getenv("KSS_PI_AI_CREDENTIAL_SOCKET", "").strip()
         nonce = os.getenv("KSS_PI_AI_CREDENTIAL_NONCE", "").strip()
         self._credential_socket: tuple[str, str] | None = (
@@ -146,9 +154,12 @@ class KSSAgentService:
         try:
             provider.start()
             return provider
-        except Exception:
-            provider.close()
-            return OpenAICompatibleProvider()
+        except Exception as exc:  # noqa: BLE001 - helper startup is surfaced via catalog/stream.
+            # Do not silently change transport after a helper failure. Settings
+            # and the live turn must exercise the same pi-ai route and broker
+            # contract, otherwise a green test can validate a different model.
+            self._provider_start_error = f"{type(exc).__name__}: {exc}"
+            return provider
 
     def _credential_socket_snapshot(self) -> tuple[str, str]:
         if self._credential_socket is None:
@@ -163,6 +174,45 @@ class KSSAgentService:
             pass
         return os.getenv("KSS_LLM_MODEL") or ""
 
+    def _session_primary_route(self, session_id: str) -> ProviderRoute:
+        """Resolve the effective non-secret route for one session.
+
+        Missing route metadata is a legacy-session condition, not a provider
+        failure. We snapshot the current global default at first use so later
+        global changes cannot silently reroute an existing conversation.
+        """
+        default = self.route_store.load().primary
+        # A live turn already has a run_started entry. Do not use get_session
+        # here: that public recovery API intentionally turns unfinished runs
+        # into interrupted after a sidecar restart.
+        state = self.sessions.current_state(session_id)
+        raw = (state.metadata.get("provider_route") if state is not None else None)
+        if isinstance(raw, Mapping):
+            try:
+                return ProviderRoute.from_dict(raw)
+            except (KeyError, TypeError, ValueError):
+                pass
+        if state is not None:
+            self.sessions.set_provider_route(session_id, default.as_dict())
+        return default
+
+    def _session_routes(self, session_id: str) -> ProviderRouteSet:
+        primary = self._session_primary_route(session_id)
+        fallback = self.route_store.load().fallback
+        if fallback is not None and fallback == primary:
+            fallback = None
+        return ProviderRouteSet(primary=primary, fallback=fallback)
+
+    @staticmethod
+    def _route_capabilities(route: ProviderRoute) -> ModelCapabilities:
+        return ModelCapabilities(
+            context_window=route.context_window,
+            max_output_tokens=route.max_output_tokens,
+            supports_tools=route.supports_tools,
+            supports_thinking=route.supports_thinking,
+            supports_images=route.supports_images,
+        )
+
     def provider_catalog(
         self,
         *,
@@ -172,7 +222,7 @@ class KSSAgentService:
         routes = self.route_store.load()
         models: list[dict[str, Any]] = []
         status = "legacy"
-        error: str | None = None
+        error: str | None = self._provider_start_error
         if isinstance(self.provider, PiAIProvider):
             status = "ready" if self.provider.is_available else "unavailable"
             try:
@@ -183,6 +233,7 @@ class KSSAgentService:
                 )
                 models = [asdict(model) for model in catalog]
                 status = "ready"
+                error = None
             except Exception as exc:  # noqa: BLE001
                 status = "unavailable"
                 error = f"{type(exc).__name__}: {exc}"
@@ -270,10 +321,30 @@ class KSSAgentService:
             self.provider.reload_credentials()
         return self.provider_catalog()
 
-    def test_provider_connection(self) -> dict[str, Any]:
+    def test_provider_connection(
+        self,
+        *,
+        primary: Mapping[str, Any] | None = None,
+        fallback: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Run a minimal provider stream probe without exposing credentials."""
 
-        routes = self.route_store.load()
+        # A session may override the global default route.  The UI must test
+        # that exact route rather than reporting a healthy global default for
+        # a different model/provider selected in the composer.
+        configured_routes = self.route_store.load()
+        routes = (
+            ProviderRouteSet(
+                primary=ProviderRoute.from_dict(primary),
+                fallback=(
+                    ProviderRoute.from_dict(fallback)
+                    if fallback is not None
+                    else configured_routes.fallback
+                ),
+            )
+            if primary is not None
+            else configured_routes
+        )
         started = time.monotonic()
         candidates = [
             {
@@ -306,6 +377,7 @@ class KSSAgentService:
                     temperature=0,
                     timeout=30,
                     include_usage=True,
+                    route_set=routes,
                 ),
             ):
                 raw_index = event.metadata.get("candidate_index")
@@ -617,6 +689,8 @@ class KSSAgentService:
         run_options = self._run_options.get(
             (session_id, client_turn_id), RuntimeRunOptions()
         )
+        session_routes = self._session_routes(session_id)
+        active_route = session_routes.primary
         request_write = self._request_writes[(session_id, client_turn_id)]
 
         had_user = any(message.role == "user" for message in turn.messages[:-1])
@@ -728,6 +802,8 @@ class KSSAgentService:
             turn,
             skills=skill_summaries,
             memories=recall_items,
+            route=active_route,
+            route_set=session_routes,
         )
         current_assembly = assembly
         await turn.emit(
@@ -984,6 +1060,8 @@ class KSSAgentService:
                 skills=skill_summaries,
                 memories=follow_up_recalls,
                 goal=item.content,
+                route=active_route,
+                route_set=session_routes,
             )
             await turn.emit(
                 "context_usage",
@@ -1002,17 +1080,16 @@ class KSSAgentService:
         def transform_context(
             conversation: list[dict[str, Any]],
         ) -> list[dict[str, Any]]:
-            route = self.route_store.load().primary
             return self._prepare_provider_messages(
                 _merge_context(
                     current_assembly,
                     conversation,
-                    provider=route.provider_id,
-                    model=route.model_id,
-                )
+                    provider=active_route.provider_id,
+                    model=active_route.model_id,
+                ),
+                route=active_route,
             )
 
-        active_route = self.route_store.load().primary
         history = self._prepare_provider_messages(
             [
                 convert_to_llm(
@@ -1022,11 +1099,12 @@ class KSSAgentService:
                     model=active_route.model_id,
                 )
                 for message in assembly.kept_messages
-            ]
+            ],
+            route=active_route,
         )
         chat_client = ChatClient(
             provider=self.provider,
-            model=self._active_model() or None,
+            route_set=session_routes,
         )
         try:
             transcript = await chat_loop.run_turn(
@@ -1097,11 +1175,13 @@ class KSSAgentService:
     def _prepare_provider_messages(
         self,
         messages: list[dict[str, Any]],
+        *,
+        route: ProviderRoute | None = None,
     ) -> list[dict[str, Any]]:
         """Resolve durable attachment IDs only at the provider boundary."""
 
-        supports_images = self.provider.model_capabilities(
-            self._active_model()
+        supports_images = self._route_capabilities(
+            route or self.route_store.load().primary
         ).supports_images
         prepared: list[dict[str, Any]] = []
         for message in messages:
@@ -1156,7 +1236,11 @@ class KSSAgentService:
         skills: list[str],
         memories: list[str],
         goal: str | None = None,
+        route: ProviderRoute | None = None,
+        route_set: ProviderRouteSet | None = None,
     ) -> ContextAssembly:
+        active_route = route or self._session_primary_route(turn.state.session_id)
+        active_routes = route_set or self._session_routes(turn.state.session_id)
         previous = self.sessions.latest_compaction(turn.state.session_id)
         kwargs = {
             "session_id": turn.state.session_id,
@@ -1164,10 +1248,8 @@ class KSSAgentService:
             "skills": skills,
             "memories": memories,
             "goal": turn.input if goal is None else goal,
-            "model": turn.model or self.model,
-            "model_capabilities": self.provider.model_capabilities(
-                turn.model or self.model
-            ),
+            "model": active_route.model_id,
+            "model_capabilities": self._route_capabilities(active_route),
             "previous_compaction": previous,
         }
         probe = self.assembler.assemble_detailed(**kwargs)
@@ -1184,6 +1266,7 @@ class KSSAgentService:
         summary: Mapping[str, Any] | None = None
         summary_usage: dict[str, Any] = {}
         fallback_reason: str | None = None
+        route_token = self._summary_route_set.set(active_routes)
         try:
             summary, summary_usage = await asyncio.wait_for(
                 self._summarize(probe.compaction_source, turn.abort_token),
@@ -1195,10 +1278,12 @@ class KSSAgentService:
             raise
         except Exception as exc:  # noqa: BLE001
             fallback_reason = f"summary_failed:{type(exc).__name__}:{exc}"
+        finally:
+            self._summary_route_set.reset(route_token)
         assembly = self.assembler.assemble_detailed(
             **kwargs,
             summary=summary,
-            summarizer_model=turn.model or self.model,
+            summarizer_model=active_route.model_id,
             summarizer_usage=summary_usage,
             fallback_reason=fallback_reason,
         )
@@ -1227,10 +1312,11 @@ class KSSAgentService:
         )
 
         def collect() -> tuple[str, dict[str, Any]]:
+            route_set = self._summary_route_set.get() or self.route_store.load()
             client = ChatClient(
-                model=self._active_model() or None,
                 timeout=30.0,
                 provider=self.provider,
+                route_set=route_set,
             )
             if hasattr(abort_token, "add_callback"):
                 abort_token.add_callback(client.abort_active_stream)

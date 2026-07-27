@@ -11,6 +11,10 @@ final class KSSStore: ObservableObject {
     @Published var settingsTargetTab: SettingsTab?
     /// xcom 设置左栏分类深链（plan 2026-07-23-003）：优先于 tab；消费一次即清空。
     @Published var settingsTargetCategory: SettingsCategory?
+    /// Cross-workspace deep link used by self-checks and inline Seesaw recovery
+    /// actions. This is deliberately separate from Settings routing so model
+    /// credentials never reappear as a global Settings category.
+    @Published var seesawDestination: SeesawDestination?
 
     /// 打开设置并落到具体分类（同时投影经典 tab，调用点统一走这里）。
     func openSettings(category: SettingsCategory) {
@@ -31,6 +35,16 @@ final class KSSStore: ObservableObject {
             return tab.defaultCategory
         }
         return nil
+    }
+
+    func openSeesawModels() {
+        seesawDestination = .models
+        selectedSection = .aiChat
+    }
+
+    func consumeSeesawDestination() -> SeesawDestination? {
+        defer { seesawDestination = nil }
+        return seesawDestination
     }
     @Published var selectedSymbol: String?
     @Published var selectedReportPath: String?
@@ -185,9 +199,15 @@ final class KSSStore: ObservableObject {
     @Published var agentModel: String?
     @Published var agentProvider: String?
     @Published var agentProviders: [AgentProviderDescriptor] = []
+    /// Global defaults for newly-created sessions. Do not use these as the
+    /// current conversation route after a session has selected its own model.
+    @Published var agentGlobalPrimaryRoute: AgentProviderRoute?
     @Published var agentPrimaryRoute: AgentProviderRoute?
     @Published var agentFallbackRoute: AgentProviderRoute?
     @Published var agentProviderStatus: String?
+    @Published var agentProviderTestOK: Bool?
+    @Published var agentProviderTestError: String?
+    @Published var agentProviderTestHint: String?
     @Published var agentUsage: AgentUsage?
     @Published var agentExistingRunId: String?
     @Published var agentLastEventIsError: Bool?
@@ -1020,7 +1040,11 @@ final class KSSStore: ObservableObject {
                 )
             }.value
             agentProviders = response.providers
-            agentPrimaryRoute = response.primary
+            agentGlobalPrimaryRoute = response.primary
+            let sessionRoute = selectedAgentSessionId.flatMap { id in
+                agentSessions.first(where: { $0.sessionId == id })?.providerRoute
+            }
+            agentPrimaryRoute = sessionRoute ?? response.primary
             agentFallbackRoute = response.fallback
             agentProviderStatus = response.status
         } catch {
@@ -1028,6 +1052,84 @@ final class KSSStore: ObservableObject {
             // sidecar must not make the otherwise usable chat surface fail.
             agentProviders = []
         }
+    }
+
+    var seesawProviderReadiness: SeesawProviderReadiness {
+        let selectedProviderID = agentPrimaryRoute?.providerId
+        let catalogConfirmsCredential = agentProviders.first {
+            $0.id == selectedProviderID
+        }?.authenticated == true
+        return Self.providerReadiness(
+            route: agentPrimaryRoute,
+            credentialPresent: catalogConfirmsCredential
+                || KeychainStore.hasLLMCredential(forProviderID: selectedProviderID),
+            providerStatus: agentProviderStatus,
+            testOK: agentProviderTestOK,
+            testError: agentProviderTestError,
+            testHint: agentProviderTestHint
+        )
+    }
+
+    nonisolated static func providerReadiness(
+        route: AgentProviderRoute?,
+        credentialPresent: Bool,
+        providerStatus: String?,
+        testOK: Bool?,
+        testError: String?,
+        testHint: String?
+    ) -> SeesawProviderReadiness {
+        guard let route,
+              !(route.providerId ?? "").isEmpty,
+              !(route.modelId ?? "").isEmpty
+        else { return .missingRoute }
+        guard credentialPresent else { return .missingCredential }
+        if let testOK {
+            return testOK ? .ready : .failed(
+                testError ?? testHint ?? "模型连接测试失败"
+            )
+        }
+        if providerStatus == "unavailable" {
+            return .failed(testError ?? "Provider Helper 当前不可用")
+        }
+        if providerStatus == nil {
+            return .brokerLoading
+        }
+        return .configuredUntested
+    }
+
+    func testAgentProviderConnection() async {
+        guard let bridge else { return }
+        let activeRoute = agentPrimaryRoute
+        let activeFallback = agentFallbackRoute
+        agentProviderTestOK = nil
+        agentProviderTestError = nil
+        agentProviderTestHint = nil
+        do {
+            let response = try await Task.detached {
+                _ = try bridge.agentProviders(action: "reload_credentials")
+                return try bridge.agentProviders(
+                    action: "test",
+                    primary: activeRoute,
+                    fallback: activeFallback
+                )
+            }.value
+            recordAgentProviderTest(response)
+            await loadAgentProviders()
+            refreshLLMCredentialsStatus()
+        } catch {
+            agentProviderTestOK = false
+            agentProviderTestError = error.localizedDescription
+            agentProviderTestHint = "请检查 API Key、模型与服务端点"
+        }
+    }
+
+    /// Keep explicit probe results separate from catalog availability. A
+    /// catalog refresh cannot turn a failed real connection test green.
+    func recordAgentProviderTest(_ response: AgentProvidersResponse) {
+        agentProviderTestOK = response.ok ?? false
+        agentProviderTestError = response.error
+        agentProviderTestHint = response.hint
+        agentProviderStatus = response.status ?? agentProviderStatus
     }
 
     func importAgentAttachments(_ urls: [URL]) async {
@@ -1186,13 +1288,67 @@ final class KSSStore: ObservableObject {
             }
             chatMessagesByAgentSession[sessionId] = chatMessages
             agentContextUsage = session.contextUsage
-            agentPrimaryRoute = session.providerRoute ?? agentPrimaryRoute
+            agentPrimaryRoute = session.providerRoute ?? agentGlobalPrimaryRoute ?? agentPrimaryRoute
             pendingAgentAttachments.removeAll()
             agentAttachmentError = nil
             hydrateAgentQueue(session.queuedInputs)
         } else if let cached = chatMessagesByAgentSession[sessionId] {
             chatMessages = cached
             hydrateAgentQueue(nil)
+        }
+    }
+
+    func setAgentSessionProviderRoute(_ route: AgentProviderRoute) {
+        guard !isChatStreaming,
+              let sessionId = selectedAgentSessionId,
+              let bridge
+        else { return }
+        Task {
+            do {
+                let response = try await Task.detached {
+                    try bridge.agentSessions(
+                        action: "set_provider_route",
+                        sessionId: sessionId,
+                        providerRoute: route
+                    )
+                }.value
+                agentSessions = response.sessions.filter { !$0.archived }
+                agentPrimaryRoute = route
+                agentProviderTestOK = nil
+                agentProviderTestError = nil
+                agentProviderTestHint = nil
+            } catch {
+                agentProviderTestOK = false
+                agentProviderTestError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Update the default snapshot used only by future conversations. The
+    /// active session keeps its own persisted route, so changing the default
+    /// never reroutes an existing transcript.
+    func setAgentGlobalDefaultRoute(_ route: AgentProviderRoute) {
+        guard !isChatStreaming, let bridge else { return }
+        let fallback = agentFallbackRoute
+        Task {
+            do {
+                let response = try await Task.detached {
+                    try bridge.agentProviders(
+                        action: "set_route",
+                        primary: route,
+                        fallback: fallback
+                    )
+                }.value
+                self.agentGlobalPrimaryRoute = response.primary ?? route
+                self.agentFallbackRoute = response.fallback
+                self.agentProviderStatus = response.status
+                self.agentProviderTestOK = nil
+                self.agentProviderTestError = nil
+                self.agentProviderTestHint = nil
+            } catch {
+                self.agentProviderTestOK = false
+                self.agentProviderTestError = error.localizedDescription
+            }
         }
     }
 
@@ -2057,7 +2213,21 @@ final class KSSStore: ObservableObject {
             selfCheckBannerDismissed = false
             return
         }
-        selfCheckItems = resp.items
+        var normalized = resp.items
+        // Agent secrets intentionally travel through the Keychain/Broker, so
+        // the sidecar's legacy environment-only probe can never be the Swift
+        // UI's source of truth. Preserve all other self-check results.
+        if let index = normalized.firstIndex(where: { $0.item == "llm" }),
+           KeychainStore.hasLLMCredentials() {
+            normalized[index] = SelfCheckItem(
+                item: "llm",
+                status: "ok",
+                detail: "Seesaw LLM 凭据已存于 macOS Keychain",
+                fixHint: nil,
+                fixAction: nil
+            )
+        }
+        selfCheckItems = normalized
         selfCheckGeneratedAt = resp.generatedAt
         selfCheckBannerDismissed = false   // 新一轮结果，重新允许横幅（若仍有 fail）
     }

@@ -22,6 +22,8 @@ def test_provider_connection_requires_a_finished_stream(tmp_path):
             assert messages[-1]["content"] == "Reply with OK only."
             assert tools == []
             assert config.model is None
+            assert config.route_set is not None
+            assert config.route_set.primary.provider_id == "openai-compatible"
             yield ProviderEvent(
                 type="text",
                 model="model-a",
@@ -38,7 +40,9 @@ def test_provider_connection_requires_a_finished_stream(tmp_path):
             )
 
     service.provider = FinishedProvider()
-    result = service.test_provider_connection()
+    result = service.test_provider_connection(
+        primary={"provider_id": "openai-compatible", "model_id": "model-a"}
+    )
 
     assert result["ok"] is True
     assert result["status"] == "ready"
@@ -82,10 +86,11 @@ def test_service_resolves_images_only_at_provider_boundary_and_persists_thinking
 ):
     async def scenario():
         service = KSSAgentService(tmp_path, tmp_path)
-        service.provider.model_capabilities = lambda _model=None: ModelCapabilities(
-            supports_images=True,
-            supports_thinking=True,
-        )
+        # Attachments use the selected session route's capability snapshot, not
+        # whichever global model happened to initialize the provider.
+        route = service.route_store.load().primary.as_dict()
+        route.update(supports_images=True, supports_thinking=True)
+        service.set_provider_routes(primary=route)
         selected = tmp_path / "chart.png"
         image_bytes = (
             b"\x89PNG\r\n\x1a\n"

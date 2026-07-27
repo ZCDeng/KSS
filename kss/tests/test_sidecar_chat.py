@@ -721,6 +721,20 @@ def test_agent_json_commands_standard_response(monkeypatch, tmp_path):
     assert payload["sessions"][0]["session_id"] == "s2"
     assert payload["sessions"][0]["updated_at"]
 
+    routed = json.loads(sc._handle_agent_json_command({
+        "cmd": "agent-session",
+        "action": "set_provider_route",
+        "session_id": "s2",
+        "provider_route": {
+            "provider_id": "deepseek",
+            "model_id": "deepseek-v4-flash",
+            "thinking_level": "high",
+        },
+    }))
+    routed_payload = json.loads(routed["stdout"])["data"]
+    session = next(item for item in routed_payload["sessions"] if item["session_id"] == "s2")
+    assert session["provider_route"]["model_id"] == "deepseek-v4-flash"
+
     mem_store = sc.MemoryStore(tmp_path)
     mem = mem_store.propose("preference", "记住 A", metadata={"source": "test"})
     assert mem.status == "proposed"
@@ -883,7 +897,9 @@ def test_agent_provider_catalog_and_route_actions(monkeypatch, tmp_path):
                 "fallback": fallback,
             }
 
-        def test_provider_connection(self):
+        def test_provider_connection(self, *, primary=None, fallback=None):
+            assert primary == {"provider_id": "openai", "model_id": "gpt-next"}
+            assert fallback is None
             return {
                 "source": "llm",
                 "ok": True,
@@ -936,6 +952,7 @@ def test_agent_provider_catalog_and_route_actions(monkeypatch, tmp_path):
     tested = json.loads(sc._handle_agent_json_command({
         "cmd": "agent-providers",
         "action": "test",
+        "primary": {"provider_id": "openai", "model_id": "gpt-next"},
     }))
     tested_payload = json.loads(tested["stdout"])["data"]
     assert tested_payload["ok"] is True

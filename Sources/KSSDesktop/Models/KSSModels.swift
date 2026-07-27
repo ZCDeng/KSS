@@ -1558,6 +1558,14 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     }
 }
 
+/// A narrowly scoped navigation request into the Seesaw workspace. Provider
+/// credentials belong to the chat product surface, not global application
+/// settings, so self-checks use this instead of a SettingsCategory case.
+enum SeesawDestination: Equatable {
+    case conversation
+    case models
+}
+
 // MARK: - 设置页 Tab（R2-U4 Tab 化；R4 合并为两 tab：凭证与数据源 / 任务与日志）
 
 enum SettingsTab: String, CaseIterable, Identifiable {
@@ -1593,7 +1601,6 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
     case tushare
     case longbridge
     case telegram
-    case llm
     case yupi
     case tasks
     case logs
@@ -1606,7 +1613,6 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
         case .tushare: return "Tushare"
         case .longbridge: return "Longbridge"
         case .telegram: return "Telegram"
-        case .llm: return "Seesaw LLM"
         case .yupi: return "资讯雷达"
         case .tasks: return "任务"
         case .logs: return "日志"
@@ -1616,7 +1622,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
     /// 投影到经典两 Tab。
     var tab: SettingsTab {
         switch self {
-        case .selfCheck, .tushare, .longbridge, .telegram, .llm, .yupi:
+        case .selfCheck, .tushare, .longbridge, .telegram, .yupi:
             return .credentials
         case .tasks, .logs:
             return .operations
@@ -1642,8 +1648,8 @@ enum SettingsTabRouting {
         case "telegram":
             return .telegram
         case "llm", "openrouter", "yupi":
-            // openrouter/yupi 自检文案若出现，落到对应能力面
-            return item == "yupi" || item == "openrouter" ? .yupi : .llm
+            // LLM 具体配置已迁到 Seesaw 的模型页面；Settings 保留自检。
+            return item == "yupi" || item == "openrouter" ? .yupi : .selfCheck
         case "scheduled", "cron", "launchd", "jobs":
             return .tasks
         default:
@@ -1672,7 +1678,7 @@ enum SettingsTabRouting {
         switch category {
         case .selfCheck, .yupi, .logs:
             return false
-        case .tushare, .longbridge, .telegram, .llm:
+        case .tushare, .longbridge, .telegram:
             let raw = category.rawValue
             if !isSourceConfigured(raw) { return true }
             if let ok = testOK(raw), !ok { return true }
@@ -2219,12 +2225,60 @@ struct AgentProviderRoute: Codable, Equatable {
     var modelId: String?
     var baseURL: String?
     var thinkingLevel: String?
+    var contextWindow: Int?
+    var maxOutputTokens: Int?
+    var supportsImages: Bool?
+    var supportsTools: Bool?
+    var supportsThinking: Bool?
 
     enum CodingKeys: String, CodingKey {
         case providerId = "provider_id"
         case modelId = "model_id"
         case baseURL = "base_url"
         case thinkingLevel = "thinking_level"
+        case contextWindow = "context_window"
+        case maxOutputTokens = "max_output_tokens"
+        case supportsImages = "supports_images"
+        case supportsTools = "supports_tools"
+        case supportsThinking = "supports_thinking"
+    }
+
+    init(
+        providerId: String? = nil,
+        modelId: String? = nil,
+        baseURL: String? = nil,
+        thinkingLevel: String? = nil,
+        contextWindow: Int? = nil,
+        maxOutputTokens: Int? = nil,
+        supportsImages: Bool? = nil,
+        supportsTools: Bool? = nil,
+        supportsThinking: Bool? = nil
+    ) {
+        self.providerId = providerId
+        self.modelId = modelId
+        self.baseURL = baseURL
+        self.thinkingLevel = thinkingLevel
+        self.contextWindow = contextWindow
+        self.maxOutputTokens = maxOutputTokens
+        self.supportsImages = supportsImages
+        self.supportsTools = supportsTools
+        self.supportsThinking = supportsThinking
+    }
+}
+
+enum SeesawProviderReadiness: Equatable {
+    case missingCredential
+    case missingRoute
+    case brokerLoading
+    case configuredUntested
+    case ready
+    case failed(String)
+
+    var isReadyForComposer: Bool {
+        switch self {
+        case .configuredUntested, .ready: return true
+        default: return false
+        }
     }
 }
 

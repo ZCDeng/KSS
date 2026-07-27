@@ -94,6 +94,17 @@ class SessionStore:
             return self._recover_incomplete_run_once(session_id) or state
         return state
 
+    def current_state(self, session_id: str) -> AgentState | None:
+        """读取当前状态而不触发崩溃恢复。
+
+        Runtime 在一条 run 已写入 ``run_started`` 后仍需要读取 metadata（例如
+        session-level provider route）。此时调用 :meth:`get_session` 会把自己的
+        活跃 run 错认成 sidecar 崩溃遗留并终结它，所以运行路径必须使用这个纯读取
+        入口。启动恢复与用户打开会话仍应使用 ``get_session``。
+        """
+        entries = self._read_entries(session_id)
+        return self._state_from_entries(entries) if entries else None
+
     def open_session(self, session_id: str) -> AgentState | None:
         """打开会话；等价于 get_session."""
         return self.get_session(session_id)
@@ -438,6 +449,43 @@ class SessionStore:
         """追加会话状态更新."""
         self._append(state.session_id, event_type="state_updated", payload=asdict(state))
         return state
+
+    def set_provider_route(
+        self, session_id: str, provider_route: dict[str, Any]
+    ) -> AgentState:
+        """Persist one session's non-secret model route atomically.
+
+        The route is session metadata rather than a global preference: old
+        sessions may omit it and safely inherit the global default until their
+        next explicit selection.
+        """
+        result: AgentState | None = None
+
+        def update(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            nonlocal result
+            current = self._state_from_entries(entries)
+            if current is None:
+                raise KeyError(f"会话不存在: {session_id}")
+            metadata = {
+                **current.metadata,
+                "provider_route": dict(provider_route),
+                "updated_at": utc_timestamp(),
+            }
+            result = AgentState(
+                session_id=current.session_id,
+                status=current.status,
+                cursor=current.cursor,
+                active_skill_ids=current.active_skill_ids,
+                pinned_skill_ids=current.pinned_skill_ids,
+                metadata=metadata,
+            )
+            return self._build_entries(
+                session_id, entries, [("state_updated", asdict(result))]
+            )
+
+        update_jsonl_locked(self._path(session_id), update)
+        assert result is not None
+        return result
 
     def complete_session(self, session_id: str) -> AgentState:
         """将会话标记为 completed."""

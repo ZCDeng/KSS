@@ -56,4 +56,56 @@ final class CredentialStatusTests: XCTestCase {
         XCTAssertFalse(store.selfCheckHasFail)
         XCTAssertFalse(store.showSelfCheckBanner)
     }
+
+    func testSeesawReadinessUsesBrokerCredentialStateNotLegacySelfCheckWarn() {
+        let readiness = KSSStore.providerReadiness(
+            route: AgentProviderRoute(providerId: "deepseek", modelId: "deepseek-v4-flash"),
+            credentialPresent: true,
+            providerStatus: "ready",
+            testOK: nil,
+            testError: nil,
+            testHint: nil
+        )
+
+        XCTAssertEqual(readiness, .configuredUntested)
+    }
+
+    func testSeesawReadinessKeepsChatFailureSeparateFromConfiguration() {
+        let readiness = KSSStore.providerReadiness(
+            route: AgentProviderRoute(providerId: "deepseek", modelId: "deepseek-v4-flash"),
+            credentialPresent: true,
+            providerStatus: "ready",
+            testOK: true,
+            testError: "old stream failure",
+            testHint: nil
+        )
+
+        XCTAssertEqual(readiness, .ready)
+    }
+
+    func testSeesawReadinessReportsExplicitConnectionTestFailure() {
+        let readiness = KSSStore.providerReadiness(
+            route: AgentProviderRoute(providerId: "deepseek", modelId: "deepseek-v4-flash"),
+            credentialPresent: true,
+            providerStatus: "ready",
+            testOK: false,
+            testError: "401 invalid key",
+            testHint: nil
+        )
+
+        XCTAssertEqual(readiness, .failed("401 invalid key"))
+    }
+
+    func testSeesawReadinessRequiresTheSelectedRouteCredential() {
+        let readiness = KSSStore.providerReadiness(
+            route: AgentProviderRoute(providerId: "custom-gateway", modelId: "market-model"),
+            credentialPresent: false,
+            providerStatus: "ready",
+            testOK: nil,
+            testError: nil,
+            testHint: nil
+        )
+
+        XCTAssertEqual(readiness, .missingCredential)
+    }
 }

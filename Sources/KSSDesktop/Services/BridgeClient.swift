@@ -725,10 +725,20 @@ struct BridgeClient {
                             onFrame: onFrame, onConfirmRequired: onConfirmRequired, onEnd: onEnd)
     }
 
-    func agentSessions(action: String = "list", sessionId: String? = nil, title: String? = nil) throws -> AgentSessionListResponse {
+    func agentSessions(
+        action: String = "list",
+        sessionId: String? = nil,
+        title: String? = nil,
+        providerRoute: AgentProviderRoute? = nil
+    ) throws -> AgentSessionListResponse {
         var payload: [String: Any] = ["action": action]
         if let sessionId { payload["session_id"] = sessionId }
         if let title { payload["title"] = title }
+        if let providerRoute,
+           let data = try? JSONEncoder().encode(providerRoute),
+           let object = try? JSONSerialization.jsonObject(with: data) {
+            payload["provider_route"] = object
+        }
         return try agentCommand("agent-session", payload: payload, as: AgentSessionListResponse.self)
     }
 

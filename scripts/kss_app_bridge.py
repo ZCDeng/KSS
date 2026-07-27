@@ -3988,11 +3988,29 @@ def _check_credential(item: str, label: str, keys: tuple[str, ...]) -> dict[str,
 def _check_llm_credential() -> dict[str, Any]:
     from kss.llm.openai_client import LLMUnavailable, _resolve_credential_candidates  # noqa: PLC0415
 
+    # Seesaw credentials now live in macOS Keychain and are handed to the
+    # pi-ai helper through the credential broker. The launcher deliberately
+    # receives presence flags rather than clear-text keys, so an env-only
+    # resolver is no longer an authoritative self-check.
+    presence_flags = (
+        "KSS_LLM_PRIMARY_CREDENTIAL_PRESENT",
+        "KSS_LLM_FALLBACK_CREDENTIAL_PRESENT",
+    )
+    if any(os.environ.get(flag, "").strip() in {"1", "true", "yes"} for flag in presence_flags):
+        return {
+            "item": "llm",
+            "status": "ok",
+            "detail": "Seesaw LLM 凭据已由安全凭据服务提供",
+            "fixHint": None,
+            "fixAction": None,
+        }
+
     try:
         _resolve_credential_candidates()
     except LLMUnavailable:
         return {"item": "llm", "status": "warn", "detail": "未配置任何 LLM 凭据",
-                 "fixHint": "去设置页数据源分区填写", "fixAction": "open_settings"}
+                 "fixHint": "打开 Seesaw 的模型页面配置 API Key、模型与端点",
+                 "fixAction": "open_seesaw_models"}
     return {"item": "llm", "status": "ok", "detail": "LLM 凭据已配置", "fixHint": None, "fixAction": None}
 
 

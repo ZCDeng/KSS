@@ -77,7 +77,9 @@ final class SettingsTabTests: XCTestCase {
         XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "longbridge"), .longbridge)
         XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "intraday_secrets"), .longbridge)
         XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "telegram"), .telegram)
-        XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "llm"), .llm)
+        // LLM credentials are configured in Seesaw Models, not a global
+        // Settings category. The self-check row owns the explicit deep link.
+        XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "llm"), .selfCheck)
         XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "yupi"), .yupi)
         XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "openrouter"), .yupi)
     }
@@ -103,7 +105,7 @@ final class SettingsTabTests: XCTestCase {
     func testCategoryOrderIsStable() {
         XCTAssertEqual(
             SettingsCategory.allCases.map(\.rawValue),
-            ["selfCheck", "tushare", "longbridge", "telegram", "llm", "yupi", "tasks", "logs"]
+            ["selfCheck", "tushare", "longbridge", "telegram", "yupi", "tasks", "logs"]
         )
     }
 
