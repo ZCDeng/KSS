@@ -6,13 +6,16 @@ enum KSSResources {
     static let bundle: Bundle = resolveBundle(
         resourceRoot: Bundle.main.resourceURL,
         executableRoot: Bundle.main.executableURL?.deletingLastPathComponent(),
-        fallback: Bundle.module
+        // Do not eagerly evaluate Bundle.module here. In a signed app SwiftPM's
+        // generated fallback may point at the build machine, even though the
+        // resource bundle was packaged correctly beside the executable.
+        fallback: { Bundle.module }
     )
 
     static func resolveBundle(
         resourceRoot: URL?,
         executableRoot: URL?,
-        fallback: Bundle
+        fallback: () -> Bundle
     ) -> Bundle {
         let name = "KSSDesktop_KSSDesktop.bundle"
         for root in [resourceRoot, executableRoot].compactMap({ $0 }) {
@@ -20,6 +23,6 @@ enum KSSResources {
                 return bundle
             }
         }
-        return fallback
+        return fallback()
     }
 }

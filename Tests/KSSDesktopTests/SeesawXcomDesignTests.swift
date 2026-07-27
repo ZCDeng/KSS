@@ -46,16 +46,72 @@ final class SeesawXcomDesignTests: XCTestCase {
         XCTAssertFalse(focus.contains("xcomUtilityPanel"))
     }
 
+    func testFocusShellRendersEveryOverlayFromOneSharedSurface() throws {
+        let source = try source
+        let focusStart = try XCTUnwrap(source.range(of: "private func focusSeesawShell"))
+        let legacyStart = try XCTUnwrap(
+            source.range(of: "private func xcomSeesawShell", range: focusStart.upperBound..<source.endIndex)
+        )
+        let focus = String(source[focusStart.lowerBound..<legacyStart.lowerBound])
+
+        XCTAssertTrue(focus.contains("focusOverlaySurface"))
+        XCTAssertFalse(focus.contains(".popover(isPresented: overlayBinding(.sessions)"))
+        let overlayStart = try XCTUnwrap(source.range(of: "private func focusOverlayContent"))
+        let overlayEnd = try XCTUnwrap(source.range(of: "private func focusHeader", range: overlayStart.upperBound..<source.endIndex))
+        let overlayContent = String(source[overlayStart.lowerBound..<overlayEnd.lowerBound])
+        XCTAssertTrue(overlayContent.contains("case .skills:"))
+        XCTAssertTrue(overlayContent.contains("focusSkillPalette"))
+        XCTAssertTrue(overlayContent.contains("case .context:"))
+        XCTAssertTrue(overlayContent.contains("focusContextPopover"))
+    }
+
     func testFocusShellUsesResponsiveOpenWorkerStyleInspector() throws {
         let source = try source
         XCTAssertTrue(source.contains("let persistentInspector = size.width >= 1180"))
         XCTAssertTrue(source.contains("focusInspector"))
         XCTAssertTrue(source.contains("showInspectorDrawer"))
-        XCTAssertTrue(source.contains("DisclosureGroup("))
+        XCTAssertTrue(source.contains("toggleInspectorSection"))
         XCTAssertTrue(source.contains("case liveMarket"))
         XCTAssertTrue(source.contains("agentLiveMarketContexts"))
         XCTAssertTrue(source.contains("private var focusEmptyConversation"))
-        XCTAssertTrue(source.contains("focusComposer\n                .frame(maxWidth: SeesawXcomChrome.feedColumnWidth)"))
+        XCTAssertTrue(source.contains("SeesawXcomChrome.composerColumnWidth"))
+    }
+
+    func testFocusHeaderDoesNotDuplicateRailOrComposerControls() throws {
+        let source = try source
+        let start = try XCTUnwrap(source.range(of: "private func focusHeader"))
+        let end = try XCTUnwrap(source.range(of: "private var focusInspector", range: start.upperBound..<source.endIndex))
+        let header = String(source[start.lowerBound..<end.lowerBound])
+
+        XCTAssertTrue(header.contains("toggleOverlay(.sessions)"))
+        XCTAssertTrue(header.contains("showInspectorDrawer"))
+        XCTAssertFalse(header.contains("toggleOverlay(.context)"))
+        XCTAssertFalse(header.contains("toggleOverlay(.skills)"))
+        XCTAssertFalse(header.contains("seesawPage = isInModelsWorkspace ? .conversation : .models"))
+    }
+
+    func testFocusEmptyStateUsesTaskRowsAndComposerOwnsModelStatus() throws {
+        let source = try source
+        XCTAssertTrue(source.contains("private var focusResearchTaskRows"))
+        XCTAssertTrue(source.contains("researchTaskRow("))
+        XCTAssertTrue(source.contains("$0.name == starter.skillId"))
+        XCTAssertTrue(source.contains("private var composerInlineStatus"))
+        XCTAssertTrue(source.contains("private var composerControlBar"))
+        XCTAssertFalse(source.contains("private var focusProviderIssue"))
+    }
+
+    func testRailOnlyShowsContextualMarketAndWorkState() throws {
+        let source = try source
+        let start = try XCTUnwrap(source.range(of: "private var focusInspector"))
+        let end = try XCTUnwrap(source.range(of: "private func inspectorSection", range: start.upperBound..<source.endIndex))
+        let inspector = String(source[start.lowerBound..<end.lowerBound])
+
+        XCTAssertTrue(inspector.contains("if store.isChatStreaming || store.agentSteeringCount"))
+        XCTAssertTrue(inspector.contains("if !store.agentLiveMarketContexts.isEmpty"))
+        XCTAssertTrue(inspector.contains("if hasEvidenceOrAttachments"))
+        XCTAssertTrue(inspector.contains("opens: .skills"))
+        XCTAssertTrue(inspector.contains("opens: .context"))
+        XCTAssertFalse(inspector.contains("历史问题不会隐式请求"))
     }
 
     func testModelsBelongToSeesawRatherThanGlobalSettings() throws {
@@ -80,6 +136,26 @@ final class SeesawXcomDesignTests: XCTestCase {
         XCTAssertTrue(source.contains("Toggle(\"置顶\""))
     }
 
+    func testFocusConversationKeepsOneComposerAndUsesLandscapeUtilitySurfaces() throws {
+        let source = try source
+        let start = try XCTUnwrap(source.range(of: "private var focusConversationWorkspace"))
+        let end = try XCTUnwrap(source.range(of: "private var focusEmptyConversation", range: start.upperBound..<source.endIndex))
+        let workspace = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertEqual(workspace.components(separatedBy: "focusComposer").count - 1, 1)
+        XCTAssertTrue(source.contains("focusOverlaySize(for: overlay, in: size)"))
+        XCTAssertTrue(source.contains("Color.clear"))
+        XCTAssertFalse(source.contains("Color.black\n                .opacity(theme.appearance"))
+    }
+
+    func testAssistantTranscriptUsesBlockMarkdownRenderer() throws {
+        let source = try source
+        let start = try XCTUnwrap(source.range(of: "private func focusMessageCell"))
+        let end = try XCTUnwrap(source.range(of: "private func focusToolRow", range: start.upperBound..<source.endIndex))
+        let messageCell = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(messageCell.contains("SeesawMarkdownView(markdown: message.text, errorTint:"))
+        XCTAssertFalse(messageCell.contains("markdownText(message.text)\n                        .font(KSSFont.themed(15"))
+    }
+
     func testSeesawNavigationCollapseIsTransient() throws {
         let source = try contentSource
         XCTAssertTrue(source.contains("@State private var seesawNavigationExpanded"))
@@ -87,5 +163,13 @@ final class SeesawXcomDesignTests: XCTestCase {
         XCTAssertTrue(source.contains("if store.selectedSection == .aiChat"))
         XCTAssertTrue(source.contains("return !seesawNavigationExpanded"))
         XCTAssertTrue(source.contains("AIChatView(globalNavigationExpanded: $seesawNavigationExpanded)"))
+    }
+
+    func testEnteringSeesawDoesNotAnimateThePreviousDetailThroughFocusWorkspace() throws {
+        let source = try contentSource
+        XCTAssertTrue(source.contains("private var seesawDetailTransition"))
+        XCTAssertTrue(source.contains("if store.selectedSection == .aiChat { return .identity }"))
+        XCTAssertTrue(source.contains(".transition(seesawDetailTransition)"))
+        XCTAssertTrue(source.contains(".animation(seesawDetailAnimation, value: store.selectedSection)"))
     }
 }

@@ -22,16 +22,16 @@
 - Key contexts of use: wide desktop window, information-dense research, repeated multi-turn sessions, and packaged `/Applications` builds.
 
 ## Information architecture
-- Primary navigation: global KSS workspace rail temporarily collapses while Seesaw is active; the Seesaw header opens sessions, Skills, context and the Seesaw-local Models page.
+- Primary navigation: global KSS workspace rail temporarily collapses while Seesaw is active; the Seesaw header opens sessions and the narrow-window execution drawer. Skills, context and models stay with the Composer or Right Rail rather than duplicating header controls.
 - Core routes/screens: empty conversation, active conversation, Models Center, Provider detail, Session Palette, Skill Palette, Context Popover, Right Rail, evidence attachment, and write confirmation.
 - Content hierarchy: 53pt conversation header → centered Focus column → shared composer with pinned Skills → tool and evidence attachments → explicit safety context.
 
 ## Design principles
-- Focus, not dashboard: the active prompt is the visual center. On wide windows, a compact Right Rail keeps progress, live market context, evidence, Skills and context visible without competing with the conversation; narrow windows use a trailing drawer.
+- Focus, not dashboard: the active prompt is the visual center. On wide windows, a compact Right Rail shows only active progress, available evidence, live market state, Skills and context; narrow windows use a trailing drawer. It must not repeat Composer or header actions.
 - Skills before settings: pinned Skills sit beside the composer. Provider configuration belongs to Seesaw's Models Center, not global KSS Settings; API keys remain in Keychain and route/explicit-test state is the only source of readiness.
 - Flat by design: hairlines establish structure; cards and shadows are reserved for the Composer and content attachments.
 - Preserve agency: stop, archive, enable, pin, approve, and reject controls remain explicit and close to their effects.
-- Tradeoffs: every theme shares a 760pt maximum Focus column and the same information architecture; themes may only vary visual tokens.
+- Tradeoffs: every theme shares a 760pt transcript and 680pt Composer measure with the same information architecture; themes may only vary visual tokens.
 
 ## Visual language
 - Color: x.com tokens from `ThemeCatalog`; `#1D9BF0` is the interaction accent. Market and status semantics remain exempt.
@@ -39,6 +39,9 @@
 - Spacing/layout rhythm: 16pt horizontal column padding, 18pt message cadence, compact 10–14pt Composer internals.
 - Shape/radius/elevation: assistant text is transparent; user messages and Composer use restrained rounded surfaces; buttons/chips are capsules; charts/evidence attachments may use 12–16pt radius.
 - Motion: short, interruptible state changes; no ornamental entrance animation. Respect Reduce Motion.
+- Composer stability: the empty and hydrated transcript share one Composer identity; loading history must never dissolve, replace or dim the input surface.
+- Utility workspaces: Skills and Context & Memory open as landscape desktop panels. They preserve the visible Composer and use a transparent outside-click surface rather than a full-window dimmer.
+- Transcript readability: assistant prose renders native block Markdown. Titles, lists, quotes and market-data tables are formatted for reading; raw Markdown syntax is reserved for explicit code blocks.
 - Imagery/iconography: SF Symbols and 36–44pt control hit areas; do not add repeated avatar chrome to assistant responses.
 
 ## Components
@@ -61,7 +64,7 @@
 
 ## Interaction states
 - Loading: preserve the startup loading animation; in Seesaw, show a compact assistant-adjacent tool row with progress and tool name.
-- Empty: brief prompt, shared Composer, enabled Skill starters, then optional suggestions; no hero or capability-card grid.
+- Empty: one short prompt, a compact list of enabled Skill task rows, and the shared Composer; no hero, capability-card grid or detached recommendation link.
 - Error: actionable provider/credential copy next to the Composer without destroying prior messages. Configuration readiness may only use the route, Keychain/Credential Broker and explicit connection-test state; a prior chat failure is a separate diagnostic.
 - Live market: show a compact, source-labelled Longbridge snapshot in the Right Rail only when the user explicitly asks for real-time/market context. Display `as_of`, receipt time, scope and coverage limits; never imply Beijing Exchange coverage or persist live values in memory/compaction.
 - Success: evidence/tool completion remains attached to the relevant message.

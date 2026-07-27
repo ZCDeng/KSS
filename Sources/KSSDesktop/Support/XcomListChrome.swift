@@ -43,6 +43,9 @@ enum XcomListChrome {
 /// 信息架构。
 enum SeesawXcomChrome {
     static let feedColumnWidth: CGFloat = 760
+    /// Composer uses the narrower OpenWorker-style reading measure even when the
+    /// transcript has room for a wider answer column.
+    static let composerColumnWidth: CGFloat = 680
     // Legacy branch constants remain while its private helpers are retired. The
     // live `AIChatView` rendering path only uses the Focus Layout metrics below.
     static let sessionRailWidth: CGFloat = 320

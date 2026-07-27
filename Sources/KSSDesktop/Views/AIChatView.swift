@@ -149,7 +149,6 @@ struct AIChatView: View {
     var body: some View {
         GeometryReader { geo in
             focusSeesawShell(size: geo.size)
-            .onAppear { Task { await loadIndicatorSuggestion() } }        // U9: 空态确定性候选建议 chip
             .onAppear { Task { await store.loadAgentBootstrap() } }
             .onAppear { applySeesawDestination() }
             .onAppear { globalNavigationExpanded = false }
@@ -225,13 +224,7 @@ struct AIChatView: View {
                 switch seesawPage {
                 case .conversation:
                     HStack(spacing: 0) {
-                        Group {
-                            if store.chatMessages.isEmpty {
-                                focusEmptyConversation
-                            } else {
-                                focusConversation
-                            }
-                        }
+                        focusConversationWorkspace
                         .frame(maxWidth: SeesawXcomChrome.feedColumnWidth)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -265,14 +258,66 @@ struct AIChatView: View {
                         .shadow(color: .black.opacity(0.14), radius: 14, x: -4)
                 }
             }
+
+            if !isInModelsWorkspace, let overlay = activeOverlay {
+                focusOverlaySurface(overlay, size: size)
+                    .zIndex(2)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.28, dampingFraction: 0.9), value: showInspectorDrawer)
         .onExitCommand {
-            if showInspectorDrawer { showInspectorDrawer = false }
+            if activeOverlay != nil { activeOverlay = nil }
+            else if showInspectorDrawer { showInspectorDrawer = false }
             else if case .providerDetail = seesawPage { seesawPage = .models }
             else if seesawPage == .models { seesawPage = .conversation }
-            else { activeOverlay = nil }
+        }
+    }
+
+    private func focusOverlaySurface(_ overlay: SeesawOverlay, size: CGSize) -> some View {
+        let overlaySize = focusOverlaySize(for: overlay, in: size)
+        return ZStack {
+            // Keep the Composer visually stable while a utility workspace is open.
+            // A transparent hit surface still lets a click outside close the panel,
+            // without making the entire conversation appear to fade away.
+            Color.clear
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { activeOverlay = nil }
+
+            focusOverlayContent(overlay)
+                .frame(width: overlaySize.width, height: overlaySize.height)
+                .background(theme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(theme.hairline)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .shadow(color: .black.opacity(theme.appearance == .dark ? 0.30 : 0.18), radius: 28, y: 12)
+                .padding(24)
+        }
+        .accessibilityAddTraits(.isModal)
+    }
+
+    private func focusOverlaySize(for overlay: SeesawOverlay, in size: CGSize) -> CGSize {
+        let horizontalInset: CGFloat = size.width >= 1180 ? 96 : 24
+        let width = min(940, max(360, size.width - horizontalInset))
+        let preferredHeight = min(580, max(390, size.height - 140))
+        // Skills and Context are desktop workspaces, not tall phone popovers.
+        // Keep their height below a 0.68 aspect ratio so the content reads laterally.
+        let height = min(preferredHeight, width * 0.68)
+        return CGSize(width: width, height: height)
+    }
+
+    @ViewBuilder
+    private func focusOverlayContent(_ overlay: SeesawOverlay) -> some View {
+        switch overlay {
+        case .sessions:
+            focusSessionPalette
+        case .skills:
+            focusSkillPalette
+        case .context:
+            focusContextPopover
         }
     }
 
@@ -318,64 +363,20 @@ struct AIChatView: View {
             }
             .buttonStyle(.plain)
             .help("会话")
-            .popover(isPresented: overlayBinding(.sessions), arrowEdge: .top) {
-                focusSessionPalette
-                    .frame(width: SeesawXcomChrome.overlayWidth, height: 500)
-            }
 
             Spacer(minLength: 8)
 
-            Button { toggleOverlay(.context) } label: {
-                Label(
-                    compact ? "上下文" : contextUsageShort,
-                    systemImage: "circle.dotted.circle"
-                )
-                .font(KSSFont.themed(12.5, .semibold, theme: theme))
-                .padding(.horizontal, compact ? 0 : 10)
-                .frame(height: 36)
-                .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(activeOverlay == .context ? theme.accent : theme.textSecondary)
-            .help("上下文、记忆与模型状态")
-            .popover(isPresented: overlayBinding(.context), arrowEdge: .top) {
-                focusContextPopover
-                    .frame(width: 420, height: 560)
-            }
-
-            Button { toggleOverlay(.skills) } label: {
-                Label(
-                    compact ? "技能" : "技能 \(pinnedSkills.count)/\(enabledSkillCount)",
-                    systemImage: "slider.horizontal.3"
-                )
-                .font(KSSFont.themed(12.5, .semibold, theme: theme))
-                .padding(.horizontal, compact ? 0 : 10)
-                .frame(height: 36)
-                .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(activeOverlay == .skills ? theme.accent : theme.textPrimary)
-            .help("技能：\(pinnedSkills.count) 个置顶，\(enabledSkillCount) 个启用")
-            .popover(isPresented: overlayBinding(.skills), arrowEdge: .top) {
-                focusSkillPalette
-                    .frame(width: 440, height: 600)
-            }
-
-            Button {
-                activeOverlay = nil
-                showInspectorDrawer = false
-                seesawPage = isInModelsWorkspace ? .conversation : .models
-            } label: {
-                Label(isInModelsWorkspace ? "返回对话" : "模型", systemImage: isInModelsWorkspace ? "chevron.left" : "cpu")
-                    .font(KSSFont.themed(12.5, .semibold, theme: theme))
-                    .padding(.horizontal, compact ? 0 : 9)
-                    .frame(height: 36)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(isInModelsWorkspace ? theme.accent : theme.textSecondary)
-            .help(isInModelsWorkspace ? "返回对话" : "管理 Seesaw 模型与凭据")
-
-            if !isInModelsWorkspace, !persistentInspector {
+            if isInModelsWorkspace {
+                Button { seesawPage = .conversation } label: {
+                    Label("返回对话", systemImage: "chevron.left")
+                        .font(KSSFont.themed(12.5, .semibold, theme: theme))
+                        .padding(.horizontal, compact ? 0 : 9)
+                        .frame(height: 36)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(theme.accent)
+                .help("返回对话")
+            } else if !persistentInspector {
                 Button { showInspectorDrawer.toggle() } label: {
                     Label("执行面板", systemImage: "rectangle.rightthird.inset.filled")
                         .labelStyle(.iconOnly)
@@ -409,12 +410,16 @@ struct AIChatView: View {
 
     // MARK: - OpenWorker-style inspector and Models workspace
 
+    private var hasEvidenceOrAttachments: Bool {
+        !store.pendingAgentAttachments.isEmpty || store.chatMessages.contains { $0.evidenceSummary.hasEvidence }
+    }
+
     private var focusInspector: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 if showInspectorDrawer {
                     HStack {
-                        Text("执行面板")
+                        Text("工作台")
                             .font(KSSFont.themed(15, .bold, theme: theme))
                         Spacer()
                         Button { showInspectorDrawer = false } label: {
@@ -425,74 +430,57 @@ struct AIChatView: View {
                         .buttonStyle(.plain)
                         .foregroundStyle(theme.textSecondary)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+                    .overlay(alignment: .bottom) { Rectangle().fill(theme.hairline).frame(height: 1) }
                 }
 
-                inspectorSection(.progress, systemImage: "chevron.down") {
-                    if store.isChatStreaming {
-                        Label(store.chatToolInProgress.map { "正在调用 \($0)" } ?? "模型正在生成", systemImage: "circle.dotted.circle")
-                            .foregroundStyle(theme.accent)
-                    } else {
-                        Text("长任务、工具调用与确认会在这里显示。")
-                            .foregroundStyle(theme.textSecondary)
-                    }
-                    if store.agentSteeringCount + store.agentFollowUpCount > 0 {
-                        Text("队列：\(store.agentSteeringCount) 条补充 · \(store.agentFollowUpCount) 条追问")
-                            .foregroundStyle(theme.textSecondary)
-                    }
-                }
-
-                inspectorSection(.liveMarket, systemImage: "waveform.path.ecg") {
-                    if let live = store.agentLiveMarketContexts.last {
-                        Text(live.coverageText)
-                            .foregroundStyle(theme.textSecondary)
-                        if let snapshotID = live.snapshotID {
-                            Text("快照 · \(snapshotID)")
-                                .font(.system(size: 10.5, design: .monospaced))
+                if store.isChatStreaming || store.agentSteeringCount + store.agentFollowUpCount > 0 {
+                    inspectorSection(.progress, systemImage: "circle.dotted.circle") {
+                        if store.isChatStreaming {
+                            Label(store.chatToolInProgress.map { "正在调用 \($0)" } ?? "模型正在生成", systemImage: "circle.dotted.circle")
+                                .foregroundStyle(theme.accent)
+                        }
+                        if store.agentSteeringCount + store.agentFollowUpCount > 0 {
+                            Text("队列：\(store.agentSteeringCount) 条补充 · \(store.agentFollowUpCount) 条追问")
                                 .foregroundStyle(theme.textSecondary)
                         }
-                        ForEach(live.rows.prefix(4)) { row in
-                            HStack(spacing: 8) {
-                                Text(row.symbol)
-                                    .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
-                                Spacer(minLength: 0)
-                                if let last = row.quote?.lastDone {
-                                    Text(String(format: "%.2f", last))
+                    }
+                }
+
+                if !store.agentLiveMarketContexts.isEmpty {
+                    inspectorSection(.liveMarket, systemImage: "waveform.path.ecg") {
+                        if let live = store.agentLiveMarketContexts.last {
+                            Text(live.coverageText)
+                                .foregroundStyle(theme.textSecondary)
+                            ForEach(live.rows.prefix(4)) { row in
+                                HStack(spacing: 8) {
+                                    Text(row.symbol)
                                         .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
-                                } else {
-                                    Text(row.quote?.error ?? "未覆盖")
-                                        .font(KSSFont.themed(11, theme: theme))
-                                        .foregroundStyle(Color.orange)
+                                    Spacer(minLength: 0)
+                                    if let last = row.quote?.lastDone {
+                                        Text(String(format: "%.2f", last))
+                                            .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                                    } else {
+                                        Text(row.quote?.error ?? "未覆盖")
+                                            .font(KSSFont.themed(11, theme: theme))
+                                            .foregroundStyle(Color.orange)
+                                    }
                                 }
+                                .foregroundStyle(theme.textPrimary)
                             }
-                            .foregroundStyle(theme.textPrimary)
-                        }
-                        if let asOf = live.sourceAsOf {
-                            Text("数据时点 · \(asOf)")
+                            if let asOf = live.sourceAsOf {
+                                Text("数据时点 · \(asOf)")
+                                    .foregroundStyle(theme.textSecondary)
+                            }
+                            Text("Longbridge 只读 · forward-observed · 北交所不覆盖")
                                 .foregroundStyle(theme.textSecondary)
                         }
-                        if let received = live.retrievedAt {
-                            Text("接收于 · \(received)")
-                                .foregroundStyle(theme.textSecondary)
-                        }
-                        Text("Longbridge 只读 · forward-observed · 北交所不覆盖")
-                            .foregroundStyle(theme.textSecondary)
-                        if !live.errors.isEmpty {
-                            Text("部分失败：\(live.errors.map(\.symbol).joined(separator: "、"))")
-                                .foregroundStyle(Color.orange)
-                        }
-                    } else {
-                        Text("仅在明确询问实时、盘中、当前报价或“今日盘面”时拉取；历史问题不会隐式请求。")
-                            .foregroundStyle(theme.textSecondary)
                     }
                 }
 
-                inspectorSection(.evidence, systemImage: "paperclip") {
-                    if store.pendingAgentAttachments.isEmpty && !store.chatMessages.contains(where: { $0.evidenceSummary.hasEvidence }) {
-                        Text("暂无可预览的证据或附件。")
-                            .foregroundStyle(theme.textSecondary)
-                    } else {
+                if hasEvidenceOrAttachments {
+                    inspectorSection(.evidence, systemImage: "paperclip") {
                         if !store.pendingAgentAttachments.isEmpty {
                             Text("附件 \(store.pendingAgentAttachments.count) 个")
                                 .foregroundStyle(theme.textSecondary)
@@ -505,7 +493,7 @@ struct AIChatView: View {
                     }
                 }
 
-                inspectorSection(.skills, systemImage: "slider.horizontal.3") {
+                inspectorSection(.skills, systemImage: "slider.horizontal.3", opens: .skills) {
                     Text("\(pinnedSkills.count) 个置顶 · \(enabledSkillCount) 个启用")
                         .foregroundStyle(theme.textSecondary)
                     if !pinnedSkills.isEmpty {
@@ -515,12 +503,12 @@ struct AIChatView: View {
                                 .foregroundStyle(theme.textPrimary)
                         }
                     }
-                    Button("管理 Skills…") { toggleOverlay(.skills) }
+                    Button("浏览 Skills…") { toggleOverlay(.skills) }
                         .buttonStyle(.borderless)
                         .foregroundStyle(theme.accent)
                 }
 
-                inspectorSection(.context, systemImage: "circle.dotted.circle") {
+                inspectorSection(.context, systemImage: "circle.dotted.circle", opens: .context) {
                     Text(contextUsageShort)
                         .foregroundStyle(theme.textSecondary)
                     Text(providerComposerLabel)
@@ -534,40 +522,63 @@ struct AIChatView: View {
                         .foregroundStyle(theme.accent)
                 }
             }
-            .padding(.bottom, 18)
+            .padding(.bottom, 12)
         }
         .font(KSSFont.themed(12, theme: theme))
-        .background(theme.canvas)
+        .background(theme.surface)
+    }
+
+    private func toggleInspectorSection(_ section: InspectorSection) {
+        if expandedInspectorSections.contains(section) {
+            expandedInspectorSections.remove(section)
+        } else {
+            expandedInspectorSections.insert(section)
+        }
     }
 
     private func inspectorSection<Content: View>(
         _ section: InspectorSection,
         systemImage: String,
+        opens overlay: SeesawOverlay? = nil,
         @ViewBuilder content: @escaping () -> Content
     ) -> some View {
-        DisclosureGroup(
-            isExpanded: Binding(
-                get: { expandedInspectorSections.contains(section) },
-                set: { isExpanded in
-                    if isExpanded {
-                        expandedInspectorSections.insert(section)
-                    } else {
-                        expandedInspectorSections.remove(section)
-                    }
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                if let overlay {
+                    showInspectorDrawer = false
+                    activeOverlay = overlay
+                } else {
+                    toggleInspectorSection(section)
                 }
-            )
-        ) {
-            content()
-                .padding(.top, 8)
-                .font(KSSFont.themed(11.5, theme: theme))
-                .fixedSize(horizontal: false, vertical: true)
-        } label: {
-            Label(section.title, systemImage: systemImage)
-                .font(KSSFont.themed(13, .bold, theme: theme))
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 18, alignment: .center)
+                    Text(section.title)
+                        .font(KSSFont.themed(13, .bold, theme: theme))
+                    Spacer(minLength: 0)
+                    Image(systemName: overlay == nil
+                          ? (expandedInspectorSections.contains(section) ? "chevron.up" : "chevron.down")
+                          : "arrow.up.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+                }
                 .foregroundStyle(theme.textPrimary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if expandedInspectorSections.contains(section) {
+                content()
+                    .padding(.leading, 28)
+                    .padding(.top, 10)
+                    .font(KSSFont.themed(11.5, theme: theme))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 20)
         .padding(.vertical, 15)
         .overlay(alignment: .bottom) {
             Rectangle().fill(theme.hairline).frame(height: 1)
@@ -1088,50 +1099,59 @@ struct AIChatView: View {
         }
     }
 
-    private var focusEmptyConversation: some View {
+    /// The input must have one stable identity while session hydration swaps the
+    /// empty transcript for history. Keeping it outside the conditional avoids a
+    /// Composer dissolve/flicker after the page has already appeared.
+    private var focusConversationWorkspace: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    Spacer(minLength: 54)
-
-                    Text("今天想研究什么？")
-                        .font(KSSFont.themed(24, .bold, theme: theme))
-                        .foregroundStyle(theme.textPrimary)
-
-                    Text("从一个市场问题开始；Seesaw 会将结论与可验证证据放在一起。")
-                        .font(KSSFont.themed(14, theme: theme))
-                        .foregroundStyle(theme.textSecondary)
-
-                    focusSkillStarters
-
-                    if indicatorSuggestion?.family != nil {
-                        focusIndicatorSuggestion
-                    }
-                    if store.researchCandidate != nil {
-                        focusResearchCandidate
-                    }
-
-                    Spacer(minLength: 32)
+            Group {
+                if store.chatMessages.isEmpty {
+                    focusEmptyConversation
+                } else {
+                    focusMessageList
                 }
-                .frame(maxWidth: SeesawXcomChrome.feedColumnWidth, alignment: .leading)
-                .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
-                .padding(.bottom, 28)
-                .frame(maxWidth: .infinity, alignment: .center)
             }
-
             focusComposer
-                .frame(maxWidth: SeesawXcomChrome.feedColumnWidth)
+                .frame(maxWidth: SeesawXcomChrome.composerColumnWidth)
                 .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
-                .padding(.vertical, 12)
+                .padding(.top, 10)
+                .padding(.bottom, 18)
         }
     }
 
-    private var focusConversation: some View {
-        VStack(spacing: 0) {
-            focusMessageList
-            focusComposer
-                .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
-                .padding(.vertical, 12)
+    private var focusEmptyConversation: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Spacer(minLength: 76)
+
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Image(systemName: "sparkle")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(theme.accent)
+                    Text("今天想研究什么？")
+                        .font(KSSFont.themed(25, .bold, theme: theme))
+                        .foregroundStyle(theme.textPrimary)
+                }
+
+                Text("选一个起点，或直接在下方描述你想弄清的市场问题。")
+                    .font(KSSFont.themed(14, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                    .padding(.top, 10)
+
+                focusResearchTaskRows
+                    .padding(.top, 30)
+
+                if store.researchCandidate != nil {
+                    focusResearchCandidate
+                        .padding(.top, 14)
+                }
+
+                Spacer(minLength: 40)
+            }
+            .frame(maxWidth: SeesawXcomChrome.composerColumnWidth, alignment: .leading)
+            .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
+            .padding(.bottom, 28)
+            .frame(maxWidth: .infinity, alignment: .center)
         }
     }
 
@@ -1196,11 +1216,7 @@ struct AIChatView: View {
                             .foregroundStyle(theme.textSecondary)
                     }
                 } else if !message.text.isEmpty {
-                    markdownText(message.text)
-                        .font(KSSFont.themed(15, theme: theme))
-                        .foregroundStyle(message.isError ? Color.red : theme.textPrimary)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
+                    SeesawMarkdownView(markdown: message.text, errorTint: message.isError ? Color.red : nil)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
@@ -1249,14 +1265,14 @@ struct AIChatView: View {
     }
 
     private var focusComposer: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            focusProviderIssue
+        VStack(alignment: .leading, spacing: 9) {
+            composerInlineStatus
             queuedInputPanel
             pendingAttachmentStrip
             focusPinnedSkillChips
 
             TextField(
-                store.chatMessages.isEmpty ? "问问盘面…" : "继续问…",
+                store.chatMessages.isEmpty ? "问问盘面、个股或一个研究问题…" : "继续追问…",
                 text: $input,
                 axis: .vertical
             )
@@ -1267,23 +1283,74 @@ struct AIChatView: View {
             .lineLimit(2...6)
             .onKeyPress(.return, phases: .down, action: handleComposerReturn)
 
-            HStack(spacing: 8) {
-                attachmentPickerButton
-                composerModelMenu
-                Spacer(minLength: 8)
-                if store.isChatStreaming {
-                    queueShortcutHint
-                    focusStopButton
-                }
-                focusSendButton
-            }
+            composerControlBar
         }
-        .padding(14)
-        .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 18))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(theme.surface, in: RoundedRectangle(cornerRadius: 20))
         .overlay {
-            RoundedRectangle(cornerRadius: 18).stroke(theme.hairline)
+            RoundedRectangle(cornerRadius: 20).stroke(theme.hairline)
         }
+        .shadow(color: .black.opacity(theme.appearance == .dark ? 0.16 : 0.08), radius: 18, y: 7)
         .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder
+    private var composerInlineStatus: some View {
+        if let issue = providerIssueDescription {
+            HStack(spacing: 7) {
+                Image(systemName: store.seesawProviderReadiness == .configuredUntested
+                      ? "info.circle" : "exclamationmark.triangle")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(issue)
+                    .lineLimit(2)
+                Spacer(minLength: 4)
+                Button("检查模型") {
+                    activeOverlay = nil
+                    seesawPage = .models
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(theme.accent)
+            }
+            .font(KSSFont.themed(11.5, .medium, theme: theme))
+            .foregroundStyle(store.seesawProviderReadiness == .configuredUntested ? theme.textSecondary : Color.orange)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                store.seesawProviderReadiness == .configuredUntested
+                    ? theme.surfaceContainer
+                    : Color.orange.opacity(0.08),
+                in: RoundedRectangle(cornerRadius: 9)
+            )
+        }
+    }
+
+    private var composerControlBar: some View {
+        HStack(spacing: 9) {
+            attachmentPickerButton
+
+            Button { toggleOverlay(.skills) } label: {
+                Label("Skills", systemImage: "slider.horizontal.3")
+                    .font(KSSFont.themed(11.5, .medium, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                    .padding(.horizontal, 8)
+                    .frame(height: 28)
+                    .background(theme.surfaceContainer, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("浏览和管理 Skills")
+
+            Spacer(minLength: 4)
+            composerModelMenu
+
+            if store.isChatStreaming {
+                queueShortcutHint
+                focusStopButton
+            }
+
+            focusSendButton
+        }
+        .frame(minHeight: 32)
     }
 
     private var composerModelMenu: some View {
@@ -1313,38 +1380,10 @@ struct AIChatView: View {
     }
 
     @ViewBuilder
-    private var focusProviderIssue: some View {
-        if let issue = providerIssueDescription {
-            Button {
-                activeOverlay = nil
-                seesawPage = .models
-            } label: {
-                Label(issue, systemImage: "exclamationmark.triangle")
-                    .font(KSSFont.themed(12.5, .medium, theme: theme))
-                    .foregroundStyle(Color.orange)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(Color.orange.opacity(0.09), in: RoundedRectangle(cornerRadius: 10))
-            }
-            .buttonStyle(.plain)
-            .help("打开 Seesaw 模型设置")
-        }
-    }
-
     private var focusPinnedSkillChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 7) {
-                Button { toggleOverlay(.skills) } label: {
-                    Label("技能", systemImage: "slider.horizontal.3")
-                        .font(KSSFont.themed(11.5, .semibold, theme: theme))
-                        .padding(.horizontal, 9)
-                        .frame(height: 26)
-                        .background(theme.surfaceContainer, in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(theme.textSecondary)
-
+        if !pinnedSkills.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 7) {
                 ForEach(pinnedSkills) { skill in
                     Button {
                         selectedSkillId = skill.id
@@ -1367,53 +1406,79 @@ struct AIChatView: View {
                     .help("查看 \(skill.name) 技能详情")
                 }
             }
+            }
         }
     }
 
-    private var focusSkillStarters: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if !availableSkillStarters.isEmpty {
-                Text("从技能开始")
-                    .font(KSSFont.themed(13, .semibold, theme: theme))
-                    .foregroundStyle(theme.textSecondary)
+    private var focusResearchTaskRows: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("从这里开始")
+                .font(KSSFont.themed(12, .semibold, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+                .padding(.bottom, 8)
 
-                FlowLayout(spacing: 8, lineSpacing: 8) {
-                    ForEach(availableSkillStarters) { starter in
-                        Button {
-                            input = starter.prompt
-                            isComposerFocused = true
-                        } label: {
-                            Label(starter.title, systemImage: starter.icon)
-                                .font(KSSFont.themed(12.5, .semibold, theme: theme))
-                                .foregroundStyle(theme.textPrimary)
-                                .padding(.horizontal, 11)
-                                .frame(height: 32)
-                                .background(theme.surfaceContainer, in: Capsule())
-                                .overlay(Capsule().stroke(theme.hairline))
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(store.isChatStreaming)
+            VStack(spacing: 0) {
+                ForEach(availableSkillStarters) { starter in
+                    researchTaskRow(starter)
+                    if starter.id != availableSkillStarters.last?.id {
+                        Divider().overlay(theme.hairline)
+                            .padding(.leading, 53)
                     }
                 }
             }
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(theme.hairline))
         }
     }
 
-    @ViewBuilder
-    private var focusIndicatorSuggestion: some View {
-        if let suggestion = indicatorSuggestion, let family = suggestion.family {
-            let label = Self.indicatorFamilyLabels[family] ?? family
-            Button {
-                let reason = suggestion.reason.map { "：\($0)" } ?? ""
-                input = "帮我回测 \(label)\(reason)"
-                isComposerFocused = true
-            } label: {
-                Label("Seesaw 建议：研究一下\(label)", systemImage: "sparkles")
-                    .font(KSSFont.themed(12.5, .semibold, theme: theme))
+    private func researchTaskRow(_ starter: SkillStarter) -> some View {
+        Button {
+            input = starter.prompt
+            isComposerFocused = true
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: starter.icon)
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(theme.accent)
+                    .frame(width: 28, height: 28)
+                    .background(theme.accentSoft, in: RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(starter.title)
+                        .font(KSSFont.themed(14, .semibold, theme: theme))
+                        .foregroundStyle(theme.textPrimary)
+                    Text(researchTaskDescription(for: starter.skillId))
+                        .font(KSSFont.themed(12, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(theme.textSecondary)
+                    .padding(.top, 4)
             }
-            .buttonStyle(.plain)
-            .disabled(store.isChatStreaming)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(store.isChatStreaming)
+        .help("填入“\(starter.title)”的起始问题")
+    }
+
+    private func researchTaskDescription(for skillID: String) -> String {
+        switch skillID {
+        case "kss-review":
+            return "解释一只股票今天为什么动"
+        case "longbridge-realtime":
+            return "查看指数、热点与盘中结构"
+        case "kss-indicator-pipeline":
+            return "把指标研究成可回测的问题"
+        case "kss-orientation":
+            return "先了解可用数据、工具与约束"
+        default:
+            return "用这个 Skill 开始一项研究"
         }
     }
 
@@ -1421,10 +1486,19 @@ struct AIChatView: View {
     private var focusResearchCandidate: some View {
         if let candidate = store.researchCandidate {
             Button { store.selectedSection = .runbook } label: {
-                Label("开始深度研究：\(candidate.objective)", systemImage: "scope")
-                    .font(KSSFont.themed(12.5, .semibold, theme: theme))
-                    .foregroundStyle(theme.textSecondary)
-                    .lineLimit(2)
+                HStack(spacing: 8) {
+                    Image(systemName: "scope")
+                        .foregroundStyle(theme.accent)
+                    Text("继续深度研究：\(candidate.objective)")
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Image(systemName: "arrow.up.right")
+                }
+                .font(KSSFont.themed(12.5, .medium, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: 10))
             }
             .buttonStyle(.plain)
         }
@@ -1824,7 +1898,12 @@ struct AIChatView: View {
 
     private var availableSkillStarters: [SkillStarter] {
         skillStarters.filter { starter in
-            guard let skill = store.agentSkills.first(where: { $0.id == starter.skillId }) else { return false }
+            // Bundled Skills use a repository-relative file id (for example
+            // `.claude/skills/kss-review/SKILL.md`); the manifest name is the
+            // stable public identity used by the starter catalogue.
+            guard let skill = store.agentSkills.first(where: {
+                $0.id == starter.skillId || $0.name == starter.skillId
+            }) else { return false }
             return skill.enabled != false && skill.available != false
         }
     }
@@ -1922,20 +2001,12 @@ struct AIChatView: View {
     }
 
     private func toggleOverlay(_ overlay: SeesawOverlay) {
-        activeOverlay = activeOverlay == overlay ? nil : overlay
-    }
-
-    private func overlayBinding(_ overlay: SeesawOverlay) -> Binding<Bool> {
-        Binding(
-            get: { activeOverlay == overlay },
-            set: { isPresented in
-                if isPresented {
-                    activeOverlay = overlay
-                } else if activeOverlay == overlay {
-                    activeOverlay = nil
-                }
-            }
-        )
+        if activeOverlay == overlay {
+            activeOverlay = nil
+        } else {
+            showInspectorDrawer = false
+            activeOverlay = overlay
+        }
     }
 
     private func xcomSeesawShell(size: CGSize) -> some View {

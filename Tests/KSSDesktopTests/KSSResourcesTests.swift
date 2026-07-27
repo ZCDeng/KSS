@@ -23,14 +23,19 @@ final class KSSResourcesTests: XCTestCase {
         )
         try plistData.write(to: embedded.appending(path: "Info.plist"))
 
+        var fallbackWasEvaluated = false
         let resolved = KSSResources.resolveBundle(
             resourceRoot: resources,
             executableRoot: nil,
-            fallback: Bundle.module
+            fallback: {
+                fallbackWasEvaluated = true
+                return Bundle.module
+            }
         )
 
         XCTAssertEqual(resolved.bundleURL.standardizedFileURL, embedded.standardizedFileURL)
         XCTAssertFalse(resolved.bundleURL.path.contains("/.build/"))
+        XCTAssertFalse(fallbackWasEvaluated)
     }
 
     func testMissingEmbeddedBundleUsesFallback() {
@@ -38,7 +43,7 @@ final class KSSResourcesTests: XCTestCase {
             resourceRoot: FileManager.default.temporaryDirectory
                 .appending(path: "missing-\(UUID().uuidString)"),
             executableRoot: nil,
-            fallback: Bundle.module
+            fallback: { Bundle.module }
         )
         XCTAssertEqual(resolved.bundleURL, Bundle.module.bundleURL)
     }

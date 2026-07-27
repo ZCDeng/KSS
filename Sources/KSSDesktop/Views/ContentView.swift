@@ -19,6 +19,18 @@ struct ContentView: View {
         return sidebarCollapsed
     }
 
+    /// Seesaw owns a distinct workspace shell. Do not fade the previous detail
+    /// through it, otherwise an outgoing legacy page is briefly visible before
+    /// the focused conversation layout is ready.
+    private var seesawDetailTransition: AnyTransition {
+        if store.selectedSection == .aiChat { return .identity }
+        return KSSTheme.fadeThrough
+    }
+
+    private var seesawDetailAnimation: Animation? {
+        store.selectedSection == .aiChat ? nil : KSSTheme.motionStandard
+    }
+
     private var watchlist: [String] {
         watchlistSymbols
             .split(separator: ",")
@@ -88,9 +100,9 @@ struct ContentView: View {
                     detail
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .id(store.selectedSection)
-                        .transition(KSSTheme.fadeThrough)
+                        .transition(seesawDetailTransition)
                 }
-                .animation(KSSTheme.motionStandard, value: store.selectedSection)
+                .animation(seesawDetailAnimation, value: store.selectedSection)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(theme.canvas)
                 .toolbar {
