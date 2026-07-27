@@ -191,6 +191,8 @@ class ResearchRepository:
         dependencies: list[tuple[str, str, bool]],
         client_request_id: str | None,
         execution_mode: str = "single",
+        origin: str = "manual",
+        cadence: str | None = None,
     ) -> dict[str, Any]:
         conn = self.transaction()
         try:
@@ -208,8 +210,9 @@ class ResearchRepository:
                 INSERT INTO research_goals (
                     goal_id, session_id, profile_id, objective, status, inputs_json,
                     snapshot_json, budget_json, usage_json, termination_reason,
-                    client_request_id, created_at, updated_at, execution_mode
-                ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+                    client_request_id, created_at, updated_at, execution_mode,
+                    origin, cadence
+                ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     goal_id,
@@ -224,6 +227,8 @@ class ResearchRepository:
                     now,
                     now,
                     execution_mode,
+                    origin,
+                    cadence,
                 ),
             )
             for item in criteria:
@@ -332,6 +337,92 @@ class ResearchRepository:
             ensure_schema(conn)
             rows = conn.execute("SELECT goal_id FROM research_goals ORDER BY created_at DESC LIMIT 1000").fetchall()
         return [g for row in rows if (g := self.get_goal(str(row["goal_id"])))]
+
+    def list_report_summaries(
+        self,
+        *,
+        origin: str | None = None,
+        cadence: str | None = None,
+        profile_ids: list[str] | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """List report archive rows without opening report HTML objects."""
+        filters = ["g.profile_id IN ('investment-daily-v1', 'investment-weekly-v3')"]
+        params: list[Any] = []
+        if origin:
+            filters.append("g.origin=?")
+            params.append(origin)
+        if cadence:
+            filters.append("g.cadence=?")
+            params.append(cadence)
+        if profile_ids:
+            placeholders = ",".join("?" for _ in profile_ids)
+            filters.append(f"g.profile_id IN ({placeholders})")
+            params.extend(profile_ids)
+        if cursor:
+            # v1 cursors were a timestamp only. Keep consuming those, while
+            # new cursors append the goal id so reports created in the same
+            # SQLite timestamp bucket cannot be skipped between pages.
+            cursor_created_at, separator, cursor_goal_id = cursor.partition("|")
+            if separator and cursor_goal_id:
+                filters.append("(g.created_at < ? OR (g.created_at = ? AND g.goal_id < ?))")
+                params.extend([cursor_created_at, cursor_created_at, cursor_goal_id])
+            else:
+                filters.append("g.created_at < ?")
+                params.append(cursor_created_at)
+        safe_limit = max(1, min(int(limit), 200))
+        query = f"""
+            SELECT g.goal_id, g.profile_id, g.origin, g.cadence, g.objective,
+                   g.status AS goal_status, g.inputs_json, g.snapshot_json,
+                   g.created_at,
+                   a.status AS audit_status,
+                   r.artifact_id, r.object_hash, r.metadata_json
+            FROM research_goals g
+            LEFT JOIN research_audits a ON a.audit_id=(
+                SELECT audit_id FROM research_audits
+                WHERE goal_id=g.goal_id ORDER BY created_at DESC LIMIT 1
+            )
+            LEFT JOIN research_artifacts r ON r.artifact_id=(
+                SELECT artifact_id FROM research_artifacts
+                WHERE goal_id=g.goal_id AND kind='report_html'
+                ORDER BY created_at DESC LIMIT 1
+            )
+            WHERE {' AND '.join(filters)} AND r.artifact_id IS NOT NULL
+            ORDER BY g.created_at DESC, g.goal_id DESC
+            LIMIT ?
+        """
+        params.append(safe_limit + 1)
+        with connect(self.db_path) as conn:
+            ensure_schema(conn)
+            rows = conn.execute(query, params).fetchall()
+        has_more = len(rows) > safe_limit
+        selected = rows[:safe_limit]
+        reports: list[dict[str, Any]] = []
+        for row in selected:
+            item = dict(row)
+            inputs = loads(item.pop("inputs_json"), {})
+            snapshot = loads(item.pop("snapshot_json"), {})
+            metadata = loads(item.pop("metadata_json"), {})
+            date_range = str(inputs.get("date_range") or "")
+            if "_to_" in date_range:
+                date_start, date_end = date_range.split("_to_", 1)
+            else:
+                date_start = str(inputs.get("trade_date") or "")
+                date_end = date_start
+            reports.append({
+                **item,
+                "date_start": date_start or None,
+                "date_end": date_end or None,
+                "as_of": snapshot.get("as_of") or inputs.get("as_of"),
+                "title": metadata.get("title") or item.get("objective"),
+                "is_draft": bool(metadata.get("draft") or item.get("audit_status") != "pass"),
+            })
+        next_cursor = (
+            f"{selected[-1]['created_at']}|{selected[-1]['goal_id']}"
+            if has_more and selected else None
+        )
+        return reports, next_cursor
 
     def _criteria(self, conn: sqlite3.Connection, goal_id: str) -> list[dict[str, Any]]:
         rows = conn.execute("SELECT * FROM research_criteria WHERE goal_id=? ORDER BY rowid", (goal_id,)).fetchall()

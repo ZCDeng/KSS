@@ -5,6 +5,25 @@
 <dict>
 	<key>Label</key>
 	<string>com.zcdeng.kss.paper_trade_daily</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/zcdeng/projects/KSS/scripts/run_paper_trade_daily.sh</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/Users/zcdeng/projects/KSS</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>HOME</key>
+		<string>/Users/zcdeng</string>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/paper_trade_daily.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/paper_trade_daily.log</string>
+	<key>ThrottleInterval</key>
+	<integer>60</integer>
 	<key>StartCalendarInterval</key>
 	<array>
 		<dict>
@@ -48,26 +67,7 @@
 			<integer>5</integer>
 		</dict>
 	</array>
-	<key>ProgramArguments</key>
-	<array>
-		<string>/Users/zcdeng/projects/KSS/scripts/run_paper_trade_daily.sh</string>
-	</array>
-	<key>WorkingDirectory</key>
-	<string>/Users/zcdeng/projects/KSS</string>
-	<key>EnvironmentVariables</key>
-	<dict>
-		<key>PATH</key>
-		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-		<key>HOME</key>
-		<string>/Users/zcdeng</string>
-	</dict>
-	<key>StandardOutPath</key>
-	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/paper_trade_daily.log</string>
-	<key>StandardErrorPath</key>
-	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/paper_trade_daily.log</string>
 	<key>RunAtLoad</key>
 	<false/>
-	<key>ThrottleInterval</key>
-	<integer>60</integer>
 </dict>
 </plist>

@@ -3,6 +3,11 @@ import SwiftUI
 // MARK: - 四态实时状态徽标（价格页）
 
 /// 交易时段 + 新鲜 / 已过期 / 非实时 / 实时源未连接 / 非交易时段。
+enum RealtimeStatusBadgeStyle {
+    case compact
+    case pageHeader
+}
+
 struct RealtimeStatusBadge: View {
     @Environment(\.kssTheme) private var theme
     var freshness: RealtimeFreshness
@@ -10,6 +15,14 @@ struct RealtimeStatusBadge: View {
     var authFailed: Bool
     var updatedAt: Date?
     var onRetry: () -> Void
+    var style: RealtimeStatusBadgeStyle = .compact
+
+    private var textFont: Font {
+        switch style {
+        case .compact: return .caption2
+        case .pageHeader: return KSSFont.themed(14, .semibold, theme: theme)
+        }
+    }
 
     var body: some View {
         if let hours, !hours.isTradingSession {
@@ -17,7 +30,7 @@ struct RealtimeStatusBadge: View {
                 Image(systemName: "clock")
                 Text("非交易时段")
             }
-            .font(.caption2)
+            .font(textFont)
             .foregroundStyle(theme.textSecondary)
         } else if authFailed {
             Button(action: onRetry) {
@@ -26,7 +39,7 @@ struct RealtimeStatusBadge: View {
                     Text("实时源未连接")
                     Text("重试").underline()
                 }
-                .font(.caption2)
+                .font(textFont)
                 .foregroundStyle(theme.down)
             }
             .buttonStyle(.plain)
@@ -41,7 +54,7 @@ struct RealtimeStatusBadge: View {
                         .foregroundStyle(theme.textSecondary)
                 }
             }
-            .font(.caption2)
+            .font(textFont)
         } else if freshness == .fresh {
             HStack(spacing: 4) {
                 Image(systemName: "clock")
@@ -53,7 +66,7 @@ struct RealtimeStatusBadge: View {
                         .foregroundStyle(theme.textSecondary)
                 }
             }
-            .font(.caption2)
+            .font(textFont)
         } else {
             Button(action: onRetry) {
                 HStack(spacing: 4) {
@@ -61,7 +74,7 @@ struct RealtimeStatusBadge: View {
                     Text("非实时")
                     Text("重试").underline()
                 }
-                .font(.caption2)
+                .font(textFont)
                 .foregroundStyle(theme.textSecondary)
             }
             .buttonStyle(.plain)

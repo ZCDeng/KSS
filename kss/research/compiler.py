@@ -29,6 +29,279 @@ FINANCIAL_NUMBER_RE = re.compile(
 ALLOWED_NUMBER_CONTEXT_RE = re.compile(r"(20\d{2}[-年/]|第[一二三四五六七八九十\d]+|V\d+|#)")
 CSP = "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
 
+# The source report is intentionally not checked into KSS: it is a private
+# WeChat attachment.  These values are the reviewed, source-independent V3
+# presentation contract.  Keeping the contract in code makes the report
+# compiler deterministic and gives tests a stable surface without copying any
+# private report content into the repository.
+V3_PRESENTATION_CONTRACT = {
+    "layout": "investment-research-v3",
+    "page_max_width": "1200px",
+    "title_size": "36px",
+    "section_size": "24px",
+    "body_size": "15.5px",
+    "body_line_height": "1.78",
+    "table_size": "13.5px",
+    "meta_size": "12px",
+    "precision_card_min_width": "292px",
+}
+
+
+REPORT_CSS = """
+    :root {
+      color-scheme: light;
+      --report-ink: #101828;
+      --report-ink-soft: #475467;
+      --report-ink-faint: #667085;
+      --report-line: #d9e1ea;
+      --report-line-strong: #b9c6d5;
+      --report-paper: #ffffff;
+      --report-canvas: #f3f6fa;
+      --report-blue: #1677c8;
+      --report-blue-soft: #eaf4ff;
+      --report-navy: #10243e;
+      --report-alert: #b42318;
+      --report-alert-bg: #fff1f0;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--report-canvas); }
+    body {
+      margin: 0;
+      color: var(--report-ink);
+      background: var(--report-canvas);
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif;
+      font-size: 15.5px;
+      font-weight: 400;
+      line-height: 1.78;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+    }
+    main {
+      width: min(100%, 1200px);
+      margin: 0 auto;
+      padding: 42px 30px 76px;
+    }
+    .report-masthead {
+      display: grid;
+      gap: 18px;
+      padding: 0 0 22px;
+      border-top: 4px solid var(--report-navy);
+      border-bottom: 1px solid var(--report-line-strong);
+    }
+    .report-eyebrow,
+    .section-index,
+    .card-kicker,
+    .meta-label {
+      color: var(--report-ink-faint);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", monospace;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      line-height: 1.3;
+      text-transform: uppercase;
+    }
+    .masthead-title-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+    }
+    h1, h2, h3, p { margin: 0; }
+    h1 {
+      max-width: 830px;
+      font-size: clamp(29px, 3vw, 36px);
+      font-weight: 750;
+      letter-spacing: -.036em;
+      line-height: 1.18;
+    }
+    .audit-chip {
+      flex: 0 0 auto;
+      margin-top: 4px;
+      border: 1px solid #a9cbea;
+      border-radius: 999px;
+      color: #075b99;
+      background: var(--report-blue-soft);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+      padding: 7px 10px;
+      white-space: nowrap;
+    }
+    .audit-chip.is-failed {
+      border-color: #f7b4ad;
+      color: var(--report-alert);
+      background: var(--report-alert-bg);
+    }
+    .report-subtitle {
+      max-width: 840px;
+      color: var(--report-ink-soft);
+      font-size: 16px;
+      line-height: 1.65;
+    }
+    .report-meta {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0;
+      margin: 2px 0 0;
+      border-top: 1px solid var(--report-line);
+      border-bottom: 1px solid var(--report-line);
+    }
+    .report-meta > div {
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+      padding: 9px 14px 9px 0;
+    }
+    .report-meta > div + div { padding-left: 14px; border-left: 1px solid var(--report-line); }
+    .meta-value {
+      overflow: hidden;
+      color: var(--report-ink);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", monospace;
+      font-size: 12px;
+      line-height: 1.35;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .report-section {
+      padding: 27px 0 0;
+      scroll-margin-top: 24px;
+    }
+    .report-section + .report-section { margin-top: 8px; border-top: 1px solid var(--report-line); }
+    .section-heading {
+      display: grid;
+      grid-template-columns: 38px minmax(0, 1fr);
+      align-items: baseline;
+      column-gap: 10px;
+      margin-bottom: 14px;
+    }
+    .section-index { color: var(--report-blue); }
+    h2 {
+      font-size: 24px;
+      font-weight: 720;
+      letter-spacing: -.024em;
+      line-height: 1.25;
+    }
+    .report-block + .report-block { margin-top: 14px; }
+    h3 {
+      margin-bottom: 7px;
+      color: var(--report-ink);
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -.012em;
+      line-height: 1.45;
+    }
+    .report-prose {
+      max-width: 88ch;
+      color: #263446;
+      font-size: 15.5px;
+      line-height: 1.78;
+      white-space: pre-wrap;
+    }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(164px, 1fr));
+      gap: 9px;
+    }
+    .metric {
+      min-height: 111px;
+      padding: 13px 14px 12px;
+      border: 1px solid var(--report-line);
+      border-top: 2px solid #9ac8eb;
+      background: var(--report-paper);
+    }
+    .metric-label { color: var(--report-ink-soft); font-size: 13px; font-weight: 650; line-height: 1.35; }
+    .metric-value {
+      margin: 8px 0 7px;
+      color: var(--report-navy);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", monospace;
+      font-size: 25px;
+      font-weight: 750;
+      letter-spacing: -.045em;
+      line-height: 1;
+    }
+    .metric-meta,
+    .card-evidence {
+      color: var(--report-ink-faint);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", monospace;
+      font-size: 11px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+    .table-scroll { overflow-x: auto; border: 1px solid var(--report-line); background: var(--report-paper); }
+    table { width: 100%; min-width: 560px; border-collapse: collapse; font-size: 13.5px; line-height: 1.5; }
+    th, td { padding: 9px 12px; border-bottom: 1px solid var(--report-line); text-align: left; vertical-align: top; }
+    th {
+      color: #344054;
+      background: #f5f8fb;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .01em;
+    }
+    tbody tr:last-child td { border-bottom: 0; }
+    tbody tr:nth-child(even) td { background: #fbfcfe; }
+    .precision-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(292px, 1fr));
+      gap: 10px;
+    }
+    .precision-card {
+      display: grid;
+      gap: 7px;
+      min-width: 0;
+      padding: 13px 14px;
+      border: 1px solid var(--report-line);
+      border-left: 3px solid #7ab8e6;
+      background: var(--report-paper);
+      break-inside: avoid;
+    }
+    .precision-card strong { color: var(--report-ink); font-size: 15px; line-height: 1.4; }
+    .precision-card p { color: #344054; font-size: 13.5px; line-height: 1.58; }
+    .precision-card .card-evidence { margin-top: 1px; }
+    .chart-frame { overflow: hidden; border: 1px solid var(--report-line); background: var(--report-paper); }
+    .chart-frame svg { display: block; width: 100%; height: auto; min-height: 168px; }
+    .watermark {
+      position: fixed;
+      top: 18px;
+      left: 18px;
+      z-index: 2;
+      border: 1px solid #f7b4ad;
+      color: var(--report-alert);
+      background: var(--report-alert-bg);
+      font-size: 12px;
+      font-weight: 750;
+      letter-spacing: .01em;
+      padding: 8px 12px;
+    }
+    @media (max-width: 720px) {
+      main { padding: 26px 18px 48px; }
+      h1 { font-size: 30px; }
+      h2 { font-size: 22px; }
+      .masthead-title-row { display: block; }
+      .audit-chip { display: inline-block; margin-top: 12px; }
+      .report-meta { grid-template-columns: 1fr; }
+      .report-meta > div + div { padding-left: 0; border-left: 0; border-top: 1px solid var(--report-line); }
+      .section-heading { grid-template-columns: 31px minmax(0, 1fr); column-gap: 8px; }
+      .precision-cards { grid-template-columns: 1fr; }
+    }
+    @media print {
+      @page { margin: 13mm 12mm 15mm; }
+      html, body { background: #fff; }
+      main { width: 100%; max-width: none; padding: 0; }
+      .report-section { break-inside: avoid; }
+      .report-section + .report-section { margin-top: 6mm; }
+      .watermark { position: static; display: inline-block; margin: 0 0 6mm; }
+      .table-scroll { overflow: visible; }
+      table { min-width: 0; }
+      .precision-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .precision-card, .metric { break-inside: avoid; }
+    }
+"""
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -271,9 +544,16 @@ class ReportCompiler:
         }
 
     def render_html(self, document: ReportDocument, *, audit: dict[str, Any], draft: bool) -> str:
-        sections = "\n".join(self._render_section(section, document.metric_ledger.by_id()) for section in document.sections)
+        metrics = document.metric_ledger.by_id()
+        sections = "\n".join(
+            self._render_section(section, metrics, index=index)
+            for index, section in enumerate(document.sections, start=1)
+        )
         watermark = "<div class=\"watermark\">草稿 · 审计未通过 · 不得正式发布</div>" if draft else ""
-        audit_summary = html.escape(audit["status"])
+        audit_passed = audit["status"] == "pass"
+        audit_summary = "审计通过" if audit_passed else "审计未通过"
+        report_class = "report-v3" if document.profile_id == "investment-weekly-v3" else "report-standard"
+        audit_class = "audit-chip" if audit_passed else "audit-chip is-failed"
         return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -281,36 +561,31 @@ class ReportCompiler:
   <meta http-equiv="Content-Security-Policy" content="{html.escape(CSP)}">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{html.escape(document.title)}</title>
-  <style>
-    :root {{ color-scheme: light; --ink:#0f172a; --muted:#64748b; --line:#dbe4ee; --blue:#1d9bf0; --bg:#f8fafc; }}
-    body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--ink); background:var(--bg); }}
-    main {{ max-width:1180px; margin:0 auto; padding:40px 28px 80px; }}
-    header {{ border-bottom:1px solid var(--line); margin-bottom:28px; padding-bottom:22px; }}
-    h1 {{ font-size:34px; margin:0 0 8px; letter-spacing:-0.03em; }}
-    h2 {{ font-size:24px; margin:30px 0 14px; letter-spacing:-0.02em; }}
-    h3 {{ font-size:17px; margin:18px 0 8px; }}
-    p {{ line-height:1.72; }}
-    table {{ width:100%; border-collapse:collapse; background:white; border:1px solid var(--line); border-radius:14px; overflow:hidden; }}
-    th,td {{ padding:10px 12px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }}
-    th {{ background:#eef6ff; font-weight:700; }}
-    .metric-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }}
-    .metric {{ background:white; border:1px solid var(--line); border-radius:18px; padding:16px; }}
-    .metric-value {{ font-size:26px; font-weight:800; color:var(--blue); }}
-    .cards {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }}
-    .card {{ background:white; border:1px solid var(--line); border-radius:18px; padding:14px; }}
-    .muted {{ color:var(--muted); font-size:13px; }}
-    .watermark {{ position:fixed; inset:16px auto auto 16px; z-index:2; background:#fff1f2; color:#be123c; border:1px solid #fecdd3; border-radius:999px; padding:8px 14px; font-weight:700; }}
-    @media print {{ body {{ background:white; }} .watermark {{ position:static; display:inline-block; }} }}
-  </style>
+  <style>{REPORT_CSS}</style>
 </head>
-<body>{watermark}<main>
-<header><h1>{html.escape(document.title)}</h1><p class="muted">{html.escape(document.subtitle)} · {html.escape(document.date_range)} · as of {html.escape(document.as_of)} · audit {audit_summary}</p></header>
+<body class="{report_class}" data-report-layout="{V3_PRESENTATION_CONTRACT['layout'] if report_class == 'report-v3' else 'standard'}">{watermark}<main>
+<header class="report-masthead">
+  <div class="report-eyebrow">KSS · INVESTMENT RESEARCH</div>
+  <div class="masthead-title-row"><h1>{html.escape(document.title)}</h1><span class="{audit_class}">{audit_summary}</span></div>
+  <p class="report-subtitle">{html.escape(document.subtitle)}</p>
+  <div class="report-meta" aria-label="报告元数据">
+    <div><span class="meta-label">研究周期</span><span class="meta-value">{html.escape(document.date_range)}</span></div>
+    <div><span class="meta-label">数据时点</span><span class="meta-value">{html.escape(document.as_of)}</span></div>
+    <div><span class="meta-label">版本</span><span class="meta-value">{html.escape(document.profile_id)}</span></div>
+  </div>
+</header>
 {sections}
 </main></body></html>"""
 
-    def _render_section(self, section: ReportSection, metrics: dict[str, MetricEntry]) -> str:
+    def _render_section(self, section: ReportSection, metrics: dict[str, MetricEntry], *, index: int) -> str:
         blocks = "\n".join(self._render_block(block, metrics) for block in section.blocks)
-        return f"<section id=\"{html.escape(section.anchor)}\"><h2>{html.escape(section.title)}</h2>{blocks}</section>"
+        section_class = re.sub(r"[^a-z0-9-]", "-", section.anchor.lower()).strip("-") or "section"
+        return (
+            f"<section class=\"report-section section-{html.escape(section_class)}\" "
+            f"id=\"{html.escape(section.anchor)}\">"
+            f"<div class=\"section-heading\"><span class=\"section-index\">{index:02d}</span>"
+            f"<h2>{html.escape(section.title)}</h2></div>{blocks}</section>"
+        )
 
     def _render_block(self, block: ReportBlock, metrics: dict[str, MetricEntry]) -> str:
         title = f"<h3>{html.escape(block.title)}</h3>" if block.title else ""
@@ -319,19 +594,26 @@ class ReportCompiler:
             for metric_id in block.metric_refs:
                 metric = metrics[metric_id]
                 value = self._format_metric(metric)
-                items.append(f"<div class=\"metric\"><div class=\"muted\">{html.escape(metric.label)}</div><div class=\"metric-value\">{html.escape(value)}</div><div class=\"muted\">{html.escape(metric.formula_id)} · {html.escape(metric.as_of)}</div></div>")
-            return f"{title}<div class=\"metric-grid\">{''.join(items)}</div>"
+                items.append(
+                    "<div class=\"metric\">"
+                    f"<div class=\"metric-label\">{html.escape(metric.label)}</div>"
+                    f"<div class=\"metric-value\">{html.escape(value)}</div>"
+                    f"<div class=\"metric-meta\">{html.escape(metric.formula_id)} · {html.escape(metric.as_of)}</div>"
+                    "</div>"
+                )
+            return f"<div class=\"report-block report-block-metrics\">{title}<div class=\"metric-grid\">{''.join(items)}</div></div>"
         if block.type == "precision_cards":
             cards = []
             for row in block.rows:
                 cards.append(
-                    "<div class=\"card\">"
+                    "<article class=\"precision-card\">"
+                    "<span class=\"card-kicker\">精判卡</span>"
                     f"<strong>{html.escape(str(row.get('title') or row.get('card_id') or '卡片'))}</strong>"
                     f"<p>{html.escape(str(row.get('summary') or ''))}</p>"
-                    f"<p class=\"muted\">metric: {html.escape(','.join(map(str, row.get('metric_refs', []))))} · evidence: {html.escape(','.join(map(str, row.get('evidence_refs', []))))}</p>"
-                    "</div>"
+                    f"<p class=\"card-evidence\">metric: {html.escape(','.join(map(str, row.get('metric_refs', []))))} · evidence: {html.escape(','.join(map(str, row.get('evidence_refs', []))))}</p>"
+                    "</article>"
                 )
-            return f"{title}<div class=\"cards\">{''.join(cards)}</div>"
+            return f"<div class=\"report-block report-block-cards\">{title}<div class=\"precision-cards\">{''.join(cards)}</div></div>"
         if block.type == "svg_chart" and block.chart:
             values = [
                 metric
@@ -355,10 +637,10 @@ class ReportCompiler:
                     f"{html.escape(self._format_metric(metric))}</title></rect>"
                 )
             return (
-                f"{title}<svg role=\"img\" aria-label=\""
+                f"<div class=\"report-block report-block-chart\">{title}<div class=\"chart-frame\"><svg role=\"img\" aria-label=\""
                 f"{html.escape(block.chart.title)}\" viewBox=\"0 0 640 180\" "
                 f"xmlns=\"http://www.w3.org/2000/svg\">"
-                f"{''.join(bars)}</svg>"
+                f"{''.join(bars)}</svg></div></div>"
             )
         if block.rows:
             columns = sorted({key for row in block.rows for key in row.keys() if key not in {"metric_refs", "evidence_refs"}})
@@ -367,9 +649,9 @@ class ReportCompiler:
                 "<tr>" + "".join(f"<td>{html.escape(str(row.get(col, '')))}</td>" for col in columns) + "</tr>"
                 for row in block.rows
             )
-            return f"{title}<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+            return f"<div class=\"report-block report-block-table\">{title}<div class=\"table-scroll\"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div></div>"
         text = html.escape(block.text or "")
-        return f"{title}<p>{text}</p>"
+        return f"<div class=\"report-block report-block-prose\">{title}<p class=\"report-prose\">{text}</p></div>"
 
     def _format_metric(self, metric: MetricEntry) -> str:
         if isinstance(metric.value, (int, float)):
@@ -450,24 +732,60 @@ class ReportCompiler:
         return sorted(selected, key=lambda row: str(row.get("card_id")))
 
     def _preview_png(self, *, status: str, draft: bool, width: int = 640, height: int = 360) -> bytes:
-        bg = (248, 250, 252)
-        accent = (190, 18, 60) if draft or status != "pass" else (29, 155, 240)
+        # A structural, content-free preview of the V3 report.  It mirrors the
+        # masthead, compact metadata band, metric grid and dense report rows
+        # without attempting to rasterize untrusted model text.
+        bg = (243, 246, 250)
+        paper = (255, 255, 255)
+        navy = (16, 36, 62)
+        ink = (16, 24, 40)
+        line = (217, 225, 234)
+        blue = (22, 119, 200)
+        alert = (180, 35, 24)
+        accent = alert if draft or status != "pass" else blue
+
+        def in_rect(x: int, y: int, rect: tuple[int, int, int, int]) -> bool:
+            left, top, right, bottom = rect
+            return left <= x <= right and top <= y <= bottom
+
+        paper_rect = (30, 20, width - 30, height - 20)
+        accent_rect = (30, 20, width - 30, 23)
+        title_rect = (56, 56, 306, 76)
+        subtitle_rect = (56, 88, 420, 96)
+        meta_line = (56, 111, width - 56, 112)
+        meta_rects = [(56, 121, 188, 138), (202, 121, 334, 138), (348, 121, 510, 138)]
+        section_rule = (56, 157, width - 56, 158)
+        metric_rects = [(56, 174, 165, 228), (174, 174, 283, 228), (292, 174, 401, 228), (410, 174, 519, 228)]
+        metric_values = [(68, 196, 132, 207), (186, 196, 250, 207), (304, 196, 368, 207), (422, 196, 486, 207)]
+        table_head = (56, 246, width - 56, 260)
+        table_rows = [(56, 268, width - 56, 269), (56, 281, width - 56, 282), (56, 294, width - 56, 295)]
+        body_lines = [(56, 315, 360, 320), (56, 328, 500, 333)]
+
         rows = []
         for y in range(height):
             row = bytearray([0])
             for x in range(width):
-                if 36 <= x <= width - 36 and 44 <= y <= height - 44:
-                    color = (255, 255, 255)
-                else:
-                    color = bg
-                if 36 <= x <= width - 36 and 44 <= y <= 52:
+                color = paper if in_rect(x, y, paper_rect) else bg
+                if in_rect(x, y, accent_rect):
                     color = accent
-                if 70 <= x <= 300 and 95 <= y <= 122:
-                    color = (15, 23, 42)
-                if 70 <= x <= 560 and 155 <= y <= 172:
-                    color = (219, 228, 238)
-                if 70 <= x <= 520 and 198 <= y <= 215:
-                    color = (219, 228, 238)
+                elif in_rect(x, y, title_rect):
+                    color = navy
+                elif in_rect(x, y, subtitle_rect):
+                    color = (71, 84, 103)
+                elif in_rect(x, y, meta_line) or in_rect(x, y, section_rule):
+                    color = line
+                elif any(in_rect(x, y, rect) for rect in meta_rects):
+                    color = (234, 240, 246)
+                elif any(in_rect(x, y, rect) for rect in metric_rects):
+                    color = (249, 252, 255)
+                elif any(in_rect(x, y, rect) for rect in metric_values):
+                    color = blue
+                elif in_rect(x, y, table_head):
+                    color = (245, 248, 251)
+                elif any(in_rect(x, y, rect) for rect in table_rows):
+                    color = line
+                elif any(in_rect(x, y, rect) for rect in body_lines):
+                    color = ink
                 row.extend(color)
             rows.append(bytes(row))
         raw = b"".join(rows)

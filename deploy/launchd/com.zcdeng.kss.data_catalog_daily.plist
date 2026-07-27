@@ -5,13 +5,6 @@
 <dict>
 	<key>Label</key>
 	<string>com.zcdeng.kss.data_catalog_daily</string>
-	<key>StartCalendarInterval</key>
-	<dict>
-		<key>Hour</key>
-		<integer>8</integer>
-		<key>Minute</key>
-		<integer>50</integer>
-	</dict>
 	<key>ProgramArguments</key>
 	<array>
 		<string>/Users/zcdeng/projects/KSS/scripts/run_data_catalog_daily.sh</string>
@@ -29,9 +22,16 @@
 	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/data_catalog_daily.log</string>
 	<key>StandardErrorPath</key>
 	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/data_catalog_daily.log</string>
-	<key>RunAtLoad</key>
-	<false/>
 	<key>ThrottleInterval</key>
 	<integer>60</integer>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>8</integer>
+		<key>Minute</key>
+		<integer>50</integer>
+	</dict>
+	<key>RunAtLoad</key>
+	<false/>
 </dict>
 </plist>

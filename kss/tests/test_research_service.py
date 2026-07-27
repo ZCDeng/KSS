@@ -77,6 +77,141 @@ def test_research_migration_v4_adds_agent_ownership(tmp_path):
     assert "agent_id" in attempt_columns
 
 
+def test_research_migration_v5_adds_report_archive_metadata(tmp_path):
+    db_path = tmp_path / "storage" / "kss.db"
+    with connect(db_path) as conn:
+        applied = ensure_schema(conn)
+        goal_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(research_goals)")
+        }
+        indexes = {
+            row["name"]
+            for row in conn.execute("PRAGMA index_list(research_goals)")
+        }
+
+    assert 5 in applied
+    assert {"origin", "cadence"} <= goal_columns
+    assert "idx_research_goals_origin_cadence_created" in indexes
+
+
+def test_daily_profile_freezes_one_trade_day_and_uses_daily_anchors(tmp_path):
+    service = ResearchService(
+        state_root=tmp_path,
+        project_root=Path(__file__).resolve().parents[2],
+    )
+    created = service.create_goal(payload={
+        "client_request_id": "daily-profile",
+        "profile_id": "investment-daily-v1",
+        "objective": "测试投资分析日报",
+        "inputs": {"trade_date": "2026-07-17", "as_of": "2026-07-17"},
+        "origin": "scheduled",
+        "cadence": "daily",
+    })
+
+    assert created["ok"] is True
+    detail = created["detail"]
+    assert detail["origin"] == "scheduled"
+    assert detail["cadence"] == "daily"
+    assert detail["snapshot"]["inputs"]["trading_calendar"] == ["2026-07-17"]
+    profile = {item["profile_id"]: item for item in list_profiles(Path(__file__).resolve().parents[2])}["investment-daily-v1"]
+    assert [section["anchor"] for section in profile["sections"]] == [
+        "overview", "temperature", "theme-consensus", "risk-radar",
+        "precision-cards", "methodology", "audit",
+    ]
+
+
+def test_report_archive_listing_is_metadata_only_and_excludes_uncompiled_goals(tmp_path):
+    service = ResearchService(
+        state_root=tmp_path,
+        project_root=Path(__file__).resolve().parents[2],
+        allow_synthetic_fixture=True,
+    )
+    uncompiled = service.create_goal(payload={
+        "client_request_id": "archive-uncompiled",
+        "profile_id": "investment-daily-v1",
+        "objective": "还未编译的日报",
+        "inputs": {"trade_date": "2026-07-17", "as_of": "2026-07-17"},
+        "origin": "scheduled",
+        "cadence": "daily",
+    })
+    compiled = service.create_goal(payload={
+        "client_request_id": "archive-compiled",
+        "profile_id": "investment-weekly-v3",
+        "objective": "已归档的周报",
+        "inputs": {"date_range": "2026-07-13_to_2026-07-17", "as_of": "2026-07-17"},
+        "origin": "scheduled",
+        "cadence": "weekly",
+    })
+    goal_id = compiled["goal_id"]
+    artifact = service.artifacts.put_bytes(
+        goal_id=goal_id,
+        kind="report_html",
+        name="report.html",
+        data=b"<!doctype html><title>test</title>",
+        media_type="text/html; charset=utf-8",
+        metadata={"title": "投资分析周报 V3", "draft": False},
+    )
+    service.repo.update_goal_status(goal_id, "completed")
+
+    response = service.list_goals(
+        origin="scheduled",
+        profile_ids=["investment-daily-v1", "investment-weekly-v3"],
+        limit=10,
+    )
+
+    assert response["goals"] == []
+    assert len(response["reports"]) == 1
+    row = response["reports"][0]
+    assert row["goal_id"] == goal_id
+    assert row["artifact_id"] == artifact["artifact_id"]
+    assert row["object_hash"] == artifact["object_hash"]
+    assert row["title"] == "投资分析周报 V3"
+    assert uncompiled["goal_id"] != row["goal_id"]
+
+
+def test_report_archive_cursor_keeps_same_timestamp_rows(tmp_path):
+    service = ResearchService(
+        state_root=tmp_path,
+        project_root=Path(__file__).resolve().parents[2],
+        allow_synthetic_fixture=True,
+    )
+    goal_ids = []
+    for index in range(2):
+        created = service.create_goal(payload={
+            "client_request_id": f"cursor-{index}",
+            "profile_id": "investment-daily-v1",
+            "objective": f"日报 {index}",
+            "inputs": {"trade_date": "2026-07-17", "as_of": "2026-07-17"},
+            "origin": "scheduled",
+            "cadence": "daily",
+        })
+        goal_id = created["goal_id"]
+        goal_ids.append(goal_id)
+        service.artifacts.put_bytes(
+            goal_id=goal_id,
+            kind="report_html",
+            name="report.html",
+            data=b"<!doctype html>",
+            media_type="text/html; charset=utf-8",
+            metadata={"draft": False},
+        )
+
+    # SQLite timestamps are intentionally collapsed to exercise the secondary
+    # goal-id key used by new cursors.
+    with connect(service.db_path) as conn:
+        conn.execute(
+            "UPDATE research_goals SET created_at='2026-07-17T23:20:00Z' WHERE goal_id IN (?, ?)",
+            goal_ids,
+        )
+        conn.commit()
+
+    first = service.list_goals(origin="scheduled", limit=1)
+    second = service.list_goals(origin="scheduled", limit=1, cursor=first["next_cursor"])
+    assert len(first["reports"]) == len(second["reports"]) == 1
+    assert first["reports"][0]["goal_id"] != second["reports"][0]["goal_id"]
+
+
 def test_multi_agent_pilot_binds_roles_and_caps_concurrency(tmp_path):
     class RecordingRunner:
         def __init__(self) -> None:

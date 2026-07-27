@@ -5,13 +5,6 @@
 <dict>
 	<key>Label</key>
 	<string>com.zcdeng.kss.collect_intraday</string>
-	<key>StartCalendarInterval</key>
-	<dict>
-		<key>Hour</key>
-		<integer>15</integer>
-		<key>Minute</key>
-		<integer>5</integer>
-	</dict>
 	<key>ProgramArguments</key>
 	<array>
 		<string>/Users/zcdeng/projects/KSS/scripts/run_collect_intraday.sh</string>
@@ -31,9 +24,16 @@
 	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/collect_intraday.log</string>
 	<key>StandardErrorPath</key>
 	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/collect_intraday.log</string>
-	<key>RunAtLoad</key>
-	<false/>
 	<key>ThrottleInterval</key>
 	<integer>60</integer>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>15</integer>
+		<key>Minute</key>
+		<integer>5</integer>
+	</dict>
+	<key>RunAtLoad</key>
+	<false/>
 </dict>
 </plist>

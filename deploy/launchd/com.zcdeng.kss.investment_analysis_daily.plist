@@ -4,10 +4,10 @@
 <!-- GENERATED — do not edit; edit kss/config/cron_jobs.yaml -->
 <dict>
 	<key>Label</key>
-	<string>com.zcdeng.kss.sector_review_daily</string>
+	<string>com.zcdeng.kss.investment_analysis_daily</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Users/zcdeng/projects/KSS/scripts/run_sector_review_daily.sh</string>
+		<string>/Users/zcdeng/projects/KSS/scripts/run_investment_analysis_daily.sh</string>
 	</array>
 	<key>WorkingDirectory</key>
 	<string>/Users/zcdeng/projects/KSS</string>
@@ -19,9 +19,9 @@
 		<string>/Users/zcdeng</string>
 	</dict>
 	<key>StandardOutPath</key>
-	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/sector_review_daily.log</string>
+	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/investment_analysis_daily.log</string>
 	<key>StandardErrorPath</key>
-	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/sector_review_daily.log</string>
+	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/investment_analysis_daily.log</string>
 	<key>ThrottleInterval</key>
 	<integer>60</integer>
 	<key>StartCalendarInterval</key>
@@ -30,41 +30,41 @@
 			<key>Weekday</key>
 			<integer>1</integer>
 			<key>Hour</key>
-			<integer>17</integer>
+			<integer>23</integer>
 			<key>Minute</key>
-			<integer>30</integer>
+			<integer>20</integer>
 		</dict>
 		<dict>
 			<key>Weekday</key>
 			<integer>2</integer>
 			<key>Hour</key>
-			<integer>17</integer>
+			<integer>23</integer>
 			<key>Minute</key>
-			<integer>30</integer>
+			<integer>20</integer>
 		</dict>
 		<dict>
 			<key>Weekday</key>
 			<integer>3</integer>
 			<key>Hour</key>
-			<integer>17</integer>
+			<integer>23</integer>
 			<key>Minute</key>
-			<integer>30</integer>
+			<integer>20</integer>
 		</dict>
 		<dict>
 			<key>Weekday</key>
 			<integer>4</integer>
 			<key>Hour</key>
-			<integer>17</integer>
+			<integer>23</integer>
 			<key>Minute</key>
-			<integer>30</integer>
+			<integer>20</integer>
 		</dict>
 		<dict>
 			<key>Weekday</key>
 			<integer>5</integer>
 			<key>Hour</key>
-			<integer>17</integer>
+			<integer>23</integer>
 			<key>Minute</key>
-			<integer>30</integer>
+			<integer>20</integer>
 		</dict>
 	</array>
 	<key>RunAtLoad</key>

@@ -645,6 +645,22 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             ON research_attempts(goal_id, agent_id, status);
         """,
     ),
+    (
+        5,
+        """
+        -- ---------------------------------------------------------------
+        -- Investment analysis archive (plan 2026-07-28): manual and
+        -- scheduled research share the same immutable ledger, with a small
+        -- index for daily/weekly report browsing.
+        -- ---------------------------------------------------------------
+        ALTER TABLE research_goals
+            ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual';
+        ALTER TABLE research_goals
+            ADD COLUMN cadence TEXT;
+        CREATE INDEX IF NOT EXISTS idx_research_goals_origin_cadence_created
+            ON research_goals(origin, cadence, created_at DESC);
+        """,
+    ),
 )
 
 

@@ -5,15 +5,6 @@
 <dict>
 	<key>Label</key>
 	<string>com.zcdeng.kss.prediction_validation_weekly</string>
-	<key>StartCalendarInterval</key>
-	<dict>
-		<key>Weekday</key>
-		<integer>5</integer>
-		<key>Hour</key>
-		<integer>19</integer>
-		<key>Minute</key>
-		<integer>30</integer>
-	</dict>
 	<key>ProgramArguments</key>
 	<array>
 		<string>/Users/zcdeng/projects/KSS/scripts/run_prediction_validation_weekly.sh</string>
@@ -31,9 +22,18 @@
 	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/prediction_validation_weekly.log</string>
 	<key>StandardErrorPath</key>
 	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/prediction_validation_weekly.log</string>
-	<key>RunAtLoad</key>
-	<false/>
 	<key>ThrottleInterval</key>
 	<integer>60</integer>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Weekday</key>
+		<integer>5</integer>
+		<key>Hour</key>
+		<integer>19</integer>
+		<key>Minute</key>
+		<integer>30</integer>
+	</dict>
+	<key>RunAtLoad</key>
+	<false/>
 </dict>
 </plist>

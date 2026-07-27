@@ -8,7 +8,11 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "KSSDesktop", targets: ["KSSDesktop"])
+        .executable(name: "KSSDesktop", targets: ["KSSDesktop"]),
+        // A deliberately narrow, signed scheduler entrypoint. It owns the
+        // Keychain-to-broker hop for long research jobs without giving Python
+        // a credential-bearing environment.
+        .executable(name: "KSSResearchSchedulerHelper", targets: ["KSSResearchSchedulerHelper"])
     ],
     targets: [
         .executableTarget(
@@ -39,6 +43,10 @@ let package = Package(
                 .copy("Resources/chirp-bold-web.woff"),
                 .copy("Resources/chirp-heavy-web.woff")
             ]
+        ),
+        .executableTarget(
+            name: "KSSResearchSchedulerHelper",
+            path: "Sources/KSSResearchScheduler"
         ),
         .testTarget(
             name: "KSSDesktopTests",

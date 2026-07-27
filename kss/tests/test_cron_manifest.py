@@ -51,11 +51,11 @@ def _doc(jobs: list[dict], order: list[str] | None = None) -> dict:
 # --------------------------------------------------------------------------- #
 # happy：真实清单
 # --------------------------------------------------------------------------- #
-def test_real_manifest_loads_28_jobs() -> None:
+def test_real_manifest_loads_30_jobs() -> None:
     m = load_manifest()  # 默认读 kss/config/cron_jobs.yaml
-    assert len(m.jobs) == 28
+    assert len(m.jobs) == 30
     suffixes = {j.suffix for j in m.jobs}
-    assert len(suffixes) == 28  # 全唯一
+    assert len(suffixes) == 30  # 全唯一
     # yupi 产品化：KeepAlive 常驻
     yupi = next(j for j in m.jobs if j.suffix == "yupi_server")
     assert yupi.keepalive is True
@@ -63,6 +63,7 @@ def test_real_manifest_loads_28_jobs() -> None:
     assert {"news_digest_premarket", "news_digest_postclose"} <= suffixes
     # 紫苏叶富化预热已注册（默认停用）
     assert "perilla_enrich_daily" in suffixes
+    assert {"investment_analysis_daily", "investment_analysis_weekly"} <= suffixes
 
 
 def test_real_manifest_fields_complete() -> None:
@@ -108,6 +109,20 @@ def test_signed_package_includes_root_scanner_wrapper() -> None:
     """bundle-mode 的 PROJECT_ROOT=Resources，必须带根级 run_scanner.sh。"""
     script = (_REPO / "script" / "sign_and_build.sh").read_text(encoding="utf-8")
     assert "run_scanner.sh" in script
+
+
+def test_signed_package_embeds_and_signs_scheduler_helper() -> None:
+    script = (_REPO / "script" / "sign_and_build.sh").read_text(encoding="utf-8")
+    assert "KSSResearchSchedulerHelper" in script
+    assert "Contents/Helpers" in script or "APP_HELPERS" in script
+    assert "codesign --verify --strict --verbose=2 \"$APP_HELPERS/KSSResearchSchedulerHelper\"" in script
+
+
+def test_weekly_report_wrapper_persists_calendar_without_leaking_tushare_to_model_helper() -> None:
+    wrapper = (_REPO / "scripts" / "run_investment_analysis_weekly.sh").read_text(encoding="utf-8")
+    assert "persist_trading_calendar.py" in wrapper
+    assert "kss_load_credential TUSHARE_TOKEN" in wrapper
+    assert "unset TUSHARE_TOKEN" in wrapper
 
 
 def test_collect_intraday_catchup_false() -> None:
@@ -388,6 +403,24 @@ class TestTriggeredBy:
         assert m.job("mi_signal_pack").triggered_by == "formal_daily_picks"
         assert m.job("indicator_signal_pack").triggered_by == "mi_signal_pack"
         assert m.job("formal_daily_review").triggered_by == "indicator_signal_pack"
+        assert m.job("investment_analysis_daily").triggered_by == "formal_daily_review"
+        assert m.job("investment_analysis_weekly").triggered_by is None
         for suffix in ("formal_daily_picks", "mi_signal_pack",
                        "indicator_signal_pack", "formal_daily_review"):
             assert m.job(suffix).schedule.hour == 23, f"{suffix} 应为深夜兜底档"
+        assert m.job("investment_analysis_daily").schedule.minute == 20
+        assert m.job("investment_analysis_weekly").schedule.minute == 40
+
+
+def test_scheduled_research_wrappers_do_not_load_or_export_model_keys() -> None:
+    for name in ("run_investment_analysis_daily.sh", "run_investment_analysis_weekly.sh"):
+        wrapper = (_REPO / "scripts" / name).read_text(encoding="utf-8")
+        assert "KSSResearchSchedulerHelper" in wrapper
+        assert "API_KEY" not in wrapper
+        assert "KSS_LLM_PRIMARY_KEY" not in wrapper
+        assert "KSS_LLM_FALLBACK_KEY" not in wrapper
+    weekly = (_REPO / "scripts" / "run_investment_analysis_weekly.sh").read_text(encoding="utf-8")
+    # The lone data-source credential exists only for the calendar subprocess;
+    # the signed helper receives no Tushare or model secret environment value.
+    assert "kss_load_credential TUSHARE_TOKEN" in weekly
+    assert "unset TUSHARE_TOKEN" in weekly

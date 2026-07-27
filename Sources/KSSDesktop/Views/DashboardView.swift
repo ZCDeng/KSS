@@ -53,19 +53,20 @@ struct DashboardView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: sectionSpacing) {
                     HStack(alignment: .top) {
-                        PageTitle("今日看盘", subtitle: "本地量化研究工作台 · log_mv 选股 / 紫苏叶供应链 / 北证扫描")
-                        Spacer(minLength: 16)
-                        VStack(alignment: .trailing, spacing: 4) {
-                            EditorialDateView()
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            PageTitle("盯盘")
                             RealtimeStatusBadge(
                                 freshness: displayedFreshness,
                                 hours: tradingHours,
                                 authFailed: realtimeAuthFailed,
                                 updatedAt: realtimeUpdatedAt,
-                                onRetry: onRetryRealtime
+                                onRetry: onRetryRealtime,
+                                style: .pageHeader
                             )
                             .help(freshnessDiagnostic ?? "")
                         }
+                        Spacer(minLength: 16)
+                        EditorialDateView()
                     }
 
                     // 缺 Tushare 凭证 + 股票池确实为空 → 明确指引（U9/R12，AE1），不是静默空白。

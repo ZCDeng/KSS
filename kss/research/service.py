@@ -18,6 +18,7 @@ from kss.storage.db import connect, ensure_schema
 
 from .artifacts import ArtifactStore
 from .compiler import ReportCompiler, make_investment_weekly_fixture, stable_json
+from .execution_slot import ResearchExecutionSlot
 from .graph import get_profile as get_graph_profile
 from .models import Claim, Evidence
 from .profiles import get_profile as get_packaged_profile
@@ -169,6 +170,12 @@ class ResearchService:
             for dep_kind in task.depends_on:
                 dependencies.append((task_id, task_ids[dep_kind], True))
         snapshot = self._snapshot(profile_id=profile_id, inputs=inputs)
+        origin = str(payload.get("origin") or "manual")
+        cadence = payload.get("cadence")
+        if origin not in {"manual", "scheduled"}:
+            return {"protocol_version": 1, "ok": False, "error": "invalid_origin"}
+        if cadence not in {None, "daily", "weekly"}:
+            return {"protocol_version": 1, "ok": False, "error": "invalid_cadence"}
         created = self.repo.create_goal(
             goal_id=goal_id,
             session_id=payload.get("session_id"),
@@ -182,6 +189,8 @@ class ResearchService:
             dependencies=dependencies,
             client_request_id=payload.get("client_request_id"),
             execution_mode=execution_mode,
+            origin=origin,
+            cadence=str(cadence) if cadence else None,
         )
         resolved_goal_id = str(created.get("goal_id") or goal_id)
         return {
@@ -194,8 +203,39 @@ class ResearchService:
             "profile": get_packaged_profile(profile_id, self.project_root),
         }
 
-    def list_goals(self, **_: Any) -> dict[str, Any]:
-        return {"protocol_version": 1, "ok": True, "event": "listed", "profiles": list_packaged_profiles(self.project_root), "goals": [self._summary(g) for g in self.repo.list_goals()]}
+    def list_goals(
+        self,
+        *,
+        origin: str | None = None,
+        cadence: str | None = None,
+        profile_ids: list[str] | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+        **_: Any,
+    ) -> dict[str, Any]:
+        if origin or cadence or profile_ids:
+            reports, next_cursor = self.repo.list_report_summaries(
+                origin=origin, cadence=cadence, profile_ids=profile_ids,
+                limit=limit or 100, cursor=cursor,
+            )
+            return {
+                "protocol_version": 1,
+                "ok": True,
+                "event": "listed",
+                "profiles": list_packaged_profiles(self.project_root),
+                # Report archives deliberately avoid hydrating every historical goal
+                # (and, in particular, never read report HTML at list time).
+                "goals": [],
+                "reports": reports,
+                "next_cursor": next_cursor,
+            }
+        return {
+            "protocol_version": 1,
+            "ok": True,
+            "event": "listed",
+            "profiles": list_packaged_profiles(self.project_root),
+            "goals": [self._summary(g) for g in self.repo.list_goals()],
+        }
 
     def open_goal(self, goal_id: str | None = None, **_: Any) -> dict[str, Any]:
         if not goal_id:
@@ -335,7 +375,20 @@ class ResearchService:
         return None
 
     def _run_goal_worker(self, goal_id: str) -> None:
+        slot = ResearchExecutionSlot(self.state_root)
         try:
+            if not slot.acquire():
+                self.repo.update_goal_status(
+                    goal_id,
+                    "queued",
+                    termination_reason="global_research_slot_busy",
+                )
+                self._emit(
+                    goal_id,
+                    "goal_status",
+                    {"status": "queued", "reason": "global_research_slot_busy"},
+                )
+                return
             exhausted = self._run_ready_loop(goal_id)
             settled = self.repo.get_goal(goal_id) or {}
             may_settle = exhausted and settled.get("status") == "running"
@@ -359,6 +412,7 @@ class ResearchService:
             self.repo.update_goal_status(goal_id, "failed", termination_reason=str(exc))
             self._emit(goal_id, "research_error", {"error": str(exc)})
         finally:
+            slot.release()
             with self._worker_lock:
                 self._workers.pop(goal_id, None)
 
@@ -1027,6 +1081,7 @@ class ResearchService:
         document = (
             make_investment_weekly_fixture()
             if self.allow_synthetic_fixture
+            and (self.repo.get_goal(goal_id) or {}).get("profile_id") == "investment-weekly-v3"
             else self._build_report_document(goal_id)
         )
         compiled = self.compiler.compile(document)
@@ -1457,14 +1512,22 @@ class ResearchService:
                 ],
             ),
         ]
+        profile_id = str(goal.get("profile_id") or "investment-weekly-v3")
+        if profile_id == "investment-daily-v1":
+            sections = [
+                section for section in sections
+                if section.anchor != "analyst-sections"
+            ]
+        date_range = str((goal.get("inputs") or {}).get("date_range") or "")
+        if profile_id == "investment-daily-v1":
+            trade_date = str((goal.get("inputs") or {}).get("trade_date") or "未指定")
+            date_range = f"{trade_date}_to_{trade_date}"
         return ReportDocument(
             document_id=f"{goal_id}-{snapshot_id or 'snapshot'}",
-            profile_id=str(goal.get("profile_id") or "investment-weekly-v3"),
-            title="投资分析周报 V3",
+            profile_id=profile_id,
+            title=("投资分析日报 V1" if profile_id == "investment-daily-v1" else "投资分析周报 V3"),
             subtitle="结构化证据草稿",
-            date_range=str(
-                (goal.get("inputs") or {}).get("date_range") or "未指定"
-            ),
+            date_range=date_range or "未指定",
             as_of=self._goal_as_of(goal_id),
             sections=sections,
             metric_ledger=metrics,
@@ -2331,6 +2394,8 @@ class ResearchService:
             "terminal_reason": goal.get("termination_reason"),
             "created_at": goal.get("created_at"),
             "updated_at": goal.get("updated_at"),
+            "origin": goal.get("origin") or "manual",
+            "cadence": goal.get("cadence"),
         }
 
     def _wire_goal(self, goal: dict[str, Any]) -> dict[str, Any]:
@@ -2476,6 +2541,10 @@ class ResearchService:
                     for offset in range((end - start).days + 1)
                     if (start + timedelta(days=offset)).weekday() < 5
                 ]
+        elif profile_id == "investment-daily-v1":
+            trade_date = str(inputs.get("trade_date") or "")
+            if trade_date and not frozen_inputs.get("trading_calendar"):
+                frozen_inputs["trading_calendar"] = [trade_date]
         raw = stable_json({"profile_id": profile_id, "inputs": frozen_inputs, "as_of": as_of, "refresh_of": refresh_of})
         return {
             "snapshot_id": "snap_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24],
@@ -2516,6 +2585,22 @@ class ResearchService:
         profile_id: str,
         inputs: dict[str, Any],
     ) -> list[dict[str, str]]:
+        if profile_id == "investment-daily-v1":
+            findings: list[dict[str, str]] = []
+            trade_date = str(inputs.get("trade_date") or "")
+            try:
+                trade = date.fromisoformat(trade_date)
+            except ValueError:
+                findings.append({"field": "trade_date", "reason": "invalid_iso_date"})
+                trade = None
+            try:
+                as_of = date.fromisoformat(str(inputs.get("as_of") or ""))
+            except ValueError:
+                findings.append({"field": "as_of", "reason": "invalid_iso_date"})
+                as_of = None
+            if trade and as_of and as_of < trade:
+                findings.append({"field": "as_of", "reason": "before_trade_date"})
+            return findings
         if profile_id != "investment-weekly-v3":
             return []
         findings: list[dict[str, str]] = []

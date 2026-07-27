@@ -1462,6 +1462,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     case themes = "Themes"
     case trends = "Trends"
     case reviews = "Reviews"
+    case investmentAnalysis = "Investment Analysis"
     case newsDigest = "News"
     case backtests = "Backtests"
     case stocks = "Stocks"
@@ -1474,13 +1475,14 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .dashboard: return "今日看盘"
+        case .dashboard: return "盯盘"
         case .recommendations: return "推荐"
         case .watchlist: return "自选"
         case .themes: return "主题"
         case .trends: return "趋势观察"
         case .runbook: return "任务台"
         case .reviews: return "AI复盘"
+        case .investmentAnalysis: return "投资分析"
         case .newsDigest: return "资讯雷达"
         case .backtests: return "AI回测"
         case .stocks: return "股票池"
@@ -1499,6 +1501,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .trends: return "calendar"
         case .runbook: return "terminal"
         case .reviews: return "doc.text.magnifyingglass"
+        case .investmentAnalysis: return "doc.text.image"
         case .newsDigest: return "antenna.radiowaves.left.and.right"
         case .backtests: return "chart.xyaxis.line"
         case .stocks: return "list.bullet.rectangle"
@@ -1516,7 +1519,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     /// 不上侧栏的 section：代码、视图、路由均完整保留。两种排除原因不同——
     /// 暂停类（如曾经的舆情 digest）是"未达预期，等改进方案定了再恢复，从本数组移除即重新显示"；
     /// 任务/架构/Seesaw/设置 属于永久挪走类（改到工具栏/侧边栏页脚），不预期再回到侧边栏导航列表。
-    static let hidden: [WorkspaceSection] = [.runbook, .architecture, .aiChat, .settings]
+    static let hidden: [WorkspaceSection] = [.themes, .runbook, .architecture, .aiChat, .settings]
 
     /// 可被用户拖拽重排的 section（enum 原序，去掉置顶项与隐藏项）。
     static var reorderable: [WorkspaceSection] {
@@ -1668,7 +1671,7 @@ enum SettingsTabRouting {
     }
 
     /// 左栏单分类是否需要角标（xcom nav）。
-    /// `sourceRaw` 为 `SettingsDataSource.rawValue`（tushare/longbridge/telegram/llm）。
+    /// `sourceRaw` 为 `SettingsDataSource.rawValue`（tushare/longbridge/telegram）。
     static func categoryNeedsBadge(
         _ category: SettingsCategory,
         isSourceConfigured: (String) -> Bool,
@@ -2763,6 +2766,8 @@ struct ResearchGoalSummary: Decodable, Equatable, Identifiable {
     var terminalReason: String?
     var createdAt: String?
     var updatedAt: String?
+    var origin: String
+    var cadence: String?
 
     var id: String { goalId }
 
@@ -2776,6 +2781,7 @@ struct ResearchGoalSummary: Decodable, Equatable, Identifiable {
         case terminalReason = "terminal_reason"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+        case origin, cadence
     }
 
     init(from decoder: Decoder) throws {
@@ -2792,12 +2798,15 @@ struct ResearchGoalSummary: Decodable, Equatable, Identifiable {
         terminalReason = try? c.decode(String.self, forKey: .terminalReason)
         createdAt = try? c.decode(String.self, forKey: .createdAt)
         updatedAt = try? c.decode(String.self, forKey: .updatedAt)
+        origin = (try? c.decode(String.self, forKey: .origin)) ?? "manual"
+        cadence = try? c.decode(String.self, forKey: .cadence)
     }
 
     init(goalId: String, sessionId: String? = nil, profileId: String = "investment-weekly-v3",
          executionMode: String = "single",
          objective: String, status: String, progress: Double? = nil,
-         terminalReason: String? = nil, createdAt: String? = nil, updatedAt: String? = nil) {
+         terminalReason: String? = nil, createdAt: String? = nil, updatedAt: String? = nil,
+         origin: String = "manual", cadence: String? = nil) {
         self.goalId = goalId
         self.sessionId = sessionId
         self.profileId = profileId
@@ -2808,6 +2817,51 @@ struct ResearchGoalSummary: Decodable, Equatable, Identifiable {
         self.terminalReason = terminalReason
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.origin = origin
+        self.cadence = cadence
+    }
+}
+
+struct InvestmentAnalysisReportSummary: Decodable, Equatable, Identifiable {
+    var goalId: String
+    var profileId: String
+    var cadence: String?
+    var dateStart: String?
+    var dateEnd: String?
+    var asOf: String?
+    var title: String
+    var goalStatus: String
+    var auditStatus: String?
+    var isDraft: Bool
+    var artifactId: String?
+    var objectHash: String?
+    var createdAt: String?
+
+    var id: String { goalId }
+
+    enum CodingKeys: String, CodingKey {
+        case goalId = "goal_id", profileId = "profile_id", cadence
+        case dateStart = "date_start", dateEnd = "date_end", asOf = "as_of"
+        case title, goalStatus = "goal_status", auditStatus = "audit_status"
+        case isDraft = "is_draft", artifactId = "artifact_id"
+        case objectHash = "object_hash", createdAt = "created_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        goalId = (try? c.decode(String.self, forKey: .goalId)) ?? ""
+        profileId = (try? c.decode(String.self, forKey: .profileId)) ?? ""
+        cadence = try? c.decode(String.self, forKey: .cadence)
+        dateStart = try? c.decode(String.self, forKey: .dateStart)
+        dateEnd = try? c.decode(String.self, forKey: .dateEnd)
+        asOf = try? c.decode(String.self, forKey: .asOf)
+        title = (try? c.decode(String.self, forKey: .title)) ?? "投资分析"
+        goalStatus = (try? c.decode(String.self, forKey: .goalStatus)) ?? "draft"
+        auditStatus = try? c.decode(String.self, forKey: .auditStatus)
+        isDraft = (try? c.decode(Bool.self, forKey: .isDraft)) ?? true
+        artifactId = try? c.decode(String.self, forKey: .artifactId)
+        objectHash = try? c.decode(String.self, forKey: .objectHash)
+        createdAt = try? c.decode(String.self, forKey: .createdAt)
     }
 }
 
@@ -3062,6 +3116,8 @@ struct ResearchGoalDetail: Decodable, Equatable, Identifiable {
     var terminalReason: String?
     var createdAt: String?
     var updatedAt: String?
+    var origin: String
+    var cadence: String?
     var criteria: [ResearchCriterion]
     var tasks: [ResearchTask]
     var evidence: [ResearchEvidence]
@@ -3079,7 +3135,8 @@ struct ResearchGoalDetail: Decodable, Equatable, Identifiable {
             goalId: goalId, sessionId: sessionId, profileId: profileId,
             executionMode: executionMode,
             objective: objective, status: status, progress: progress,
-            terminalReason: terminalReason, createdAt: createdAt, updatedAt: updatedAt)
+            terminalReason: terminalReason, createdAt: createdAt, updatedAt: updatedAt,
+            origin: origin, cadence: cadence)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -3092,6 +3149,7 @@ struct ResearchGoalDetail: Decodable, Equatable, Identifiable {
         case terminalReason = "terminal_reason"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+        case origin, cadence
         case criteria, tasks, evidence, audit, artifacts, events, snapshot
         case researchAgents = "research_agents"
         case budget, usage
@@ -3111,6 +3169,8 @@ struct ResearchGoalDetail: Decodable, Equatable, Identifiable {
         terminalReason = try? c.decode(String.self, forKey: .terminalReason)
         createdAt = try? c.decode(String.self, forKey: .createdAt)
         updatedAt = try? c.decode(String.self, forKey: .updatedAt)
+        origin = (try? c.decode(String.self, forKey: .origin)) ?? "manual"
+        cadence = try? c.decode(String.self, forKey: .cadence)
         criteria = (try? c.decode([ResearchCriterion].self, forKey: .criteria)) ?? []
         tasks = (try? c.decode([ResearchTask].self, forKey: .tasks)) ?? []
         evidence = (try? c.decode([ResearchEvidence].self, forKey: .evidence)) ?? []
@@ -3153,9 +3213,12 @@ struct ResearchResponse: Decodable, Equatable {
     var goal: ResearchGoalDetail?
     var profiles: [ResearchProfileSummary]?
     var error: String?
+    var reports: [InvestmentAnalysisReportSummary]
+    var nextCursor: String?
 
     enum CodingKeys: String, CodingKey {
-        case goals, goal, detail, profiles, error
+        case goals, goal, detail, profiles, error, reports
+        case nextCursor = "next_cursor"
     }
 
     init(from decoder: Decoder) throws {
@@ -3165,6 +3228,8 @@ struct ResearchResponse: Decodable, Equatable {
             ?? (try? c.decode(ResearchGoalDetail.self, forKey: .goal))
         profiles = try? c.decode([ResearchProfileSummary].self, forKey: .profiles)
         error = try? c.decode(String.self, forKey: .error)
+        reports = (try? c.decode([InvestmentAnalysisReportSummary].self, forKey: .reports)) ?? []
+        nextCursor = try? c.decode(String.self, forKey: .nextCursor)
     }
 }
 

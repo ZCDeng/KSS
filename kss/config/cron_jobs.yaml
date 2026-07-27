@@ -158,6 +158,25 @@ jobs:
     enabled: true
     triggered_by: indicator_signal_pack
 
+  # 研究报告由签名 Swift helper 开 Keychain credential broker，再启动持久
+  # Python Runner；launchd plist 与 wrapper 均不含模型 API key。
+  - suffix: investment_analysis_daily
+    wrapper: scripts/run_investment_analysis_daily.sh
+    schedule: {hour: 23, minute: 20, weekdays: [1, 2, 3, 4, 5]}
+    title: 投资分析日报
+    category: 板块复盘
+    catchup: true
+    enabled: true
+    triggered_by: formal_daily_review
+
+  - suffix: investment_analysis_weekly
+    wrapper: scripts/run_investment_analysis_weekly.sh
+    schedule: {hour: 23, minute: 40, weekdays: [1, 2, 3, 4, 5]}
+    title: 投资分析周报
+    category: 板块复盘
+    catchup: true
+    enabled: true
+
   - suffix: news_digest_premarket
     wrapper: scripts/run_news_digest_premarket.sh
     schedule: {hour: 8, minute: 40, weekdays: [1, 2, 3, 4, 5]}

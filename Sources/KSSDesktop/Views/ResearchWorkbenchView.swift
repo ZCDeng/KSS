@@ -729,7 +729,7 @@ enum ResearchArtifactPreviewLoader {
     }
 }
 
-private struct ResearchArtifactPreview: NSViewRepresentable {
+struct ResearchArtifactPreview: NSViewRepresentable {
     let artifact: ResearchArtifact
     let stateRoot: URL?
 
@@ -751,7 +751,7 @@ private struct ResearchArtifactPreview: NSViewRepresentable {
             ?? ResearchArtifactPreviewLoader.load(
                 relativePath: artifact.relativePath,
                 under: stateRoot)
-        if artifact.mediaType == "text/html", let content = loadedContent {
+        if artifact.mediaType?.hasPrefix("text/html") == true, let content = loadedContent {
             body = content
         } else {
             let preview = loadedContent

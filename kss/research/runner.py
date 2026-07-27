@@ -32,12 +32,18 @@ class AgentResearchTaskRunner:
     assistant prose by itself never becomes evidence.
     """
 
-    def __init__(self, *, state_root: Path, project_root: Path) -> None:
+    def __init__(
+        self,
+        *,
+        state_root: Path,
+        project_root: Path,
+        shared_agent: KSSAgentService | None = None,
+    ) -> None:
         self._state_root = Path(state_root)
         self._project_root = Path(project_root)
         # Test/compatibility injection point. Production leaves this unset so
         # each concurrent attempt owns an isolated runtime instance.
-        self._agent: KSSAgentService | None = None
+        self._agent = shared_agent
         self._active_sessions: dict[
             str, dict[str, tuple[KSSAgentService, str]]
         ] = {}

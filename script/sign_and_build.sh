@@ -25,6 +25,7 @@ DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
+APP_HELPERS="$APP_CONTENTS/Helpers"
 APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
@@ -58,6 +59,7 @@ KSS_PI_AI_OUTPUT_ROOT="$PI_AI_BUILD_ROOT" "$ROOT_DIR/script/prepare_pi_ai_helper
 # resource_bundle_accessor.swift 启动即 SIGTRAP。native 落平铺资源包，布局可被找到。
 SWIFT_BUILD_FLAGS="-c release --build-system native"
 swift build $SWIFT_BUILD_FLAGS
+swift build $SWIFT_BUILD_FLAGS --product KSSResearchSchedulerHelper
 # 不调用 `swift build --show-bin-path`：native 会在 release/KSSDesktop 上 mkdir，
 # 与已链接的同名二进制冲突（File exists）。
 BUILD_BIN_PATH=""
@@ -72,6 +74,11 @@ if [ -z "$BUILD_BIN_PATH" ]; then
   exit 1
 fi
 echo "二进制：$BUILD_BIN_PATH/$APP_NAME"
+SCHEDULER_HELPER="$BUILD_BIN_PATH/KSSResearchSchedulerHelper"
+if [ ! -x "$SCHEDULER_HELPER" ]; then
+  echo "ERROR：找不到 release 二进制 KSSResearchSchedulerHelper" >&2
+  exit 1
+fi
 
 # ---- 组装 bundle ----
 # 上次若误 chmod a-w Resources，普通 rm 会 Permission denied
@@ -79,9 +86,11 @@ if [ -d "$APP_BUNDLE" ]; then
   chmod -R u+w "$APP_BUNDLE" 2>/dev/null || true
   rm -rf "$APP_BUNDLE"
 fi
-mkdir -p "$APP_MACOS" "$APP_RESOURCES"
+mkdir -p "$APP_MACOS" "$APP_HELPERS" "$APP_RESOURCES"
 cp "$BUILD_BIN_PATH/$APP_NAME" "$APP_BINARY"
 chmod +x "$APP_BINARY"
+cp "$SCHEDULER_HELPER" "$APP_HELPERS/KSSResearchSchedulerHelper"
+chmod +x "$APP_HELPERS/KSSResearchSchedulerHelper"
 [ -f "$ROOT_DIR/script/AppIcon.icns" ] && cp "$ROOT_DIR/script/AppIcon.icns" "$APP_RESOURCES/AppIcon.icns"
 RESOURCE_BUNDLE="${APP_NAME}_${APP_NAME}.bundle"
 APP_RESOURCE_BUNDLE="$APP_RESOURCES/$RESOURCE_BUNDLE"
@@ -174,6 +183,13 @@ if ! codesign -d --entitlements :- "$APP_RESOURCES/pi-ai-runtime/bin/node" 2>&1 
   echo "ERROR: signed Node helper is missing allow-jit entitlement." >&2
   exit 1
 fi
+# The scheduler helper is a nested executable.  It owns the ephemeral
+# Keychain credential broker used by launchd jobs, so it must be independently
+# signed before sealing the parent application bundle.
+codesign --force --options runtime --timestamp \
+  --entitlements "$ENTITLEMENTS" \
+  --sign "$SIGN_IDENTITY" "$APP_HELPERS/KSSResearchSchedulerHelper"
+codesign --verify --strict --verbose=2 "$APP_HELPERS/KSSResearchSchedulerHelper"
 # SwiftPM 资源包是平铺目录（无 Info.plist）→ codesign 拒签；补最小 Info.plist 使其成合法 bundle。
 if [ -d "$APP_RESOURCE_BUNDLE" ]; then
   # SwiftPM 资源包布局二选一，决定是否补 Info.plist：

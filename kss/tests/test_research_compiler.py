@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import json
 
-from kss.research.compiler import ReportCompiler, make_investment_weekly_fixture
+from kss.research.compiler import (
+    V3_PRESENTATION_CONTRACT,
+    ReportCompiler,
+    make_investment_weekly_fixture,
+)
 from kss.research.report_models import MetricEntry, MetricLedger, ReportBlock
 
 
@@ -27,7 +31,7 @@ def test_weekly_fixture_compiles_all_outputs_and_required_anchors():
         "preview.png",
     }
     html = result["outputs"]["report.html"].decode("utf-8")
-    assert '<section id="temperature">' in html
+    assert 'class="report-section section-temperature" id="temperature"' in html
     assert '<meta http-equiv="Content-Security-Policy"' in html
     assert "<script" not in html.lower()
     assert len(result["outputs"]["preview.png"]) > 1000
@@ -35,6 +39,26 @@ def test_weekly_fixture_compiles_all_outputs_and_required_anchors():
     assert audit["coverage"]["precision_card_count"] == 1143
     assert 30 <= audit["coverage"]["sample_size"] <= 200
     assert audit["coverage"]["sample_size"] == 171
+
+
+def test_weekly_v3_uses_the_dense_chinese_first_presentation_contract():
+    """The private source sample is not copied into the fixture; lock its reviewed layout contract instead."""
+    doc = make_investment_weekly_fixture(cards=30)
+    result = ReportCompiler().compile(doc)
+    html = result["outputs"]["report.html"].decode("utf-8")
+
+    assert f'data-report-layout="{V3_PRESENTATION_CONTRACT["layout"]}"' in html
+    assert 'class="report-masthead"' in html
+    assert 'font-family: -apple-system, BlinkMacSystemFont, "PingFang SC"' in html
+    assert f'font-size: {V3_PRESENTATION_CONTRACT["body_size"]}' in html
+    assert f'line-height: {V3_PRESENTATION_CONTRACT["body_line_height"]}' in html
+    assert f'minmax({V3_PRESENTATION_CONTRACT["precision_card_min_width"]}, 1fr)' in html
+    assert "@media print" in html
+    assert "@page { margin: 13mm 12mm 15mm; }" in html
+    assert '<section class="report-section section-temperature" id="temperature">' in html
+    assert '<div class="section-heading"><span class="section-index">02</span>' in html
+    assert 'class="precision-card"' in html
+    assert "<script" not in html.lower()
 
 
 def test_compiler_blocks_unbound_financial_numbers_even_when_section_has_other_metrics():

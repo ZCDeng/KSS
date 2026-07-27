@@ -66,6 +66,37 @@ final class ResearchProtocolTests: XCTestCase {
         XCTAssertEqual(response.goal?.artifacts.first?.isDraft, true)
     }
 
+    func testResearchResponseDecodesLightweightInvestmentReportArchive() throws {
+        let data = Data(#"""
+        {
+          "goals": [],
+          "reports": [{
+            "goal_id": "weekly-1",
+            "profile_id": "investment-weekly-v3",
+            "cadence": "weekly",
+            "date_start": "2026-07-13",
+            "date_end": "2026-07-17",
+            "as_of": "2026-07-17",
+            "title": "投资分析周报 V3",
+            "goal_status": "completed",
+            "audit_status": "pass",
+            "is_draft": false,
+            "artifact_id": "artifact-1",
+            "object_hash": "abc123",
+            "created_at": "2026-07-17T23:40:00Z"
+          }],
+          "next_cursor": "2026-07-17T23:40:00Z"
+        }
+        """#.utf8)
+
+        let response = try JSONDecoder().decode(ResearchResponse.self, from: data)
+        XCTAssertEqual(response.goals, [])
+        XCTAssertEqual(response.reports.first?.goalId, "weekly-1")
+        XCTAssertEqual(response.reports.first?.cadence, "weekly")
+        XCTAssertEqual(response.reports.first?.objectHash, "abc123")
+        XCTAssertEqual(response.nextCursor, "2026-07-17T23:40:00Z")
+    }
+
     func testResearchDetailDefaultsMissingCollectionsToEmpty() throws {
         let data = Data(#"""
         {"goal":{"goal_id":"g","profile_id":"default","objective":"目标","status":"created"}}

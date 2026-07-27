@@ -253,7 +253,14 @@ struct ContentView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let snapshot = store.snapshot {
+        // Seesaw and the report archive have independent sidecar hydration.
+        // They must not wait for the dashboard snapshot, otherwise startup
+        // briefly exposes the old data workspace before the home appears.
+        if store.selectedSection == .aiChat {
+            AIChatView(globalNavigationExpanded: $seesawNavigationExpanded)
+        } else if store.selectedSection == .investmentAnalysis {
+            InvestmentAnalysisView(store: store)
+        } else if let snapshot = store.snapshot {
             switch store.selectedSection {
             case .dashboard:
                 DashboardView(
@@ -360,6 +367,8 @@ struct ContentView: View {
                     onSelectSectorRotationDate: { date in Task { await store.loadSectorRotation(date: date) } },
                     onOpenExternally: { path in store.openReportInMarkEdit(path: path) }
                 )
+            case .investmentAnalysis:
+                EmptyView()
             case .backtests:
                 BacktestsView(
                     reports: snapshot.backtests,
@@ -393,7 +402,7 @@ struct ContentView: View {
                     onUpdateCsData: { Task { await updateCsDataAndRefreshDetail() } }
                 )
             case .aiChat:
-                AIChatView(globalNavigationExpanded: $seesawNavigationExpanded)
+                EmptyView()
             case .newsDigest:
                 IntelView()
                     .environmentObject(store)

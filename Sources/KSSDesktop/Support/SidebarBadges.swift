@@ -15,7 +15,7 @@ enum SidebarNavBadge: Equatable, Sendable {
 }
 
 /// 从 store 侧可观测信号推导导航角标映射（纯函数，可单测）。
-/// - Parameter selfCheckFailCount: 自检失败项数；>0 时在「今日看盘」挂 dot（详情仍靠 banner）。
+/// - Parameter selfCheckFailCount: 自检失败项数；>0 时在「盯盘」挂 dot（详情仍靠 banner）。
 /// - Parameter recommendationCount: 可选推荐条数；≥1 时在「推荐」挂 count（无数据则不传 / 传 0）。
 enum SidebarBadgeMapping {
     static func badges(

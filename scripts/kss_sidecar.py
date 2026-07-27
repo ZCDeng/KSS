@@ -807,6 +807,11 @@ def _research_action_payload(req: dict[str, Any]) -> dict[str, Any]:
         artifact_id=req.get("artifact_id"),
         input=req.get("input"),
         query=req.get("query"),
+        origin=req.get("origin"),
+        cadence=req.get("cadence"),
+        profile_ids=req.get("profile_ids"),
+        limit=req.get("limit"),
+        cursor=req.get("cursor"),
         payload=req,
     )
     if inspect.isawaitable(result):

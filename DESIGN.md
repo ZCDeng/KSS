@@ -22,7 +22,7 @@
 - Key contexts of use: wide desktop window, information-dense research, repeated multi-turn sessions, and packaged `/Applications` builds.
 
 ## Information architecture
-- Primary navigation: global KSS workspace rail temporarily collapses while Seesaw is active; the Seesaw header opens sessions and the narrow-window execution drawer. Skills, context and models stay with the Composer or Right Rail rather than duplicating header controls.
+- Primary navigation: startup resolves to Seesaw after the launch animation unless an explicit navigation, report deep link or recoverable session state takes precedence. The global KSS workspace rail temporarily collapses while Seesaw is active; the Seesaw header opens sessions and the narrow-window execution drawer. Skills, context and models stay with the Composer or Right Rail rather than duplicating header controls. `主题` is not a navigation destination; visual appearance remains available from the global chrome.
 - Core routes/screens: empty conversation, active conversation, Models Center, Provider detail, Session Palette, Skill Palette, Context Popover, Right Rail, evidence attachment, and write confirmation.
 - Content hierarchy: 53pt conversation header → centered Focus column → shared composer with pinned Skills → tool and evidence attachments → explicit safety context.
 
@@ -43,6 +43,7 @@
 - Utility workspaces: Skills and Context & Memory open as landscape desktop panels. They preserve the visible Composer and use a transparent outside-click surface rather than a full-window dimmer.
 - Utility workspace typography: Skills and Context & Memory reuse the Settings → Tasks type scale: 14.5pt item titles, 12.5pt explanations and 11.5pt metadata. Skills is a flat x.com list: only its search field receives a capsule fill; filters use an underline tab bar and list titles/rows use hairlines rather than filled group cards. “加入本会话 / 移出本会话” selects at most three Skills for later replies in the current session; never expose the internal `pin` term as the primary action.
 - Transcript readability: assistant prose renders native block Markdown. Titles, lists, quotes and market-data tables are formatted for reading; raw Markdown syntax is reserved for explicit code blocks.
+- Investment report V3: static reports use a Chinese-first reading stack (`PingFang SC` before fallback), a 36pt masthead, 24pt numbered sections, 15.5pt/1.78 prose, 13.5pt compact tables and 11–12pt audit metadata. The layout is a 1200pt editorial sheet with a thin masthead rule, three-field metadata band, dense metric grid, 292pt minimum precision cards, stable section anchors and print-safe two-column cards. The private WeChat source is never copied into the repository; the compiler contract and synthetic fixture are the durable calibration source.
 - Imagery/iconography: SF Symbols and 36–44pt control hit areas; do not add repeated avatar chrome to assistant responses.
 
 ## Components
@@ -83,6 +84,8 @@
 - Performance constraints: lazy timeline rendering; do not recreate the Agent/runtime layer for visual changes.
 - Compatibility constraints: session, Skill and memory protocol schemas stay unchanged; provider route is an optional append-only session state so every session can select a primary model while global settings retain the default/fallback route. A session can only override its primary route; fallback is global and can run only before first output. Temporary Seesaw navigation collapse must not mutate the user's persisted sidebar preference; all safety/evidence/write-confirmation behavior must remain intact.
 - Market-data constraints: Longbridge access is read-only and must reuse the shared context service/tool path. Explicit current-market intent may prefetch `market`, `watchlist` or `symbols`; historical questions must not silently trigger it. Quote provenance remains forward-observed and must be visible in the transcript/evidence rail.
+- Market workspace: the rail and page title use `盯盘`. The title cluster owns the page-header market status; data freshness and coverage semantics remain unchanged and only the compact badge variant appears outside the page header.
+- Investment analysis archive: `投资分析` is a read-only daily/weekly report library using the AI复盘 master-detail pattern. Rows load audit/status/hash metadata only; selecting a row opens the corresponding report artifact and deep-links research control back to the task workbench. The archive never starts, retries or publishes a research job itself.
 - Test/screenshot expectations: Swift tests, Release build, and installed-app screenshots for empty conversation, active conversation, streaming/tool state, Session Palette, Skill Palette and Context Popover.
 
 ## Open questions

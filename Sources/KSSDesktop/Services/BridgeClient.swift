@@ -827,7 +827,12 @@ struct BridgeClient {
         executionMode: String? = nil,
         objective: String? = nil,
         inputs: [String: String]? = nil,
-        budgetOverrides: [String: Int]? = nil
+        budgetOverrides: [String: Int]? = nil,
+        origin: String? = nil,
+        cadence: String? = nil,
+        profileIds: [String]? = nil,
+        limit: Int? = nil,
+        cursor: String? = nil
     ) throws -> ResearchResponse {
         var payload: [String: Any] = ["action": action]
         if let clientRequestId { payload["client_request_id"] = clientRequestId }
@@ -839,6 +844,11 @@ struct BridgeClient {
         if let objective { payload["objective"] = objective }
         if let inputs { payload["inputs"] = inputs }
         if let budgetOverrides { payload["budget_overrides"] = budgetOverrides }
+        if let origin { payload["origin"] = origin }
+        if let cadence { payload["cadence"] = cadence }
+        if let profileIds { payload["profile_ids"] = profileIds }
+        if let limit { payload["limit"] = limit }
+        if let cursor { payload["cursor"] = cursor }
         return try agentCommand("agent-research", payload: payload, as: ResearchResponse.self)
     }
 

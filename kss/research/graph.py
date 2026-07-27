@@ -19,6 +19,16 @@ WEEKLY_ANCHORS = [
     "audit",
 ]
 
+DAILY_ANCHORS = [
+    "overview",
+    "temperature",
+    "theme-consensus",
+    "risk-radar",
+    "precision-cards",
+    "methodology",
+    "audit",
+]
+
 
 def investment_weekly_v3() -> ProfileSpec:
     agents = [
@@ -161,6 +171,40 @@ def investment_weekly_v3() -> ProfileSpec:
     )
 
 
+def investment_daily_v1() -> ProfileSpec:
+    """Daily report keeps the weekly evidence discipline but removes the
+    analyst section and tightens all market evidence to one trading day."""
+    weekly = investment_weekly_v3()
+    criteria = []
+    for item in weekly.criteria:
+        copied = dict(item)
+        if copied.get("validator") not in {"snapshot", "delivery_audit"}:
+            copied["freshness_days"] = 1
+        if copied.get("validator") == "source_coverage":
+            copied["min_verified_evidence"] = 3
+        criteria.append(copied)
+    tasks = [
+        TaskSpec(
+            kind=task.kind,
+            title=("生成精判卡结构" if task.kind == "analyst_cards" else task.title),
+            required=task.required,
+            depends_on=list(task.depends_on),
+            agent_id=task.agent_id,
+            payload=dict(task.payload),
+        )
+        for task in weekly.tasks
+    ]
+    return ProfileSpec(
+        profile_id="investment-daily-v1",
+        title="投资分析日报 V1",
+        anchors=list(DAILY_ANCHORS),
+        criteria=criteria,
+        agents=list(weekly.agents),
+        tasks=tasks,
+        budget=dict(weekly.budget),
+    )
+
+
 def generic_research_v1() -> ProfileSpec:
     return ProfileSpec(
         profile_id="generic-research-v1",
@@ -219,6 +263,7 @@ def generic_research_v1() -> ProfileSpec:
 def get_profile(profile_id: str) -> ProfileSpec:
     profiles = {
         "investment-weekly-v3": investment_weekly_v3(),
+        "investment-daily-v1": investment_daily_v1(),
         "generic-research-v1": generic_research_v1(),
     }
     try:
@@ -228,4 +273,8 @@ def get_profile(profile_id: str) -> ProfileSpec:
 
 
 def list_profiles() -> list[dict]:
-    return [investment_weekly_v3().to_wire(), generic_research_v1().to_wire()]
+    return [
+        investment_weekly_v3().to_wire(),
+        investment_daily_v1().to_wire(),
+        generic_research_v1().to_wire(),
+    ]

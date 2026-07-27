@@ -11,6 +11,7 @@ DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
+APP_HELPERS="$APP_CONTENTS/Helpers"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 
@@ -23,8 +24,14 @@ cd "$ROOT_DIR"
 # logo)。--build-system native 让产物落 .build/<triple>/debug、布局与本脚本一致。
 SWIFT_BUILD_FLAGS="--build-system native"
 swift build $SWIFT_BUILD_FLAGS
+swift build $SWIFT_BUILD_FLAGS --product KSSResearchSchedulerHelper
 BUILD_BIN_PATH="$(swift build $SWIFT_BUILD_FLAGS --show-bin-path)"
 BUILD_BINARY="$BUILD_BIN_PATH/$APP_NAME"
+SCHEDULER_HELPER="$BUILD_BIN_PATH/KSSResearchSchedulerHelper"
+if [ ! -x "$SCHEDULER_HELPER" ]; then
+  echo "ERROR: missing KSSResearchSchedulerHelper build output" >&2
+  exit 1
+fi
 
 # Release packaging marks bundled Skill resources read-only. A later dev build
 # may reuse the same dist path, so restore owner write access before replacing it.
@@ -32,11 +39,13 @@ if [ -d "$APP_BUNDLE" ]; then
   chmod -R u+w "$APP_BUNDLE" 2>/dev/null || true
   rm -rf "$APP_BUNDLE"
 fi
-mkdir -p "$APP_MACOS"
+mkdir -p "$APP_MACOS" "$APP_HELPERS"
 APP_RESOURCES="$APP_CONTENTS/Resources"
 mkdir -p "$APP_RESOURCES"
 cp "$BUILD_BINARY" "$APP_BINARY"
 chmod +x "$APP_BINARY"
+cp "$SCHEDULER_HELPER" "$APP_HELPERS/KSSResearchSchedulerHelper"
+chmod +x "$APP_HELPERS/KSSResearchSchedulerHelper"
 
 # App icon (red K logo) → dock / Finder.
 if [ -f "$ROOT_DIR/script/AppIcon.icns" ]; then

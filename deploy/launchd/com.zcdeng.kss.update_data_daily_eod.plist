@@ -5,6 +5,26 @@
 <dict>
 	<key>Label</key>
 	<string>com.zcdeng.kss.update_data_daily_eod</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/zcdeng/projects/KSS/scripts/run_update_data_daily.sh</string>
+		<string>--post-close</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/Users/zcdeng/projects/KSS</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>HOME</key>
+		<string>/Users/zcdeng</string>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/update_data_daily_eod.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/update_data_daily_eod.log</string>
+	<key>ThrottleInterval</key>
+	<integer>60</integer>
 	<key>StartCalendarInterval</key>
 	<array>
 		<dict>
@@ -48,27 +68,7 @@
 			<integer>5</integer>
 		</dict>
 	</array>
-	<key>ProgramArguments</key>
-	<array>
-		<string>/Users/zcdeng/projects/KSS/scripts/run_update_data_daily.sh</string>
-		<string>--post-close</string>
-	</array>
-	<key>WorkingDirectory</key>
-	<string>/Users/zcdeng/projects/KSS</string>
-	<key>EnvironmentVariables</key>
-	<dict>
-		<key>PATH</key>
-		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-		<key>HOME</key>
-		<string>/Users/zcdeng</string>
-	</dict>
-	<key>StandardOutPath</key>
-	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/update_data_daily_eod.log</string>
-	<key>StandardErrorPath</key>
-	<string>/Users/zcdeng/projects/KSS/storage/logs/cron/update_data_daily_eod.log</string>
 	<key>RunAtLoad</key>
 	<false/>
-	<key>ThrottleInterval</key>
-	<integer>60</integer>
 </dict>
 </plist>

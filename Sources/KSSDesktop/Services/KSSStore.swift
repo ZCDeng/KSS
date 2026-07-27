@@ -6,7 +6,9 @@ import PDFKit
 @MainActor
 final class KSSStore: ObservableObject {
     @Published var snapshot: AppSnapshot?
-    @Published var selectedSection: WorkspaceSection = .dashboard
+    /// Seesaw is the post-launch home workspace. Data pages remain available on
+    /// demand and must not block the first usable interaction on a snapshot.
+    @Published var selectedSection: WorkspaceSection = .aiChat
     /// 设置页深链目标 tab（R2-U4 KTD3）：进设置页时消费一次即清空，默认落密钥 tab。
     @Published var settingsTargetTab: SettingsTab?
     /// xcom 设置左栏分类深链（plan 2026-07-23-003）：优先于 tab；消费一次即清空。
@@ -155,7 +157,7 @@ final class KSSStore: ObservableObject {
 
     // MARK: Longbridge 实时（U1/U2）—— 页面加载时拉取，失败保持 nil（UI 回退存量 + 标注"非实时"）
     @Published var realtimeQuote: LongbridgeQuote?     // 兼容 canary（上证 / 任一 live）
-    @Published var realtimeQuotesBySymbol: [String: LongbridgeQuote] = [:]  // 多标的 map，供 今日看盘 overlay
+    @Published var realtimeQuotesBySymbol: [String: LongbridgeQuote] = [:]  // 多标的 map，供盯盘 overlay
     /// R6 R6：watchlist 镜像（真源 ContentView @AppStorage，经 syncWatchlistToDB 同步）——
     /// 进 refreshRealtimeQuotes 的 priority 采集，使自选列表盘中有实时 quote。
     @Published var watchlistSymbols: [String] = []
@@ -231,6 +233,7 @@ final class KSSStore: ObservableObject {
     @Published var agentAttachmentError: String?
     // MARK: Deep Research workbench
     @Published var researchGoals: [ResearchGoalSummary] = []
+    @Published var investmentAnalysisReports: [InvestmentAnalysisReportSummary] = []
     @Published var selectedResearchGoalId: String?
     @Published var selectedResearchGoal: ResearchGoalDetail?
     @Published var researchProfiles: [ResearchProfileSummary] = []
@@ -1814,7 +1817,7 @@ final class KSSStore: ObservableObject {
             if let sel = selectedSymbol { priority.append(sel) }
             // 自选列表（R6 R6）：用户主动盯的票，优先级仅次于当前选中
             priority.append(contentsOf: watchlistSymbols)
-            // 今日看盘堆叠卡：优先进预算槽（实盘主视觉）
+            // 盯盘堆叠卡：优先进预算槽（实盘主视觉）
             priority.append(contentsOf: RealtimeMerge.symbolsFromIndexStacks(snapshot?.marketStrip?.indexStacks))
             priority.append(contentsOf: RealtimeMerge.symbolsFromRecommendations(snapshot?.recommendations ?? []))
             priority.append(contentsOf: RealtimeMerge.symbolsFromThemes(themeLeaders))
@@ -2678,6 +2681,42 @@ final class KSSStore: ObservableObject {
             "date_range": "\(formatter.string(from: start))_to_\(formatter.string(from: referenceDate))",
             "as_of": formatter.string(from: referenceDate),
         ]
+    }
+
+    static func defaultInvestmentDailyInputs(referenceDate: Date = Date()) -> [String: String] {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd"
+        let day = formatter.string(from: referenceDate)
+        return ["trade_date": day, "as_of": day]
+    }
+
+    func loadInvestmentAnalysisReports(cadence: String? = nil) async {
+        guard let bridge else { return }
+        isLoadingResearch = true
+        defer { isLoadingResearch = false }
+        do {
+            let response = try await Task.detached {
+                try bridge.agentResearch(
+                    action: "list",
+                    cadence: cadence,
+                    profileIds: ["investment-daily-v1", "investment-weekly-v3"],
+                    limit: 100)
+            }.value
+            if let error = response.error, !error.isEmpty {
+                errorMessage = "读取投资分析失败：\(error)"
+            } else {
+                investmentAnalysisReports = response.reports
+            }
+        } catch {
+            errorMessage = "读取投资分析失败：\(error.localizedDescription)"
+        }
+    }
+
+    func openInvestmentAnalysisReport(_ goalId: String) async {
+        await openResearchGoal(goalId)
     }
 
     func openResearchGoal(_ goalId: String) async {

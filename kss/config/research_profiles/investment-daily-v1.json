@@ -1,0 +1,40 @@
+{
+  "profile_id": "investment-daily-v1",
+  "title": "投资分析日报 V1",
+  "version": 1,
+  "inputs_schema": {
+    "type": "object",
+    "required": ["trade_date", "as_of"],
+    "properties": {
+      "trade_date": {"type": "string", "description": "YYYY-MM-DD"},
+      "trading_calendar": {"type": "array", "items": {"type": "string"}},
+      "scope": {"type": "string"},
+      "analysis_sources": {"type": "array", "items": {"type": "string"}},
+      "as_of": {"type": "string"},
+      "notes": {"type": "string"}
+    }
+  },
+  "freshness": {
+    "market_data_days": 1,
+    "analysis_source_days": 1,
+    "snapshot_refresh_required_on_new_as_of": true
+  },
+  "sections": [
+    {"anchor": "overview", "required": true},
+    {"anchor": "temperature", "required": true},
+    {"anchor": "theme-consensus", "required": true},
+    {"anchor": "risk-radar", "required": true},
+    {"anchor": "precision-cards", "required": true},
+    {"anchor": "methodology", "required": true},
+    {"anchor": "audit", "required": true}
+  ],
+  "audit_rules": {
+    "no_javascript": true,
+    "no_remote_resources": true,
+    "strict_csp": true,
+    "html_escape_model_text": true,
+    "all_financial_numbers_require_metric_refs": true,
+    "publish_requires_audit_pass": true
+  },
+  "allow_model_to_extend_dag": false
+}
