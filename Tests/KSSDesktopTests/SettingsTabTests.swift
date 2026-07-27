@@ -134,4 +134,9 @@ final class SettingsTabTests: XCTestCase {
         XCTAssertEqual(SettingsTab.scheduledTasks, .operations)
         XCTAssertEqual(SettingsTab.logs, .operations)
     }
+
+    func testCredentialHydrationDoesNotLookLikeAnUnsavedUserEdit() {
+        XCTAssertFalse(SettingsCredentialChangePolicy.shouldMarkDirty(isHydrating: true))
+        XCTAssertTrue(SettingsCredentialChangePolicy.shouldMarkDirty(isHydrating: false))
+    }
 }

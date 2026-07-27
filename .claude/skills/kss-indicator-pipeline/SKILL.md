@@ -1,5 +1,11 @@
 ---
 name: kss-indicator-pipeline
+category: kss-workflow
+version: 1.0.0
+source: kss-bundled
+protected: true
+required_tools: [get_indicator_lab, backtest_indicator, suggest_indicator]
+allowed_profiles: [chat, generic-research-v1, investment-weekly-v3]
 description: |
   把「技术/量价指标」从深度研究一路接到 KSS 真 A 股回测、门禁裁决、策略与 Signal Pack、
   内嵌 K 线（lightweight-charts，非 TV.com）标注，以及自选股复盘文字的端到端流水线。

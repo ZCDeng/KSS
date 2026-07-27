@@ -33,17 +33,28 @@ class AgentResearchTaskRunner:
     """
 
     def __init__(self, *, state_root: Path, project_root: Path) -> None:
-        self._agent = KSSAgentService(state_root, project_root)
-        self._active_sessions: dict[str, str] = {}
+        self._state_root = Path(state_root)
+        self._project_root = Path(project_root)
+        # Test/compatibility injection point. Production leaves this unset so
+        # each concurrent attempt owns an isolated runtime instance.
+        self._agent: KSSAgentService | None = None
+        self._active_sessions: dict[
+            str, dict[str, tuple[KSSAgentService, str]]
+        ] = {}
         self._lock = threading.Lock()
 
     def abort(self, goal_id: str, reason: str = "research_paused") -> bool:
         with self._lock:
-            session_id = self._active_sessions.get(goal_id)
-        if not session_id:
+            sessions = list(
+                self._active_sessions.get(goal_id, {}).values()
+            )
+        if not sessions:
             return False
-        run_id = self._agent.runtime.active_run_id(session_id)
-        return bool(run_id and self._agent.abort(run_id, reason))
+        aborted = False
+        for agent, session_id in sessions:
+            run_id = agent.runtime.active_run_id(session_id)
+            aborted = bool(run_id and agent.abort(run_id, reason)) or aborted
+        return aborted
 
     def run(
         self,
@@ -85,13 +96,24 @@ class AgentResearchTaskRunner:
         session_id = (
             f"research-{goal['goal_id']}-{task['task_id']}-{attempt_id}"
         )
+        agent = self._agent or KSSAgentService(
+            self._state_root, self._project_root
+        )
+        owns_agent = self._agent is None
+
+        def finish(value: dict[str, Any]) -> dict[str, Any]:
+            if owns_agent:
+                agent.close()
+            return value
         prompt = self._prompt(
             goal=goal,
             task=task,
             dependency_summaries=dependency_summaries,
         )
         with self._lock:
-            self._active_sessions[str(goal["goal_id"])] = session_id
+            self._active_sessions.setdefault(
+                str(goal["goal_id"]), {}
+            )[attempt_id] = (agent, session_id)
         payload = task.get("payload") or {}
         timeout_seconds = float(payload.get("timeout_seconds") or 240.0)
         token_budget = int(payload.get("max_provider_tokens") or 25_000)
@@ -104,11 +126,12 @@ class AgentResearchTaskRunner:
             max_provider_tokens=token_budget,
             allow_write_tools=False,
             trusted_internal_input=True,
+            profile_id=str(goal.get("profile_id") or "") or None,
         )
         try:
             try:
                 result = await asyncio.wait_for(
-                    self._agent.run_turn(
+                    agent.run_turn(
                         session_id,
                         attempt_id,
                         prompt,
@@ -119,20 +142,29 @@ class AgentResearchTaskRunner:
                     timeout=timeout_seconds + 5.0,
                 )
             except TimeoutError:
-                run_id = self._agent.runtime.active_run_id(session_id)
+                run_id = agent.runtime.active_run_id(session_id)
                 if run_id:
-                    self._agent.abort(run_id, "research_task_timeout")
-                return self._incomplete("agent_runtime_timeout", events=events)
+                    agent.abort(run_id, "research_task_timeout")
+                return finish(
+                    self._incomplete("agent_runtime_timeout", events=events)
+                )
             except Exception as exc:  # provider/runtime errors become durable incomplete results
-                return self._incomplete(f"agent_runtime_error: {exc}")
+                return finish(
+                    self._incomplete(f"agent_runtime_error: {exc}")
+                )
         finally:
             with self._lock:
-                self._active_sessions.pop(str(goal["goal_id"]), None)
+                active = self._active_sessions.get(str(goal["goal_id"]), {})
+                active.pop(attempt_id, None)
+                if not active:
+                    self._active_sessions.pop(str(goal["goal_id"]), None)
 
         if result.status != "completed":
-            return self._incomplete(
-                result.error or result.termination_reason or result.status,
-                usage=dict(result.usage),
+            return finish(
+                self._incomplete(
+                    result.error or result.termination_reason or result.status,
+                    usage=dict(result.usage),
+                )
             )
         tool_messages = result.messages
         initial_usage = dict(result.usage)
@@ -161,21 +193,37 @@ class AgentResearchTaskRunner:
                 max_provider_tokens=min(token_budget, 5_000),
                 allow_write_tools=False,
                 trusted_internal_input=True,
+                profile_id=str(goal.get("profile_id") or "") or None,
             )
+            with self._lock:
+                self._active_sessions.setdefault(
+                    str(goal["goal_id"]), {}
+                )[attempt_id] = (agent, session_id)
             try:
-                repair = await asyncio.wait_for(
-                    self._agent.run_turn(
-                        session_id,
-                        f"{attempt_id}-repair",
-                        "上一条回复不符合任务结果契约。请仅按指定六个字段输出合法 JSON，不调用工具。",
-                        emit_repair,
-                        reject_write,
-                        run_options=repair_options,
-                    ),
-                    timeout=repair_options.timeout_seconds + 5.0,
-                )
-            except Exception:
-                repair = None
+                try:
+                    repair = await asyncio.wait_for(
+                        agent.run_turn(
+                            session_id,
+                            f"{attempt_id}-repair",
+                            "上一条回复不符合任务结果契约。请仅按指定六个字段输出合法 JSON，不调用工具。",
+                            emit_repair,
+                            reject_write,
+                            run_options=repair_options,
+                        ),
+                        timeout=repair_options.timeout_seconds + 5.0,
+                    )
+                except Exception:
+                    repair = None
+            finally:
+                with self._lock:
+                    active = self._active_sessions.get(
+                        str(goal["goal_id"]), {}
+                    )
+                    active.pop(attempt_id, None)
+                    if not active:
+                        self._active_sessions.pop(
+                            str(goal["goal_id"]), None
+                        )
             events.extend(repair_events)
             if repair is not None and repair.status == "completed":
                 repaired_text = next(
@@ -188,13 +236,15 @@ class AgentResearchTaskRunner:
                 )
                 parsed = self._parse_result(repaired_text)
             if parsed is None:
-                return self._incomplete(
-                    "task_result_schema_invalid_after_repair",
-                    usage=self._merge_usage(
-                        initial_usage,
-                        dict(repair.usage) if repair is not None else {},
-                    ),
-                    events=events,
+                return finish(
+                    self._incomplete(
+                        "task_result_schema_invalid_after_repair",
+                        usage=self._merge_usage(
+                            initial_usage,
+                            dict(repair.usage) if repair is not None else {},
+                        ),
+                        events=events,
+                    )
                 )
             combined_usage = self._merge_usage(
                 initial_usage, dict(repair.usage)
@@ -204,7 +254,7 @@ class AgentResearchTaskRunner:
         parsed["_tool_evidence"] = self._tool_evidence(events)
         parsed["_tool_results"] = self._tool_results(tool_messages)
         parsed["run_id"] = result.run_id
-        return parsed
+        return finish(parsed)
 
     def _prompt(
         self,
@@ -219,6 +269,19 @@ class AgentResearchTaskRunner:
             "snapshot": self._sanitize_controlled(goal.get("snapshot") or {}),
             "dependencies": self._sanitize_controlled(dependency_summaries),
             "allowed_tools": (task.get("payload") or {}).get("tool_whitelist") or [],
+            "agent": {
+                "agent_id": task.get("agent_id"),
+                "role": (task.get("payload") or {}).get("agent_role"),
+                "instructions": self._sanitize_controlled(
+                    (task.get("payload") or {}).get("agent_instructions")
+                ),
+                "can_submit_claims": bool(
+                    (task.get("payload") or {}).get(
+                        "can_submit_claims", True
+                    )
+                ),
+                "can_verify_evidence": False,
+            },
         }
         structured_hint = ""
         metric_by_kind = {
@@ -243,6 +306,7 @@ class AgentResearchTaskRunner:
         return (
             "你正在执行 KSS 深度研究任务节点。只允许使用只读工具；任何写操作都会被拒绝。"
             "会话历史、长期记忆、Skill 文本和模型自身知识不能充当已验证证据。"
+            "角色不能验证自己的 Evidence、修改 Criteria、提高预算或发布报告。"
             "只可引用本次成功工具结果中的来源。最终只输出一个 JSON 对象，不要 Markdown：\n"
             '{"status":"succeeded|incomplete","claims":[],"evidence_refs":[],'
             '"artifact_refs":[],"open_questions":[],"warnings":[]}\n'

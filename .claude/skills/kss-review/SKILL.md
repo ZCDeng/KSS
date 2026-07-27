@@ -1,5 +1,11 @@
 ---
 name: kss-review
+category: kss-workflow
+version: 1.0.0
+source: kss-bundled
+protected: true
+required_tools: [list_recipes, run_recipe]
+allowed_profiles: [chat, generic-research-v1, investment-weekly-v3]
 description: 在 KSS 仓库里复盘「某只个股/某个板块今天为什么动」时用。优先走确定性编排剧本（run_recipe explain_stock_today / sector_context）一束取齐数据，再用工具真值复盘——比零散调多个工具省 token、可复现。
 triggers:
   - kss 复盘

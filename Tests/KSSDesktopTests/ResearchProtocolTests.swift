@@ -11,6 +11,7 @@ final class ResearchProtocolTests: XCTestCase {
             "goal_id": "goal-1",
             "session_id": "session-1",
             "profile_id": "deep",
+            "execution_mode": "multi_agent_pilot",
             "objective": "研究储能产业链",
             "status": "running",
             "progress": 0.35,
@@ -21,10 +22,18 @@ final class ResearchProtocolTests: XCTestCase {
           "goal": {
             "goal_id": "goal-1",
             "profile_id": "deep",
+            "execution_mode": "multi_agent_pilot",
             "objective": "研究储能产业链",
             "status": "running",
             "criteria": [{"criterion_id": "c1", "title": "覆盖主要公司", "status": "met"}],
-            "tasks": [{"task_id": "t1", "title": "检索财报", "status": "completed"}],
+            "tasks": [{"task_id": "t1", "title": "检索财报", "status": "completed", "agent_id": "source_collector"}],
+            "research_agents": [{
+              "agent_id": "source_collector",
+              "title": "来源采集",
+              "focus": "采集并校验证据",
+              "tasks": 2,
+              "succeeded": 1
+            }],
             "evidence": [{"evidence_id": "e1", "title": "公司公告", "source": "SSE", "url": "https://example.com"}],
             "audit": [{"event_id": "a1", "type": "goal_created", "timestamp": "2026-07-26T09:00:00Z"}],
             "artifacts": [{
@@ -44,9 +53,14 @@ final class ResearchProtocolTests: XCTestCase {
 
         let response = try JSONDecoder().decode(ResearchResponse.self, from: data)
         XCTAssertEqual(response.goals.first?.goalId, "goal-1")
+        XCTAssertEqual(response.goals.first?.executionMode, "multi_agent_pilot")
         XCTAssertEqual(response.goals.first?.progress, 0.35)
+        XCTAssertEqual(response.goal?.executionMode, "multi_agent_pilot")
         XCTAssertEqual(response.goal?.criteria.first?.id, "c1")
         XCTAssertEqual(response.goal?.tasks.first?.id, "t1")
+        XCTAssertEqual(response.goal?.tasks.first?.agentId, "source_collector")
+        XCTAssertEqual(response.goal?.researchAgents.first?.agentId, "source_collector")
+        XCTAssertEqual(response.goal?.researchAgents.first?.tasks, 2)
         XCTAssertEqual(response.goal?.evidence.first?.source, "SSE")
         XCTAssertEqual(response.goal?.artifacts.first?.logicalName, "research.md")
         XCTAssertEqual(response.goal?.artifacts.first?.isDraft, true)

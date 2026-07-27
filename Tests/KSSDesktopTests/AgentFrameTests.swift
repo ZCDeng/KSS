@@ -63,6 +63,81 @@ final class AgentFrameTests: XCTestCase {
         XCTAssertEqual(frame.usage?.reasoningTokens, 4)
     }
 
+    func testThinkingFramesDecodeAndReduceWithoutTouchingVisibleText() throws {
+        let store = KSSStore(testBridge: nil)
+        store.chatMessages = [
+            ChatMessage(role: .assistant, text: "", numbersUnverified: true),
+        ]
+        let assistantId = try XCTUnwrap(store.chatMessages.first?.id)
+
+        for json in [
+            #"{"type":"thinking_start","run_id":"r1","sequence":1,"content_index":0,"provider":"anthropic","model":"claude-test"}"#,
+            #"{"type":"thinking_delta","run_id":"r1","sequence":2,"content_index":0,"delta":"检查证据"}"#,
+            #"{"type":"thinking_delta","run_id":"r1","sequence":3,"content_index":0,"delta":"与数字"}"#,
+            #"{"type":"thinking_end","run_id":"r1","sequence":4,"content_index":0,"signature":"opaque-signature"}"#,
+        ] {
+            XCTAssertTrue(store.applyAgentFrame(try decodeFrame(json), assistantId: assistantId))
+        }
+
+        XCTAssertEqual(store.chatMessages[0].text, "")
+        XCTAssertEqual(store.chatMessages[0].thinkingBlocks.count, 1)
+        XCTAssertEqual(store.chatMessages[0].thinkingBlocks[0].text, "检查证据与数字")
+        XCTAssertEqual(store.chatMessages[0].thinkingBlocks[0].signature, "opaque-signature")
+        XCTAssertEqual(store.agentProvider, "anthropic")
+        XCTAssertEqual(store.agentModel, "claude-test")
+    }
+
+    func testFrameDecodesProviderRouteContentBlocksAndAttachments() throws {
+        let frame = try decodeFrame("""
+        {"type":"message_end","provider":"openai","model":"gpt-test","content_index":2,
+         "provider_route":{"provider_id":"openai","model_id":"gpt-test","thinking_level":"high"},
+         "content_blocks":[
+           {"type":"thinking","content_index":0,"text":"reason","redacted":false},
+           {"type":"text","content_index":1,"text":"answer"}
+         ],
+         "attachments":[
+           {"id":"att-1","name":"chart.png","mime_type":"image/png","size_bytes":42,
+            "sha256":"abc","status":"ready"}
+         ]}
+        """)
+
+        XCTAssertEqual(frame.provider, "openai")
+        XCTAssertEqual(frame.contentIndex, 2)
+        XCTAssertEqual(frame.providerRoute?.modelId, "gpt-test")
+        XCTAssertEqual(frame.contentBlocks?.first?.type, "thinking")
+        XCTAssertEqual(frame.attachments?.first?.name, "chart.png")
+        XCTAssertEqual(frame.attachments?.first?.isReady, true)
+    }
+
+    func testAdditiveProviderAndAttachmentResponsesAllowSparsePayloads() throws {
+        let providerResponse = try JSONDecoder().decode(
+            AgentProvidersResponse.self,
+            from: Data(#"{"status":"starting"}"#.utf8))
+        XCTAssertTrue(providerResponse.providers.isEmpty)
+        XCTAssertEqual(providerResponse.status, "starting")
+
+        let testedProviderResponse = try JSONDecoder().decode(
+            AgentProvidersResponse.self,
+            from: Data(#"{"source":"llm","ok":true,"status":"ready","latency_ms":12.5,"hint":"stream ok","candidates":[{"role":"primary","model":"gpt-test","ok":true,"latency_ms":12.5,"hint":"stream ok"}]}"#.utf8))
+        XCTAssertEqual(testedProviderResponse.source, "llm")
+        XCTAssertEqual(testedProviderResponse.ok, true)
+        XCTAssertEqual(testedProviderResponse.latencyMs, 12.5)
+        XCTAssertEqual(testedProviderResponse.candidates?.first?.hint, "stream ok")
+
+        let attachmentResponse = try JSONDecoder().decode(
+            AgentAttachmentsResponse.self,
+            from: Data(#"{"attachment":{"id":"a1","filename":"note.md","mime_type":"text/markdown","extraction_status":"extracted"}}"#.utf8))
+        XCTAssertEqual(attachmentResponse.allAttachments.map(\.id), ["a1"])
+        XCTAssertEqual(attachmentResponse.allAttachments.first?.name, "note.md")
+
+        let model = try JSONDecoder().decode(
+            AgentModelDescriptor.self,
+            from: Data(#"{"provider_id":"openai","model_id":"gpt-test","supports_images":true}"#.utf8))
+        XCTAssertEqual(model.id, "gpt-test")
+        XCTAssertEqual(model.providerId, "openai")
+        XCTAssertEqual(model.supportsImages, true)
+    }
+
     func testAgentFrameDeduplicatesSequencesAndReportsGaps() throws {
         let store = KSSStore(testBridge: nil)
         store.chatMessages = [ChatMessage(role: .assistant, text: "", numbersUnverified: true)]
@@ -145,6 +220,32 @@ final class AgentFrameTests: XCTestCase {
         store.openAgentSession("s1")
         XCTAssertEqual(store.chatMessages.map(\.text), ["问", "答"])
         XCTAssertEqual(store.chatMessages.last?.evidenceSummary.kssTruthCount, 1)
+    }
+
+    func testAgentSessionHydratesContentBlocksAndAttachmentReferences() throws {
+        let data = Data("""
+        {"sessions":[{"session_id":"s1","title":"A","archived":false,
+          "messages":[
+            {"id":"u1","role":"user","content":[
+              {"type":"text","content_index":0,"text":"看这张图"},
+              {"type":"attachment_ref","content_index":1,"attachment_id":"att-1","mime_type":"image/png"}
+            ],"attachments":[
+              {"id":"att-1","name":"chart.png","mime_type":"image/png","size_bytes":2048,"status":"ready"}
+            ]},
+            {"id":"a1","role":"assistant","content_blocks":[
+              {"type":"thinking","content_index":0,"text":"先核对图表","provider":"openai"},
+              {"type":"text","content_index":1,"text":"已核对"}
+            ]}
+          ]}]}
+        """.utf8)
+        let response = try JSONDecoder().decode(AgentSessionListResponse.self, from: data)
+        let store = KSSStore(testBridge: nil)
+        store.agentSessions = response.sessions
+        store.openAgentSession("s1")
+
+        XCTAssertEqual(store.chatMessages.map(\.text), ["看这张图", "已核对"])
+        XCTAssertEqual(store.chatMessages[0].attachments.first?.id, "att-1")
+        XCTAssertEqual(store.chatMessages[1].thinkingBlocks.first?.text, "先核对图表")
     }
 
     func testAbortNeverFallsBackToLegacyChat() {

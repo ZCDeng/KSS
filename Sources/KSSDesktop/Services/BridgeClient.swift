@@ -31,6 +31,25 @@ enum BridgeError: LocalizedError {
 }
 
 struct BridgeClient {
+    /// Child processes inherit only non-secret ambient settings. Credentials
+    /// required by KSS are appended explicitly from KeychainStore below.
+    ///
+    /// This is deliberately pattern based: an installed app launched from a
+    /// developer shell can otherwise inherit unrelated API keys and forward
+    /// them to the long-lived Python sidecar.
+    static func sanitizedChildEnvironment(
+        _ source: [String: String] = ProcessInfo.processInfo.environment
+    ) -> [String: String] {
+        let secretFragments = [
+            "API_KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL",
+            "AUTHORIZATION", "PRIVATE_KEY",
+        ]
+        return source.filter { key, _ in
+            let upper = key.uppercased()
+            return !secretFragments.contains(where: upper.contains)
+        }
+    }
+
     /// 不可变代码根（scripts/ 与 kss/config 所在）。
     let projectRoot: URL
     /// 可变状态根（storage/.cache）。dev-mode 默认 = projectRoot（in-repo，行为不变）；
@@ -418,15 +437,19 @@ struct BridgeClient {
         process.arguments = [bridge.path] + args
         process.currentDirectoryURL = projectRoot
         // 显式注入双根 + 解释器，使 bridge 及其派生子脚本（U1 惰性 env 解析）一致定位代码/状态/运行时。
-        var env = ProcessInfo.processInfo.environment
+        var env = Self.sanitizedChildEnvironment()
         env["KSS_PROJECT_ROOT"] = projectRoot.path
         env["KSS_STATE_ROOT"] = stateRoot.path
         env["KSS_PYTHON"] = python.path
         // 禁止在 .app/Resources 写 __pycache__（会破坏 codesign sealed resources → 无法打开）
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["PYTHONPYCACHEPREFIX"] = stateRoot.appending(path: ".cache/pycache").path
-        // U3：注入 Keychain 凭据（优先于 .env/network.env，见 bridge setdefault）。
-        for (key, value) in KeychainStore.injectedEnvironment() { env[key] = value }
+        // U3/M1：非 LLM 数据源凭据仍走 env，LLM BYOK 仅通过 nonce 绑定的本地 broker 注入 pi-ai。
+        for (key, value) in KeychainStore.sidecarEnvironment() { env[key] = value }
+        if let broker = CredentialBrokerRegistry.broker(for: stateRoot) {
+            env["KSS_PI_AI_CREDENTIAL_SOCKET"] = broker.socketPath
+            env["KSS_PI_AI_CREDENTIAL_NONCE"] = broker.nonce
+        }
         process.environment = env
 
         let output = Pipe()
@@ -538,13 +561,17 @@ struct BridgeClient {
         let p = Process()
         p.executableURL = python
         p.arguments = [sidecar.path]
-        var env = ProcessInfo.processInfo.environment
+        var env = Self.sanitizedChildEnvironment()
         env["KSS_PROJECT_ROOT"] = projectRoot.path
         env["KSS_STATE_ROOT"] = stateRoot.path
         env["KSS_PYTHON"] = python.path
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["PYTHONPYCACHEPREFIX"] = stateRoot.appending(path: ".cache/pycache").path
-        for (key, value) in KeychainStore.injectedEnvironment() { env[key] = value }
+        for (key, value) in KeychainStore.sidecarEnvironment() { env[key] = value }
+        if let broker = CredentialBrokerRegistry.broker(for: stateRoot) {
+            env["KSS_PI_AI_CREDENTIAL_SOCKET"] = broker.socketPath
+            env["KSS_PI_AI_CREDENTIAL_NONCE"] = broker.nonce
+        }
         p.environment = env
         let logHandle = Self.sidecarLogHandle(stateRoot: stateRoot)
         p.standardOutput = logHandle
@@ -738,6 +765,48 @@ struct BridgeClient {
         return try agentCommand("agent-queue", payload: payload, as: AgentQueueResponse.self)
     }
 
+    func agentProviders(
+        action: String = "list",
+        primary: AgentProviderRoute? = nil,
+        fallback: AgentProviderRoute? = nil
+    ) throws -> AgentProvidersResponse {
+        var payload: [String: Any] = ["action": action]
+        if action == "reload_credentials",
+           let broker = CredentialBrokerRegistry.broker(for: stateRoot, refreshNonce: true) {
+            payload["socket_path"] = broker.socketPath
+            payload["nonce"] = broker.nonce
+        }
+        let encoder = JSONEncoder()
+        if let primary,
+           let data = try? encoder.encode(primary),
+           let object = try? JSONSerialization.jsonObject(with: data) {
+            payload["primary"] = object
+        }
+        if let fallback,
+           let data = try? encoder.encode(fallback),
+           let object = try? JSONSerialization.jsonObject(with: data) {
+            payload["fallback"] = object
+        }
+        return try agentCommand("agent-providers", payload: payload, as: AgentProvidersResponse.self)
+    }
+
+    func agentAttachments(
+        action: String,
+        sessionId: String,
+        path: String? = nil,
+        attachmentId: String? = nil,
+        extractedText: String? = nil
+    ) throws -> AgentAttachmentsResponse {
+        var payload: [String: Any] = [
+            "action": action,
+            "session_id": sessionId,
+        ]
+        if let path { payload["path"] = path }
+        if let attachmentId { payload["attachment_id"] = attachmentId }
+        if let extractedText { payload["extracted_text"] = extractedText }
+        return try agentCommand("agent-attachments", payload: payload, as: AgentAttachmentsResponse.self)
+    }
+
     func agentResearch(
         action: String = "list",
         clientRequestId: String? = nil,
@@ -745,6 +814,7 @@ struct BridgeClient {
         goalId: String? = nil,
         taskId: String? = nil,
         profileId: String? = nil,
+        executionMode: String? = nil,
         objective: String? = nil,
         inputs: [String: String]? = nil,
         budgetOverrides: [String: Int]? = nil
@@ -755,6 +825,7 @@ struct BridgeClient {
         if let goalId { payload["goal_id"] = goalId }
         if let taskId { payload["task_id"] = taskId }
         if let profileId { payload["profile_id"] = profileId }
+        if let executionMode { payload["execution_mode"] = executionMode }
         if let objective { payload["objective"] = objective }
         if let inputs { payload["inputs"] = inputs }
         if let budgetOverrides { payload["budget_overrides"] = budgetOverrides }
@@ -806,6 +877,7 @@ struct BridgeClient {
 
     func agentTurn(sessionId: String, clientTurnId: String, input: String,
                    sourceQueueId: String? = nil,
+                   attachmentIds: [String] = [],
                    onControlReady: @escaping (AgentControlChannel) -> Void,
                    onFrame: @escaping (AgentFrame) -> Void,
                    onConfirmRequired: @escaping (AgentFrame) -> Bool,
@@ -818,6 +890,7 @@ struct BridgeClient {
             "input": input,
         ]
         if let sourceQueueId { payload["source_queue_id"] = sourceQueueId }
+        if !attachmentIds.isEmpty { payload["attachment_ids"] = attachmentIds }
         guard var request = try? JSONSerialization.data(withJSONObject: payload) else {
             onEnd("无法编码 Agent 请求"); return
         }
@@ -1257,9 +1330,16 @@ struct BridgeClient {
         return nil
     }
 
-    /// dev-mode 判定：`KSS_PROJECT_ROOT` env 存在即 dev（build_and_run.sh 注入）。
+    /// A signed app always uses its embedded code and Application Support
+    /// state. Ambient development overrides are only honored by non-bundled
+    /// test/dev executables.
+    private static var isBundledApp: Bool {
+        Bundle.main.bundleURL.pathExtension.lowercased() == "app"
+    }
+
+    /// dev-mode 判定：非 app bundle 且 `KSS_PROJECT_ROOT` env 存在。
     private static var isDevMode: Bool {
-        ProcessInfo.processInfo.environment["KSS_PROJECT_ROOT"] != nil
+        !isBundledApp && ProcessInfo.processInfo.environment["KSS_PROJECT_ROOT"] != nil
     }
 
     /// bundle-mode 状态根默认：`~/Library/Application Support/KSS`。
@@ -1298,8 +1378,8 @@ struct BridgeClient {
     /// bundle 的代码仍来自 Resources，但可变数据继续使用安装期记录的状态根；二者不能混为一处。
     private static func resolveRoots() -> (project: URL, state: URL)? {
         let fm = FileManager.default
-        let envProject = ProcessInfo.processInfo.environment["KSS_PROJECT_ROOT"]
-        let envState = ProcessInfo.processInfo.environment["KSS_STATE_ROOT"]
+        let envProject = isBundledApp ? nil : ProcessInfo.processInfo.environment["KSS_PROJECT_ROOT"]
+        let envState = isBundledApp ? nil : ProcessInfo.processInfo.environment["KSS_STATE_ROOT"]
         let crumb = readBreadcrumb()
 
         func hasBridge(_ url: URL) -> Bool {
@@ -1309,7 +1389,7 @@ struct BridgeClient {
         // ---- projectRoot（KTD7 三层：dev env > 同步代码 override > bundle Resources > 面包屑 > 兜底）----
         // bundle 模式下：只要 Resources 内嵌 scripts/ 存在，就优先用 bundle 代码，避免 breadcrumb
         // 残留指向旧主仓库导致 app 升级后仍读旧代码。
-        let envScripts = ProcessInfo.processInfo.environment["KSS_SCRIPTS_ROOT"]
+        let envScripts = isBundledApp ? nil : ProcessInfo.processInfo.environment["KSS_SCRIPTS_ROOT"]
         var project: URL?
         if let envProject { project = URL(fileURLWithPath: envProject) }            // dev 硬分支
         else if let envScripts,                                                      // 同步代码 override（iCloud/共享）
@@ -1386,7 +1466,8 @@ struct BridgeClient {
     /// bridge 脚本解释器：KSS_PYTHON env → state-root bootstrap venv → 系统 python3。
     static func resolvePython(stateRoot: URL) -> URL {
         let fm = FileManager.default
-        if let envPy = ProcessInfo.processInfo.environment["KSS_PYTHON"],
+        if !isBundledApp,
+           let envPy = ProcessInfo.processInfo.environment["KSS_PYTHON"],
            fm.isExecutableFile(atPath: envPy) {
             return URL(fileURLWithPath: envPy)
         }
@@ -1438,7 +1519,7 @@ struct BridgeClient {
         p.executableURL = uv
         // --no-dev（plan 2026-07-12-005 / U11 R16）：生产 venv 不带 pytest 等 dev 依赖组。
         p.arguments = ["sync", "--frozen", "--no-dev", "--project", projectRoot.path]
-        var env = ProcessInfo.processInfo.environment
+        var env = sanitizedChildEnvironment()
         env["UV_PROJECT_ENVIRONMENT"] = stateRoot.appending(path: "venv").path
         p.environment = env
         let errPipe = Pipe()
@@ -1489,7 +1570,7 @@ struct BridgeClient {
             p.executableURL = uv
             // --no-dev（plan 2026-07-12-005 / U11 R16）：生产 venv 不带 pytest 等 dev 依赖组。
             p.arguments = ["sync", "--frozen", "--no-dev", "--project", projectRoot.path]
-            var env = ProcessInfo.processInfo.environment
+            var env = sanitizedChildEnvironment()
             env["UV_PROJECT_ENVIRONMENT"] = venvDir.path
             p.environment = env
             p.standardOutput = FileHandle.nullDevice

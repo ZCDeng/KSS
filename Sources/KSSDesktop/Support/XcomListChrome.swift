@@ -39,16 +39,20 @@ enum XcomListChrome {
     }
 }
 
-/// Seesaw 在 x.com 主题下的时间线几何。与通用 list/detail chrome 分开，
-/// 避免经典主题或其他工作区被 600pt 阅读列约束。
+/// Seesaw Focus Layout 的共享几何。主题只影响 token，不能再改变会话、技能与记忆的
+/// 信息架构。
 enum SeesawXcomChrome {
-    static let feedColumnWidth: CGFloat = 600
+    static let feedColumnWidth: CGFloat = 760
+    // Legacy branch constants remain while its private helpers are retired. The
+    // live `AIChatView` rendering path only uses the Focus Layout metrics below.
     static let sessionRailWidth: CGFloat = 320
     static let utilityPanelWidth: CGFloat = 400
     static let headerHeight: CGFloat = 53
     static let avatarSize: CGFloat = 40
     static let rowHorizontalPadding: CGFloat = 16
     static let rowVerticalPadding: CGFloat = 12
+    static let compactContentWidth: CGFloat = 820
+    static let overlayWidth: CGFloat = 380
     static let minimumThreeColumnWidth =
         sessionRailWidth + feedColumnWidth + utilityPanelWidth
 }

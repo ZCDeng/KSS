@@ -1685,12 +1685,138 @@ enum SettingsTabRouting {
 
 // MARK: - AI 复盘助手聊天模型（#4 U4/U5）
 
+/// Provider-neutral streamed/persisted message content. Unknown block types are
+/// retained as metadata instead of making hydration fail, so protocol v1 can
+/// evolve without forcing a lock-step desktop release.
+struct AgentContentBlock: Codable, Identifiable, Equatable {
+    var type: String
+    var contentIndex: Int?
+    var text: String?
+    var signature: String?
+    var redacted: Bool?
+    var provider: String?
+    var model: String?
+    var attachmentId: String?
+    var mimeType: String?
+
+    var id: String {
+        [
+            type,
+            contentIndex.map(String.init) ?? "-",
+            attachmentId ?? "-",
+        ].joined(separator: ":")
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case type, text, signature, redacted, provider, model
+        case contentIndex = "content_index"
+        case attachmentId = "attachment_id"
+        case mimeType = "mime_type"
+    }
+}
+
+/// An immutable attachment reference. File bytes live in the sidecar's
+/// content-addressed store; chat/session JSON only carries this descriptor.
+struct AgentAttachment: Codable, Identifiable, Equatable {
+    var id: String
+    var name: String
+    var mimeType: String?
+    var kind: String?
+    var sizeBytes: Int?
+    var sha256: String?
+    var status: String?
+    var extractionStatus: String?
+    var extractedChars: Int?
+    var error: String?
+    var provenance: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, filename, kind, status, error, provenance
+        case mimeType = "mime_type"
+        case sizeBytes = "size_bytes"
+        case sha256
+        case extractionStatus = "extraction_status"
+        case extractedChars = "extracted_chars"
+    }
+
+    init(
+        id: String,
+        name: String,
+        mimeType: String? = nil,
+        kind: String? = nil,
+        sizeBytes: Int? = nil,
+        sha256: String? = nil,
+        status: String? = nil,
+        extractionStatus: String? = nil,
+        extractedChars: Int? = nil,
+        error: String? = nil,
+        provenance: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.mimeType = mimeType
+        self.kind = kind
+        self.sizeBytes = sizeBytes
+        self.sha256 = sha256
+        self.status = status
+        self.extractionStatus = extractionStatus
+        self.extractedChars = extractedChars
+        self.error = error
+        self.provenance = provenance
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = (try? c.decode(String.self, forKey: .name))
+            ?? (try? c.decode(String.self, forKey: .filename))
+            ?? "附件"
+        mimeType = try? c.decode(String.self, forKey: .mimeType)
+        kind = try? c.decode(String.self, forKey: .kind)
+        sizeBytes = try? c.decode(Int.self, forKey: .sizeBytes)
+        sha256 = try? c.decode(String.self, forKey: .sha256)
+        status = try? c.decode(String.self, forKey: .status)
+        extractionStatus = try? c.decode(String.self, forKey: .extractionStatus)
+        extractedChars = try? c.decode(Int.self, forKey: .extractedChars)
+        error = try? c.decode(String.self, forKey: .error)
+        provenance = try? c.decode(String.self, forKey: .provenance)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .filename)
+        try c.encodeIfPresent(mimeType, forKey: .mimeType)
+        try c.encodeIfPresent(kind, forKey: .kind)
+        try c.encodeIfPresent(sizeBytes, forKey: .sizeBytes)
+        try c.encodeIfPresent(sha256, forKey: .sha256)
+        try c.encodeIfPresent(status, forKey: .status)
+        try c.encodeIfPresent(extractionStatus, forKey: .extractionStatus)
+        try c.encodeIfPresent(extractedChars, forKey: .extractedChars)
+        try c.encodeIfPresent(error, forKey: .error)
+        try c.encodeIfPresent(provenance, forKey: .provenance)
+    }
+
+    var isReady: Bool {
+        status == nil || status == "ready" || status == "imported"
+    }
+
+    var displaySize: String? {
+        guard let sizeBytes else { return nil }
+        return ByteCountFormatter.string(fromByteCount: Int64(sizeBytes), countStyle: .file)
+    }
+}
+
 /// 一条聊天消息。会话历史归 KSSStore（不放 view @State，避免 .id(selectedSection) 销毁）。
 struct ChatMessage: Identifiable, Equatable {
     enum Role { case user, assistant }
     let id = UUID()
     let role: Role
     var text: String
+    /// Provider-returned reasoning only. It is rendered separately from the
+    /// answer and must never be synthesized from ordinary assistant text.
+    var thinkingBlocks: [AgentContentBlock] = []
+    var attachments: [AgentAttachment] = []
     var evidenceSummary: ChatEvidenceSummary = .empty
     var evidenceDrawer: ChatEvidenceDrawer = ChatEvidenceDrawer()
     /// 助手本轮自产数字是否还「未核实」（流式中为 true，done 守卫过转 false）。R7/KTD-5。
@@ -1819,6 +1945,7 @@ struct AgentSession: Codable, Identifiable, Equatable {
     var messages: [AgentHydratedMessage]?
     var contextUsage: AgentContextUsage?
     var queuedInputs: [AgentQueuedInput]?
+    var providerRoute: AgentProviderRoute?
 
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
@@ -1827,11 +1954,12 @@ struct AgentSession: Codable, Identifiable, Equatable {
         case messages
         case contextUsage = "context_usage"
         case queuedInputs = "queued_inputs"
+        case providerRoute = "provider_route"
     }
 
     init(sessionId: String, title: String, archived: Bool = false, updatedAt: String? = nil,
          messages: [AgentHydratedMessage]? = nil, contextUsage: AgentContextUsage? = nil,
-         queuedInputs: [AgentQueuedInput]? = nil) {
+         queuedInputs: [AgentQueuedInput]? = nil, providerRoute: AgentProviderRoute? = nil) {
         self.sessionId = sessionId
         self.title = title
         self.archived = archived
@@ -1839,6 +1967,7 @@ struct AgentSession: Codable, Identifiable, Equatable {
         self.messages = messages
         self.contextUsage = contextUsage
         self.queuedInputs = queuedInputs
+        self.providerRoute = providerRoute
     }
 }
 
@@ -1954,6 +2083,8 @@ struct AgentHydratedMessage: Codable, Equatable, Identifiable {
     var toolCalls: [AgentHydratedToolCall]?
     var evidenceSummary: ChatEvidenceSummary?
     var evidenceDrawer: ChatEvidenceDrawer?
+    var contentBlocks: [AgentContentBlock]?
+    var attachments: [AgentAttachment]?
 
     enum CodingKeys: String, CodingKey {
         case id, role, text, content
@@ -1961,30 +2092,43 @@ struct AgentHydratedMessage: Codable, Equatable, Identifiable {
         case evidenceSummary, evidenceDrawer
         case evidenceSummarySnake = "evidence_summary"
         case evidenceDrawerSnake = "evidence_drawer"
+        case contentBlocks = "content_blocks"
+        case attachments
     }
 
     init(id: String, role: String, text: String,
          toolCalls: [AgentHydratedToolCall]? = nil,
-         evidenceSummary: ChatEvidenceSummary? = nil, evidenceDrawer: ChatEvidenceDrawer? = nil) {
+         evidenceSummary: ChatEvidenceSummary? = nil, evidenceDrawer: ChatEvidenceDrawer? = nil,
+         contentBlocks: [AgentContentBlock]? = nil, attachments: [AgentAttachment]? = nil) {
         self.id = id
         self.role = role
         self.text = text
         self.toolCalls = toolCalls
         self.evidenceSummary = evidenceSummary
         self.evidenceDrawer = evidenceDrawer
+        self.contentBlocks = contentBlocks
+        self.attachments = attachments
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
         role = (try? c.decode(String.self, forKey: .role)) ?? "assistant"
+        contentBlocks = (try? c.decode([AgentContentBlock].self, forKey: .contentBlocks))
+            ?? (try? c.decode([AgentContentBlock].self, forKey: .content))
         text = (try? c.decode(String.self, forKey: .text))
-            ?? (try? c.decode(String.self, forKey: .content)) ?? ""
+            ?? (try? c.decode(String.self, forKey: .content))
+            ?? contentBlocks?
+                .filter { $0.type == "text" }
+                .compactMap(\.text)
+                .joined()
+            ?? ""
         toolCalls = try? c.decode([AgentHydratedToolCall].self, forKey: .toolCalls)
         evidenceSummary = (try? c.decode(ChatEvidenceSummary.self, forKey: .evidenceSummary))
             ?? (try? c.decode(ChatEvidenceSummary.self, forKey: .evidenceSummarySnake))
         evidenceDrawer = (try? c.decode(ChatEvidenceDrawer.self, forKey: .evidenceDrawer))
             ?? (try? c.decode(ChatEvidenceDrawer.self, forKey: .evidenceDrawerSnake))
+        attachments = try? c.decode([AgentAttachment].self, forKey: .attachments)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1995,6 +2139,8 @@ struct AgentHydratedMessage: Codable, Equatable, Identifiable {
         try c.encodeIfPresent(toolCalls, forKey: .toolCalls)
         try c.encodeIfPresent(evidenceSummary, forKey: .evidenceSummary)
         try c.encodeIfPresent(evidenceDrawer, forKey: .evidenceDrawer)
+        try c.encodeIfPresent(contentBlocks, forKey: .contentBlocks)
+        try c.encodeIfPresent(attachments, forKey: .attachments)
     }
 }
 
@@ -2003,12 +2149,203 @@ struct AgentHydratedToolCall: Codable, Equatable {
     var name: String
 }
 
+// MARK: - Provider catalog / attachment protocol
+
+struct AgentModelDescriptor: Codable, Identifiable, Equatable {
+    var id: String
+    var name: String?
+    var providerId: String?
+    var contextWindow: Int?
+    var maxOutputTokens: Int?
+    var supportsThinking: Bool?
+    var supportsImages: Bool?
+    var supportsTools: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name
+        case modelId = "model_id"
+        case providerId = "provider_id"
+        case contextWindow = "context_window"
+        case maxOutputTokens = "max_output_tokens"
+        case supportsThinking = "supports_thinking"
+        case supportsImages = "supports_images"
+        case supportsTools = "supports_tools"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decode(String.self, forKey: .id))
+            ?? (try? c.decode(String.self, forKey: .modelId))
+            ?? "unknown"
+        name = try? c.decode(String.self, forKey: .name)
+        providerId = try? c.decode(String.self, forKey: .providerId)
+        contextWindow = try? c.decode(Int.self, forKey: .contextWindow)
+        maxOutputTokens = try? c.decode(Int.self, forKey: .maxOutputTokens)
+        supportsThinking = try? c.decode(Bool.self, forKey: .supportsThinking)
+        supportsImages = try? c.decode(Bool.self, forKey: .supportsImages)
+        supportsTools = try? c.decode(Bool.self, forKey: .supportsTools)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .modelId)
+        try c.encodeIfPresent(name, forKey: .name)
+        try c.encodeIfPresent(providerId, forKey: .providerId)
+        try c.encodeIfPresent(contextWindow, forKey: .contextWindow)
+        try c.encodeIfPresent(maxOutputTokens, forKey: .maxOutputTokens)
+        try c.encodeIfPresent(supportsThinking, forKey: .supportsThinking)
+        try c.encodeIfPresent(supportsImages, forKey: .supportsImages)
+        try c.encodeIfPresent(supportsTools, forKey: .supportsTools)
+    }
+}
+
+struct AgentProviderDescriptor: Codable, Identifiable, Equatable {
+    var id: String
+    var name: String?
+    var authenticated: Bool?
+    var authKind: String?
+    var baseURL: String?
+    var models: [AgentModelDescriptor]?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, authenticated, models
+        case authKind = "auth_kind"
+        case baseURL = "base_url"
+    }
+}
+
+struct AgentProviderRoute: Codable, Equatable {
+    var providerId: String?
+    var modelId: String?
+    var baseURL: String?
+    var thinkingLevel: String?
+
+    enum CodingKeys: String, CodingKey {
+        case providerId = "provider_id"
+        case modelId = "model_id"
+        case baseURL = "base_url"
+        case thinkingLevel = "thinking_level"
+    }
+}
+
+struct AgentProvidersResponse: Codable, Equatable {
+    var providers: [AgentProviderDescriptor]
+    var primary: AgentProviderRoute?
+    var fallback: AgentProviderRoute?
+    var status: String?
+    var source: String?
+    var ok: Bool?
+    var latencyMs: Double?
+    var hint: String?
+    var candidates: [DataSourceCandidateProbe]?
+    var error: String?
+
+    init(
+        providers: [AgentProviderDescriptor] = [],
+        primary: AgentProviderRoute? = nil,
+        fallback: AgentProviderRoute? = nil,
+        status: String? = nil,
+        source: String? = nil,
+        ok: Bool? = nil,
+        latencyMs: Double? = nil,
+        hint: String? = nil,
+        candidates: [DataSourceCandidateProbe]? = nil,
+        error: String? = nil
+    ) {
+        self.providers = providers
+        self.primary = primary
+        self.fallback = fallback
+        self.status = status
+        self.source = source
+        self.ok = ok
+        self.latencyMs = latencyMs
+        self.hint = hint
+        self.candidates = candidates
+        self.error = error
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case providers, primary, fallback, status, source, ok, hint, candidates, error
+        case latencyMs = "latency_ms"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        providers = (try? c.decode([AgentProviderDescriptor].self, forKey: .providers)) ?? []
+        primary = try? c.decode(AgentProviderRoute.self, forKey: .primary)
+        fallback = try? c.decode(AgentProviderRoute.self, forKey: .fallback)
+        status = try? c.decode(String.self, forKey: .status)
+        source = try? c.decode(String.self, forKey: .source)
+        ok = try? c.decode(Bool.self, forKey: .ok)
+        latencyMs = try? c.decode(Double.self, forKey: .latencyMs)
+        hint = try? c.decode(String.self, forKey: .hint)
+        candidates = try? c.decode([DataSourceCandidateProbe].self, forKey: .candidates)
+        error = try? c.decode(String.self, forKey: .error)
+    }
+}
+
+struct AgentAttachmentsResponse: Codable, Equatable {
+    var attachments: [AgentAttachment]
+    var attachment: AgentAttachment?
+    var error: String?
+
+    init(
+        attachments: [AgentAttachment] = [],
+        attachment: AgentAttachment? = nil,
+        error: String? = nil
+    ) {
+        self.attachments = attachments
+        self.attachment = attachment
+        self.error = error
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case attachments, attachment, error
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        attachments = (try? c.decode([AgentAttachment].self, forKey: .attachments)) ?? []
+        attachment = try? c.decode(AgentAttachment.self, forKey: .attachment)
+        error = try? c.decode(String.self, forKey: .error)
+    }
+
+    var allAttachments: [AgentAttachment] {
+        if !attachments.isEmpty { return attachments }
+        return attachment.map { [$0] } ?? []
+    }
+}
+
 struct AgentSkill: Codable, Identifiable, Equatable {
     var id: String
     var name: String
     var description: String?
     var enabled: Bool?
     var pinned: Bool?
+    var category: String?
+    var version: String?
+    var source: String?
+    var upstreamCommit: String?
+    var contentHash: String?
+    var trust: String?
+    var requiredTools: [String]?
+    var allowedProfiles: [String]?
+    var protected: Bool?
+    var active: Bool?
+    var shadowedBy: String?
+    var available: Bool?
+    var missingRequiredTools: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, description, enabled, pinned, category, version, source
+        case trust, protected, active, available
+        case upstreamCommit = "upstream_commit"
+        case contentHash = "content_hash"
+        case requiredTools = "required_tools"
+        case allowedProfiles = "allowed_profiles"
+        case shadowedBy = "shadowed_by"
+        case missingRequiredTools = "missing_required_tools"
+    }
 }
 
 struct AgentSkillDiagnostic: Codable, Identifiable, Equatable {
@@ -2291,6 +2628,7 @@ struct ResearchGoalSummary: Decodable, Equatable, Identifiable {
     var goalId: String
     var sessionId: String?
     var profileId: String
+    var executionMode: String
     var objective: String
     var status: String
     var progress: Double?
@@ -2305,6 +2643,7 @@ struct ResearchGoalSummary: Decodable, Equatable, Identifiable {
         case legacyId = "id"
         case sessionId = "session_id"
         case profileId = "profile_id"
+        case executionMode = "execution_mode"
         case objective, status, progress
         case terminalReason = "terminal_reason"
         case createdAt = "created_at"
@@ -2318,6 +2657,7 @@ struct ResearchGoalSummary: Decodable, Equatable, Identifiable {
             ?? ""
         sessionId = try? c.decode(String.self, forKey: .sessionId)
         profileId = (try? c.decode(String.self, forKey: .profileId)) ?? "investment-weekly-v3"
+        executionMode = (try? c.decode(String.self, forKey: .executionMode)) ?? "single"
         objective = (try? c.decode(String.self, forKey: .objective)) ?? "未命名研究"
         status = (try? c.decode(String.self, forKey: .status)) ?? "created"
         progress = try? c.decode(Double.self, forKey: .progress)
@@ -2327,11 +2667,13 @@ struct ResearchGoalSummary: Decodable, Equatable, Identifiable {
     }
 
     init(goalId: String, sessionId: String? = nil, profileId: String = "investment-weekly-v3",
+         executionMode: String = "single",
          objective: String, status: String, progress: Double? = nil,
          terminalReason: String? = nil, createdAt: String? = nil, updatedAt: String? = nil) {
         self.goalId = goalId
         self.sessionId = sessionId
         self.profileId = profileId
+        self.executionMode = executionMode
         self.objective = objective
         self.status = status
         self.progress = progress
@@ -2372,6 +2714,7 @@ struct ResearchTask: Decodable, Equatable, Identifiable {
     var taskId: String
     var title: String
     var status: String
+    var agentId: String?
     var attempt: Int?
     var detail: String?
 
@@ -2380,6 +2723,7 @@ struct ResearchTask: Decodable, Equatable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case taskId = "task_id"
         case legacyId = "id"
+        case agentId = "agent_id"
         case title, objective, status, attempt, detail
     }
 
@@ -2392,8 +2736,40 @@ struct ResearchTask: Decodable, Equatable, Identifiable {
             ?? (try? c.decode(String.self, forKey: .legacyId))
             ?? "task:\(title)"
         status = (try? c.decode(String.self, forKey: .status)) ?? "pending"
+        agentId = try? c.decode(String.self, forKey: .agentId)
         attempt = try? c.decode(Int.self, forKey: .attempt)
         detail = try? c.decode(String.self, forKey: .detail)
+    }
+}
+
+struct ResearchAgentSummary: Decodable, Equatable, Identifiable {
+    var agentId: String
+    var title: String
+    var role: String?
+    var focus: String?
+    var tasks: Int?
+    var succeeded: Int?
+
+    var id: String { agentId }
+
+    enum CodingKeys: String, CodingKey {
+        case agentId = "agent_id"
+        case legacyId = "id"
+        case title, name, role, focus, tasks, succeeded
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        agentId = (try? c.decode(String.self, forKey: .agentId))
+            ?? (try? c.decode(String.self, forKey: .legacyId))
+            ?? ""
+        title = (try? c.decode(String.self, forKey: .title))
+            ?? (try? c.decode(String.self, forKey: .name))
+            ?? agentId
+        role = try? c.decode(String.self, forKey: .role)
+        focus = try? c.decode(String.self, forKey: .focus)
+        tasks = try? c.decode(Int.self, forKey: .tasks)
+        succeeded = try? c.decode(Int.self, forKey: .succeeded)
     }
 }
 
@@ -2551,6 +2927,7 @@ struct ResearchGoalDetail: Decodable, Equatable, Identifiable {
     var goalId: String
     var sessionId: String?
     var profileId: String
+    var executionMode: String
     var objective: String
     var status: String
     var progress: Double?
@@ -2563,6 +2940,7 @@ struct ResearchGoalDetail: Decodable, Equatable, Identifiable {
     var audit: [ResearchAuditEntry]
     var artifacts: [ResearchArtifact]
     var events: [ResearchEvent]
+    var researchAgents: [ResearchAgentSummary]
     var snapshot: ResearchSnapshot?
     var budget: [String: Int]
     var usage: [String: Int]
@@ -2571,6 +2949,7 @@ struct ResearchGoalDetail: Decodable, Equatable, Identifiable {
     var summary: ResearchGoalSummary {
         ResearchGoalSummary(
             goalId: goalId, sessionId: sessionId, profileId: profileId,
+            executionMode: executionMode,
             objective: objective, status: status, progress: progress,
             terminalReason: terminalReason, createdAt: createdAt, updatedAt: updatedAt)
     }
@@ -2580,11 +2959,13 @@ struct ResearchGoalDetail: Decodable, Equatable, Identifiable {
         case legacyId = "id"
         case sessionId = "session_id"
         case profileId = "profile_id"
+        case executionMode = "execution_mode"
         case objective, status, progress
         case terminalReason = "terminal_reason"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case criteria, tasks, evidence, audit, artifacts, events, snapshot
+        case researchAgents = "research_agents"
         case budget, usage
     }
 
@@ -2595,6 +2976,7 @@ struct ResearchGoalDetail: Decodable, Equatable, Identifiable {
             ?? ""
         sessionId = try? c.decode(String.self, forKey: .sessionId)
         profileId = (try? c.decode(String.self, forKey: .profileId)) ?? "investment-weekly-v3"
+        executionMode = (try? c.decode(String.self, forKey: .executionMode)) ?? "single"
         objective = (try? c.decode(String.self, forKey: .objective)) ?? "未命名研究"
         status = (try? c.decode(String.self, forKey: .status)) ?? "created"
         progress = try? c.decode(Double.self, forKey: .progress)
@@ -2607,6 +2989,7 @@ struct ResearchGoalDetail: Decodable, Equatable, Identifiable {
         audit = (try? c.decode([ResearchAuditEntry].self, forKey: .audit)) ?? []
         artifacts = (try? c.decode([ResearchArtifact].self, forKey: .artifacts)) ?? []
         events = (try? c.decode([ResearchEvent].self, forKey: .events)) ?? []
+        researchAgents = (try? c.decode([ResearchAgentSummary].self, forKey: .researchAgents)) ?? []
         snapshot = try? c.decode(ResearchSnapshot.self, forKey: .snapshot)
         budget = (try? c.decode([String: Int].self, forKey: .budget)) ?? [:]
         usage = (try? c.decode([String: Int].self, forKey: .usage)) ?? [:]
@@ -2774,6 +3157,14 @@ struct AgentFrame: Decodable, Equatable {
     let reason: String?
     let error: String?
     let model: String?
+    let provider: String?
+    let contentIndex: Int?
+    let signature: String?
+    let redacted: Bool?
+    let contentBlocks: [AgentContentBlock]?
+    let attachment: AgentAttachment?
+    let attachments: [AgentAttachment]?
+    let providerRoute: AgentProviderRoute?
     let usage: AgentUsage?
     let existingRunId: String?
     let isError: Bool?
@@ -2794,7 +3185,8 @@ struct AgentFrame: Decodable, Equatable {
     let researchCandidate: ResearchCandidate?
 
     enum CodingKeys: String, CodingKey {
-        case type, sequence, text, delta, name, tool, command, effect, reason, error, model, usage, numberGuard
+        case type, sequence, text, delta, name, tool, command, effect, reason, error, model, provider, usage, numberGuard
+        case signature, redacted, attachment, attachments
         case operation, item
         case numberGuardSnake = "number_guard"
         case protocolVersion = "protocol_version"
@@ -2820,6 +3212,10 @@ struct AgentFrame: Decodable, Equatable {
         case steeringCount = "steering_count"
         case followUpCount = "follow_up_count"
         case researchCandidate = "research_candidate"
+        case contentIndex = "content_index"
+        case contentIndexCamel = "contentIndex"
+        case contentBlocks = "content_blocks"
+        case providerRoute = "provider_route"
     }
 
     init(from decoder: Decoder) throws {
@@ -2842,6 +3238,15 @@ struct AgentFrame: Decodable, Equatable {
         reason = try? c.decode(String.self, forKey: .reason)
         error = try? c.decode(String.self, forKey: .error)
         model = try? c.decode(String.self, forKey: .model)
+        provider = try? c.decode(String.self, forKey: .provider)
+        contentIndex = (try? c.decode(Int.self, forKey: .contentIndex))
+            ?? (try? c.decode(Int.self, forKey: .contentIndexCamel))
+        signature = try? c.decode(String.self, forKey: .signature)
+        redacted = try? c.decode(Bool.self, forKey: .redacted)
+        contentBlocks = try? c.decode([AgentContentBlock].self, forKey: .contentBlocks)
+        attachment = try? c.decode(AgentAttachment.self, forKey: .attachment)
+        attachments = try? c.decode([AgentAttachment].self, forKey: .attachments)
+        providerRoute = try? c.decode(AgentProviderRoute.self, forKey: .providerRoute)
         usage = try? c.decode(AgentUsage.self, forKey: .usage)
         existingRunId = try? c.decode(String.self, forKey: .existingRunId)
         isError = (try? c.decode(Bool.self, forKey: .isError))

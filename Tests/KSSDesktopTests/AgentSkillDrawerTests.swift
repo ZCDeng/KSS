@@ -9,9 +9,9 @@ final class AgentSkillDrawerTests: XCTestCase {
             .deletingLastPathComponent()
             .appending(path: "Sources/KSSDesktop/Views/AIChatView.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
-        let drawerStart = try XCTUnwrap(source.range(of: "private var skillDrawer"))
+        let drawerStart = try XCTUnwrap(source.range(of: "private func focusSkillRow"))
         let drawerEnd = try XCTUnwrap(
-            source.range(of: "private var memoryDrawer", range: drawerStart.upperBound..<source.endIndex)
+            source.range(of: "private var focusContextPopover", range: drawerStart.upperBound..<source.endIndex)
         )
         let drawer = String(source[drawerStart.lowerBound..<drawerEnd.lowerBound])
 

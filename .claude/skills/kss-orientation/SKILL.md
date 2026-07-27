@@ -1,5 +1,11 @@
 ---
 name: kss-orientation
+category: kss-safety
+version: 1.0.0
+source: kss-bundled
+protected: true
+required_tools: [get_orientation, get_data_catalog]
+allowed_profiles: [chat, generic-research-v1, investment-weekly-v3]
 description: 在 KSS 仓库里用 agent 查 A 股盘面/数据时先看这个。一次上手 KSS 的命令图、数据目录、可用剧本与数字纪律——任何盘面问题动手前先 get_orientation，避免凭空假设有哪些数据。
 triggers:
   - kss 上手

@@ -121,6 +121,7 @@ class ResearchTask:
     status: TaskStatus
     required: bool
     sequence_index: int
+    agent_id: str | None = None
     payload: dict[str, Any] = field(default_factory=dict)
 
     def to_wire(self) -> dict[str, Any]:
@@ -133,7 +134,27 @@ class TaskSpec:
     title: str
     required: bool = True
     depends_on: list[str] = field(default_factory=list)
+    agent_id: str | None = None
     payload: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ResearchAgentSpec:
+    agent_id: str
+    role: str
+    instructions: str
+    provider_route: str | None = None
+    model_override: str | None = None
+    tool_whitelist: list[str] = field(default_factory=list)
+    skill_whitelist: list[str] = field(default_factory=list)
+    max_steps: int = 8
+    max_tokens: int = 25_000
+    timeout_seconds: int = 240
+    can_submit_claims: bool = True
+    can_verify_evidence: bool = False
+
+    def to_wire(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -142,6 +163,8 @@ class ProfileSpec:
     title: str
     criteria: list[dict[str, Any]]
     tasks: list[TaskSpec]
+    agents: list[ResearchAgentSpec] = field(default_factory=list)
+    pilot_max_concurrency: int = 2
     anchors: list[str] = field(default_factory=list)
     budget: dict[str, int] = field(default_factory=lambda: {
         "max_nodes": 24,
@@ -152,4 +175,5 @@ class ProfileSpec:
     def to_wire(self) -> dict[str, Any]:
         data = asdict(self)
         data["tasks"] = [asdict(t) for t in self.tasks]
+        data["agents"] = [asdict(agent) for agent in self.agents]
         return data

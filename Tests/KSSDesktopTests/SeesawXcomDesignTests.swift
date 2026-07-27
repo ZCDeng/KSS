@@ -12,36 +12,56 @@ final class SeesawXcomDesignTests: XCTestCase {
         }
     }
 
-    func testXcomUsesDedicatedTimelineShell() throws {
+    private var contentSource: String {
+        get throws {
+            let sourceURL = URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appending(path: "Sources/KSSDesktop/Views/ContentView.swift")
+            return try String(contentsOf: sourceURL, encoding: .utf8)
+        }
+    }
+
+    func testAllThemesUseSharedFocusShell() throws {
         let source = try source
-        XCTAssertTrue(source.contains("private func xcomSeesawShell"))
+        XCTAssertTrue(source.contains("focusSeesawShell(size: geo.size)"))
+        XCTAssertTrue(source.contains("private func focusSeesawShell"))
         XCTAssertTrue(source.contains("SeesawXcomChrome.feedColumnWidth"))
         XCTAssertTrue(source.contains("SeesawXcomChrome.headerHeight"))
+        XCTAssertFalse(source.contains("if isXcom"))
     }
 
-    func testXcomEmptyStateDoesNotUseCenteredHero() throws {
+    func testFocusShellKeepsAuxiliarySurfacesOutOfConversationColumn() throws {
         let source = try source
-        let shellStart = try XCTUnwrap(source.range(of: "private func xcomSeesawShell"))
-        let classicStart = try XCTUnwrap(
-            source.range(of: "private func classicSeesawShell", range: shellStart.upperBound..<source.endIndex)
+        let focusStart = try XCTUnwrap(source.range(of: "private func focusSeesawShell"))
+        let legacyStart = try XCTUnwrap(
+            source.range(of: "private func xcomSeesawShell", range: focusStart.upperBound..<source.endIndex)
         )
-        let shell = String(source[shellStart.lowerBound..<classicStart.lowerBound])
-        XCTAssertFalse(shell.contains("heroEmptyState"))
-        XCTAssertTrue(shell.contains("xcomEmptyTimeline"))
-
-        let timelineStart = try XCTUnwrap(source.range(of: "private var xcomEmptyTimeline"))
-        let composerStart = try XCTUnwrap(
-            source.range(of: "private var xcomComposer", range: timelineStart.upperBound..<source.endIndex)
-        )
-        let timeline = String(source[timelineStart.lowerBound..<composerStart.lowerBound])
-        XCTAssertTrue(timeline.contains("xcomComposer"))
+        let focus = String(source[focusStart.lowerBound..<legacyStart.lowerBound])
+        XCTAssertTrue(focus.contains("focusSessionPalette"))
+        XCTAssertTrue(focus.contains("focusSkillPalette"))
+        XCTAssertTrue(focus.contains("focusContextPopover"))
+        XCTAssertFalse(focus.contains("xcomAgentSidebar"))
+        XCTAssertFalse(focus.contains("xcomUtilityPanel"))
     }
 
-    func testXcomSkillsUseFlatUtilityPanelInsteadOfPopover() throws {
+    func testFocusComposerIsSharedAndSkillsRemainExplicit() throws {
         let source = try source
-        XCTAssertTrue(source.contains("private var xcomSkillPanel"))
-        XCTAssertTrue(source.contains("xcomUtilityPanel"))
+        XCTAssertTrue(source.contains("private var focusComposer"))
+        XCTAssertTrue(source.contains("focusPinnedSkillChips"))
+        XCTAssertTrue(source.contains("availableSkillStarters"))
+        XCTAssertTrue(source.contains("private var focusSkillPalette"))
         XCTAssertTrue(source.contains("Toggle(\"启用\""))
         XCTAssertTrue(source.contains("Toggle(\"置顶\""))
+    }
+
+    func testSeesawNavigationCollapseIsTransient() throws {
+        let source = try contentSource
+        XCTAssertTrue(source.contains("@State private var seesawNavigationExpanded"))
+        XCTAssertTrue(source.contains("private var effectiveSidebarCollapsed"))
+        XCTAssertTrue(source.contains("if store.selectedSection == .aiChat"))
+        XCTAssertTrue(source.contains("return !seesawNavigationExpanded"))
+        XCTAssertTrue(source.contains("AIChatView(globalNavigationExpanded: $seesawNavigationExpanded)"))
     }
 }

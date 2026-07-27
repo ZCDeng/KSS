@@ -23,7 +23,20 @@ from kss.llm.openai_client import (
 
 logger = logging.getLogger(__name__)
 
-ProviderEventType = Literal["text", "tool_call", "usage", "finish", "error"]
+ProviderEventType = Literal[
+    "text_start",
+    "text",
+    "text_end",
+    "thinking_start",
+    "thinking",
+    "thinking_end",
+    "tool_call_start",
+    "tool_call_update",
+    "tool_call",
+    "usage",
+    "finish",
+    "error",
+]
 _DEFAULT_TIMEOUT_SEC = 90.0
 _DEFAULT_TEMPERATURE = 0.4
 
@@ -36,6 +49,7 @@ class ModelCapabilities:
     max_output_tokens: int = 8_000
     supports_tools: bool = True
     supports_thinking: bool = False
+    supports_images: bool = False
 
 
 @dataclass(frozen=True)
@@ -46,6 +60,8 @@ class ProviderUsage:
     output_tokens: int = 0
     total_tokens: int = 0
     cached_input_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    reasoning_tokens: int | None = None
 
     def as_dict(self) -> dict[str, int]:
         result = {
@@ -55,6 +71,10 @@ class ProviderUsage:
         }
         if self.cached_input_tokens is not None:
             result["cached_input_tokens"] = self.cached_input_tokens
+        if self.cache_write_tokens is not None:
+            result["cache_write_tokens"] = self.cache_write_tokens
+        if self.reasoning_tokens is not None:
+            result["reasoning_tokens"] = self.reasoning_tokens
         return result
 
 
@@ -94,6 +114,9 @@ class ProviderEvent:
     model: str
     provider: str = "openai-compatible"
     text: str | None = None
+    content_index: int | None = None
+    signature: str | None = None
+    redacted: bool = False
     tool_call_id: str | None = None
     tool_name: str | None = None
     tool_arguments: dict[str, Any] | None = None
@@ -110,6 +133,12 @@ class ProviderEvent:
         }
         if self.text is not None:
             result["text"] = self.text
+        if self.content_index is not None:
+            result["content_index"] = self.content_index
+        if self.signature is not None:
+            result["signature"] = self.signature
+        if self.redacted:
+            result["redacted"] = True
         if self.tool_call_id is not None:
             result["id"] = self.tool_call_id
         if self.tool_name is not None:
@@ -134,6 +163,7 @@ class ProviderConfig:
     temperature: float = _DEFAULT_TEMPERATURE
     timeout: float | None = None
     include_usage: bool = False
+    thinking_level: str | None = None
 
 
 class AbortSignal(Protocol):

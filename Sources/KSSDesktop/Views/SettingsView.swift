@@ -265,18 +265,23 @@ struct SettingsCredentialsSection: View {
     /// xcom 单源详情；经典传 nil 渲染全部。
     var focusSource: SettingsDataSource?
     @State private var testing: Set<String> = []
+    @State private var saving: Set<String> = []
 
     @State private var tushareToken = ""
     @State private var telegramBotToken = ""
     @State private var telegramChatId = ""
     @State private var telegramApiUrl = ""
     // BYOK 端点泛化：主用/备用两组独立 base_url/key/model，主用先试、备用兜底。
+    @State private var llmPrimaryProvider = "kss-primary"
     @State private var llmPrimaryBaseUrl = ""
     @State private var llmPrimaryKey = ""
     @State private var llmPrimaryModel = ""
+    @State private var llmPrimaryThinking = "off"
+    @State private var llmFallbackProvider = "kss-fallback"
     @State private var llmFallbackBaseUrl = ""
     @State private var llmFallbackKey = ""
     @State private var llmFallbackModel = ""
+    @State private var llmFallbackThinking = "off"
     // 兼容旧配置（新六键全空时才生效）。
     @State private var openaiApiKey = ""
     @State private var openaiBaseUrl = ""
@@ -288,8 +293,12 @@ struct SettingsCredentialsSection: View {
     @State private var longbridgeAccessToken = ""
     /// 已保存反馈按卡显示（source.rawValue）。任一字段编辑即清除对应卡的反馈。
     @State private var savedSources: Set<String> = []
+    /// Keychain/provider route 回填会触发 SwiftUI `onChange`；回填期间不能被误判成用户编辑。
+    @State private var isHydratingValues = true
+    @State private var hydrationGeneration = 0
 
     private var isXcomFlat: Bool { focusSource != nil }
+    private let thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
     private var visibleSources: [SettingsDataSource] {
         if let focusSource { return [focusSource] }
@@ -299,9 +308,9 @@ struct SettingsCredentialsSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: isXcomFlat ? SettingsFormStyle.blockSpacing : 14) {
             if isXcomFlat {
-                SettingsHintText(text: "凭据存入 macOS Keychain，不写入磁盘明文。留空保存表示删除该项；保存后自动重启后台服务生效。")
+                SettingsHintText(text: "KSS 会自动继承现有 LLM 配置。只有切换服务或密钥时才需要修改；凭据仅存于 macOS Keychain。")
             } else {
-                Text("凭据存入 macOS Keychain，不写入磁盘明文。留空保存表示删除该项；保存后自动重启后台服务生效。")
+                Text("KSS 会自动继承现有 LLM 配置。只有切换服务或密钥时才需要修改；凭据仅存于 macOS Keychain。")
                     .font(KSSFont.themed(12.5, theme: theme))
                     .foregroundStyle(theme.textSecondary)
             }
@@ -319,7 +328,13 @@ struct SettingsCredentialsSection: View {
                 }
             }
         }
-        .onAppear(perform: load)
+        .onAppear(perform: hydrate)
+        .task {
+            await store.loadAgentProviders(reloadCredentials: true)
+            if !dirtySources.contains(SettingsDataSource.llm.rawValue) {
+                hydrate()
+            }
+        }
     }
 
     @ViewBuilder
@@ -342,20 +357,48 @@ struct SettingsCredentialsSection: View {
                 field("API URL（自建中继，可选）", text: $telegramApiUrl, secure: false, source: .telegram)
             }
         case .llm:
-            sourceCard(.llm, note: "Seesaw 的 OpenAI 兼容端点：主用失败自动降级备用；两组全空时退回下方兼容旧配置。") {
+            sourceCard(.llm, note: "默认直接沿用 KSS 已有的主模型配置；保存时会立即重载并做一次真实连接测试。") {
+                providerRuntimeSummary
                 subHead("主用")
+                providerPicker(
+                    "Provider",
+                    selection: $llmPrimaryProvider,
+                    modelSelection: $llmPrimaryModel
+                )
+                .onChange(of: llmPrimaryProvider) { oldProvider, providerId in
+                    guard oldProvider != providerId else { return }
+                    if providerId != "kss-primary" {
+                        llmPrimaryBaseUrl = ""
+                    }
+                    llmPrimaryKey = inheritedProviderKey(providerId)
+                }
                 field("API Key", text: $llmPrimaryKey, secure: true, source: .llm)
-                field("Base URL（网关/oneAPI，可选，留空用官方端点）", text: $llmPrimaryBaseUrl, secure: false, source: .llm)
-                field("模型 ID（可选）", text: $llmPrimaryModel, secure: false, source: .llm)
-                subHead("备用")
-                field("API Key", text: $llmFallbackKey, secure: true, source: .llm)
-                field("Base URL（可选）", text: $llmFallbackBaseUrl, secure: false, source: .llm)
-                field("模型 ID（可选）", text: $llmFallbackModel, secure: false, source: .llm)
-                subHead("兼容旧配置（仅上方主用/备用均为空时生效）")
-                field("DeepSeek API Key", text: $deepseekApiKey, secure: true, source: .llm)
-                field("OpenAI API Key（fallback）", text: $openaiApiKey, secure: true, source: .llm)
-                field("OpenAI Base URL（可选）", text: $openaiBaseUrl, secure: false, source: .llm)
-                field("模型 ID（KSS_LLM_MODEL，可选）", text: $llmModel, secure: false, source: .llm)
+                field("Base URL（仅自定义网关需要）", text: $llmPrimaryBaseUrl, secure: false, source: .llm)
+                modelPicker("模型", providerId: llmPrimaryProvider, selection: $llmPrimaryModel)
+                thinkingPicker("Thinking", selection: $llmPrimaryThinking)
+                DisclosureGroup("备用模型（可选）") {
+                    VStack(alignment: .leading, spacing: SettingsFormStyle.cardInnerSpacing) {
+                        providerPicker(
+                            "Provider",
+                            selection: $llmFallbackProvider,
+                            modelSelection: $llmFallbackModel
+                        )
+                        .onChange(of: llmFallbackProvider) { oldProvider, providerId in
+                            guard oldProvider != providerId else { return }
+                            if providerId != "kss-fallback" {
+                                llmFallbackBaseUrl = ""
+                            }
+                            llmFallbackKey = inheritedProviderKey(providerId)
+                        }
+                        field("API Key", text: $llmFallbackKey, secure: true, source: .llm)
+                        field("Base URL（仅自定义网关需要）", text: $llmFallbackBaseUrl, secure: false, source: .llm)
+                        modelPicker("模型", providerId: llmFallbackProvider, selection: $llmFallbackModel)
+                        thinkingPicker("Thinking", selection: $llmFallbackThinking)
+                    }
+                    .padding(.top, 8)
+                }
+                .font(KSSFont.themed(13, .semibold, theme: theme))
+                .foregroundStyle(theme.textSecondary)
                 Toggle(isOn: $appLive) {
                     VStack(alignment: .leading, spacing: isXcomFlat ? SettingsFormStyle.titleMetaSpacing : 2) {
                         Text("允许 AI 执行写操作（live）")
@@ -379,7 +422,189 @@ struct SettingsCredentialsSection: View {
         }
     }
 
+    private var providerRuntimeSummary: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                SettingsStatusCapsule(
+                    text: store.agentProviderStatus ?? "provider —",
+                    tint: (store.agentProviderStatus == "ready") ? theme.accent : theme.textSecondary
+                )
+                if let route = store.agentPrimaryRoute {
+                    Text("主用 \(route.providerId ?? "provider") / \(route.modelId ?? "model")")
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                SettingsBorderedAction(
+                    title: "刷新状态",
+                    systemImage: "arrow.clockwise",
+                    action: {
+                        Task {
+                            await store.loadAgentProviders(reloadCredentials: true)
+                            if !dirtySources.contains(SettingsDataSource.llm.rawValue) {
+                                hydrate()
+                            }
+                        }
+                    }
+                )
+            }
+            if let route = store.agentPrimaryRoute,
+               let provider = store.agentProviders.first(where: { $0.id == route.providerId }) {
+                HStack(spacing: 8) {
+                    Text(provider.authenticated == true ? "已继承 KSS 凭据" : "等待凭据验证")
+                        .font(KSSFont.themed(12.5, .semibold, theme: theme))
+                        .foregroundStyle(provider.authenticated == true ? theme.accent : theme.textSecondary)
+                    Text(
+                        (provider.models?.isEmpty == false)
+                            ? "\(provider.models?.count ?? 0) 个可用模型"
+                            : "使用已保存模型 ID"
+                    )
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(theme.textSecondary)
+                }
+            }
+            if let route = store.agentPrimaryRoute,
+               let providerId = route.providerId,
+               let modelId = route.modelId,
+               let model = store.agentProviders
+                .first(where: { $0.id == providerId })?
+                .models?.first(where: { $0.id == modelId }) {
+                HStack(spacing: 6) {
+                    if let context = model.contextWindow {
+                        SettingsStatusCapsule(text: "ctx \(context)", tint: theme.textSecondary)
+                    }
+                    if model.supportsImages == true {
+                        SettingsStatusCapsule(text: "图片", tint: theme.accent)
+                    }
+                    if model.supportsThinking == true {
+                        SettingsStatusCapsule(text: "Thinking", tint: theme.accent)
+                    }
+                    if model.supportsTools == true {
+                        SettingsStatusCapsule(text: "Tools", tint: theme.accent)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    @ViewBuilder
+    private func thinkingPicker(_ label: String, selection: Binding<String>) -> some View {
+        HStack {
+            Text(label)
+                .font(KSSFont.themed(isXcomFlat ? SettingsFormStyle.fieldLabel : 13, .semibold, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+            Spacer()
+            Picker(label, selection: selection) {
+                ForEach(thinkingLevels, id: \.self) { level in
+                    Text(level).tag(level)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .onChange(of: selection.wrappedValue) { _, _ in markDirty(.llm) }
+        }
+    }
+
+    @ViewBuilder
+    private func providerPicker(
+        _ label: String,
+        selection: Binding<String>,
+        modelSelection: Binding<String>
+    ) -> some View {
+        let supported = ["kss-primary", "kss-fallback", "deepseek", "openai", "openrouter"]
+        let ids = Array(Set(supported + [selection.wrappedValue]))
+            .filter { !$0.isEmpty }
+            .sorted()
+        HStack {
+            Text(label)
+                .font(KSSFont.themed(isXcomFlat ? SettingsFormStyle.fieldLabel : 13, .semibold, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+            Spacer()
+            Picker(label, selection: selection) {
+                ForEach(ids, id: \.self) { providerId in
+                    Text(providerDisplayName(providerId)).tag(providerId)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .onChange(of: selection.wrappedValue) { _, providerId in
+                if let firstModel = store.agentProviders
+                    .first(where: { $0.id == providerId })?
+                    .models?.first?.id {
+                    modelSelection.wrappedValue = firstModel
+                }
+                markDirty(.llm)
+            }
+        }
+    }
+
+    private func providerDisplayName(_ providerId: String) -> String {
+        switch providerId {
+        case "kss-primary": "继承 KSS 主配置"
+        case "kss-fallback": "继承 KSS 备用配置"
+        case "deepseek": "DeepSeek"
+        case "openai": "OpenAI"
+        case "openrouter": "OpenRouter"
+        default: providerId
+        }
+    }
+
+    private func inheritedProviderKey(_ providerId: String) -> String {
+        if let scoped = KeychainStore.readProviderAPIKey(providerId) {
+            return scoped
+        }
+        switch providerId {
+        case "kss-primary": return KeychainStore.read("KSS_LLM_PRIMARY_KEY") ?? ""
+        case "kss-fallback": return KeychainStore.read("KSS_LLM_FALLBACK_KEY") ?? ""
+        case "deepseek": return KeychainStore.read("DEEPSEEK_API_KEY") ?? ""
+        case "openai": return KeychainStore.read("OPENAI_API_KEY") ?? ""
+        case "openrouter": return KeychainStore.read("OPENROUTER_API_KEY") ?? ""
+        default: return ""
+        }
+    }
+
+    @ViewBuilder
+    private func modelPicker(
+        _ label: String,
+        providerId: String,
+        selection: Binding<String>
+    ) -> some View {
+        let models = store.agentProviders
+            .first(where: { $0.id == providerId })?
+            .models ?? []
+        if models.isEmpty {
+            field("模型 ID", text: selection, secure: false, source: .llm)
+        } else {
+            let modelIds = Array(Set(models.map(\.id) + [selection.wrappedValue]))
+                .filter { !$0.isEmpty }
+            HStack {
+                Text(label)
+                    .font(KSSFont.themed(isXcomFlat ? SettingsFormStyle.fieldLabel : 13, .semibold, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                Spacer()
+                Picker(label, selection: selection) {
+                    ForEach(modelIds, id: \.self) { modelId in
+                        Text(
+                            models.first(where: { $0.id == modelId })?.name
+                                ?? modelId
+                        )
+                        .tag(modelId)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .onChange(of: selection.wrappedValue) { _, _ in markDirty(.llm) }
+            }
+        }
+    }
+
     private func markDirty(_ source: SettingsDataSource) {
+        guard SettingsCredentialChangePolicy.shouldMarkDirty(isHydrating: isHydratingValues) else {
+            return
+        }
         dirtySources.insert(source.rawValue)
         savedSources.remove(source.rawValue)
     }
@@ -422,35 +647,46 @@ struct SettingsCredentialsSection: View {
                         .foregroundStyle(theme.accent)
                 }
                 if isXcomFlat {
+                    if source != .llm {
+                        SettingsBorderedAction(
+                            title: "测试",
+                            systemImage: "antenna.radiowaves.left.and.right",
+                            busy: testing.contains(source.rawValue),
+                            action: { Task { await runTest(source) } }
+                        )
+                    }
                     SettingsBorderedAction(
-                        title: "测试",
-                        systemImage: "antenna.radiowaves.left.and.right",
-                        busy: testing.contains(source.rawValue),
-                        action: { Task { await runTest(source) } }
-                    )
-                    SettingsBorderedAction(
-                        title: "保存",
-                        systemImage: "square.and.arrow.down",
-                        action: { save(source) }
+                        title: source == .llm ? "保存并测试" : "保存",
+                        systemImage: source == .llm ? "checkmark.icloud" : "square.and.arrow.down",
+                        busy: saving.contains(source.rawValue),
+                        action: { saveAction(source) }
                     )
                 } else {
+                    if source != .llm {
+                        Button {
+                            Task { await runTest(source) }
+                        } label: {
+                            if testing.contains(source.rawValue) {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Text("测试").font(KSSFont.themed(12.5, .semibold, theme: theme))
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(testing.contains(source.rawValue))
+                    }
                     Button {
-                        Task { await runTest(source) }
+                        saveAction(source)
                     } label: {
-                        if testing.contains(source.rawValue) {
+                        if saving.contains(source.rawValue) {
                             ProgressView().controlSize(.small)
                         } else {
-                            Text("测试").font(KSSFont.themed(12.5, .semibold, theme: theme))
+                            Text(source == .llm ? "保存并测试" : "保存")
+                                .font(KSSFont.themed(12.5, .semibold, theme: theme))
                         }
                     }
                     .buttonStyle(.bordered)
-                    .disabled(testing.contains(source.rawValue))
-                    Button {
-                        save(source)
-                    } label: {
-                        Text("保存").font(KSSFont.themed(12.5, .semibold, theme: theme))
-                    }
-                    .buttonStyle(.bordered)
+                    .disabled(saving.contains(source.rawValue))
                 }
             }
             Text(note)
@@ -548,17 +784,41 @@ struct SettingsCredentialsSection: View {
 
     // MARK: 读写
 
+    private func hydrate() {
+        hydrationGeneration += 1
+        let generation = hydrationGeneration
+        let hydratedSources = Set(visibleSources.map(\.rawValue))
+        isHydratingValues = true
+        load()
+
+        // `onChange` 在本次 SwiftUI transaction 结算时才执行；下一次主队列 tick
+        // 再解除 gate，并清理仅由程序回填产生的 dirty 标记。
+        DispatchQueue.main.async {
+            guard generation == hydrationGeneration else { return }
+            dirtySources.subtract(hydratedSources)
+            isHydratingValues = false
+        }
+    }
+
     private func load() {
         tushareToken = KeychainStore.read("TUSHARE_TOKEN") ?? ""
         telegramBotToken = KeychainStore.read("TELEGRAM_BOT_TOKEN") ?? ""
         telegramChatId = KeychainStore.read("TELEGRAM_CHAT_ID") ?? ""
         telegramApiUrl = KeychainStore.read("TELEGRAM_API_URL") ?? ""
+        llmPrimaryProvider = store.agentPrimaryRoute?.providerId ?? "kss-primary"
         llmPrimaryBaseUrl = KeychainStore.read("KSS_LLM_PRIMARY_BASE_URL") ?? ""
-        llmPrimaryKey = KeychainStore.read("KSS_LLM_PRIMARY_KEY") ?? ""
-        llmPrimaryModel = KeychainStore.read("KSS_LLM_PRIMARY_MODEL") ?? ""
+        llmPrimaryKey = KeychainStore.readProviderAPIKey(llmPrimaryProvider)
+            ?? KeychainStore.read("KSS_LLM_PRIMARY_KEY") ?? ""
+        llmPrimaryModel = store.agentPrimaryRoute?.modelId
+            ?? KeychainStore.read("KSS_LLM_PRIMARY_MODEL") ?? ""
+        llmPrimaryThinking = store.agentPrimaryRoute?.thinkingLevel ?? "off"
+        llmFallbackProvider = store.agentFallbackRoute?.providerId ?? "kss-fallback"
         llmFallbackBaseUrl = KeychainStore.read("KSS_LLM_FALLBACK_BASE_URL") ?? ""
-        llmFallbackKey = KeychainStore.read("KSS_LLM_FALLBACK_KEY") ?? ""
-        llmFallbackModel = KeychainStore.read("KSS_LLM_FALLBACK_MODEL") ?? ""
+        llmFallbackKey = KeychainStore.readProviderAPIKey(llmFallbackProvider)
+            ?? KeychainStore.read("KSS_LLM_FALLBACK_KEY") ?? ""
+        llmFallbackModel = store.agentFallbackRoute?.modelId
+            ?? KeychainStore.read("KSS_LLM_FALLBACK_MODEL") ?? ""
+        llmFallbackThinking = store.agentFallbackRoute?.thinkingLevel ?? "off"
         openaiApiKey = KeychainStore.read("OPENAI_API_KEY") ?? ""
         openaiBaseUrl = KeychainStore.read("OPENAI_BASE_URL") ?? ""
         deepseekApiKey = KeychainStore.read("DEEPSEEK_API_KEY") ?? ""
@@ -571,6 +831,14 @@ struct SettingsCredentialsSection: View {
 
     /// 按源保存（只写该卡字段）；随后全杀重启 sidecar（SIGHUP re-exec 留旧 env）并刷新
     /// 两条「已配置」判定源（self-check 与 hasLLMCredentials 历史上各自维护）。
+    private func saveAction(_ source: SettingsDataSource) {
+        if source == .llm {
+            Task { await saveLLMAndTest() }
+        } else {
+            save(source)
+        }
+    }
+
     private func save(_ source: SettingsDataSource) {
         switch source {
         case .tushare:
@@ -584,17 +852,7 @@ struct SettingsCredentialsSection: View {
             KeychainStore.write("TELEGRAM_CHAT_ID", telegramChatId)
             KeychainStore.write("TELEGRAM_API_URL", telegramApiUrl)
         case .llm:
-            KeychainStore.write("KSS_LLM_PRIMARY_BASE_URL", llmPrimaryBaseUrl)
-            KeychainStore.write("KSS_LLM_PRIMARY_KEY", llmPrimaryKey)
-            KeychainStore.write("KSS_LLM_PRIMARY_MODEL", llmPrimaryModel)
-            KeychainStore.write("KSS_LLM_FALLBACK_BASE_URL", llmFallbackBaseUrl)
-            KeychainStore.write("KSS_LLM_FALLBACK_KEY", llmFallbackKey)
-            KeychainStore.write("KSS_LLM_FALLBACK_MODEL", llmFallbackModel)
-            KeychainStore.write("OPENAI_API_KEY", openaiApiKey)
-            KeychainStore.write("OPENAI_BASE_URL", openaiBaseUrl)
-            KeychainStore.write("DEEPSEEK_API_KEY", deepseekApiKey)
-            KeychainStore.write("KSS_LLM_MODEL", llmModel)
-            KeychainStore.write("KSS_APP_LIVE", appLive ? "1" : "")
+            return
         }
         BridgeClient.restartSidecarForEnvChange()
         store.refreshLLMCredentialsStatus()
@@ -603,14 +861,143 @@ struct SettingsCredentialsSection: View {
         savedSources.insert(source.rawValue)
     }
 
+    private func saveLLMAndTest() async {
+        let source = SettingsDataSource.llm
+        guard let bridge = store.bridge else {
+            results[source.rawValue] = DataSourceTestResult(
+                source: "llm", ok: false, latencyMs: nil,
+                error: "后台服务尚未就绪", hint: "请稍后重试", candidates: nil
+            )
+            return
+        }
+        guard !saving.contains(source.rawValue) else { return }
+        saving.insert(source.rawValue)
+        defer { saving.remove(source.rawValue) }
+
+        let primaryModel = llmPrimaryModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackModel = llmFallbackModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !primaryModel.isEmpty else {
+            results[source.rawValue] = DataSourceTestResult(
+                source: "llm", ok: false, latencyMs: nil,
+                error: "请选择或填写主用模型", hint: "模型不能为空", candidates: nil
+            )
+            return
+        }
+        func nilIfEmpty(_ value: String) -> String? {
+            value.isEmpty ? nil : value
+        }
+        let primary = AgentProviderRoute(
+            providerId: primaryRouteProviderId,
+            modelId: primaryModel,
+            baseURL: nilIfEmpty(llmPrimaryBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines)),
+            thinkingLevel: llmPrimaryThinking
+        )
+        let fallback = llmFallbackKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? nil
+            : AgentProviderRoute(
+                providerId: fallbackRouteProviderId,
+                modelId: fallbackModel.isEmpty ? "gpt-4o-mini" : fallbackModel,
+                baseURL: nilIfEmpty(llmFallbackBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines)),
+                thinkingLevel: llmFallbackThinking
+        )
+        let writesSucceeded = [
+            KeychainStore.write("KSS_LLM_PRIMARY_BASE_URL", llmPrimaryBaseUrl),
+            KeychainStore.write("KSS_LLM_PRIMARY_KEY", llmPrimaryKey),
+            KeychainStore.write("KSS_LLM_PRIMARY_MODEL", primaryModel),
+            KeychainStore.writeProviderAPIKey(primaryRouteProviderId, llmPrimaryKey),
+            KeychainStore.write("KSS_LLM_FALLBACK_BASE_URL", llmFallbackBaseUrl),
+            KeychainStore.write("KSS_LLM_FALLBACK_KEY", llmFallbackKey),
+            KeychainStore.write("KSS_LLM_FALLBACK_MODEL", fallbackModel),
+            KeychainStore.writeProviderAPIKey(fallbackRouteProviderId, llmFallbackKey),
+            KeychainStore.write("KSS_APP_LIVE", appLive ? "1" : ""),
+        ].allSatisfy { $0 }
+        guard writesSucceeded else {
+            results[source.rawValue] = DataSourceTestResult(
+                source: "llm", ok: false, latencyMs: nil,
+                error: "无法写入 macOS Keychain", hint: "请检查钥匙串访问权限", candidates: nil
+            )
+            return
+        }
+
+        do {
+            let response = try await Task.detached {
+                _ = try bridge.agentProviders(action: "set_route", primary: primary, fallback: fallback)
+                _ = try bridge.agentProviders(action: "reload_credentials")
+                return try bridge.agentProviders(action: "test")
+            }.value
+            let testResult = DataSourceTestResult(
+                source: response.source ?? "llm",
+                ok: response.ok ?? false,
+                latencyMs: response.latencyMs,
+                error: response.error,
+                hint: response.hint ?? response.status,
+                candidates: response.candidates
+            )
+            results[source.rawValue] = testResult
+            await store.loadAgentProviders()
+            store.refreshLLMCredentialsStatus()
+            await store.runSelfCheck()
+            if testResult.ok {
+                dirtySources.remove(source.rawValue)
+                savedSources.insert(source.rawValue)
+            } else {
+                savedSources.remove(source.rawValue)
+                dirtySources.insert(source.rawValue)
+            }
+        } catch {
+            results[source.rawValue] = DataSourceTestResult(
+                source: "llm", ok: false, latencyMs: nil,
+                error: error.localizedDescription,
+                hint: "配置未生效，请按提示检查", candidates: nil
+            )
+            savedSources.remove(source.rawValue)
+            dirtySources.insert(source.rawValue)
+        }
+    }
+
+    private var primaryRouteProviderId: String {
+        llmPrimaryBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? llmPrimaryProvider
+            : "kss-primary"
+    }
+
+    private var fallbackRouteProviderId: String {
+        llmFallbackBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? llmFallbackProvider
+            : "kss-fallback"
+    }
+
     private func runTest(_ source: SettingsDataSource) async {
         guard let bridge = store.bridge else { return }
         testing.insert(source.rawValue)
         defer { testing.remove(source.rawValue) }
-        let result = try? await Task.detached { try bridge.datasourceTest(source: source.rawValue) }.value
+        let result: DataSourceTestResult?
+        if source == .llm {
+            result = try? await Task.detached {
+                _ = try bridge.agentProviders(action: "reload_credentials")
+                let response = try bridge.agentProviders(action: "test")
+                return DataSourceTestResult(
+                    source: response.source ?? "llm",
+                    ok: response.ok ?? (response.status == "ready"),
+                    latencyMs: response.latencyMs,
+                    error: response.error,
+                    hint: response.hint ?? response.status,
+                    candidates: response.candidates
+                )
+            }.value
+            await store.loadAgentProviders()
+        } else {
+            result = try? await Task.detached { try bridge.datasourceTest(source: source.rawValue) }.value
+        }
         if let result {
             results[source.rawValue] = result
         }
+    }
+}
+
+enum SettingsCredentialChangePolicy {
+    static func shouldMarkDirty(isHydrating: Bool) -> Bool {
+        !isHydrating
     }
 }
 
@@ -654,6 +1041,12 @@ enum SettingsDataSource: String, CaseIterable, Identifiable {
         case .telegram: return .telegram
         case .llm: return .llm
         }
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
     }
 }
 

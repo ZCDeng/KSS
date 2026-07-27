@@ -34,11 +34,10 @@ final class XcomListChromeTests: XCTestCase {
         XCTAssertNotEqual(String(describing: hovered), String(describing: off))
     }
 
-    func testSeesawTimelineGeometryMatchesXcomReference() {
-        XCTAssertEqual(SeesawXcomChrome.feedColumnWidth, 600)
-        XCTAssertEqual(SeesawXcomChrome.sessionRailWidth, 320)
+    func testSeesawFocusGeometryCentersConversationWithoutThreeColumnBudget() {
+        XCTAssertEqual(SeesawXcomChrome.feedColumnWidth, 760)
         XCTAssertEqual(SeesawXcomChrome.headerHeight, 53)
-        XCTAssertEqual(SeesawXcomChrome.avatarSize, 40)
-        XCTAssertEqual(SeesawXcomChrome.minimumThreeColumnWidth, 1320)
+        XCTAssertEqual(SeesawXcomChrome.compactContentWidth, 820)
+        XCTAssertEqual(SeesawXcomChrome.overlayWidth, 380)
     }
 }

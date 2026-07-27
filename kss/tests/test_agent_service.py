@@ -1,15 +1,176 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import sys
 from pathlib import Path
 
 from kss.agent import AgentMessage, KSSAgentService, RuntimeRunOptions
 from kss.agent.context import ContextAssembler
+from kss.agent.provider import ModelCapabilities, ProviderError, ProviderEvent
 
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT / "scripts"))
 import kss_chat_loop as chat_loop  # noqa: E402
+
+
+def test_provider_connection_requires_a_finished_stream(tmp_path):
+    service = KSSAgentService(tmp_path, tmp_path)
+
+    class FinishedProvider:
+        def stream_sync(self, messages, tools, config):
+            assert messages[-1]["content"] == "Reply with OK only."
+            assert tools == []
+            assert config.model is None
+            yield ProviderEvent(
+                type="text",
+                model="model-a",
+                provider="primary",
+                text="OK",
+                metadata={"candidate_index": 0},
+            )
+            yield ProviderEvent(
+                type="finish",
+                model="model-a",
+                provider="primary",
+                finish_reason="stop",
+                metadata={"candidate_index": 0},
+            )
+
+    service.provider = FinishedProvider()
+    result = service.test_provider_connection()
+
+    assert result["ok"] is True
+    assert result["status"] == "ready"
+    assert result["candidates"][0]["ok"] is True
+
+
+def test_provider_connection_does_not_accept_partial_output(tmp_path):
+    service = KSSAgentService(tmp_path, tmp_path)
+
+    class PartialProvider:
+        def stream_sync(self, messages, tools, config):
+            yield ProviderEvent(
+                type="thinking",
+                model="model-a",
+                provider="primary",
+                text="partial",
+                metadata={"candidate_index": 0},
+            )
+            yield ProviderEvent(
+                type="error",
+                model="model-a",
+                provider="primary",
+                error=ProviderError(
+                    code="stream_failed",
+                    message="stream broke",
+                    phase="stream",
+                ),
+                metadata={"candidate_index": 0},
+            )
+
+    service.provider = PartialProvider()
+    result = service.test_provider_connection()
+
+    assert result["ok"] is False
+    assert result["status"] == "unavailable"
+    assert result["candidates"][0]["ok"] is False
+
+
+def test_service_resolves_images_only_at_provider_boundary_and_persists_thinking(
+    monkeypatch, tmp_path
+):
+    async def scenario():
+        service = KSSAgentService(tmp_path, tmp_path)
+        service.provider.model_capabilities = lambda _model=None: ModelCapabilities(
+            supports_images=True,
+            supports_thinking=True,
+        )
+        selected = tmp_path / "chart.png"
+        image_bytes = (
+            b"\x89PNG\r\n\x1a\n"
+            b"\x00\x00\x00\rIHDR"
+            b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+        )
+        selected.write_bytes(image_bytes)
+        attachment = service.import_attachment(str(selected))
+        captured = {}
+
+        async def fake_run_turn(messages, emit, request_write, **kwargs):
+            captured["messages"] = messages
+            user_blocks = messages[-1]["content"]
+            image = next(block for block in user_blocks if block["type"] == "image")
+            assert base64.b64decode(image["data"]) == image_bytes
+            assert image["mimeType"] == "image/png"
+            await emit({"type": "thinking_start", "content_index": 0})
+            await emit({
+                "type": "thinking_delta",
+                "text": "provider reasoning",
+                "content_index": 0,
+            })
+            await emit({"type": "chunk", "text": "可见回答", "content_index": 1})
+            await emit({"type": "done", "reason": "stop"})
+            return chat_loop.TurnTranscript(
+                messages=[
+                    *messages,
+                    {
+                        "role": "assistant",
+                        "content": "可见回答",
+                        "content_blocks": [
+                            {
+                                "type": "thinking",
+                                "text": "provider reasoning",
+                                "content_index": 0,
+                                "provider": "mock",
+                                "model": "mock-model",
+                                "signature": "sig",
+                            },
+                            {
+                                "type": "text",
+                                "text": "可见回答",
+                                "content_index": 1,
+                            },
+                        ],
+                    },
+                ],
+                run_state={"status": "done", "reason": "stop"},
+            )
+
+        monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+
+        async def no_write(**kwargs):
+            raise AssertionError("write gate should not be used")
+
+        result = await service.run_turn(
+            "multimodal",
+            "multimodal-client",
+            "看图",
+            lambda event: asyncio.sleep(0),
+            no_write,
+            attachment_ids=[attachment.id],
+        )
+
+        assert result.status == "completed"
+        messages = service.sessions.read_messages("multimodal")
+        user = next(message for message in messages if message.role == "user")
+        assistant = next(
+            message for message in messages if message.role == "assistant"
+        )
+        assert user.metadata["attachment_ids"] == [attachment.id]
+        assert any(
+            block.type == "image" and block.attachment_id == attachment.id
+            for block in user.content_blocks
+        )
+        assert assistant.content == "可见回答"
+        assert assistant.content_blocks[0].type == "thinking"
+        assert assistant.content_blocks[0].text == "provider reasoning"
+        session_text = (
+            tmp_path / "storage" / "agent" / "sessions" / "multimodal.jsonl"
+        ).read_text(encoding="utf-8")
+        assert base64.b64encode(image_bytes).decode("ascii") not in session_text
+        service.close()
+
+    asyncio.run(scenario())
 
 
 def test_service_enforces_per_run_capability_and_budget_envelope(

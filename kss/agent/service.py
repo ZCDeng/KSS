@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import time
@@ -11,10 +12,18 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping
 from uuid import uuid4
 
+from kss.agent.attachments import AttachmentRecord, AttachmentStore
 from kss.agent.context import ContextAssembler, ContextAssembly
 from kss.agent.jsonl import utc_timestamp
 from kss.agent.memory_store import MemoryRecall, MemoryStore
-from kss.agent.provider import OpenAICompatibleProvider
+from kss.agent.pi_ai_provider import PiAIProvider
+from kss.agent.provider import OpenAICompatibleProvider, ProviderConfig
+from kss.agent.provider_route import (
+    ProviderRoute,
+    ProviderRouteSet,
+    ProviderRouteStore,
+    legacy_routes_from_environment,
+)
 from kss.agent.runtime import AgentRuntime, RuntimeTurn
 from kss.agent.session_store import (
     QueuedInputLimitError,
@@ -22,7 +31,14 @@ from kss.agent.session_store import (
     SessionStore,
 )
 from kss.agent.skills import SkillManager, SkillResourceError
-from kss.agent.types import AgentEvent, AgentMessage, RunResult, ToolCall, convert_to_llm
+from kss.agent.types import (
+    AgentContentBlock,
+    AgentEvent,
+    AgentMessage,
+    RunResult,
+    ToolCall,
+    convert_to_llm,
+)
 from kss.llm.chat_client import ChatClient, sanitize_user_text
 
 EmitEvent = Callable[[AgentEvent], Awaitable[None]]
@@ -54,6 +70,7 @@ class RuntimeRunOptions:
     max_provider_tokens: int | None = None
     allow_write_tools: bool = True
     trusted_internal_input: bool = False
+    profile_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.max_steps < 1:
@@ -71,31 +88,305 @@ class KSSAgentService:
     human-in-the-loop write gate.
     """
 
-    def __init__(self, state_root: str | Path, project_root: str | Path) -> None:
+    def __init__(
+        self,
+        state_root: str | Path,
+        project_root: str | Path,
+        *,
+        start_provider: bool = False,
+    ) -> None:
         self.state_root = Path(state_root)
         self.project_root = Path(project_root)
         self.sessions = SessionStore(self.state_root)
         self.skills = SkillManager(self.project_root, self.state_root)
         self.memories = MemoryStore(self.state_root)
-        self.provider = OpenAICompatibleProvider()
-        self.model = os.getenv("KSS_LLM_MODEL") or ""
+        self.attachments = AttachmentStore(self.state_root)
+        self.route_store = ProviderRouteStore(self.state_root)
+        self.provider = self._build_provider(start_provider=start_provider)
+        self.model = self._active_model()
         self.assembler = ContextAssembler(
             model_capabilities=self.provider.model_capabilities(self.model)
         )
         self._request_writes: dict[tuple[str, str], RequestWrite] = {}
         self._source_queue_ids: dict[tuple[str, str], str] = {}
         self._run_options: dict[tuple[str, str], RuntimeRunOptions] = {}
+        self._turn_attachment_ids: dict[tuple[str, str], tuple[str, ...]] = {}
         self._transcripts: dict[str, Any] = {}
         self.runtime = AgentRuntime(
             self._execute_turn,
             model=self.model or None,
-            model_resolver=lambda: os.getenv("KSS_LLM_MODEL") or None,
+            model_resolver=lambda: self._active_model() or None,
             message_loader=self.sessions.read_messages,
             run_admission=self._admit_run,
             persistence_barrier=self._persist_turn,
             queue_store=self.sessions,
             runner_owns_turn_boundaries=True,
         )
+
+    def _build_provider(self, *, start_provider: bool) -> Any:
+        socket_path = os.getenv("KSS_PI_AI_CREDENTIAL_SOCKET", "").strip()
+        nonce = os.getenv("KSS_PI_AI_CREDENTIAL_NONCE", "").strip()
+        self._credential_socket: tuple[str, str] | None = (
+            (socket_path, nonce) if socket_path and nonce else None
+        )
+        if self._credential_socket is not None:
+            provider = PiAIProvider(
+                route_resolver=self.route_store.load,
+                credential_socket_resolver=self._credential_socket_snapshot,
+            )
+        else:
+            # One-release compatibility path: pi-ai receives the legacy
+            # Keychain-derived environment snapshot in memory only.
+            provider = PiAIProvider(
+                route_resolver=self.route_store.load,
+                credential_resolver=lambda: legacy_routes_from_environment()[1],
+            )
+        if not start_provider:
+            return provider
+        try:
+            provider.start()
+            return provider
+        except Exception:
+            provider.close()
+            return OpenAICompatibleProvider()
+
+    def _credential_socket_snapshot(self) -> tuple[str, str]:
+        if self._credential_socket is None:
+            raise ValueError("credential broker is not configured")
+        return self._credential_socket
+
+    def _active_model(self) -> str:
+        try:
+            if isinstance(self.provider, PiAIProvider):
+                return self.route_store.load().primary.model_id
+        except Exception:
+            pass
+        return os.getenv("KSS_LLM_MODEL") or ""
+
+    def provider_catalog(
+        self,
+        *,
+        refresh: bool = False,
+        provider_id: str | None = None,
+    ) -> dict[str, Any]:
+        routes = self.route_store.load()
+        models: list[dict[str, Any]] = []
+        status = "legacy"
+        error: str | None = None
+        if isinstance(self.provider, PiAIProvider):
+            status = "ready" if self.provider.is_available else "unavailable"
+            try:
+                catalog = (
+                    self.provider.refresh_models(provider_id)
+                    if refresh
+                    else self.provider.list_models(provider_id)
+                )
+                models = [asdict(model) for model in catalog]
+                status = "ready"
+            except Exception as exc:  # noqa: BLE001
+                status = "unavailable"
+                error = f"{type(exc).__name__}: {exc}"
+        providers = self._provider_descriptors(routes=routes, models=models)
+        return {
+            "provider_backend": (
+                "pi-ai" if isinstance(self.provider, PiAIProvider) else "legacy"
+            ),
+            "status": status,
+            "providers": providers,
+            "models": models,
+            "primary": routes.primary.as_dict(),
+            "fallback": routes.fallback.as_dict() if routes.fallback else None,
+            "error": error,
+        }
+
+    def _provider_descriptors(
+        self,
+        *,
+        routes: ProviderRouteSet,
+        models: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        grouped: dict[str, dict[str, Any]] = {}
+        authenticated = (
+            self.provider.authenticated_provider_ids
+            if isinstance(self.provider, PiAIProvider)
+            else frozenset()
+        )
+        for route in routes.ordered():
+            grouped.setdefault(
+                route.provider_id,
+                {
+                    "id": route.provider_id,
+                    "name": route.provider_id,
+                    "auth_kind": "api_key",
+                    "base_url": route.base_url,
+                    "authenticated": route.provider_id in authenticated,
+                    "models": [],
+                },
+            )
+        for model in models:
+            if not isinstance(model, dict):
+                continue
+            provider_id = str(model.get("provider_id") or "unknown")
+            provider = grouped.setdefault(
+                provider_id,
+                {
+                    "id": provider_id,
+                    "name": provider_id,
+                    "auth_kind": "api_key",
+                    "base_url": None,
+                    "authenticated": provider_id in authenticated,
+                    "models": [],
+                },
+            )
+            provider["models"].append(model)
+        return [grouped[key] for key in sorted(grouped)]
+
+    def set_provider_routes(
+        self,
+        *,
+        primary: Mapping[str, Any],
+        fallback: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        routes = ProviderRouteSet(
+            primary=ProviderRoute.from_dict(primary),
+            fallback=ProviderRoute.from_dict(fallback) if fallback else None,
+        )
+        self.route_store.save(routes)
+        self.model = routes.primary.model_id
+        return self.provider_catalog()
+
+    def reload_provider_credentials(
+        self,
+        *,
+        socket_path: str | None = None,
+        nonce: str | None = None,
+    ) -> dict[str, Any]:
+        if socket_path or nonce:
+            if not socket_path or not nonce:
+                raise ValueError("credential reload requires socket_path and nonce")
+            self._credential_socket = (socket_path, nonce)
+        if isinstance(self.provider, PiAIProvider):
+            self.provider.invalidate_credentials(reset_broker_nonce=True)
+            self.provider.reload_credentials()
+        return self.provider_catalog()
+
+    def test_provider_connection(self) -> dict[str, Any]:
+        """Run a minimal provider stream probe without exposing credentials."""
+
+        routes = self.route_store.load()
+        started = time.monotonic()
+        candidates = [
+            {
+                "role": "primary" if index == 0 else "fallback",
+                "provider_id": route.provider_id,
+                "model": route.model_id,
+                "ok": False,
+                "latency_ms": None,
+                "hint": "not reached",
+            }
+            for index, route in enumerate(routes.ordered())
+        ]
+        if not candidates:
+            catalog = self.provider_catalog()
+            catalog.update({
+                "source": "llm",
+                "ok": False,
+                "status": "unavailable",
+                "latency_ms": None,
+                "hint": "未配置 provider route",
+                "candidates": [],
+            })
+            return catalog
+
+        try:
+            for event in self.provider.stream_sync(
+                [{"role": "user", "content": "Reply with OK only."}],
+                [],
+                ProviderConfig(
+                    temperature=0,
+                    timeout=30,
+                    include_usage=True,
+                ),
+            ):
+                raw_index = event.metadata.get("candidate_index")
+                candidate_index = raw_index if isinstance(raw_index, int) else 0
+                if not (0 <= candidate_index < len(candidates)):
+                    candidate_index = 0
+                candidate = candidates[candidate_index]
+                if event.model:
+                    candidate["model"] = event.model
+                candidate["latency_ms"] = round((time.monotonic() - started) * 1000, 1)
+                if event.type == "error":
+                    message = event.error.message if event.error else "provider error"
+                    candidate["hint"] = message
+                    candidate["error"] = message
+                    continue
+                if event.type in {
+                    "text_start",
+                    "text",
+                    "text_end",
+                    "thinking_start",
+                    "thinking",
+                    "thinking_end",
+                    "usage",
+                }:
+                    candidate["hint"] = "streaming"
+                if event.type == "finish":
+                    candidate["ok"] = True
+                    candidate["hint"] = "stream ok"
+                    break
+            ok = any(bool(candidate.get("ok")) for candidate in candidates)
+            latency_ms = round((time.monotonic() - started) * 1000, 1)
+            catalog = self.provider_catalog()
+            catalog.update({
+                "source": "llm",
+                "ok": ok,
+                "status": "ready" if ok else "unavailable",
+                "latency_ms": latency_ms,
+                "hint": (
+                    "stream ok"
+                    if ok
+                    else next(
+                        (
+                            str(candidate.get("hint"))
+                            for candidate in candidates
+                            if candidate.get("hint")
+                            and candidate.get("hint") not in {"not reached", "streaming"}
+                        ),
+                        "provider stream failed",
+                    )
+                ),
+                "candidates": candidates,
+            })
+            return catalog
+        except Exception as exc:  # noqa: BLE001 - provider helpers fail across process boundaries.
+            message = str(exc)
+            candidates[0]["hint"] = message
+            candidates[0]["error"] = message
+            candidates[0]["latency_ms"] = round((time.monotonic() - started) * 1000, 1)
+            catalog = self.provider_catalog()
+            catalog.update({
+                "source": "llm",
+                "ok": False,
+                "status": "unavailable",
+                "latency_ms": round((time.monotonic() - started) * 1000, 1),
+                "hint": message,
+                "candidates": candidates,
+            })
+            return catalog
+
+    def import_attachment(
+        self,
+        source: str,
+        *,
+        extracted_text: str | None = None,
+    ) -> AttachmentRecord:
+        return self.attachments.import_file(source, extracted_text=extracted_text)
+
+    def close(self) -> None:
+        close = getattr(self.provider, "close", None)
+        if callable(close):
+            close()
 
     def duplicate_turn(self, session_id: str, client_turn_id: str) -> DuplicateTurn | None:
         """Return the durable disposition for an already-seen client turn."""
@@ -130,6 +421,7 @@ class KSSAgentService:
         emit: EmitEvent,
         request_write: RequestWrite,
         source_queue_id: str | None = None,
+        attachment_ids: list[str] | tuple[str, ...] | None = None,
         *,
         run_options: RuntimeRunOptions | None = None,
     ) -> RunResult:
@@ -140,6 +432,8 @@ class KSSAgentService:
             self._source_queue_ids[key] = source_queue_id
         if run_options is not None:
             self._run_options[key] = run_options
+        if attachment_ids:
+            self._turn_attachment_ids[key] = tuple(str(value) for value in attachment_ids)
         try:
             turn_input = input
             if run_options is None or not run_options.trusted_internal_input:
@@ -156,6 +450,7 @@ class KSSAgentService:
             self._request_writes.pop(key, None)
             self._source_queue_ids.pop(key, None)
             self._run_options.pop(key, None)
+            self._turn_attachment_ids.pop(key, None)
 
     def steer(
         self,
@@ -326,6 +621,40 @@ class KSSAgentService:
 
         had_user = any(message.role == "user" for message in turn.messages[:-1])
         current_user = turn.messages[-1]
+        attachment_ids = self._turn_attachment_ids.get(
+            (session_id, client_turn_id),
+            (),
+        )
+        if attachment_ids:
+            records = self.attachments.validate_turn(
+                self.attachments.load_record(value) for value in attachment_ids
+            )
+            blocks: list[AgentContentBlock] = [
+                AgentContentBlock(type="text", text=current_user.content, content_index=0)
+            ]
+            next_index = 1
+            for record in records:
+                record_blocks = self.attachments.content_blocks(
+                    record,
+                    content_index=next_index,
+                    include_extracted_text=False,
+                )
+                blocks.extend(record_blocks)
+                next_index += len(record_blocks)
+            current_user = AgentMessage(
+                id=current_user.id,
+                role=current_user.role,
+                content=current_user.content,
+                timestamp=current_user.timestamp,
+                tool_calls=current_user.tool_calls,
+                content_blocks=tuple(blocks),
+                metadata={
+                    **current_user.metadata,
+                    "attachment_ids": list(attachment_ids),
+                    "attachments": [record.to_payload() for record in records],
+                },
+            )
+            turn.messages[-1] = current_user
         source_queue_id = self._source_queue_ids.get((session_id, client_turn_id))
         self.sessions.append_message(
             session_id,
@@ -371,6 +700,13 @@ class KSSAgentService:
             session_id, "skill_index", {"run_id": run_id, "status": skill_status}
         )
         discovered = self.skills.discover()[0]
+        if run_options.profile_id is not None:
+            discovered = [
+                skill
+                for skill in discovered
+                if not skill.allowed_profiles
+                or run_options.profile_id in skill.allowed_profiles
+            ]
         if run_options.allowed_skills is not None:
             discovered = [
                 skill
@@ -401,6 +737,7 @@ class KSSAgentService:
         all_specs = {
             str(spec.get("name") or ""): spec for spec in chat_loop.TOOL_SPECS
         }
+        self.skills.available_tools = frozenset(all_specs)
         if run_options.allowed_tools is None:
             selected_specs = list(chat_loop.TOOL_SPECS)
         else:
@@ -665,9 +1002,32 @@ class KSSAgentService:
         def transform_context(
             conversation: list[dict[str, Any]],
         ) -> list[dict[str, Any]]:
-            return _merge_context(current_assembly, conversation)
+            route = self.route_store.load().primary
+            return self._prepare_provider_messages(
+                _merge_context(
+                    current_assembly,
+                    conversation,
+                    provider=route.provider_id,
+                    model=route.model_id,
+                )
+            )
 
-        history = [convert_to_llm(message) for message in assembly.kept_messages]
+        active_route = self.route_store.load().primary
+        history = self._prepare_provider_messages(
+            [
+                convert_to_llm(
+                    message,
+                    include_thinking=True,
+                    provider=active_route.provider_id,
+                    model=active_route.model_id,
+                )
+                for message in assembly.kept_messages
+            ]
+        )
+        chat_client = ChatClient(
+            provider=self.provider,
+            model=self._active_model() or None,
+        )
         try:
             transcript = await chat_loop.run_turn(
                 history,
@@ -681,6 +1041,7 @@ class KSSAgentService:
                 emit_internal_boundaries=True,
                 max_steps=run_options.max_steps,
                 turn_timeout=run_options.timeout_seconds,
+                chat_client=chat_client,
             )
         except BaseException:
             if message_open:
@@ -693,7 +1054,9 @@ class KSSAgentService:
                 boundary_open = False
                 await turn.emit("turn_end", {"reason": "aborted"})
             raise
-        self._transcripts[run_id] = transcript
+        self._transcripts[run_id] = _sanitize_transcript(
+            transcript.as_dict()
+        )
         usage = transcript.run_state.get("usage")
         if isinstance(usage, dict):
             turn.add_usage(**usage)
@@ -711,6 +1074,9 @@ class KSSAgentService:
             turn.append_message(message)
         reason = str(transcript.run_state.get("reason") or "completed")
         failed = reason == "error" or provider_budget_exceeded
+        provider_error = str(
+            transcript.run_state.get("error") or "provider stream failed"
+        )
         if provider_budget_exceeded:
             reason = "provider_token_budget_exceeded"
         return RunResult(
@@ -722,11 +1088,66 @@ class KSSAgentService:
             error=(
                 "provider token budget exceeded"
                 if provider_budget_exceeded
-                else "provider stream failed" if failed else None
+                else provider_error if failed else None
             ),
             usage=dict(turn.state.usage),
             termination_reason=reason,
         )
+
+    def _prepare_provider_messages(
+        self,
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Resolve durable attachment IDs only at the provider boundary."""
+
+        supports_images = self.provider.model_capabilities(
+            self._active_model()
+        ).supports_images
+        prepared: list[dict[str, Any]] = []
+        for message in messages:
+            content = message.get("content")
+            if not isinstance(content, list):
+                prepared.append(message)
+                continue
+            blocks: list[dict[str, Any]] = []
+            for raw in content:
+                if not isinstance(raw, Mapping):
+                    continue
+                block = dict(raw)
+                block_type = str(block.get("type") or "")
+                if block_type == "image":
+                    attachment_id = block.get("attachment_id")
+                    if not isinstance(attachment_id, str) or not supports_images:
+                        continue
+                    record = self.attachments.load_record(attachment_id)
+                    if record.kind != "image":
+                        continue
+                    block = {
+                        "type": "image",
+                        "data": base64.b64encode(
+                            self.attachments.load_bytes(record)
+                        ).decode("ascii"),
+                        "mimeType": record.mime_type,
+                    }
+                elif block_type == "attachment_ref":
+                    attachment_id = block.get("attachment_id")
+                    if isinstance(attachment_id, str):
+                        record = self.attachments.load_record(attachment_id)
+                        extracted = self.attachments.load_extracted_text(record)
+                        if extracted:
+                            blocks.append(
+                                {
+                                    "type": "text",
+                                    "text": (
+                                        f"\n\n[附件 {record.filename} 提取文本]\n"
+                                        f"{extracted}\n[附件文本结束]\n"
+                                    ),
+                                }
+                            )
+                    continue
+                blocks.append(block)
+            prepared.append({**message, "content": blocks})
+        return prepared
 
     async def _assemble_context(
         self,
@@ -807,8 +1228,9 @@ class KSSAgentService:
 
         def collect() -> tuple[str, dict[str, Any]]:
             client = ChatClient(
-                model=os.getenv("KSS_LLM_MODEL") or None,
+                model=self._active_model() or None,
                 timeout=30.0,
+                provider=self.provider,
             )
             if hasattr(abort_token, "add_callback"):
                 abort_token.add_callback(client.abort_active_stream)
@@ -850,7 +1272,13 @@ class KSSAgentService:
             self.sessions.append_entry(result.session_id, "run_state", run_state)
             if transcript is not None:
                 self.sessions.append_entry(
-                    result.session_id, "transcript", transcript.as_dict()
+                    result.session_id,
+                    "transcript",
+                    (
+                        dict(transcript)
+                        if isinstance(transcript, Mapping)
+                        else transcript.as_dict()
+                    ),
                 )
             self.sessions.finish_run(
                 result.session_id,
@@ -884,10 +1312,22 @@ def _loop_event_name(event_type: str) -> str:
 
 
 def _merge_context(
-    assembly: ContextAssembly, conversation: list[dict[str, Any]]
+    assembly: ContextAssembly,
+    conversation: list[dict[str, Any]],
+    *,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> list[dict[str, Any]]:
     system = [message for message in conversation if message.get("role") == "system"]
-    context = [convert_to_llm(message) for message in assembly.context.messages]
+    context = [
+        convert_to_llm(
+            message,
+            include_thinking=True,
+            provider=provider,
+            model=model,
+        )
+        for message in assembly.context.messages
+    ]
     remaining = [
         message for message in conversation if message.get("role") != "system"
     ]
@@ -905,7 +1345,7 @@ def _new_transcript_messages(
             index
             for index, message in enumerate(messages)
             if message.get("role") == "user"
-            and message.get("content") == current_user_text
+            and _llm_visible_text(message.get("content")) == current_user_text
         ),
         default=len(messages) - 1,
     )
@@ -938,7 +1378,37 @@ def _message_from_llm(message: dict[str, Any], *, run_id: str) -> AgentMessage:
             )
         )
     metadata: dict[str, Any] = {"run_id": run_id}
+    if message.get("provider") is not None:
+        metadata["provider"] = str(message["provider"])
+    if message.get("model") is not None:
+        metadata["model"] = str(message["model"])
     content = message.get("content")
+    structured_content = message.get("content_blocks")
+    blocks: list[AgentContentBlock] = []
+    if isinstance(structured_content, list) or isinstance(content, list):
+        raw_blocks = (
+            structured_content if isinstance(structured_content, list) else content
+        )
+        for index, raw in enumerate(raw_blocks):
+            if not isinstance(raw, Mapping):
+                continue
+            block_type = str(raw.get("type") or "")
+            if block_type not in {"text", "thinking", "image", "attachment_ref"}:
+                continue
+            normalized = dict(raw)
+            normalized["type"] = block_type
+            normalized.setdefault("content_index", index)
+            if block_type == "thinking":
+                normalized["text"] = raw.get("text") or raw.get("thinking") or ""
+                normalized["signature"] = (
+                    raw.get("signature") or raw.get("thinkingSignature")
+                )
+                normalized.setdefault("provider", message.get("provider"))
+                normalized.setdefault("model", message.get("model"))
+            try:
+                blocks.append(AgentContentBlock.from_payload(normalized))
+            except (KeyError, TypeError, ValueError):
+                continue
     if role == "tool":
         metadata["tool_call_id"] = message.get("tool_call_id")
         metadata["name"] = message.get("name")
@@ -957,11 +1427,46 @@ def _message_from_llm(message: dict[str, Any], *, run_id: str) -> AgentMessage:
     return AgentMessage(
         id=str(message.get("id") or uuid4().hex),
         role=role,
-        content="" if content is None else str(content),
+        content=(
+            _llm_visible_text(content)
+            if isinstance(content, list)
+            else "" if content is None else str(content)
+        ),
         timestamp=float(message.get("timestamp") or utc_timestamp()),
         tool_calls=tuple(calls),
+        content_blocks=tuple(blocks),
         metadata=metadata,
     )
+
+
+def _llm_visible_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    return "".join(
+        str(item.get("text") or "")
+        for item in content
+        if isinstance(item, Mapping) and item.get("type") == "text"
+    )
+
+
+def _sanitize_transcript(value: Any) -> Any:
+    """Remove transient attachment payloads before append-only persistence."""
+
+    if isinstance(value, list):
+        return [_sanitize_transcript(item) for item in value]
+    if not isinstance(value, Mapping):
+        return value
+    is_image_payload = value.get("type") == "image" and "data" in value
+    result = {
+        str(key): _sanitize_transcript(item)
+        for key, item in value.items()
+        if not (is_image_payload and key == "data")
+    }
+    if is_image_payload:
+        result["redacted"] = True
+    return result
 
 
 def _parse_summary(text: str) -> dict[str, str]:

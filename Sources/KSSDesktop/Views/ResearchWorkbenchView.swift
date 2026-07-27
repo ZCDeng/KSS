@@ -10,6 +10,7 @@ struct ResearchWorkbenchView: View {
     @State private var profileId = "investment-weekly-v3"
     @State private var dateRange = ""
     @State private var asOf = ""
+    @State private var useMultiAgentPilot = false
     @State private var selectedArtifact: ResearchArtifact?
     @State private var artifactToPublish: ResearchArtifact?
     @State private var publishDestination: String?
@@ -101,7 +102,8 @@ struct ResearchWorkbenchView: View {
                         Task {
                             await store.createResearchGoal(
                                 objective: candidate.objective,
-                                profileId: candidate.profileId ?? "investment-weekly-v3")
+                                profileId: candidate.profileId ?? "investment-weekly-v3",
+                                executionMode: "single")
                         }
                     }
                     .buttonStyle(.borderedProminent)
@@ -185,6 +187,22 @@ struct ResearchWorkbenchView: View {
                         ProgressView(value: progress)
                             .tint(theme.accent)
                     }
+                    HStack(spacing: 8) {
+                        Label(
+                            goal.executionMode == "multi_agent_pilot"
+                                ? "多 Agent 试验"
+                                : "单 Agent",
+                            systemImage: goal.executionMode == "multi_agent_pilot"
+                                ? "person.3.sequence.fill"
+                                : "person.fill"
+                        )
+                        if goal.executionMode == "multi_agent_pilot",
+                           !goal.researchAgents.isEmpty {
+                            Text("\(goal.researchAgents.count) 个研究角色")
+                        }
+                    }
+                    .font(KSSFont.themed(10.5, .semibold, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
                     if let snapshot = goal.snapshot {
                         HStack(spacing: 12) {
                             Label(
@@ -252,7 +270,14 @@ struct ResearchWorkbenchView: View {
                             ForEach(goal.tasks) { task in
                                 HStack {
                                     ResearchStatusLabel(status: task.status)
-                                    Text(task.title)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(task.title)
+                                        if let agentId = task.agentId, !agentId.isEmpty {
+                                            Text(agentId)
+                                                .font(KSSFont.themed(10.5, .medium, theme: theme))
+                                                .foregroundStyle(theme.textSecondary)
+                                        }
+                                    }
                                     Spacer()
                                     if ["failed", "incomplete", "interrupted", "blocked"]
                                         .contains(task.status.lowercased()) {
@@ -261,6 +286,34 @@ struct ResearchWorkbenchView: View {
                                         }
                                         .buttonStyle(.bordered)
                                         .controlSize(.small)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if goal.executionMode == "multi_agent_pilot",
+                   !goal.researchAgents.isEmpty {
+                    section("研究角色", systemImage: "person.3.sequence.fill") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(goal.researchAgents) { agent in
+                                VStack(alignment: .leading, spacing: 3) {
+                                    HStack {
+                                        Text(agent.title)
+                                            .fontWeight(.semibold)
+                                        Text(agent.agentId)
+                                            .foregroundStyle(theme.textSecondary)
+                                        Spacer()
+                                        if let tasks = agent.tasks {
+                                            Text("\(agent.succeeded ?? 0)/\(tasks) 任务")
+                                                .foregroundStyle(theme.textSecondary)
+                                        }
+                                    }
+                                    if let focus = agent.focus ?? agent.role {
+                                        Text(focus)
+                                            .font(KSSFont.themed(11.5, theme: theme))
+                                            .foregroundStyle(theme.textSecondary)
                                     }
                                 }
                             }
@@ -515,6 +568,16 @@ struct ResearchWorkbenchView: View {
                     }
                 }
             }
+            Toggle(isOn: $useMultiAgentPilot) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("启用多 Agent 研究试验")
+                        .font(KSSFont.themed(12.5, .semibold, theme: theme))
+                    Text("仅改变研究任务分工和后台调度；普通 Seesaw、写确认和金融工具顺序执行不变。")
+                        .font(KSSFont.themed(11, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                }
+            }
+            .toggleStyle(.switch)
             HStack {
                 Spacer()
                 Button("取消") { showingCreate = false }
@@ -529,6 +592,9 @@ struct ResearchWorkbenchView: View {
                         await store.createResearchGoal(
                             objective: text,
                             profileId: profileId,
+                            executionMode: useMultiAgentPilot
+                                ? "multi_agent_pilot"
+                                : "single",
                             inputs: inputs)
                     }
                 }
@@ -557,6 +623,7 @@ struct ResearchWorkbenchView: View {
         let defaults = KSSStore.defaultResearchInputs()
         dateRange = defaults["date_range"] ?? ""
         asOf = defaults["as_of"] ?? ""
+        useMultiAgentPilot = false
     }
 
     private func chooseDraftDestination(for artifact: ResearchArtifact) {

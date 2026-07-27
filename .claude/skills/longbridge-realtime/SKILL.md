@@ -1,5 +1,11 @@
 ---
 name: longbridge-realtime
+category: kss-data-source
+version: 1.0.0
+source: kss-bundled
+protected: true
+required_tools: [get_longbridge_quote, get_longbridge_quotes, get_intraday_snapshot]
+allowed_profiles: [chat, generic-research-v1, investment-weekly-v3]
 description: 用 Longbridge CLI（经 KSS 只读代理）拉取沪深实时行情 quote / kline 和静态信息，补强复盘。
 tags: [realtime, longbridge, cli, seesaw, review]
 triggers: ["此刻", "现在多少", "实时价", "盘中", "快照", "分钟线", "分时", "longbridge", "当前行情"]

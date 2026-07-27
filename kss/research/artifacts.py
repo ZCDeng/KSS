@@ -82,6 +82,7 @@ class ArtifactStore:
             now = utc_now()
             with connect(self.db_path) as conn:
                 ensure_schema(conn)
+                conn.execute("BEGIN IMMEDIATE")
                 conn.execute(
                     """
                     INSERT INTO research_artifacts (
@@ -102,6 +103,10 @@ class ArtifactStore:
                         dumps(metadata or {}),
                         now,
                     ),
+                )
+                conn.execute(
+                    "UPDATE research_goals SET updated_at=updated_at WHERE goal_id=?",
+                    (goal_id,),
                 )
                 row = conn.execute("SELECT COALESCE(MAX(sequence), 0) + 1 AS seq FROM research_events WHERE goal_id=?", (goal_id,)).fetchone()
                 sequence = int(row["seq"])
@@ -186,6 +191,11 @@ class ArtifactStore:
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp_path, destination)
+            directory_fd = os.open(parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         finally:
             tmp_path.unlink(missing_ok=True)
         return {"destination": str(destination), "sha256": hashlib.sha256(data).hexdigest(), "size_bytes": len(data)}

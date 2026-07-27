@@ -16,6 +16,7 @@ from kss.agent.types import (
     QueuedInputMode,
     SessionStatus,
     ToolCall,
+    message_content_blocks_from_payload,
 )
 
 
@@ -502,6 +503,9 @@ class SessionStore:
                                 error=call.get("error"),
                             )
                             for call in payload.get("tool_calls", ())
+                        ),
+                        content_blocks=message_content_blocks_from_payload(
+                            payload.get("content_blocks")
                         ),
                         metadata={
                             **payload.get("metadata", {}),

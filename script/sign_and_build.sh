@@ -29,6 +29,8 @@ APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 ENTITLEMENTS="$ROOT_DIR/script/KSSDesktop.entitlements"
+NODE_ENTITLEMENTS="$ROOT_DIR/script/NodeHelper.entitlements"
+PI_AI_BUILD_ROOT="$ROOT_DIR/.build/pi-ai-helper"
 
 # ---- 签名身份解析（缺则大声失败）----
 SIGN_IDENTITY="${KSS_SIGN_IDENTITY:-}"
@@ -47,6 +49,10 @@ echo "签名身份：$SIGN_IDENTITY"
 
 cd "$ROOT_DIR"
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+# pi-ai is a signed, self-contained provider helper. Preparation pins both the
+# Node runtime archive checksum and npm dependency lock; release bundles never
+# fall back to a system Node installation.
+KSS_PI_AI_OUTPUT_ROOT="$PI_AI_BUILD_ROOT" "$ROOT_DIR/script/prepare_pi_ai_helper.sh"
 # 强制 swiftpm 原生 build-system（与 build_and_run.sh 一致）：默认 build system
 # 产出 Contents/ 布局的资源包，运行时 Bundle.module 定位不到 →
 # resource_bundle_accessor.swift 启动即 SIGTRAP。native 落平铺资源包，布局可被找到。
@@ -116,6 +122,10 @@ for item in scripts kss deploy pyproject.toml uv.lock backtest_etf_radar.py run_
   copy_resource_item "$item" "$APP_RESOURCES"
 done
 
+# ---- pi-ai provider helper（固定 Node 22.19.0 arm64 + pi-ai 0.82.1）----
+cp -R "$PI_AI_BUILD_ROOT/runtime" "$APP_RESOURCES/pi-ai-runtime"
+cp -R "$PI_AI_BUILD_ROOT/helper" "$APP_RESOURCES/pi-ai-helper"
+
 # ---- Agent skills 进 Resources（bundle-mode 只读发现面）----
 for skills_root in .claude/skills .agents/skills; do
   copy_resource_item "$skills_root" "$APP_RESOURCES/$(dirname "$skills_root")"
@@ -150,7 +160,20 @@ cat >"$INFO_PLIST" <<PLIST
 PLIST
 
 # ---- 签名（KTD6：只签 .app + hardened runtime；运行时是子进程，无逐 dylib 循环）----
-# 先签内嵌资源 bundle（若有），再签顶层 .app。
+# 先签 Node helper executable 和内嵌资源 bundle（若有），再签顶层 .app。
+if find "$APP_RESOURCES/pi-ai-helper/node_modules" -type f -name '*.node' -print -quit | grep -q .; then
+  echo "ERROR: pi-ai helper contains unsupported native .node modules." >&2
+  exit 1
+fi
+codesign --force --options runtime --timestamp \
+  --entitlements "$NODE_ENTITLEMENTS" \
+  --sign "$SIGN_IDENTITY" "$APP_RESOURCES/pi-ai-runtime/bin/node"
+codesign --verify --strict --verbose=2 "$APP_RESOURCES/pi-ai-runtime/bin/node"
+if ! codesign -d --entitlements :- "$APP_RESOURCES/pi-ai-runtime/bin/node" 2>&1 \
+  | grep -q 'com.apple.security.cs.allow-jit'; then
+  echo "ERROR: signed Node helper is missing allow-jit entitlement." >&2
+  exit 1
+fi
 # SwiftPM 资源包是平铺目录（无 Info.plist）→ codesign 拒签；补最小 Info.plist 使其成合法 bundle。
 if [ -d "$APP_RESOURCE_BUNDLE" ]; then
   # SwiftPM 资源包布局二选一，决定是否补 Info.plist：

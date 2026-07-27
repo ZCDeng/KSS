@@ -1,0 +1,12 @@
+{
+  "name": "kss-pi-ai-helper",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0 <23"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.82.1"
+  }
+}

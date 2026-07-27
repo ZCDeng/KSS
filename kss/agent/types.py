@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Iterable, Literal, Mapping
 
 MemoryKind = Literal["preference", "decision", "thesis"]
 MemoryStatus = Literal["proposed", "approved", "archived", "deleted"]
@@ -13,6 +13,13 @@ RuntimeStatus = Literal["starting", "running", "completed", "failed", "aborted",
 RunTerminalStatus = Literal["completed", "failed", "aborted", "interrupted"]
 QueuedInputMode = Literal["steering", "follow_up"]
 QueuedInputStatus = Literal["queued", "restored", "applied", "discarded"]
+AgentContentType = Literal[
+    "text",
+    "thinking",
+    "image",
+    "attachment_ref",
+    "tool_call",
+]
 
 
 @dataclass(frozen=True)
@@ -35,24 +42,130 @@ class ToolCall:
 
 
 @dataclass(frozen=True)
+class AgentContentBlock:
+    """Provider-neutral message content block.
+
+    Attachment and image blocks contain durable object references, never raw
+    file bytes or base64. ``thinking`` is kept separate from visible text so it
+    cannot accidentally enter compaction, memories, or evidence.
+    """
+
+    type: AgentContentType
+    text: str | None = None
+    content_index: int | None = None
+    signature: str | None = None
+    redacted: bool = False
+    provider: str | None = None
+    model: str | None = None
+    attachment_id: str | None = None
+    mime_type: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.type not in {
+            "text",
+            "thinking",
+            "image",
+            "attachment_ref",
+            "tool_call",
+        }:
+            raise ValueError(f"unsupported content block type: {self.type}")
+        if self.content_index is not None and self.content_index < 0:
+            raise ValueError("content_index must be non-negative")
+        if self.type in {"text", "thinking"} and self.text is None:
+            raise ValueError(f"{self.type} content block requires text")
+        if self.type in {"image", "attachment_ref"} and not self.attachment_id:
+            raise ValueError(f"{self.type} content block requires attachment_id")
+
+    def to_payload(self) -> dict[str, Any]:
+        """Return the additive v1 JSON representation."""
+        payload: dict[str, Any] = {"type": self.type}
+        for key in (
+            "text",
+            "content_index",
+            "signature",
+            "provider",
+            "model",
+            "attachment_id",
+            "mime_type",
+        ):
+            value = getattr(self, key)
+            if value is not None:
+                payload[key] = value
+        if self.redacted:
+            payload["redacted"] = True
+        if self.metadata:
+            payload["metadata"] = dict(self.metadata)
+        return payload
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> AgentContentBlock:
+        """Decode a content block while ignoring unknown additive fields."""
+        metadata = payload.get("metadata")
+        return cls(
+            type=str(payload["type"]),  # type: ignore[arg-type]
+            text=_optional_string(payload.get("text")),
+            content_index=_optional_int(payload.get("content_index")),
+            signature=_optional_string(payload.get("signature")),
+            redacted=bool(payload.get("redacted", False)),
+            provider=_optional_string(payload.get("provider")),
+            model=_optional_string(payload.get("model")),
+            attachment_id=_optional_string(payload.get("attachment_id")),
+            mime_type=_optional_string(payload.get("mime_type")),
+            metadata=dict(metadata) if isinstance(metadata, Mapping) else {},
+        )
+
+
+@dataclass(frozen=True)
 class AgentMessage:
     """Agent 对话消息.
 
     Args:
         id: 消息 ID。
         role: 消息角色。
-        content: 文本内容。
+        content: 向旧调用方暴露的可见文本。构造时也接受 content block iterable。
         timestamp: Unix 秒级时间戳。
         tool_calls: 消息关联的工具调用。
+        content_blocks: 有序 provider-neutral 内容块。
         metadata: 扩展元数据。
     """
 
     id: str
     role: Literal["system", "user", "assistant", "tool"]
-    content: str
+    content: str | Iterable[AgentContentBlock | Mapping[str, Any]]
     timestamp: float
     tool_calls: tuple[ToolCall, ...] = ()
+    content_blocks: tuple[AgentContentBlock, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        content = self.content
+        blocks = tuple(self.content_blocks)
+        if isinstance(content, str):
+            visible_text = content
+        else:
+            if blocks:
+                raise ValueError(
+                    "pass structured blocks via content or content_blocks, not both"
+                )
+            blocks = _coerce_content_blocks(content)
+            visible_text = visible_text_from_blocks(blocks)
+        if blocks:
+            blocks = _coerce_content_blocks(blocks)
+            if not visible_text:
+                visible_text = visible_text_from_blocks(blocks)
+        object.__setattr__(self, "content", visible_text)
+        object.__setattr__(self, "content_blocks", blocks)
+
+    @property
+    def blocks(self) -> tuple[AgentContentBlock, ...]:
+        """Return explicit blocks or a synthetic legacy text block."""
+        if self.content_blocks:
+            return self.content_blocks
+        if self.content:
+            return (AgentContentBlock(type="text", text=str(self.content)),)
+        return ()
+
 
 
 @dataclass(frozen=True)
@@ -189,14 +302,26 @@ class Context:
     messages: tuple[AgentMessage, ...] = ()
 
 
-def convert_to_llm(message: AgentMessage) -> dict[str, Any]:
+def convert_to_llm(
+    message: AgentMessage,
+    *,
+    include_thinking: bool = False,
+    provider: str | None = None,
+    model: str | None = None,
+) -> dict[str, Any]:
     """Convert a durable ``AgentMessage`` into the provider-facing contract.
 
     This is the explicit boundary between persisted/UI agent messages and the
     OpenAI-compatible message shape. Callers must pass messages through this
     function before sending them to a provider.
     """
-    output: dict[str, Any] = {"role": message.role, "content": message.content}
+    provider_content = _content_blocks_to_llm(
+        message,
+        include_thinking=include_thinking,
+        provider=provider,
+        model=model,
+    )
+    output: dict[str, Any] = {"role": message.role, "content": provider_content}
     if message.role == "tool":
         output["tool_call_id"] = message.metadata.get("tool_call_id") or message.id
         output["name"] = message.metadata.get("name") or "tool"
@@ -213,3 +338,109 @@ def convert_to_llm(message: AgentMessage) -> dict[str, Any]:
             for call in message.tool_calls
         ]
     return output
+
+
+def visible_text_from_blocks(
+    blocks: Iterable[AgentContentBlock],
+) -> str:
+    """Render user-visible text without leaking provider thinking."""
+    return "".join(
+        block.text or ""
+        for block in blocks
+        if block.type == "text"
+    )
+
+
+def message_content_blocks_from_payload(
+    payload: Any,
+) -> tuple[AgentContentBlock, ...]:
+    """Decode additive JSON content blocks, failing closed on malformed items."""
+    if not isinstance(payload, list | tuple):
+        return ()
+    blocks: list[AgentContentBlock] = []
+    for item in payload:
+        if not isinstance(item, Mapping):
+            continue
+        try:
+            blocks.append(AgentContentBlock.from_payload(item))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return tuple(blocks)
+
+
+def _coerce_content_blocks(
+    values: Iterable[AgentContentBlock | Mapping[str, Any]],
+) -> tuple[AgentContentBlock, ...]:
+    blocks: list[AgentContentBlock] = []
+    for value in values:
+        if isinstance(value, AgentContentBlock):
+            blocks.append(value)
+        elif isinstance(value, Mapping):
+            blocks.append(AgentContentBlock.from_payload(value))
+        else:
+            raise TypeError("message content blocks must be mappings or AgentContentBlock")
+    return tuple(blocks)
+
+
+def _content_blocks_to_llm(
+    message: AgentMessage,
+    *,
+    include_thinking: bool,
+    provider: str | None,
+    model: str | None,
+) -> str | list[dict[str, Any]]:
+    if not message.content_blocks:
+        return str(message.content)
+
+    output: list[dict[str, Any]] = []
+    for block in message.content_blocks:
+        if block.type == "thinking":
+            if not include_thinking or block.redacted:
+                continue
+            if provider is not None and block.provider not in {None, provider}:
+                continue
+            if model is not None and block.model not in {None, model}:
+                continue
+            thinking: dict[str, Any] = {
+                "type": "thinking",
+                "text": block.text or "",
+            }
+            if block.signature:
+                thinking["signature"] = block.signature
+            if block.content_index is not None:
+                thinking["content_index"] = block.content_index
+            output.append(thinking)
+        elif block.type == "text":
+            item: dict[str, Any] = {"type": "text", "text": block.text or ""}
+            if block.content_index is not None:
+                item["content_index"] = block.content_index
+            output.append(item)
+        elif block.type in {"image", "attachment_ref"}:
+            item = {
+                "type": block.type,
+                "attachment_id": block.attachment_id,
+            }
+            if block.mime_type:
+                item["mime_type"] = block.mime_type
+            if block.content_index is not None:
+                item["content_index"] = block.content_index
+            output.append(item)
+        elif block.type == "tool_call":
+            # Tool calls retain their established top-level provider contract.
+            continue
+
+    if not output:
+        return ""
+    if all(item["type"] == "text" for item in output):
+        return "".join(str(item["text"]) for item in output)
+    return output
+
+
+def _optional_string(value: Any) -> str | None:
+    return str(value) if value is not None else None
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    return int(value)

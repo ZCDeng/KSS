@@ -27,12 +27,20 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
 from kss.config.paths import KSS_DB
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - KSSDesktop currently targets macOS
+    fcntl = None  # type: ignore[assignment]
+
+_MIGRATION_THREAD_LOCK = threading.RLock()
 
 # ---------------------------------------------------------------------------
 # 连接工厂
@@ -617,6 +625,26 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         CREATE INDEX IF NOT EXISTS idx_research_events_mirror ON research_events(mirrored_at);
         """,
     ),
+    (
+        4,
+        """
+        -- ---------------------------------------------------------------
+        -- Research multi-agent pilot (plan 2026-07-27):
+        -- role-bound attempts and an opt-in execution mode. Historical
+        -- research rows remain single-agent by default.
+        -- ---------------------------------------------------------------
+        ALTER TABLE research_goals
+            ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'single';
+        ALTER TABLE research_tasks
+            ADD COLUMN agent_id TEXT;
+        ALTER TABLE research_attempts
+            ADD COLUMN agent_id TEXT;
+        CREATE INDEX IF NOT EXISTS idx_research_tasks_agent
+            ON research_tasks(goal_id, agent_id, status);
+        CREATE INDEX IF NOT EXISTS idx_research_attempts_agent
+            ON research_attempts(goal_id, agent_id, status);
+        """,
+    ),
 )
 
 
@@ -628,19 +656,41 @@ def ensure_schema(conn: sqlite3.Connection) -> list[int]:
     （``CREATE TABLE IF NOT EXISTS`` 等）天然幂等，唯一需要兜底的是这条记录 insert：
     ``OR IGNORE`` 让输的那一方安静地什么都不做，而不是抛 IntegrityError 炸调用方。
     """
-    conn.execute(_MIGRATIONS_TABLE)
-    applied = {row["version"] for row in conn.execute("SELECT version FROM schema_migrations")}
-    newly_applied: list[int] = []
-    for version, ddl in MIGRATIONS:
-        if version in applied:
-            continue
-        conn.executescript(ddl)
-        conn.execute(
-            "INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, datetime('now'))",
-            (version,),
-        )
-        newly_applied.append(version)
-    return newly_applied
+    database_row = conn.execute("PRAGMA database_list").fetchone()
+    database_path = str(database_row[2]) if database_row and database_row[2] else ""
+    lock_handle = None
+    with _MIGRATION_THREAD_LOCK:
+        try:
+            if database_path and fcntl is not None:
+                lock_path = Path(database_path + ".migration.lock")
+                lock_path.parent.mkdir(parents=True, exist_ok=True)
+                lock_handle = lock_path.open("a+b")
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+            conn.execute(_MIGRATIONS_TABLE)
+            applied = {
+                row["version"]
+                for row in conn.execute("SELECT version FROM schema_migrations")
+            }
+            newly_applied: list[int] = []
+            for version, ddl in MIGRATIONS:
+                if version in applied:
+                    continue
+                conn.executescript(ddl)
+                conn.execute(
+                    "INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, datetime('now'))",
+                    (version,),
+                )
+                newly_applied.append(version)
+            if newly_applied:
+                # Publish the version row before another process is allowed to
+                # inspect and replay non-idempotent ALTER TABLE migrations.
+                conn.commit()
+            return newly_applied
+        finally:
+            if lock_handle is not None:
+                if fcntl is not None:
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                lock_handle.close()
 
 
 def ensure_schema_at(db_path: str | Path | None = None) -> list[int]:

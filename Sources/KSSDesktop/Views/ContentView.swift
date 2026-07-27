@@ -9,6 +9,15 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase   // U5: Timer lifecycle gate (R14)
     @AppStorage("sidebarOrder") private var sidebarOrder = ""
     @State private var searchText = ""
+    /// Seesaw 的专注布局只临时收起全局导航；不能改写用户的持久化偏好。
+    @State private var seesawNavigationExpanded = false
+
+    private var effectiveSidebarCollapsed: Bool {
+        if store.selectedSection == .aiChat {
+            return !seesawNavigationExpanded
+        }
+        return sidebarCollapsed
+    }
 
     private var watchlist: [String] {
         watchlistSymbols
@@ -48,10 +57,16 @@ struct ContentView: View {
         HStack(spacing: 0) {
             SidebarView(
                 selection: $store.selectedSection,
-                collapsed: sidebarCollapsed,
+                collapsed: effectiveSidebarCollapsed,
                 sections: orderedSections,
                 onToggleCollapse: {
-                    withAnimation(.easeInOut(duration: 0.2)) { sidebarCollapsed.toggle() }
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        if store.selectedSection == .aiChat {
+                            seesawNavigationExpanded.toggle()
+                        } else {
+                            sidebarCollapsed.toggle()
+                        }
+                    }
                 },
                 onReorder: { dragged, target in
                     withAnimation(.easeInOut(duration: 0.18)) {
@@ -62,7 +77,7 @@ struct ContentView: View {
                     selfCheckFailCount: store.selfCheckItems.filter(\.isFail).count
                 )
             )
-            .frame(width: sidebarCollapsed ? 64 : 272)
+            .frame(width: effectiveSidebarCollapsed ? 64 : 272)
             .frame(maxHeight: .infinity)
             .background(theme.canvas)
 
@@ -366,7 +381,7 @@ struct ContentView: View {
                     onUpdateCsData: { Task { await updateCsDataAndRefreshDetail() } }
                 )
             case .aiChat:
-                AIChatView()
+                AIChatView(globalNavigationExpanded: $seesawNavigationExpanded)
             case .newsDigest:
                 IntelView()
                     .environmentObject(store)

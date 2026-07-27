@@ -19,6 +19,7 @@ import logging
 from typing import Any, Iterator
 
 from kss.agent.provider import (
+    LLMProvider,
     OpenAICompatibleProvider,
     ProviderConfig,
     ProviderEvent,
@@ -53,7 +54,7 @@ class ChatClient:
         timeout: float | None = None,
         temperature: float = _DEFAULT_TEMPERATURE,
         client: Any | None = None,
-        provider: OpenAICompatibleProvider | None = None,
+        provider: LLMProvider | None = None,
     ) -> None:
         import os
 
@@ -112,7 +113,39 @@ def _accumulate(acc: dict[int, dict[str, Any]], tool_calls: Any) -> None:
 def _legacy_event(event: ProviderEvent) -> dict[str, Any]:
     """Map normalized events to the v1 dictionary contract consumed by the loop."""
     if event.type == "text":
-        return {"type": "text", "text": event.text or ""}
+        return {
+            "type": "text",
+            "text": event.text or "",
+            "content_index": event.content_index,
+            "provider": event.provider,
+            "model": event.model,
+        }
+    if event.type in {"text_start", "text_end"}:
+        return {
+            "type": event.type,
+            "text": event.text or "",
+            "content_index": event.content_index,
+            "provider": event.provider,
+            "model": event.model,
+        }
+    if event.type in {"thinking_start", "thinking", "thinking_end"}:
+        return {
+            "type": event.type,
+            "text": event.text or "",
+            "content_index": event.content_index,
+            "signature": event.signature,
+            "redacted": event.redacted,
+            "provider": event.provider,
+            "model": event.model,
+        }
+    if event.type in {"tool_call_start", "tool_call_update"}:
+        return {
+            "type": event.type,
+            "text": event.text or "",
+            "content_index": event.content_index,
+            "provider": event.provider,
+            "model": event.model,
+        }
     if event.type == "tool_call":
         return {
             "type": "tool_call",
@@ -125,7 +158,7 @@ def _legacy_event(event: ProviderEvent) -> dict[str, Any]:
     if event.type == "finish":
         return {"type": "finish", "reason": event.finish_reason or "stop"}
     error = event.error
-    if error is not None and error.phase == "tool_arguments":
+    if event.type == "error" and error is not None and error.phase == "tool_arguments":
         # Invalid model-generated arguments are a tool-call contract failure,
         # not a provider failure. Preserve the call so the loop can append an
         # is_error tool result and let the model repair its next attempt.
@@ -136,7 +169,15 @@ def _legacy_event(event: ProviderEvent) -> dict[str, Any]:
             "args": error.raw_arguments or "",
             "argument_error": error.as_dict(),
         }
-    return {"type": "error", "error": error.message if error else "未知 provider 错误"}
+    if event.type == "error":
+        return {
+            "type": "error",
+            "error": error.message if error else "provider 返回了空错误事件",
+        }
+    return {
+        "type": "error",
+        "error": f"不支持的 provider 事件: {event.type}",
+    }
 
 
 __all__ = ["ChatClient", "sanitize_user_text", "LLMUnavailable"]

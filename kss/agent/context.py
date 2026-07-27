@@ -501,10 +501,16 @@ class ContextAssembler:
         return DeterministicTokenEstimator().estimate_text(text)
 
     def _message_text(self, message: AgentMessage) -> str:
+        non_text_blocks = [
+            block.to_payload()
+            for block in message.content_blocks
+            if block.type not in {"text", "thinking"}
+        ]
         return json.dumps(
             {
                 "role": message.role,
                 "content": message.content,
+                "content_blocks": non_text_blocks,
                 "tool_calls": [asdict(call) for call in message.tool_calls],
                 "metadata": message.metadata,
             },

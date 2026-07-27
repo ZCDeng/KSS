@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,7 @@ class ResearchRepository:
         self.db_path = Path(db_path)
         self.research_root = Path(research_root)
         self.events_root = self.research_root / "goals"
+        self._mirror_lock = threading.Lock()
         self.research_root.mkdir(parents=True, exist_ok=True)
         with connect(self.db_path) as conn:
             ensure_schema(conn)
@@ -121,34 +123,58 @@ class ResearchRepository:
         return frame
 
     def mirror_unmirrored(self, goal_id: str | None = None) -> None:
-        with connect(self.db_path) as conn:
-            ensure_schema(conn)
-            if goal_id:
-                rows = conn.execute(
-                    "SELECT * FROM research_events WHERE goal_id=? AND mirrored_at IS NULL ORDER BY sequence",
-                    (goal_id,),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT * FROM research_events WHERE mirrored_at IS NULL ORDER BY goal_id, sequence"
-                ).fetchall()
-            by_goal: dict[str, list[sqlite3.Row]] = {}
-            for row in rows:
-                by_goal.setdefault(str(row["goal_id"]), []).append(row)
-            mirrored = utc_now()
-            for gid, items in by_goal.items():
-                log_path = self.events_root / gid / "events.jsonl"
-                log_path.parent.mkdir(parents=True, exist_ok=True)
-                with log_path.open("a", encoding="utf-8") as f:
-                    for row in items:
-                        f.write(str(row["payload_json"]) + "\n")
-                    f.flush()
-                    os.fsync(f.fileno())
-                    for row in items:
-                        conn.execute(
-                            "UPDATE research_events SET mirrored_at=? WHERE event_id=?",
-                            (mirrored, row["event_id"]),
-                        )
+        with self._mirror_lock:
+            with connect(self.db_path) as conn:
+                ensure_schema(conn)
+                if goal_id:
+                    rows = conn.execute(
+                        "SELECT * FROM research_events WHERE goal_id=? AND mirrored_at IS NULL ORDER BY sequence",
+                        (goal_id,),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT * FROM research_events WHERE mirrored_at IS NULL ORDER BY goal_id, sequence"
+                    ).fetchall()
+                by_goal: dict[str, list[sqlite3.Row]] = {}
+                for row in rows:
+                    by_goal.setdefault(str(row["goal_id"]), []).append(row)
+                mirrored = utc_now()
+                for gid, items in by_goal.items():
+                    log_path = self.events_root / gid / "events.jsonl"
+                    log_path.parent.mkdir(parents=True, exist_ok=True)
+                    mirrored_event_ids: set[str] = set()
+                    if log_path.exists():
+                        try:
+                            with log_path.open("r", encoding="utf-8") as existing:
+                                for line in existing:
+                                    try:
+                                        event = json.loads(line)
+                                    except json.JSONDecodeError:
+                                        continue
+                                    event_id = event.get("event_id") if isinstance(event, dict) else None
+                                    if isinstance(event_id, str):
+                                        mirrored_event_ids.add(event_id)
+                        except OSError:
+                            mirrored_event_ids = set()
+                    with log_path.open("a", encoding="utf-8") as f:
+                        for row in items:
+                            if str(row["event_id"]) not in mirrored_event_ids:
+                                f.write(str(row["payload_json"]) + "\n")
+                        f.flush()
+                        os.fsync(f.fileno())
+                        for row in items:
+                            conn.execute(
+                                "UPDATE research_events SET mirrored_at=? WHERE event_id=?",
+                                (mirrored, row["event_id"]),
+                            )
+                    try:
+                        directory_fd = os.open(log_path.parent, os.O_RDONLY)
+                        try:
+                            os.fsync(directory_fd)
+                        finally:
+                            os.close(directory_fd)
+                    except OSError:
+                        pass
 
     def create_goal(
         self,
@@ -164,6 +190,7 @@ class ResearchRepository:
         tasks: list[dict[str, Any]],
         dependencies: list[tuple[str, str, bool]],
         client_request_id: str | None,
+        execution_mode: str = "single",
     ) -> dict[str, Any]:
         conn = self.transaction()
         try:
@@ -181,8 +208,8 @@ class ResearchRepository:
                 INSERT INTO research_goals (
                     goal_id, session_id, profile_id, objective, status, inputs_json,
                     snapshot_json, budget_json, usage_json, termination_reason,
-                    client_request_id, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, NULL, ?, ?, ?)
+                    client_request_id, created_at, updated_at, execution_mode
+                ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, NULL, ?, ?, ?, ?)
                 """,
                 (
                     goal_id,
@@ -196,6 +223,7 @@ class ResearchRepository:
                     client_request_id,
                     now,
                     now,
+                    execution_mode,
                 ),
             )
             for item in criteria:
@@ -224,8 +252,8 @@ class ResearchRepository:
                     """
                     INSERT INTO research_tasks (
                         task_id, goal_id, profile_id, kind, title, status, required, sequence_index,
-                        payload_json, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        payload_json, created_at, updated_at, agent_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         task["task_id"],
@@ -239,6 +267,7 @@ class ResearchRepository:
                         dumps(task.get("payload") or {}),
                         now,
                         now,
+                        task.get("agent_id"),
                     ),
                 )
             for task_id, dep_id, required in dependencies:

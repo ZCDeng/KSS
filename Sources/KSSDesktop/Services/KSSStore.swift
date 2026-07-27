@@ -1,5 +1,7 @@
 import Foundation
 import Combine
+import AppKit
+import PDFKit
 
 @MainActor
 final class KSSStore: ObservableObject {
@@ -181,6 +183,11 @@ final class KSSStore: ObservableObject {
     @Published var agentSourceRecalls: [AgentSourceRecall] = []
     @Published var agentContextUsage: AgentContextUsage?
     @Published var agentModel: String?
+    @Published var agentProvider: String?
+    @Published var agentProviders: [AgentProviderDescriptor] = []
+    @Published var agentPrimaryRoute: AgentProviderRoute?
+    @Published var agentFallbackRoute: AgentProviderRoute?
+    @Published var agentProviderStatus: String?
     @Published var agentUsage: AgentUsage?
     @Published var agentExistingRunId: String?
     @Published var agentLastEventIsError: Bool?
@@ -191,6 +198,9 @@ final class KSSStore: ObservableObject {
     @Published var agentFollowUpCount = 0
     @Published var agentQueueAcknowledgement: AgentQueueAcknowledgement?
     @Published var agentProtocolUnavailable = false
+    @Published var pendingAgentAttachments: [AgentAttachment] = []
+    @Published var isImportingAgentAttachment = false
+    @Published var agentAttachmentError: String?
     // MARK: Deep Research workbench
     @Published var researchGoals: [ResearchGoalSummary] = []
     @Published var selectedResearchGoalId: String?
@@ -233,12 +243,25 @@ final class KSSStore: ObservableObject {
 
     // MARK: - 聊天一轮（流式 + 人在环内写闸）
 
-    func sendChat(_ text: String, sourceQueueId: String? = nil) {
+    func sendChat(
+        _ text: String,
+        sourceQueueId: String? = nil,
+        attachments: [AgentAttachment]? = nil
+    ) {
         guard let bridge else { errorMessage = "Cannot locate KSS project root"; return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isChatStreaming else { return }   // 单活动轮（R11）
+        let selectedAttachments = attachments ?? pendingAgentAttachments
+        guard (!trimmed.isEmpty || !selectedAttachments.isEmpty), !isChatStreaming else { return }   // 单活动轮（R11）
         if !agentProtocolUnavailable {
-            sendAgentChat(trimmed, sourceQueueId: sourceQueueId, bridge: bridge)
+            sendAgentChat(
+                trimmed,
+                sourceQueueId: sourceQueueId,
+                attachments: selectedAttachments,
+                bridge: bridge)
+            return
+        }
+        guard selectedAttachments.isEmpty else {
+            agentAttachmentError = "当前兼容聊天协议不支持附件，请恢复 Agent 服务后重试。"
             return
         }
         chatMessages.append(ChatMessage(role: .user, text: trimmed))
@@ -248,12 +271,19 @@ final class KSSStore: ObservableObject {
         startLegacyChat(bridge: bridge, assistantId: assistantId)
     }
 
-    private func sendAgentChat(_ trimmed: String, sourceQueueId: String?, bridge: BridgeClient) {
+    private func sendAgentChat(
+        _ trimmed: String,
+        sourceQueueId: String?,
+        attachments: [AgentAttachment],
+        bridge: BridgeClient
+    ) {
         ensureAgentSession()
         guard let sessionId = selectedAgentSessionId else { return }
-        chatMessages.append(ChatMessage(role: .user, text: trimmed))
+        chatMessages.append(ChatMessage(role: .user, text: trimmed, attachments: attachments))
         let assistant = ChatMessage(role: .assistant, text: "", numbersUnverified: true)
         chatMessages.append(assistant)
+        pendingAgentAttachments.removeAll()
+        agentAttachmentError = nil
         chatMessagesByAgentSession[sessionId] = chatMessages
         persistLastAgentSession(sessionId)
         let assistantId = assistant.id
@@ -263,6 +293,7 @@ final class KSSStore: ObservableObject {
         userAbortedAgentRun = false
         chatToolInProgress = nil
         agentModel = nil
+        agentProvider = nil
         agentUsage = nil
         agentExistingRunId = nil
         agentLastEventIsError = nil
@@ -277,6 +308,7 @@ final class KSSStore: ObservableObject {
                 clientTurnId: clientTurnId,
                 input: trimmed,
                 sourceQueueId: sourceQueueId,
+                attachmentIds: attachments.map(\.id),
                 onControlReady: { control in
                     Task { @MainActor [weak self] in
                         guard self?.activeAgentStreamId == streamId else { return }
@@ -488,6 +520,12 @@ final class KSSStore: ObservableObject {
         if let model = frame.model {
             agentModel = model
         }
+        if let provider = frame.provider {
+            agentProvider = provider
+        }
+        if let route = frame.providerRoute {
+            agentPrimaryRoute = route
+        }
         if let usage = frame.usage {
             agentUsage = usage
         }
@@ -547,8 +585,51 @@ final class KSSStore: ObservableObject {
         case "message_end":
             if let idx {
                 chatMessages[idx].numbersUnverified = false
+                if let blocks = frame.contentBlocks {
+                    chatMessages[idx].thinkingBlocks = blocks.filter { $0.type == "thinking" }
+                    if chatMessages[idx].text.isEmpty {
+                        chatMessages[idx].text = blocks
+                            .filter { $0.type == "text" }
+                            .compactMap(\.text)
+                            .joined()
+                    }
+                }
+                if let attachments = frame.attachments {
+                    chatMessages[idx].attachments = attachments
+                } else if let attachment = frame.attachment {
+                    chatMessages[idx].attachments = [attachment]
+                }
                 mergeAgentEvidence(frame, into: idx)
             }
+        case "thinking_start":
+            if let idx {
+                upsertThinkingBlock(frame, into: idx, appendDelta: false)
+            }
+        case "thinking_delta":
+            if let idx {
+                upsertThinkingBlock(frame, into: idx, appendDelta: true)
+            }
+        case "thinking_end":
+            if let idx {
+                upsertThinkingBlock(frame, into: idx, appendDelta: false)
+            }
+        case "attachment_import_start":
+            isImportingAgentAttachment = true
+            agentAttachmentError = nil
+        case "attachment_import_end":
+            isImportingAgentAttachment = false
+            if let attachment = frame.attachment,
+               !pendingAgentAttachments.contains(where: { $0.id == attachment.id }) {
+                pendingAgentAttachments.append(attachment)
+            }
+            if let attachments = frame.attachments {
+                pendingAgentAttachments = attachments
+            }
+        case "attachment_import_error":
+            isImportingAgentAttachment = false
+            agentAttachmentError = frame.error ?? frame.reason ?? "附件导入失败"
+        case "provider_status":
+            agentProviderStatus = frame.reason ?? frame.text
         case "tool_start", "tool_update":
             chatToolInProgress = frame.name ?? frame.tool
         case "tool_end":
@@ -605,6 +686,43 @@ final class KSSStore: ObservableObject {
             chatMessagesByAgentSession[sessionId] = chatMessages
         }
         return true
+    }
+
+    private func upsertThinkingBlock(
+        _ frame: AgentFrame,
+        into messageIndex: Int,
+        appendDelta: Bool
+    ) {
+        let contentIndex = frame.contentIndex ?? 0
+        var blocks = chatMessages[messageIndex].thinkingBlocks
+        let blockIndex = blocks.firstIndex {
+            $0.type == "thinking" && ($0.contentIndex ?? 0) == contentIndex
+        }
+        let incomingText = frame.delta ?? frame.text ?? ""
+        if let blockIndex {
+            if appendDelta {
+                blocks[blockIndex].text = (blocks[blockIndex].text ?? "") + incomingText
+            } else if !incomingText.isEmpty {
+                blocks[blockIndex].text = incomingText
+            }
+            if let signature = frame.signature { blocks[blockIndex].signature = signature }
+            if let redacted = frame.redacted { blocks[blockIndex].redacted = redacted }
+            if let provider = frame.provider { blocks[blockIndex].provider = provider }
+            if let model = frame.model { blocks[blockIndex].model = model }
+        } else {
+            blocks.append(AgentContentBlock(
+                type: "thinking",
+                contentIndex: contentIndex,
+                text: incomingText,
+                signature: frame.signature,
+                redacted: frame.redacted,
+                provider: frame.provider,
+                model: frame.model,
+                attachmentId: nil,
+                mimeType: nil))
+            blocks.sort { ($0.contentIndex ?? 0) < ($1.contentIndex ?? 0) }
+        }
+        chatMessages[messageIndex].thinkingBlocks = blocks
     }
 
     @discardableResult
@@ -886,9 +1004,131 @@ final class KSSStore: ObservableObject {
     }
 
     func loadAgentBootstrap() async {
-        await loadAgentSessions()
-        await loadAgentSkills()
-        await loadAgentMemories()
+        async let sessions: Void = loadAgentSessions()
+        async let skills: Void = loadAgentSkills()
+        async let memories: Void = loadAgentMemories()
+        async let providers: Void = loadAgentProviders(reloadCredentials: true)
+        _ = await (sessions, skills, memories, providers)
+    }
+
+    func loadAgentProviders(reloadCredentials: Bool = false) async {
+        guard let bridge else { return }
+        do {
+            let response = try await Task.detached {
+                try bridge.agentProviders(
+                    action: reloadCredentials ? "reload_credentials" : "list"
+                )
+            }.value
+            agentProviders = response.providers
+            agentPrimaryRoute = response.primary
+            agentFallbackRoute = response.fallback
+            agentProviderStatus = response.status
+        } catch {
+            // Provider catalog is a protocol-v1 additive feature. An older
+            // sidecar must not make the otherwise usable chat surface fail.
+            agentProviders = []
+        }
+    }
+
+    func importAgentAttachments(_ urls: [URL]) async {
+        guard let bridge else { return }
+        guard let sessionId = selectedAgentSessionId else {
+            agentAttachmentError = "请先创建会话。"
+            return
+        }
+        guard !isChatStreaming else {
+            agentAttachmentError = "生成期间可继续输入，但附件请在下一轮添加。"
+            return
+        }
+        let availableSlots = max(0, 4 - pendingAgentAttachments.count)
+        let selected = Array(urls.prefix(availableSlots))
+        guard !selected.isEmpty else {
+            agentAttachmentError = "每轮最多添加 4 个附件。"
+            return
+        }
+
+        isImportingAgentAttachment = true
+        agentAttachmentError = nil
+        defer { isImportingAgentAttachment = false }
+
+        for url in selected {
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer {
+                if accessed { url.stopAccessingSecurityScopedResource() }
+            }
+            do {
+                let prepared = try Self.prepareAgentAttachment(url)
+                defer { prepared.cleanup?() }
+                let response = try await Task.detached {
+                    try bridge.agentAttachments(
+                        action: "import",
+                        sessionId: sessionId,
+                        path: prepared.url.path,
+                        extractedText: prepared.extractedText)
+                }.value
+                for attachment in response.allAttachments
+                    where !pendingAgentAttachments.contains(where: { $0.id == attachment.id }) {
+                    pendingAgentAttachments.append(attachment)
+                }
+                if let responseError = response.error, !responseError.isEmpty {
+                    agentAttachmentError = responseError
+                }
+            } catch {
+                agentAttachmentError = "无法导入 \(url.lastPathComponent)：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private nonisolated static func prepareAgentAttachment(
+        _ url: URL
+    ) throws -> (url: URL, extractedText: String?, cleanup: (() -> Void)?) {
+        let suffix = url.pathExtension.lowercased()
+        if suffix == "pdf" {
+            let extracted = PDFDocument(url: url)?.string.map {
+                String($0.prefix(64 * 1024))
+            }
+            return (url, extracted, nil)
+        }
+        guard suffix == "heic" || suffix == "heif" else {
+            return (url, nil, nil)
+        }
+        guard let image = NSImage(contentsOf: url),
+              let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let jpeg = bitmap.representation(
+                using: .jpeg,
+                properties: [.compressionFactor: 0.9])
+        else {
+            throw BridgeError.processFailed("HEIC 图片无法转换为 JPEG")
+        }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kss-attachment-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true)
+        let filename = url.deletingPathExtension().lastPathComponent + ".jpg"
+        let target = directory.appendingPathComponent(filename)
+        do {
+            try jpeg.write(to: target, options: .atomic)
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
+        return (
+            target,
+            nil,
+            { try? FileManager.default.removeItem(at: directory) })
+    }
+
+    func removePendingAgentAttachment(_ attachment: AgentAttachment) {
+        pendingAgentAttachments.removeAll { $0.id == attachment.id }
+        guard let bridge, let sessionId = selectedAgentSessionId else { return }
+        Task.detached {
+            _ = try? bridge.agentAttachments(
+                action: "remove",
+                sessionId: sessionId,
+                attachmentId: attachment.id)
+        }
     }
 
     func loadAgentSessions() async {
@@ -946,6 +1186,9 @@ final class KSSStore: ObservableObject {
             }
             chatMessagesByAgentSession[sessionId] = chatMessages
             agentContextUsage = session.contextUsage
+            agentPrimaryRoute = session.providerRoute ?? agentPrimaryRoute
+            pendingAgentAttachments.removeAll()
+            agentAttachmentError = nil
             hydrateAgentQueue(session.queuedInputs)
         } else if let cached = chatMessagesByAgentSession[sessionId] {
             chatMessages = cached
@@ -1162,6 +1405,8 @@ final class KSSStore: ObservableObject {
             var chat = ChatMessage(
                 role: message.role == "user" ? .user : .assistant,
                 text: message.text,
+                thinkingBlocks: (message.contentBlocks ?? []).filter { $0.type == "thinking" },
+                attachments: message.attachments ?? [],
                 numbersUnverified: false)
             if let summary = message.evidenceSummary { chat.evidenceSummary = summary }
             if let drawer = message.evidenceDrawer { chat.evidenceDrawer = drawer }
@@ -1784,11 +2029,7 @@ final class KSSStore: ObservableObject {
     /// FALLBACK_KEY 单独存在也算已配置）或旧 OpenAI/DeepSeek 键任一存在即算已配置，
     /// 与 openai_client._resolve_credential_candidates() 的判定口径保持一致（U3/U9）。
     func refreshLLMCredentialsStatus() {
-        let env = KeychainStore.injectedEnvironment()
-        hasLLMCredentials = (env["KSS_LLM_PRIMARY_KEY"]?.isEmpty == false)
-            || (env["KSS_LLM_FALLBACK_KEY"]?.isEmpty == false)
-            || (env["OPENAI_API_KEY"]?.isEmpty == false)
-            || (env["DEEPSEEK_API_KEY"]?.isEmpty == false)
+        hasLLMCredentials = KeychainStore.hasLLMCredentials()
     }
 
     /// 启动/手动自检（plan 2026-07-12-005 / U8）。bridge 不可达（sidecar 起不来）本身
@@ -2065,6 +2306,7 @@ final class KSSStore: ObservableObject {
     func createResearchGoal(
         objective: String,
         profileId: String = "investment-weekly-v3",
+        executionMode: String = "single",
         inputs: [String: String]? = nil
     ) async {
         guard let bridge else {
@@ -2082,6 +2324,7 @@ final class KSSStore: ObservableObject {
                     action: "create",
                     clientRequestId: UUID().uuidString,
                     profileId: profileId,
+                    executionMode: executionMode,
                     objective: trimmed,
                     inputs: resolvedInputs)
             }.value

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -212,3 +213,157 @@ def test_skill_script_is_returned_as_source_and_never_executed(tmp_path):
 
     assert manager.read_resource("alpha", "script.sh") == source
     assert not marker.exists()
+
+
+def test_skill_manifest_exposes_provenance_and_required_tool_diagnostics(tmp_path):
+    root = tmp_path / ".agents" / "skills"
+    body = (
+        "---\n"
+        "name: evidence-review\n"
+        "description: Evidence review\n"
+        "category: analysis\n"
+        "version: 2.1.0\n"
+        "source: vibe-trading\n"
+        "upstream_commit: abc123\n"
+        "required_tools: [research_bundle, missing_tool]\n"
+        "allowed_profiles:\n"
+        "  - generic-research-v1\n"
+        "protected: false\n"
+        "---\n"
+        "body"
+    )
+    path = _write_skill(root, "evidence-review", body)
+
+    skill = SkillManager(
+        tmp_path,
+        available_tools={"research_bundle"},
+    ).discover()[0][0]
+
+    assert skill.category == "analysis"
+    assert skill.version == "2.1.0"
+    assert skill.source == "vibe-trading"
+    assert skill.upstream_commit == "abc123"
+    assert skill.content_hash == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert skill.trust == "packaged"
+    assert skill.required_tools == ("research_bundle", "missing_tool")
+    assert skill.allowed_profiles == ("generic-research-v1",)
+    assert skill.available is False
+    assert skill.missing_required_tools == ("missing_tool",)
+    assert skill.enabled is False
+    assert skill.as_dict()["missing_required_tools"] == ["missing_tool"]
+
+
+def test_user_overlay_requires_approval_then_overrides_non_protected_skill(tmp_path):
+    packaged_root = tmp_path / ".claude" / "skills"
+    _write_skill(
+        packaged_root,
+        "alpha",
+        "---\nname: alpha\ndescription: packaged\nsource: project\n---\npackaged",
+    )
+    user_root = tmp_path / "storage" / "agent" / "user_skills"
+    _write_skill(
+        user_root,
+        "alpha",
+        "---\nname: alpha\ndescription: user\nsource: forged-packaged\n---\nuser",
+    )
+
+    manager = SkillManager(tmp_path, state_root=tmp_path)
+    skills, diagnostics = manager.discover()
+    by_id = {skill.id: skill for skill in skills}
+    user_id = next(skill.id for skill in skills if skill.path.is_relative_to(user_root))
+
+    assert manager.load_skill("alpha").endswith("packaged")
+    assert by_id[user_id].trust == "unreviewed"
+    assert by_id[user_id].enabled is False
+    assert any(item.code == "override_pending" for item in diagnostics)
+
+    manager.set_trust(user_id, "user_approved")
+    reloaded = SkillManager(tmp_path, state_root=tmp_path)
+    approved = {skill.id: skill for skill in reloaded.discover()[0]}
+
+    assert reloaded.load_skill("alpha").endswith("user")
+    assert approved[user_id].active is True
+    assert approved[user_id].trust == "user_approved"
+    packaged = next(skill for skill in approved.values() if skill.id != user_id)
+    assert packaged.active is False
+    assert packaged.shadowed_by == user_id
+
+
+def test_protected_packaged_skill_cannot_be_overridden_or_retrusted(tmp_path):
+    packaged_root = tmp_path / ".claude" / "skills"
+    packaged_path = _write_skill(
+        packaged_root,
+        "guard",
+        (
+            "---\nname: guard\ndescription: guard\nsource: kss-bundled\n"
+            "protected: true\n---\nprotected"
+        ),
+    )
+    user_root = tmp_path / "storage" / "agent" / "user_skills"
+    _write_skill(
+        user_root,
+        "guard",
+        "---\nname: guard\ndescription: override\n---\noverride",
+    )
+
+    manager = SkillManager(tmp_path, state_root=tmp_path)
+    skills = manager.discover()[0]
+    packaged = next(skill for skill in skills if skill.path == packaged_path.resolve())
+    user = next(skill for skill in skills if skill.id.startswith("user-skills/"))
+    manager.set_trust(user.id, "user_approved")
+
+    after, diagnostics = manager.discover()
+    active = next(skill for skill in after if skill.active)
+    assert active.id == packaged.id
+    assert manager.load_skill("guard").endswith("protected")
+    assert any(item.code == "protected_override" for item in diagnostics)
+    with pytest.raises(ValueError, match="只有用户"):
+        manager.set_trust(packaged.id, "blocked")
+
+
+def test_vibe_adapted_bundle_has_fixed_safe_skill_set_and_attribution():
+    repo_root = Path(__file__).resolve().parents[2]
+    adapted_root = repo_root / ".agents" / "skills" / "vibe-adapted"
+    expected = {
+        "research-discipline",
+        "research-goal",
+        "financial-statement",
+        "macro-analysis",
+        "corporate-events",
+        "risk-analysis",
+        "correlation-analysis",
+        "sentiment-analysis",
+        "report-generate",
+        "thesis-review",
+    }
+    forbidden = {
+        "买入",
+        "卖出",
+        "仓位",
+        "目标价",
+        "超配",
+        "低配",
+        "评级",
+        " buy ",
+        " sell ",
+        " hold ",
+        "target price",
+        "overweight",
+        "underweight",
+    }
+
+    skills = [
+        skill
+        for skill in SkillManager(repo_root).discover()[0]
+        if skill.source == "vibe-trading"
+    ]
+
+    assert {skill.name for skill in skills} == expected
+    assert all(skill.upstream_commit == "4cede84635df372e56ad4fb0a0647f19be56c892" for skill in skills)
+    assert all(skill.trust == "packaged" and not skill.protected for skill in skills)
+    for skill in skills:
+        text = skill.path.read_text(encoding="utf-8").lower()
+        assert not any(term in text for term in forbidden)
+    notice = (adapted_root / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+    assert "HKUDS/Vibe-Trading" in notice
+    assert "MIT" in notice

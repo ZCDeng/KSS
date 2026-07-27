@@ -95,6 +95,36 @@ def test_read_tool_turn(monkeypatch):
     assert frames[-1]["reason"] == "stop"
 
 
+def test_tool_call_stream_boundaries_do_not_abort_the_turn(monkeypatch):
+    monkeypatch.setattr(
+        bridge,
+        "dispatch",
+        lambda cmd, args: {"symbol": args[0], "pctChange": 3.2},
+    )
+    scripts = [
+        [
+            {"type": "tool_call_start", "content_index": 0},
+            {
+                "type": "tool_call_update",
+                "content_index": 0,
+                "text": '{"symbol":"688008.SH"}',
+            },
+            _toolcall("get_stock", {"symbol": "688008.SH"}),
+            {"type": "finish", "reason": "tool_calls"},
+        ],
+        [_text("工具调用完成"), {"type": "finish", "reason": "stop"}],
+    ]
+
+    frames, chat = _drive(scripts)
+
+    assert not any(frame["type"] == "error" for frame in frames)
+    assert any(frame["type"] == "tool_done" for frame in frames)
+    assert any(
+        message["role"] == "tool" and "pctChange" in message["content"]
+        for message in chat.calls[1]
+    )
+
+
 def test_write_only_emits_intent_never_dispatches(monkeypatch):
     """R12 核心:gated 写 tool_call → loop 仅 await request_write,绝不 dispatch 写。"""
     monkeypatch.setattr(bridge, "dispatch",
@@ -140,6 +170,39 @@ def test_run_turn_returns_complete_transcript(monkeypatch):
                for m in transcript.messages)
     assert not any("688008 涨" in json.dumps(f, ensure_ascii=False)
                    for f in frames if f["type"] == "tool_done")
+
+
+def test_structured_blocks_do_not_replace_legacy_assistant_content():
+    frames = []
+
+    async def emit(ev):
+        frames.append(ev)
+
+    chat = FakeChat([
+        [
+            {"type": "thinking_start", "content_index": 0},
+            {"type": "thinking", "content_index": 0, "text": "内部推理"},
+            {"type": "thinking_end", "content_index": 0, "signature": "sig"},
+            _text("可见结论"),
+            {"type": "finish", "reason": "stop"},
+        ],
+    ])
+
+    transcript = asyncio.run(loop.run_turn(
+        [{"role": "user", "content": "解释"}],
+        emit,
+        lambda **kw: pytest.fail("no tool expected"),
+        chat_client=chat,
+    ))
+    assistant = next(
+        message for message in transcript.messages
+        if message["role"] == "assistant"
+    )
+
+    assert assistant["content"] == "可见结论"
+    assert assistant["content_blocks"][0]["type"] == "thinking"
+    assert assistant["content_blocks"][0]["text"] == "内部推理"
+    assert any(frame["type"] == "thinking_delta" for frame in frames)
 
 
 def test_bad_tool_calls_return_tool_results_without_execution(monkeypatch):
@@ -455,8 +518,8 @@ def test_provenance_and_injection_scan(monkeypatch, caplog):
                for r in caplog.records)
 
 
-def _custom_spec(name="complex_tool"):
-    return {
+def _custom_spec(name="complex_tool", *, execution_mode=None):
+    spec = {
         "name": name,
         "command": name,
         "desc": "nested schema fixture",
@@ -480,6 +543,9 @@ def _custom_spec(name="complex_tool"):
             "required": ["query", "limit", "ratio", "enabled", "mode", "items"],
         },
     }
+    if execution_mode is not None:
+        spec["execution_mode"] = execution_mode
+    return spec
 
 
 def _run_custom(scripts, registry, **kwargs):
@@ -508,6 +574,18 @@ def test_tool_registry_validates_supported_json_schema_subset():
     registry = loop.ToolRegistry([_custom_spec()])
     parameters = registry.build_schema()[0]["function"]["parameters"]
     assert parameters["properties"]["items"]["items"]["required"] == ["symbol"]
+    assert registry.execution_mode("complex_tool") == "sequential"
+    assert loop.ToolRegistry([
+        _custom_spec(execution_mode="parallel")
+    ]).execution_mode("complex_tool") == "parallel"
+
+    unsupported_mode = _custom_spec("bad_mode", execution_mode="sometimes")
+    with pytest.raises(ValueError, match="unsupported execution_mode"):
+        loop.ToolRegistry([unsupported_mode])
+
+    write_marked_parallel = _custom_spec("write_tool", execution_mode="parallel")
+    write_marked_parallel["command"] = "run"
+    assert loop.ToolRegistry([write_marked_parallel]).execution_mode("write_tool") == "sequential"
 
     unsupported_type = _custom_spec("bad_type")
     unsupported_type["parameters"]["properties"]["query"] = {"type": "null"}
@@ -618,7 +696,7 @@ def test_before_tool_hook_can_block_and_hook_failure_is_tool_error():
     assert failed["hook"] == "before_tool_call"
 
 
-def test_after_tool_hook_can_replace_mark_error_and_terminate():
+def test_after_tool_hook_all_terminate_finishes_only_after_complete_batch():
     registry = loop.ToolRegistry([_custom_spec(), _custom_spec("never_run")])
     calls = []
     stop_calls = []
@@ -642,13 +720,129 @@ def test_after_tool_hook_can_replace_mark_error_and_terminate():
         "termination_reason": "policy_stop",
     }, should_stop_after_turn=lambda current: stop_calls.append(current) or False)
 
-    assert calls == ["first"]
+    assert calls == ["first", "second"]
     assert len(stop_calls) == 1
     payload = json.loads(transcript.tool_results[0]["content"])
     assert payload == {"replacement": True, "is_error": True}
+    assert len(transcript.tool_results) == 2
     assert transcript.run_state["reason"] == "tool_terminated"
     assert transcript.run_state["termination_reason"] == "policy_stop"
     assert frames[-1]["termination_reason"] == "policy_stop"
+
+
+def test_mixed_terminate_results_continue_to_next_model_turn():
+    registry = loop.ToolRegistry([_custom_spec(), _custom_spec("continues")])
+    calls = []
+    registry.register_handler("complex_tool", lambda _args: calls.append("first") or {"ok": 1})
+    registry.register_handler("continues", lambda _args: calls.append("second") or {"ok": 2})
+    args = {
+        "query": "x", "limit": 1, "ratio": 1.5, "enabled": True,
+        "mode": "safe", "items": [{"symbol": "688008.SH"}],
+    }
+
+    def after(payload):
+        return {
+            "terminate": payload["tool_call"]["name"] == "complex_tool",
+            "termination_reason": "first_only",
+        }
+
+    transcript, _, chat = _run_custom([
+        [
+            _toolcall("complex_tool", args, id="first"),
+            _toolcall("continues", args, id="second"),
+            {"type": "finish", "reason": "tool_calls"},
+        ],
+        [_text("continued"), {"type": "finish", "reason": "stop"}],
+    ], registry, after_tool_call=after)
+
+    assert calls == ["first", "second"]
+    assert len(chat.calls) == 2
+    assert transcript.run_state["reason"] == "stop"
+
+
+def test_parallel_batch_emits_completion_order_but_persists_source_order():
+    registry = loop.ToolRegistry([
+        _custom_spec("slow", execution_mode="parallel"),
+        _custom_spec("fast", execution_mode="parallel"),
+    ])
+    release_slow = asyncio.Event()
+    started = []
+    args = {
+        "query": "x", "limit": 1, "ratio": 1.5, "enabled": True,
+        "mode": "safe", "items": [{"symbol": "688008.SH"}],
+    }
+
+    async def slow(_args):
+        started.append("slow")
+        await release_slow.wait()
+        await asyncio.sleep(0.02)
+        return {"result": "slow"}
+
+    async def fast(_args):
+        started.append("fast")
+        release_slow.set()
+        return {"result": "fast"}
+
+    registry.register_handler("slow", slow)
+    registry.register_handler("fast", fast)
+    transcript, frames, chat = _run_custom([
+        [
+            _toolcall("slow", args, id="slow-id"),
+            _toolcall("fast", args, id="fast-id"),
+            {"type": "finish", "reason": "tool_calls"},
+        ],
+        [_text("done"), {"type": "finish", "reason": "stop"}],
+    ], registry)
+
+    starts = [frame["name"] for frame in frames if frame["type"] == "tool_call"]
+    completions = [frame["name"] for frame in frames if frame["type"] == "tool_done"]
+    assert starts == ["slow", "fast"]
+    assert max(
+        index for index, frame in enumerate(frames) if frame["type"] == "tool_call"
+    ) < min(
+        index for index, frame in enumerate(frames) if frame["type"] == "tool_done"
+    )
+    assert started == ["slow", "fast"]
+    assert completions == ["fast", "slow"]
+    assert [message["name"] for message in transcript.tool_results] == ["slow", "fast"]
+    second_call_tools = [message["name"] for message in chat.calls[1] if message["role"] == "tool"]
+    assert second_call_tools == ["slow", "fast"]
+
+
+def test_sequential_tool_forces_entire_mixed_batch_to_run_in_order():
+    registry = loop.ToolRegistry([
+        _custom_spec("parallel_read", execution_mode="parallel"),
+        _custom_spec("legacy_stateful"),
+    ])
+    order = []
+    args = {
+        "query": "x", "limit": 1, "ratio": 1.5, "enabled": True,
+        "mode": "safe", "items": [{"symbol": "688008.SH"}],
+    }
+
+    async def first(_args):
+        order.extend(["first:start"])
+        await asyncio.sleep(0)
+        order.extend(["first:end"])
+        return {"result": "first"}
+
+    async def second(_args):
+        order.extend(["second:start"])
+        await asyncio.sleep(0)
+        order.extend(["second:end"])
+        return {"result": "second"}
+
+    registry.register_handler("parallel_read", first)
+    registry.register_handler("legacy_stateful", second)
+    _run_custom([
+        [
+            _toolcall("parallel_read", args, id="first"),
+            _toolcall("legacy_stateful", args, id="second"),
+            {"type": "finish", "reason": "tool_calls"},
+        ],
+        [_text("done"), {"type": "finish", "reason": "stop"}],
+    ], registry)
+    assert order == ["first:start", "first:end", "second:start", "second:end"]
 
 
 def test_after_tool_hook_failure_becomes_hook_error_and_loop_continues():
@@ -814,6 +1008,60 @@ def test_abort_stops_waiting_for_sync_handler_and_discards_late_result():
 
     asyncio.run(scenario())
     assert calls == ["slow"]
+    assert not any(frame["type"] == "tool_done" for frame in frames)
+    assert any(
+        frame["type"] == "turn_end" and frame["reason"] == "aborted"
+        for frame in frames
+    )
+
+
+def test_abort_cancels_parallel_batch_and_discards_all_late_results():
+    registry = loop.ToolRegistry([
+        _custom_spec("parallel_a", execution_mode="parallel"),
+        _custom_spec("parallel_b", execution_mode="parallel"),
+    ])
+    entered = set()
+    both_started = asyncio.Event()
+    release = asyncio.Event()
+    args = {
+        "query": "x", "limit": 1, "ratio": 1.5, "enabled": True,
+        "mode": "safe", "items": [{"symbol": "688008.SH"}],
+    }
+
+    async def handler(name):
+        entered.add(name)
+        if len(entered) == 2:
+            both_started.set()
+        await release.wait()
+        return {"late": name}
+
+    registry.register_handler("parallel_a", lambda _args: handler("parallel_a"))
+    registry.register_handler("parallel_b", lambda _args: handler("parallel_b"))
+    token = loop.AbortToken()
+    frames = []
+
+    async def scenario():
+        task = asyncio.create_task(loop.run_turn(
+            [{"role": "user", "content": "test"}],
+            lambda frame: frames.append(frame) or asyncio.sleep(0),
+            lambda **_kw: pytest.fail("write path"),
+            chat_client=FakeChat([[
+                _toolcall("parallel_a", args, id="a"),
+                _toolcall("parallel_b", args, id="b"),
+                {"type": "finish", "reason": "tool_calls"},
+            ]]),
+            tool_registry=registry,
+            abort_token=token,
+            turn_timeout=30,
+            emit_internal_boundaries=True,
+        ))
+        await asyncio.wait_for(both_started.wait(), timeout=0.25)
+        token.abort("client_abort")
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=0.25)
+
+    asyncio.run(scenario())
+    assert entered == {"parallel_a", "parallel_b"}
     assert not any(frame["type"] == "tool_done" for frame in frames)
     assert any(
         frame["type"] == "turn_end" and frame["reason"] == "aborted"

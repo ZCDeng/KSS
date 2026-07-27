@@ -853,3 +853,136 @@ def test_agent_skill_actions_return_uniform_shape(monkeypatch, tmp_path):
         "skill_id": listed_payload["skills"][0]["id"], "pinned": False,
     }))
     assert json.loads(unpinned["stdout"])["data"]["skills"][0]["pinned"] is False
+
+
+def test_agent_provider_catalog_and_route_actions(monkeypatch, tmp_path):
+    class ProviderService:
+        def provider_catalog(self, *, refresh=False, provider_id=None):
+            assert provider_id is None
+            return {
+                "status": "ready",
+                "models": [{
+                    "provider_id": "openai",
+                    "model_id": "gpt-test",
+                    "name": "GPT Test",
+                }],
+                "primary": {
+                    "provider_id": "openai",
+                    "model_id": "gpt-test",
+                    "thinking_level": "off",
+                },
+                "fallback": None,
+            }
+
+        def set_provider_routes(self, *, primary, fallback=None):
+            assert primary["model_id"] == "gpt-next"
+            return {
+                "status": "ready",
+                "models": [],
+                "primary": primary,
+                "fallback": fallback,
+            }
+
+        def test_provider_connection(self):
+            return {
+                "source": "llm",
+                "ok": True,
+                "status": "ready",
+                "latency_ms": 12.5,
+                "hint": "stream ok",
+                "candidates": [{
+                    "role": "primary",
+                    "model": "gpt-test",
+                    "ok": True,
+                    "latency_ms": 12.5,
+                    "hint": "stream ok",
+                }],
+                "providers": [{
+                    "id": "openai",
+                    "name": "OpenAI",
+                    "auth_kind": "api_key",
+                    "models": [],
+                }],
+                "models": [],
+                "primary": {
+                    "provider_id": "openai",
+                    "model_id": "gpt-test",
+                    "thinking_level": "off",
+                },
+                "fallback": None,
+            }
+
+    monkeypatch.setattr(sc, "_AGENT_SERVICE", ProviderService())
+    monkeypatch.setattr(sc, "_AGENT_SERVICE_ROOTS", (tmp_path, tmp_path))
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+
+    listed = json.loads(sc._handle_agent_json_command({
+        "cmd": "agent-providers",
+        "action": "list",
+    }))
+    payload = json.loads(listed["stdout"])["data"]
+    assert payload["providers"][0]["id"] == "openai"
+    assert payload["providers"][0]["models"][0]["model_id"] == "gpt-test"
+
+    updated = json.loads(sc._handle_agent_json_command({
+        "cmd": "agent-providers",
+        "action": "set_route",
+        "primary": {"provider_id": "openai", "model_id": "gpt-next"},
+    }))
+    updated_payload = json.loads(updated["stdout"])["data"]
+    assert updated_payload["primary"]["model_id"] == "gpt-next"
+
+    tested = json.loads(sc._handle_agent_json_command({
+        "cmd": "agent-providers",
+        "action": "test",
+    }))
+    tested_payload = json.loads(tested["stdout"])["data"]
+    assert tested_payload["ok"] is True
+    assert tested_payload["candidates"][0]["hint"] == "stream ok"
+
+
+def test_agent_attachment_import_list_remove(monkeypatch, tmp_path):
+    from kss.agent.attachments import AttachmentStore
+
+    class AttachmentService:
+        attachments = AttachmentStore(tmp_path)
+
+        def import_attachment(self, source, *, extracted_text=None):
+            return self.attachments.import_file(
+                source,
+                extracted_text=extracted_text,
+            )
+
+    service = AttachmentService()
+    monkeypatch.setattr(sc, "_AGENT_SERVICE", service)
+    monkeypatch.setattr(sc, "_AGENT_SERVICE_ROOTS", (tmp_path, tmp_path))
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+    selected = tmp_path / "selected.txt"
+    selected.write_text("附件正文", encoding="utf-8")
+
+    imported = json.loads(sc._handle_agent_json_command({
+        "cmd": "agent-attachments",
+        "action": "import",
+        "session_id": "s1",
+        "path": str(selected),
+    }))
+    imported_payload = json.loads(imported["stdout"])["data"]
+    attachment_id = imported_payload["attachment"]["id"]
+    assert imported_payload["attachment"]["extraction_status"] == "extracted"
+
+    listed = json.loads(sc._handle_agent_json_command({
+        "cmd": "agent-attachments",
+        "action": "list",
+        "session_id": "s1",
+    }))
+    assert json.loads(listed["stdout"])["data"]["attachments"][0]["id"] == attachment_id
+
+    removed = json.loads(sc._handle_agent_json_command({
+        "cmd": "agent-attachments",
+        "action": "remove",
+        "session_id": "s1",
+        "attachment_id": attachment_id,
+    }))
+    assert json.loads(removed["stdout"])["data"]["attachments"] == []

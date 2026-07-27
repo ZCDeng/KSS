@@ -8,6 +8,8 @@ import math
 import os
 import re
 import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -43,9 +45,9 @@ DATE_RANGE_RE = re.compile(
 class ResearchService:
     """Synchronous facade used by `agent-research` and `agent-artifacts`.
 
-    The first release intentionally keeps node execution sequential and local.
-    Protected compile/audit nodes are deterministic; future model-backed nodes
-    can replace `_run_task` without changing protocol or ledger semantics.
+    Single-agent goals stay sequential. The opt-in multi-agent pilot may run at
+    most two independent read-only nodes from the same goal concurrently.
+    Protected compile/audit nodes always remain deterministic and sequential.
     """
 
     def __init__(
@@ -68,6 +70,8 @@ class ResearchService:
             project_root=self.project_root,
         )
         self.allow_synthetic_fixture = allow_synthetic_fixture
+        self._worker_lock = threading.Lock()
+        self._workers: dict[str, threading.Thread] = {}
         self.artifacts.clean_staging_and_isolate_orphans()
         self.repo.mark_stale_running_attempts()
         self.repo.mirror_unmirrored()
@@ -86,6 +90,21 @@ class ResearchService:
                 "protocol_version": 1,
                 "ok": False,
                 "error": "profile_not_found",
+                "profile_id": profile_id,
+            }
+        execution_mode = str(payload.get("execution_mode") or "single")
+        if execution_mode not in {"single", "multi_agent_pilot"}:
+            return {
+                "protocol_version": 1,
+                "ok": False,
+                "error": "invalid_execution_mode",
+                "execution_mode": execution_mode,
+            }
+        if execution_mode == "multi_agent_pilot" and not profile.agents:
+            return {
+                "protocol_version": 1,
+                "ok": False,
+                "error": "profile_does_not_support_multi_agent",
                 "profile_id": profile_id,
             }
         objective = str(payload.get("objective") or goal or payload.get("goal") or profile.title)
@@ -116,8 +135,27 @@ class ResearchService:
             })
         tasks = []
         dependencies: list[tuple[str, str, bool]] = []
+        agent_specs = {agent.agent_id: agent for agent in profile.agents}
         for index, task in enumerate(profile.tasks, start=1):
             task_id = task_ids[task.kind]
+            task_payload = dict(task.payload)
+            agent = agent_specs.get(str(task.agent_id or ""))
+            if execution_mode == "multi_agent_pilot" and agent is not None:
+                task_payload.update(
+                    {
+                        "agent_role": agent.role,
+                        "agent_instructions": agent.instructions,
+                        "provider_route": agent.provider_route,
+                        "model_override": agent.model_override,
+                        "tool_whitelist": list(agent.tool_whitelist),
+                        "skill_whitelist": list(agent.skill_whitelist),
+                        "max_steps": agent.max_steps,
+                        "timeout_seconds": agent.timeout_seconds,
+                        "max_provider_tokens": agent.max_tokens,
+                        "can_submit_claims": agent.can_submit_claims,
+                        "can_verify_evidence": agent.can_verify_evidence,
+                    }
+                )
             tasks.append({
                 "task_id": task_id,
                 "kind": task.kind,
@@ -125,7 +163,8 @@ class ResearchService:
                 "status": "pending" if task.depends_on else "ready",
                 "required": task.required,
                 "sequence_index": index,
-                "payload": task.payload,
+                "agent_id": task.agent_id,
+                "payload": task_payload,
             })
             for dep_kind in task.depends_on:
                 dependencies.append((task_id, task_ids[dep_kind], True))
@@ -142,6 +181,7 @@ class ResearchService:
             tasks=tasks,
             dependencies=dependencies,
             client_request_id=payload.get("client_request_id"),
+            execution_mode=execution_mode,
         )
         resolved_goal_id = str(created.get("goal_id") or goal_id)
         return {
@@ -180,6 +220,32 @@ class ResearchService:
             return {"protocol_version": 1, "ok": False, "error": "goal_not_found", "goal": goal_id, "goal_id": goal_id}
         if goal["status"] in TERMINAL_GOAL:
             return {"protocol_version": 1, "ok": False, "error": "goal_terminal", "goal": goal_id, "goal_id": goal_id, "status": goal["status"]}
+        active_worker_goal = self._active_worker_goal()
+        if active_worker_goal:
+            if active_worker_goal == goal_id:
+                return {
+                    "protocol_version": 1,
+                    "ok": True,
+                    "event": "already_running",
+                    "goal": self._wire_goal(goal),
+                    "detail": self._wire_goal(goal),
+                    "goal_id": goal_id,
+                }
+            self.repo.update_goal_status(
+                goal_id,
+                "queued",
+                termination_reason="global_research_slot_busy",
+            )
+            queued_goal = self.repo.get_goal(goal_id) or {}
+            return {
+                "protocol_version": 1,
+                "ok": True,
+                "event": "queued",
+                "goal": self._wire_goal(queued_goal),
+                "detail": self._wire_goal(queued_goal),
+                "goal_id": goal_id,
+                "existing_goal_id": active_worker_goal,
+            }
         active_goal_id, active_attempt_id = self._active_attempt()
         if active_attempt_id:
             if active_goal_id == goal_id:
@@ -204,10 +270,71 @@ class ResearchService:
                 "goal": self._wire_goal(self.repo.get_goal(goal_id) or {}),
                 "detail": self._wire_goal(self.repo.get_goal(goal_id) or {}),
                 "goal_id": goal_id,
-                "existing_goal_id": active_goal_id,
-            }
+                    "existing_goal_id": active_goal_id,
+                }
         self.repo.update_goal_status(goal_id, "running")
         self._emit(goal_id, "research_start", {"status": "running"})
+        self._launch_worker(goal_id)
+        return {
+            "protocol_version": 1,
+            "ok": True,
+            "event": "started",
+            "goal": self._wire_goal(self.repo.get_goal(goal_id) or {}),
+            "detail": self._wire_goal(self.repo.get_goal(goal_id) or {}),
+            "goal_id": goal_id,
+        }
+
+    def wait_for_idle(self, goal_id: str | None = None, timeout: float | None = None) -> dict[str, Any]:
+        """Testing/control helper: wait for a background research worker to settle."""
+
+        if not goal_id:
+            return {"protocol_version": 1, "ok": False, "error": "goal_id_required"}
+        with self._worker_lock:
+            worker = self._workers.get(goal_id)
+        if worker is not None:
+            worker.join(timeout=timeout)
+            if worker.is_alive():
+                return {
+                    "protocol_version": 1,
+                    "ok": False,
+                    "error": "still_running",
+                    "goal_id": goal_id,
+                    "goal": self._wire_goal(self.repo.get_goal(goal_id) or {}),
+                }
+        return {
+            "protocol_version": 1,
+            "ok": True,
+            "event": "idle",
+            "goal_id": goal_id,
+            "goal": self._wire_goal(self.repo.get_goal(goal_id) or {}),
+            "detail": self._wire_goal(self.repo.get_goal(goal_id) or {}),
+        }
+
+    def _launch_worker(self, goal_id: str) -> None:
+        with self._worker_lock:
+            existing = self._workers.get(goal_id)
+            if existing and existing.is_alive():
+                return
+            worker = threading.Thread(
+                target=self._run_goal_worker,
+                args=(goal_id,),
+                name=f"kss-research-{goal_id[:12]}",
+                daemon=True,
+            )
+            self._workers[goal_id] = worker
+            worker.start()
+
+    def _active_worker_goal(self) -> str | None:
+        with self._worker_lock:
+            stale = [goal_id for goal_id, worker in self._workers.items() if not worker.is_alive()]
+            for goal_id in stale:
+                self._workers.pop(goal_id, None)
+            for goal_id, worker in self._workers.items():
+                if worker.is_alive():
+                    return goal_id
+        return None
+
+    def _run_goal_worker(self, goal_id: str) -> None:
         try:
             exhausted = self._run_ready_loop(goal_id)
             settled = self.repo.get_goal(goal_id) or {}
@@ -228,18 +355,12 @@ class ResearchService:
                         "audit_status": audit.get("status"),
                     },
                 )
-            return {
-                "protocol_version": 1,
-                "ok": True,
-                "event": "started",
-                "goal": self._wire_goal(self.repo.get_goal(goal_id) or {}),
-                "detail": self._wire_goal(self.repo.get_goal(goal_id) or {}),
-                "goal_id": goal_id,
-            }
         except Exception as exc:
             self.repo.update_goal_status(goal_id, "failed", termination_reason=str(exc))
             self._emit(goal_id, "research_error", {"error": str(exc)})
-            return {"protocol_version": 1, "ok": False, "error": "research_failed", "reason": str(exc), "goal": goal_id, "goal_id": goal_id}
+        finally:
+            with self._worker_lock:
+                self._workers.pop(goal_id, None)
 
     def pause_goal(self, goal_id: str | None = None, **_: Any) -> dict[str, Any]:
         return self._set_goal(goal_id, "paused", "paused")
@@ -584,7 +705,16 @@ class ResearchService:
         self._emit(goal_id, "audit_result", {"audit_id": audit_id, "status": status, "coverage": coverage, "findings": findings})
         if complete_if_pass:
             self.repo.update_goal_status(goal_id, "completed" if status == "pass" else "insufficient_evidence", termination_reason=None if status == "pass" else "audit_failed")
-        return {"protocol_version": 1, "ok": True, "event": "audited", "goal": goal_id, "goal_id": goal_id, **audit}
+        refreshed_goal = self.repo.get_goal(goal_id) or goal
+        return {
+            "protocol_version": 1,
+            "ok": True,
+            "event": "audited",
+            "goal": self._wire_goal(refreshed_goal),
+            "detail": self._wire_goal(refreshed_goal),
+            "goal_id": goal_id,
+            **audit,
+        }
 
     def list_events(self, goal_id: str | None = None, after_sequence: int = 0, **_: Any) -> list[dict[str, Any]]:
         return self.repo.list_events(str(goal_id), int(after_sequence or 0)) if goal_id else []
@@ -595,7 +725,16 @@ class ResearchService:
     def list_artifacts(self, goal_id: str | None = None, **_: Any) -> dict[str, Any]:
         if not goal_id:
             return {"protocol_version": 1, "ok": False, "error": "goal_id_required"}
-        return {"protocol_version": 1, "ok": True, "event": "artifacts_listed", "goal": goal_id, "goal_id": goal_id, "artifacts": [self._wire_artifact(a) for a in self.artifacts.list_goal(goal_id)]}
+        goal = self.repo.get_goal(goal_id) or {}
+        return {
+            "protocol_version": 1,
+            "ok": True,
+            "event": "artifacts_listed",
+            "goal": self._wire_goal(goal),
+            "detail": self._wire_goal(goal),
+            "goal_id": goal_id,
+            "artifacts": [self._wire_artifact(a) for a in self.artifacts.list_goal(goal_id)],
+        }
 
     def export_draft(self, goal_id: str | None = None, artifact_id: str | None = None, payload: dict[str, Any] | None = None, **_: Any) -> dict[str, Any]:
         return self._export(goal_id=goal_id, artifact_id=artifact_id, payload=payload or {}, require_pass=False, event="draft_exported")
@@ -619,19 +758,54 @@ class ResearchService:
                     termination_reason="research_budget_exhausted",
                 )
                 return False
-            task = self._next_ready_task(goal_id)
-            if not task:
+            execution_mode = str(goal.get("execution_mode") or "single")
+            ready_tasks = self._next_ready_tasks(
+                goal_id,
+                limit=2 if execution_mode == "multi_agent_pilot" else 1,
+            )
+            if not ready_tasks:
                 return True
-            attempt_id = self._start_attempt(goal_id, task)
-            if attempt_id is None:
+            if execution_mode != "multi_agent_pilot" or not all(
+                self._parallel_research_task(task) for task in ready_tasks
+            ):
+                ready_tasks = ready_tasks[:1]
+            runnable: list[tuple[dict[str, Any], str]] = []
+            for task in ready_tasks:
+                attempt_id = self._start_attempt(goal_id, task)
+                if attempt_id is None:
+                    break
+                runnable.append((task, attempt_id))
+            if not runnable:
                 self.repo.update_goal_status(
                     goal_id,
                     "queued",
                     termination_reason="global_research_slot_busy",
                 )
                 return False
-            self._run_task(goal_id, task, attempt_id)
+            if len(runnable) == 1:
+                task, attempt_id = runnable[0]
+                self._run_task(goal_id, task, attempt_id)
+            else:
+                with ThreadPoolExecutor(
+                    max_workers=min(2, len(runnable)),
+                    thread_name_prefix="kss-research-agent",
+                ) as pool:
+                    futures = [
+                        pool.submit(self._run_task, goal_id, task, attempt_id)
+                        for task, attempt_id in runnable
+                    ]
+                    for future in as_completed(futures):
+                        future.result()
             self._promote_ready_tasks(goal_id)
+
+    @staticmethod
+    def _parallel_research_task(task: dict[str, Any]) -> bool:
+        payload = task.get("payload") or {}
+        return bool(
+            task.get("agent_id")
+            and payload.get("read_only_agent")
+            and not payload.get("protected")
+        )
 
     def _run_task(
         self,
@@ -640,7 +814,13 @@ class ResearchService:
         attempt_id: str,
     ) -> None:
         try:
-            self._emit(goal_id, "task_start", {"task": task}, task_id=task["task_id"], attempt_id=attempt_id)
+            self._emit(
+                goal_id,
+                "task_start",
+                {"task": task, "agent_id": task.get("agent_id")},
+                task_id=task["task_id"],
+                attempt_id=attempt_id,
+            )
             kind = task["kind"]
             if kind == "freeze_snapshot":
                 self._register_task_evidence(goal_id, task, attempt_id, "snapshot", "冻结快照证据")
@@ -1328,17 +1508,51 @@ class ResearchService:
                 "SELECT status FROM research_tasks WHERE task_id=?",
                 (task["task_id"],),
             ).fetchone()
-            another = conn.execute(
-                "SELECT attempt_id FROM research_attempts WHERE status='running' LIMIT 1"
+            running = conn.execute(
+                """
+                SELECT attempt_id, goal_id
+                FROM research_attempts
+                WHERE status='running'
+                ORDER BY started_at
+                """
+            ).fetchall()
+            goal_row = conn.execute(
+                "SELECT execution_mode FROM research_goals WHERE goal_id=?",
+                (goal_id,),
             ).fetchone()
-            if not current or current["status"] != "ready" or another:
+            pilot = bool(
+                goal_row
+                and str(goal_row["execution_mode"]) == "multi_agent_pilot"
+            )
+            another_goal_running = any(
+                str(row["goal_id"]) != goal_id for row in running
+            )
+            capacity_exhausted = len(running) >= (2 if pilot else 1)
+            if (
+                not current
+                or current["status"] != "ready"
+                or another_goal_running
+                or capacity_exhausted
+                or (running and not self._parallel_research_task(task))
+            ):
                 self.repo.commit_close(conn)
                 return None
             row = conn.execute("SELECT COALESCE(MAX(attempt_no), 0) + 1 AS n FROM research_attempts WHERE task_id=?", (task["task_id"],)).fetchone()
             attempt_no = int(row["n"])
             conn.execute(
-                "INSERT INTO research_attempts (attempt_id, goal_id, task_id, status, attempt_no, trigger, usage_json, lease_owner, lease_expires_at, created_at, started_at) VALUES (?, ?, ?, 'running', ?, 'scheduler', ?, ?, ?, ?, ?)",
-                (attempt_id, goal_id, task["task_id"], attempt_no, dumps({}), os.uname().nodename, self._lease_expiry(), now, now),
+                "INSERT INTO research_attempts (attempt_id, goal_id, task_id, status, attempt_no, trigger, usage_json, lease_owner, lease_expires_at, created_at, started_at, agent_id) VALUES (?, ?, ?, 'running', ?, 'scheduler', ?, ?, ?, ?, ?, ?)",
+                (
+                    attempt_id,
+                    goal_id,
+                    task["task_id"],
+                    attempt_no,
+                    dumps({}),
+                    os.uname().nodename,
+                    self._lease_expiry(),
+                    now,
+                    now,
+                    task.get("agent_id"),
+                ),
             )
             conn.execute(
                 "UPDATE research_tasks SET status='running', current_attempt_id=?, lease_owner=?, lease_expires_at=?, started_at=COALESCE(started_at, ?), updated_at=? WHERE task_id=?",
@@ -1349,7 +1563,17 @@ class ResearchService:
             conn.rollback()
             self.repo.commit_close(conn)
             raise
-        self._emit(goal_id, "attempt_start", {"attempt_id": attempt_id, "task_id": task["task_id"]}, task_id=task["task_id"], attempt_id=attempt_id)
+        self._emit(
+            goal_id,
+            "attempt_start",
+            {
+                "attempt_id": attempt_id,
+                "task_id": task["task_id"],
+                "agent_id": task.get("agent_id"),
+            },
+            task_id=task["task_id"],
+            attempt_id=attempt_id,
+        )
         return attempt_id
 
     def _finish_attempt(self, goal_id: str, task_id: str, attempt_id: str, status: str, result: dict[str, Any], error: str | None = None) -> None:
@@ -1364,7 +1588,25 @@ class ResearchService:
                 "UPDATE research_tasks SET status=?, updated_at=?, finished_at=?, lease_owner=NULL, lease_expires_at=NULL WHERE task_id=?",
                 (status, now, now, task_id),
             )
-        self._emit(goal_id, "attempt_end", {"attempt_id": attempt_id, "task_id": task_id, "status": status, "error": error}, task_id=task_id, attempt_id=attempt_id)
+        with connect(self.db_path) as conn:
+            ensure_schema(conn)
+            task = conn.execute(
+                "SELECT agent_id FROM research_tasks WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+        self._emit(
+            goal_id,
+            "attempt_end",
+            {
+                "attempt_id": attempt_id,
+                "task_id": task_id,
+                "status": status,
+                "error": error,
+                "agent_id": task["agent_id"] if task else None,
+            },
+            task_id=task_id,
+            attempt_id=attempt_id,
+        )
 
     def _schedule_transient_retry(
         self,
@@ -1446,11 +1688,30 @@ class ResearchService:
             )
         )
 
-    def _next_ready_task(self, goal_id: str) -> dict[str, Any] | None:
+    def _next_ready_tasks(
+        self,
+        goal_id: str,
+        *,
+        limit: int,
+    ) -> list[dict[str, Any]]:
         with connect(self.db_path) as conn:
             ensure_schema(conn)
-            rows = conn.execute("SELECT * FROM research_tasks WHERE goal_id=? AND status='ready' ORDER BY sequence_index LIMIT 1", (goal_id,)).fetchall()
-        return self._row_task(rows[0]) if rows else None
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM research_tasks
+                WHERE goal_id=? AND status='ready'
+                ORDER BY sequence_index
+                LIMIT ?
+                """,
+                (goal_id, max(1, min(limit, 2))),
+            ).fetchall()
+        return [self._row_task(row) for row in rows]
+
+    def _next_ready_task(self, goal_id: str) -> dict[str, Any] | None:
+        """Compatibility helper retained for tests and extensions."""
+        tasks = self._next_ready_tasks(goal_id, limit=1)
+        return tasks[0] if tasks else None
 
     def _promote_ready_tasks(self, goal_id: str) -> None:
         with connect(self.db_path) as conn:
@@ -1501,8 +1762,6 @@ class ResearchService:
             method=validator,
             scope=title,
             hash=hashlib.sha256(f"{goal_id}:{task['task_id']}:{attempt_id}:{title}".encode()).hexdigest(),
-            verified=True,
-            check_count=1,
             metadata={
                 "title": title,
                 "validator": validator,
@@ -1690,7 +1949,16 @@ class ResearchService:
                     reference_map[str(reference)] = evidence_id
 
         normalized_claims: list[Any] = []
-        for raw_claim in result.get("claims") or []:
+        can_submit_claims = bool(
+            (task.get("payload") or {}).get("can_submit_claims", True)
+        )
+        raw_claims = result.get("claims") or []
+        if raw_claims and not can_submit_claims:
+            result.setdefault("warnings", []).append(
+                "agent_role_cannot_submit_claims"
+            )
+            raw_claims = []
+        for raw_claim in raw_claims:
             if isinstance(raw_claim, str):
                 content = raw_claim
                 requested_refs: list[str] = []
@@ -1795,13 +2063,14 @@ class ResearchService:
         ]
 
     def _record_usage(self, goal_id: str, usage: dict[str, Any]) -> None:
-        with connect(self.db_path) as conn:
-            ensure_schema(conn)
+        conn = self.repo.transaction()
+        try:
             row = conn.execute(
                 "SELECT usage_json, started_at FROM research_goals WHERE goal_id=?",
                 (goal_id,),
             ).fetchone()
             if not row:
+                self.repo.commit_close(conn)
                 return
             current = loads(row["usage_json"], {})
             tokens = int(
@@ -1834,6 +2103,11 @@ class ResearchService:
                 "UPDATE research_goals SET usage_json=?, updated_at=? WHERE goal_id=?",
                 (dumps(current), utc_now(), goal_id),
             )
+            self.repo.commit_close(conn)
+        except Exception:
+            conn.rollback()
+            self.repo.commit_close(conn)
+            raise
 
     def _budget_exceeded(self, goal: dict[str, Any]) -> bool:
         budget = goal.get("budget") or {}
@@ -1938,7 +2212,17 @@ class ResearchService:
                     (pub_id, goal_id, artifact["artifact_id"], result["destination"], result["sha256"], utc_now()),
                 )
             self._emit(goal_id, "artifact_ready", {"publication_id": pub_id, "destination": result["destination"], "sha256": result["sha256"]})
-        return {"protocol_version": 1, "ok": True, "event": event, "goal": goal_id, "goal_id": goal_id, "artifact": self._wire_artifact(artifact), **result}
+        goal = self.repo.get_goal(goal_id) or {}
+        return {
+            "protocol_version": 1,
+            "ok": True,
+            "event": event,
+            "goal": self._wire_goal(goal),
+            "detail": self._wire_goal(goal),
+            "goal_id": goal_id,
+            "artifact": self._wire_artifact(artifact),
+            **result,
+        }
 
     def _resolve_artifact(self, goal_id: str, artifact_id: str | None) -> dict[str, Any] | None:
         artifacts = self.artifacts.list_goal(goal_id)
@@ -2040,6 +2324,7 @@ class ResearchService:
             "id": goal["goal_id"],
             "session_id": goal.get("session_id"),
             "profile_id": goal["profile_id"],
+            "execution_mode": goal.get("execution_mode") or "single",
             "objective": goal["objective"],
             "status": goal["status"],
             "progress": (done / len(tasks)) if tasks else 0.0,
@@ -2061,12 +2346,40 @@ class ResearchService:
             "usage": goal.get("usage") or {},
             "criteria": goal.get("criteria") or [],
             "tasks": goal.get("tasks") or [],
+            "research_agents": self._research_agents(goal),
             "artifacts": [self._wire_artifact(a) for a in goal.get("artifacts") or []],
             "evidence": [self._wire_evidence(item) for item in evidence],
             "claims": claims,
             "audit": self._wire_audits(goal["goal_id"]),
             "events": self.repo.list_events(goal["goal_id"], 0)[-200:],
         }
+
+    def _research_agents(self, goal: dict[str, Any]) -> list[dict[str, Any]]:
+        if (goal.get("execution_mode") or "single") != "multi_agent_pilot":
+            return []
+        try:
+            profile = get_graph_profile(str(goal.get("profile_id") or ""))
+        except ValueError:
+            return []
+        task_stats: dict[str, dict[str, int]] = {}
+        for task in goal.get("tasks") or []:
+            agent_id = task.get("agent_id")
+            if not agent_id:
+                continue
+            stats = task_stats.setdefault(
+                str(agent_id),
+                {"tasks": 0, "succeeded": 0},
+            )
+            stats["tasks"] += 1
+            if task.get("status") == "succeeded":
+                stats["succeeded"] += 1
+        return [
+            {
+                **agent.to_wire(),
+                **task_stats.get(agent.agent_id, {"tasks": 0, "succeeded": 0}),
+            }
+            for agent in profile.agents
+        ]
 
     def _wire_evidence(self, evidence: dict[str, Any]) -> dict[str, Any]:
         metadata = evidence.get("metadata") or {}

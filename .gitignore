@@ -18,6 +18,9 @@ __pycache__/
 .coverage
 htmlcov/
 
+# Node helper dependencies are reproduced from helpers/pi-ai/package-lock.json.
+node_modules/
+
 # Virtualenv
 .venv/
 .venv-*/
@@ -83,6 +86,7 @@ idx_*.csv
 
 # 构建产物（SwiftPM .build / 可重建，不入库）
 .build/
+.build-*/
 
 # storage 缓存 / legacy（可重建，不入库）
 storage/bj_cache/

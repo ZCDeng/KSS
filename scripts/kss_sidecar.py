@@ -33,6 +33,7 @@ import kss_app_bridge as bridge  # noqa: E402
 from kss.agent import (  # noqa: E402
     AgentEvent,
     AgentMessage,
+    AttachmentError,
     EventSequencer,
     KSSAgentService,
     MemoryStore,
@@ -75,7 +76,9 @@ def _agent_service() -> KSSAgentService:
     global _AGENT_SERVICE, _AGENT_SERVICE_ROOTS
     roots = (Path(bridge.STATE_ROOT), Path(bridge.PROJECT_ROOT))
     if _AGENT_SERVICE is None or _AGENT_SERVICE_ROOTS != roots:
-        _AGENT_SERVICE = KSSAgentService(*roots)
+        if _AGENT_SERVICE is not None:
+            _AGENT_SERVICE.close()
+        _AGENT_SERVICE = KSSAgentService(*roots, start_provider=True)
         _AGENT_SERVICE_ROOTS = roots
     return _AGENT_SERVICE
 
@@ -105,7 +108,15 @@ def _session_store() -> SessionStore:
 
 
 def _skill_manager() -> SkillManager:
-    return SkillManager(bridge.PROJECT_ROOT, bridge.STATE_ROOT)
+    import kss_chat_loop as chat_loop
+
+    return SkillManager(
+        bridge.PROJECT_ROOT,
+        bridge.STATE_ROOT,
+        available_tools=[
+            str(spec.get("name") or "") for spec in chat_loop.TOOL_SPECS
+        ],
+    )
 
 
 def _memory_store() -> MemoryStore:
@@ -265,24 +276,49 @@ async def _write_runtime_event(writer: asyncio.StreamWriter, event: AgentEvent,
         await writer.drain()
 
 
-def _validate_agent_turn_request(req: dict) -> tuple[str, str, str] | tuple[None, None, str]:
-    allowed = {"cmd", "session_id", "client_turn_id", "input", "source_queue_id"}
+def _validate_agent_turn_request(
+    req: dict,
+) -> tuple[str, str, str, list[str]] | tuple[None, None, str, list[str]]:
+    allowed = {
+        "cmd",
+        "session_id",
+        "client_turn_id",
+        "input",
+        "source_queue_id",
+        "attachment_ids",
+    }
     extra = set(req) - allowed
     if extra:
-        return None, None, f"agent-turn unexpected fields: {sorted(extra)}"
+        return None, None, f"agent-turn unexpected fields: {sorted(extra)}", []
     session_id = req.get("session_id")
     client_turn_id = req.get("client_turn_id")
     text = req.get("input")
     if not isinstance(session_id, str) or not session_id:
-        return None, None, "agent-turn requires session_id"
+        return None, None, "agent-turn requires session_id", []
     if not isinstance(client_turn_id, str) or not client_turn_id:
-        return None, None, "agent-turn requires client_turn_id"
+        return None, None, "agent-turn requires client_turn_id", []
     if not isinstance(text, str):
-        return None, None, "agent-turn requires string input"
-    return session_id, client_turn_id, text
+        return None, None, "agent-turn requires string input", []
+    raw_attachment_ids = req.get("attachment_ids") or []
+    if not isinstance(raw_attachment_ids, list) or any(
+        not isinstance(item, str) for item in raw_attachment_ids
+    ):
+        return None, None, "agent-turn attachment_ids must be a string array", []
+    return session_id, client_turn_id, text, raw_attachment_ids
 
 
 def _agent_wire_message(message: AgentMessage) -> dict[str, Any]:
+    attachment_ids = message.metadata.get("attachment_ids")
+    attachments: list[dict[str, Any]] = []
+    if isinstance(attachment_ids, list):
+        store = _agent_service().attachments
+        for attachment_id in attachment_ids:
+            if not isinstance(attachment_id, str):
+                continue
+            try:
+                attachments.append(store.load_record(attachment_id).to_payload())
+            except Exception:
+                continue
     return {
         "id": message.id,
         "role": message.role,
@@ -290,6 +326,10 @@ def _agent_wire_message(message: AgentMessage) -> dict[str, Any]:
         "content": message.content,
         "timestamp": message.timestamp,
         "tool_calls": [asdict(call) for call in message.tool_calls],
+        "content_blocks": [
+            block.to_payload() for block in message.content_blocks
+        ],
+        "attachments": attachments,
         "metadata": message.metadata,
     }
 
@@ -323,13 +363,13 @@ def _skill_response(manager: SkillManager, session_id: str | None = None) -> dic
     found, diagnostics = manager.discover()
     pinned = set(manager.pinned_skill_ids(session_id)) if session_id else set()
     return {
-        "skills": [{
-            "id": skill.id,
-            "name": skill.name,
-            "description": skill.description,
-            "enabled": skill.enabled,
-            "pinned": skill.id in pinned or skill.name in pinned,
-        } for skill in found],
+        "skills": [
+            {
+                **skill.as_dict(),
+                "pinned": skill.id in pinned or skill.name in pinned,
+            }
+            for skill in found
+        ],
         "diagnostics": [{
             "code": item.code,
             "message": item.message,
@@ -337,6 +377,112 @@ def _skill_response(manager: SkillManager, session_id: str | None = None) -> dic
         } for item in diagnostics],
         "status": manager.status(),
     }
+
+
+def _attachment_wire(record: Any, *, status: str = "ready") -> dict[str, Any]:
+    payload = record.to_payload() if hasattr(record, "to_payload") else dict(record)
+    payload["name"] = payload.get("name") or payload.get("filename") or "附件"
+    payload.setdefault("status", status)
+    return payload
+
+
+def _attachments_response(service: KSSAgentService) -> dict[str, Any]:
+    return {
+        "attachments": [
+            _attachment_wire(record) for record in service.attachments.list_records()
+        ]
+    }
+
+
+def _providers_action_payload(req: dict[str, Any]) -> dict[str, Any]:
+    service = _agent_service()
+    action = str(req.get("action") or "list")
+    if action in {"list", "catalog"}:
+        payload = service.provider_catalog()
+    elif action == "refresh":
+        provider_id = req.get("provider_id")
+        payload = service.provider_catalog(
+            refresh=True,
+            provider_id=provider_id if isinstance(provider_id, str) else None,
+        )
+    elif action == "set_route":
+        primary = req.get("primary")
+        fallback = req.get("fallback")
+        if not isinstance(primary, dict):
+            return {"status": "error", "error": "agent-providers set_route requires primary"}
+        if fallback is not None and not isinstance(fallback, dict):
+            return {"status": "error", "error": "agent-providers fallback must be an object"}
+        payload = service.set_provider_routes(primary=primary, fallback=fallback)
+    elif action == "reload_credentials":
+        socket_path = req.get("socket_path")
+        nonce = req.get("nonce")
+        payload = service.reload_provider_credentials(
+            socket_path=socket_path if isinstance(socket_path, str) else None,
+            nonce=nonce if isinstance(nonce, str) else None,
+        )
+    elif action == "test":
+        payload = service.test_provider_connection()
+    else:
+        return {"status": "error", "error": f"unknown agent-providers action: {action}"}
+    if not isinstance(payload.get("providers"), list):
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for model in payload.get("models") or []:
+            if not isinstance(model, dict):
+                continue
+            provider_id = str(model.get("provider_id") or "unknown")
+            grouped.setdefault(provider_id, []).append(model)
+        payload["providers"] = [
+            {
+                "id": provider_id,
+                "name": provider_id,
+                "auth_kind": "api_key",
+                "models": models,
+            }
+            for provider_id, models in sorted(grouped.items())
+        ]
+    return payload
+
+
+def _attachments_action_payload(req: dict[str, Any]) -> dict[str, Any]:
+    service = _agent_service()
+    action = str(req.get("action") or "list")
+    if action == "list":
+        return _attachments_response(service)
+    if action == "import":
+        session_id = req.get("session_id")
+        path = req.get("path")
+        extracted_text = req.get("extracted_text")
+        if not isinstance(session_id, str) or not session_id:
+            return {"error": "agent-attachments import requires session_id"}
+        if not isinstance(path, str) or not path:
+            return {"error": "agent-attachments import requires path"}
+        try:
+            record = service.import_attachment(
+                path,
+                extracted_text=extracted_text if isinstance(extracted_text, str) else None,
+            )
+        except AttachmentError as exc:
+            return {
+                "error": exc.code,
+                "attachment": {
+                    "id": "",
+                    "name": Path(path).name or "附件",
+                    "status": "error",
+                    "error": str(exc),
+                },
+                **_attachments_response(service),
+            }
+        return {
+            "attachment": _attachment_wire(record),
+            **_attachments_response(service),
+        }
+    if action == "remove":
+        attachment_id = req.get("attachment_id")
+        if not isinstance(attachment_id, str) or not attachment_id:
+            return {"error": "agent-attachments remove requires attachment_id"}
+        service.attachments.remove_record(attachment_id)
+        return _attachments_response(service)
+    return {"error": f"unknown agent-attachments action: {action}"}
 
 
 def _memory_wire(record: Any) -> dict[str, Any]:
@@ -951,7 +1097,9 @@ async def _handle_agent_turn(reader: asyncio.StreamReader,
     """Agent v1 transport: decode, stream Runtime events, and own the write gate."""
     import kss_chat_loop as chat_loop
 
-    session_id, client_turn_id, user_text_or_error = _validate_agent_turn_request(req)
+    session_id, client_turn_id, user_text_or_error, attachment_ids = (
+        _validate_agent_turn_request(req)
+    )
     transport_run_id = uuid4().hex
     emitter = _AgentFrameEmitter(writer, session_id or "", transport_run_id)
     if session_id is None or client_turn_id is None:
@@ -1086,6 +1234,7 @@ async def _handle_agent_turn(reader: asyncio.StreamReader,
                 input=user_text_or_error,
                 emit=emit_runtime,
                 request_write=request_write,
+                attachment_ids=attachment_ids,
                 **kwargs,
             )
         )
@@ -1175,6 +1324,10 @@ def _handle_agent_json_command(req: dict) -> str | None:
             return _sidecar_ok(_research_action_payload(req))
         if cmd == "agent-artifacts":
             return _sidecar_ok(_artifact_action_payload(req))
+        if cmd == "agent-providers":
+            return _sidecar_ok(_providers_action_payload(req))
+        if cmd == "agent-attachments":
+            return _sidecar_ok(_attachments_action_payload(req))
         if cmd == "agent-session":
             store = _session_store()
             action = req.get("action") or "open"
@@ -1468,6 +1621,8 @@ async def _serve() -> None:
 
     async with server:
         await stop
+    if _AGENT_SERVICE is not None:
+        _AGENT_SERVICE.close()
     # 清理：socket/pid/version 文件一起移除，避免 orphan 文件。
     for p in (SOCKET_PATH, PID_PATH, VERSION_PATH):
         if p.exists():

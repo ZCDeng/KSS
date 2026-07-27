@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -51,6 +54,113 @@ def test_research_migration_v3_is_idempotent(tmp_path):
     } <= tables
 
 
+def test_research_migration_v4_adds_agent_ownership(tmp_path):
+    db_path = tmp_path / "storage" / "kss.db"
+    with connect(db_path) as conn:
+        applied = ensure_schema(conn)
+        goal_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(research_goals)")
+        }
+        task_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(research_tasks)")
+        }
+        attempt_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(research_attempts)")
+        }
+
+    assert 4 in applied
+    assert "execution_mode" in goal_columns
+    assert "agent_id" in task_columns
+    assert "agent_id" in attempt_columns
+
+
+def test_multi_agent_pilot_binds_roles_and_caps_concurrency(tmp_path):
+    class RecordingRunner:
+        def __init__(self) -> None:
+            self.lock = threading.Lock()
+            self.active = 0
+            self.max_active = 0
+
+        def run(self, **_: object) -> dict[str, object]:
+            with self.lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            time.sleep(0.04)
+            with self.lock:
+                self.active -= 1
+            return {
+                "status": "succeeded",
+                "claims": [],
+                "evidence_refs": [],
+                "artifact_refs": [],
+                "open_questions": [],
+                "warnings": [],
+                "usage": {"total_tokens": 10},
+                "_tool_evidence": [],
+                "_tool_results": [],
+            }
+
+        def abort(self, *_: object, **__: object) -> bool:
+            return True
+
+    runner = RecordingRunner()
+    service = ResearchService(
+        state_root=tmp_path,
+        project_root=Path(__file__).resolve().parents[2],
+        task_runner=runner,  # type: ignore[arg-type]
+    )
+    created = service.create_goal(
+        payload={
+            "client_request_id": "pilot-roles",
+            "profile_id": "investment-weekly-v3",
+            "execution_mode": "multi_agent_pilot",
+            "objective": "多角色并发约束",
+            "inputs": {
+                "date_range": "2026-07-13_to_2026-07-17",
+                "as_of": "2026-07-17",
+            },
+        }
+    )
+
+    assert created["ok"] is True
+    detail = created["detail"]
+    assert detail["execution_mode"] == "multi_agent_pilot"
+    assert {agent["agent_id"] for agent in detail["research_agents"]} == {
+        "source_collector",
+        "market_structure_analyst",
+        "risk_contradiction_critic",
+        "report_synthesizer",
+    }
+    assert next(
+        task
+        for task in detail["tasks"]
+        if task["kind"] == "compute_temperature"
+    )["agent_id"] == "market_structure_analyst"
+
+    service.start_goal(goal_id=created["goal_id"])
+    assert service.wait_for_idle(created["goal_id"], timeout=10)["ok"] is True
+
+    assert runner.max_active == 2
+    with connect(service.db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT agent_id
+            FROM research_attempts
+            WHERE goal_id=? AND agent_id IS NOT NULL
+            """,
+            (created["goal_id"],),
+        ).fetchall()
+    assert {str(row["agent_id"]) for row in rows} >= {
+        "source_collector",
+        "market_structure_analyst",
+        "risk_contradiction_critic",
+        "report_synthesizer",
+    }
+
+
 def test_artifact_store_rejects_symlink_escape(tmp_path):
     root = tmp_path / "storage" / "agent" / "research"
     objects = root / "objects"
@@ -61,6 +171,48 @@ def test_artifact_store_rejects_symlink_escape(tmp_path):
 
     with pytest.raises(ArtifactSafetyError, match="escapes research root"):
         ArtifactStore(root=root, db_path=tmp_path / "storage" / "kss.db")
+
+
+def test_artifact_events_allocate_unique_sequences_under_concurrency(tmp_path):
+    service = ResearchService(
+        state_root=tmp_path,
+        project_root=Path(__file__).resolve().parents[2],
+    )
+    created = service.create_goal(payload={
+        "client_request_id": "artifact-event-concurrency",
+        "profile_id": "investment-weekly-v3",
+        "objective": "并发产物事件序列",
+        "inputs": {
+            "date_range": "2026-07-13_to_2026-07-17",
+            "as_of": "2026-07-17",
+        },
+    })
+    goal_id = created["goal_id"]
+
+    def write_artifact(index: int) -> str:
+        artifact = service.artifacts.put_bytes(
+            goal_id=goal_id,
+            kind="test_sidecar",
+            name=f"artifact-{index}.json",
+            data=json.dumps({"index": index}).encode("utf-8"),
+            media_type="application/json",
+        )
+        return artifact["artifact_id"]
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        artifact_ids = list(pool.map(write_artifact, range(12)))
+
+    service.repo.mirror_unmirrored(goal_id)
+    events = [
+        event for event in service.list_events(goal_id=goal_id)
+        if event["type"] == "artifact_ready"
+    ]
+    sequences = [event["sequence"] for event in events]
+
+    assert len(set(artifact_ids)) == 12
+    assert len(events) == 12
+    assert len(sequences) == len(set(sequences))
+    assert sequences == sorted(sequences)
 
 
 def test_research_service_runs_goal_to_completed_and_publishes(tmp_path):
@@ -74,11 +226,13 @@ def test_research_service_runs_goal_to_completed_and_publishes(tmp_path):
 
     goal_id = created["goal_id"]
     started = service.start_goal(goal_id=goal_id)
+    settled = service.wait_for_idle(goal_id, timeout=10)
     opened = service.open_goal(goal_id=goal_id)
     artifacts = service.list_artifacts(goal_id=goal_id)
     events = service.list_events(goal_id=goal_id, after_sequence=0)
 
     assert started["ok"] is True
+    assert settled["ok"] is True
     assert opened["detail"]["status"] == "completed"
     assert all(t["status"] == "succeeded" for t in opened["detail"]["tasks"])
     assert any(a["kind"] == "report_html" for a in artifacts["artifacts"])
@@ -452,6 +606,7 @@ def test_publish_rejects_draft_even_if_goal_has_passed_audit(tmp_path):
     })
     goal_id = created["goal_id"]
     assert service.start_goal(goal_id=goal_id)["ok"] is True
+    assert service.wait_for_idle(goal_id, timeout=10)["ok"] is True
     report = next(
         item
         for item in service.artifacts.list_goal(goal_id)

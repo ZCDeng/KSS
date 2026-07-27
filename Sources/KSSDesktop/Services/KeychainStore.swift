@@ -5,6 +5,8 @@ import Security
 /// 受管键与 bridge `_load_project_env` 的 allowed 对齐；BridgeClient 启动时读出注入子进程 env。
 enum KeychainStore {
     static let service = "com.zcdeng.KSSDesktop.credentials"
+    private static let providerAccountPrefix = "KSS_PROVIDER_API_KEY."
+    private static let providerIndexDefaultsKey = "kss.llm.providerCredentialIds.v1"
 
     /// 敏感凭据（存 Keychain）。非敏感项（API URL / 模型名 / live 开关）一并管理便于配置注入。
     /// LLM key 用于 app 内 AI 复盘助手（#4）：sidecar 启动时读出注入子进程 env，
@@ -79,12 +81,137 @@ enum KeychainStore {
         return false
     }
 
+    private static let llmSecretKeys: Set<String> = [
+        "OPENAI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "KSS_LLM_PRIMARY_KEY",
+        "KSS_LLM_FALLBACK_KEY",
+    ]
+
+    private static let llmCredentialPresenceEnv: [String: String] = [
+        "OPENAI_API_KEY": "OPENAI_API_KEY_PRESENT",
+        "DEEPSEEK_API_KEY": "DEEPSEEK_API_KEY_PRESENT",
+        "KSS_LLM_PRIMARY_KEY": "KSS_LLM_PRIMARY_CREDENTIAL_PRESENT",
+        "KSS_LLM_FALLBACK_KEY": "KSS_LLM_FALLBACK_CREDENTIAL_PRESENT",
+    ]
+
     /// 注入子进程的 env 片段（仅含已配置的键）。
-    static func injectedEnvironment() -> [String: String] {
+    ///
+    /// LLM BYOK secrets are excluded for the long-lived agent sidecar. The
+    /// sidecar only receives non-secret route metadata and presence flags; the
+    /// actual API keys are served to the signed pi-ai helper through a
+    /// nonce-bound local Unix socket.
+    static func injectedEnvironment(includeLLMSecrets: Bool = true) -> [String: String] {
         var out: [String: String] = [:]
         for key in managedKeys {
+            if !includeLLMSecrets && llmSecretKeys.contains(key) {
+                continue
+            }
             if let value = read(key) { out[key] = value }
         }
+        if !includeLLMSecrets {
+            for (key, flag) in llmCredentialPresenceEnv where read(key) != nil {
+                out[flag] = "1"
+            }
+        }
         return out
+    }
+
+    static func sidecarEnvironment() -> [String: String] {
+        injectedEnvironment(includeLLMSecrets: false)
+    }
+
+    static func hasLLMCredentials() -> Bool {
+        llmSecretKeys.contains { read($0) != nil } || !providerCredentialIds().isEmpty
+    }
+
+    static func readProviderAPIKey(_ providerId: String) -> String? {
+        read(providerAccountPrefix + providerId)
+    }
+
+    @discardableResult
+    static func writeProviderAPIKey(_ providerId: String, _ value: String) -> Bool {
+        let trimmedId = providerId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedId.isEmpty,
+              trimmedId.range(of: #"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"#,
+                              options: .regularExpression) != nil
+        else { return false }
+        let saved = write(providerAccountPrefix + trimmedId, value)
+        guard saved else { return false }
+        var ids = Set(providerCredentialIds())
+        if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            ids.remove(trimmedId)
+        } else {
+            ids.insert(trimmedId)
+        }
+        UserDefaults.standard.set(ids.sorted(), forKey: providerIndexDefaultsKey)
+        return true
+    }
+
+    static func providerCredentialIds() -> [String] {
+        (UserDefaults.standard.stringArray(forKey: providerIndexDefaultsKey) ?? [])
+            .filter {
+                readProviderAPIKey($0) != nil
+            }
+    }
+
+    static func piAICredentialSnapshot() -> [String: Any] {
+        var scoped: [String: String] = [:]
+        for providerId in providerCredentialIds() {
+            if let key = readProviderAPIKey(providerId) {
+                scoped[providerId] = key
+            }
+        }
+        var legacy: [String: String] = [:]
+        for key in managedKeys where key.contains("LLM") || key.contains("OPENAI") || key.contains("DEEPSEEK") || key.contains("OPENROUTER") {
+            if let value = read(key) {
+                legacy[key] = value
+            }
+        }
+        return makePiAICredentialSnapshot(scoped: scoped, legacy: legacy)
+    }
+
+    /// Pure compatibility resolver used by the broker and regression tests.
+    /// Existing KSS LLM keys remain authoritative; aliases only fill a missing
+    /// new provider-scoped route and never overwrite an explicit credential.
+    static func makePiAICredentialSnapshot(
+        scoped: [String: String],
+        legacy: [String: String]
+    ) -> [String: Any] {
+        var credentials: [String: Any] = [:]
+        for (providerId, key) in scoped {
+            credentials[providerId] = ["type": "api_key", "key": key]
+        }
+        func put(_ providerId: String, _ key: String?) {
+            guard credentials[providerId] == nil,
+                  let key,
+                  !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else { return }
+            credentials[providerId] = ["type": "api_key", "key": key]
+        }
+
+        put("kss-primary", legacy["KSS_LLM_PRIMARY_KEY"])
+        put("kss-fallback", legacy["KSS_LLM_FALLBACK_KEY"])
+        if let key = legacy["DEEPSEEK_API_KEY"] {
+            credentials["deepseek"] = ["type": "api_key", "key": key]
+        }
+        if let key = legacy["OPENAI_API_KEY"] {
+            credentials["openai"] = ["type": "api_key", "key": key]
+        }
+        if let key = legacy["OPENROUTER_API_KEY"] {
+            credentials["openrouter"] = ["type": "api_key", "key": key]
+        }
+
+        let primaryBase = legacy["KSS_LLM_PRIMARY_BASE_URL"]?.lowercased() ?? ""
+        let fallbackBase = legacy["KSS_LLM_FALLBACK_BASE_URL"]?.lowercased() ?? ""
+        let primaryLegacy = primaryBase.contains("deepseek")
+            ? legacy["DEEPSEEK_API_KEY"]
+            : legacy["OPENAI_API_KEY"] ?? legacy["DEEPSEEK_API_KEY"]
+        let fallbackLegacy = fallbackBase.contains("deepseek")
+            ? legacy["DEEPSEEK_API_KEY"]
+            : legacy["OPENAI_API_KEY"] ?? legacy["DEEPSEEK_API_KEY"]
+        put("kss-primary", primaryLegacy)
+        put("kss-fallback", fallbackLegacy)
+        return credentials
     }
 }
