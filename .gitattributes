@@ -1,0 +1,4 @@
+# Daily review Markdown deliberately pads source-table columns for readability.
+# Treat that padding as data formatting so repository-wide whitespace checks
+# remain focused on source and executable artifacts.
+storage/daily_review/*.md whitespace=-trailing-space
