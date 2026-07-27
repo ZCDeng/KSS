@@ -4991,6 +4991,10 @@ COMMANDS = {
     "intel-rewrite-run": {"desc": "资讯雷达Top-K改写worker(JSON_PAYLOAD可选)", "args": ["[JSON_PAYLOAD]"]},
     "longbridge-quote": {"desc": "Longbridge 实时快照(ChinaConnect LV1,仅陆股通标的)", "args": ["SYMBOL"]},
     "longbridge-quotes": {"desc": "Longbridge 批量实时快照(单次 SDK 调用,逗号分隔)", "args": ["SYMBOLS"]},
+    "us-market-quotes": {
+        "desc": "隔夜美股独立快照(Longbridge优先,yFinance逐标回退)",
+        "args": ["[SYMBOLS]"],
+    },
     "market-live-context": {
         "desc": "Agent 只读实时盘面上下文(复用 Longbridge quote + intraday freshness)",
         "args": ["SYMBOLS", "[INTENT]", "[REASON]"],
@@ -5366,6 +5370,20 @@ def _longbridge_quotes(symbols_arg: str) -> dict[str, Any]:
                 )
 
     return {"quotes": out, "count": len(out)}
+
+
+def _us_market_quotes(symbols_arg: str = "") -> dict[str, Any]:
+    """返回盯盘页独立美股快照，不进入 ChinaConnect coverage router。"""
+
+    from kss.data.us_market import default_us_market_quote_service
+
+    symbols = [
+        value.strip().upper()
+        for value in symbols_arg.split(",")
+        if value.strip()
+    ]
+    snapshot = default_us_market_quote_service().fetch_snapshot(symbols or None)
+    return snapshot.to_dict()
 
 
 def _intraday_snapshot(symbol: str, interval_minutes: int = 1, asset_kind: str = "stock") -> dict[str, Any]:
@@ -6094,6 +6112,8 @@ def dispatch(command: str, args: list[str]) -> Any:
         return _longbridge_quote(args[0] if args else "")
     if command == "longbridge-quotes":
         return _longbridge_quotes(args[0] if args else "")
+    if command == "us-market-quotes":
+        return _us_market_quotes(args[0] if args else "")
     if command == "market-live-context":
         return _market_live_context(
             args[0] if args else "",

@@ -755,6 +755,7 @@ _RESEARCH_ACTION_METHODS: dict[str, tuple[str, ...]] = {
     "cancel": ("cancel", "cancel_goal"),
     "retry_task": ("retry_task", "retry", "retry_research_task"),
     "refresh_snapshot": ("refresh_snapshot", "snapshot", "get_snapshot"),
+    "import_corpus": ("import_corpus", "import_analyst_corpus"),
     "audit": ("audit", "audit_goal"),
 }
 

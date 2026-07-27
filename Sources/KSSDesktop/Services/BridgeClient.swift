@@ -124,6 +124,16 @@ struct BridgeClient {
         ).quotes
     }
 
+    /// 隔夜美股独立行情服务：Longbridge 优先、yFinance 逐项回退。
+    /// 返回统一的新鲜度状态，不进入 ChinaConnect `RealtimeMerge`。
+    func usMarketQuotes(symbols: [String] = []) throws -> USMarketQuotesResponse {
+        var command = ["us-market-quotes"]
+        if !symbols.isEmpty {
+            command.append(symbols.joined(separator: ","))
+        }
+        return try run(command, as: USMarketQuotesResponse.self)
+    }
+
     /// 最新分钟 bar 快照（按覆盖路由，前向-only）。R2。
     func intradaySnapshot(symbol: String, interval: Int = 1) throws -> IntradaySnapshot {
         try run(["intraday-snapshot", symbol, String(interval)], as: IntradaySnapshot.self)
@@ -832,7 +842,8 @@ struct BridgeClient {
         cadence: String? = nil,
         profileIds: [String]? = nil,
         limit: Int? = nil,
-        cursor: String? = nil
+        cursor: String? = nil,
+        path: String? = nil
     ) throws -> ResearchResponse {
         var payload: [String: Any] = ["action": action]
         if let clientRequestId { payload["client_request_id"] = clientRequestId }
@@ -849,6 +860,7 @@ struct BridgeClient {
         if let profileIds { payload["profile_ids"] = profileIds }
         if let limit { payload["limit"] = limit }
         if let cursor { payload["cursor"] = cursor }
+        if let path { payload["path"] = path }
         return try agentCommand("agent-research", payload: payload, as: ResearchResponse.self)
     }
 

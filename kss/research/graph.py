@@ -86,6 +86,22 @@ def investment_weekly_v3() -> ProfileSpec:
         ("delivery_audit", "执行交付审计", ["compile_report"]),
         ("preview_publish_gate", "生成预览，等待发布确认", ["delivery_audit"]),
     ]
+    skills_by_kind = {
+        "collect_sources": [
+            "investment-weekly-analysis",
+            "research-discipline",
+        ],
+        "normalize_fields": ["investment-weekly-analysis"],
+        "compute_temperature": ["investment-weekly-analysis"],
+        "theme_consensus": ["investment-weekly-analysis"],
+        "risk_radar": ["investment-weekly-analysis", "risk-analysis"],
+        "analyst_cards": ["investment-weekly-analysis"],
+        "verify_data": [
+            "investment-weekly-analysis",
+            "research-discipline",
+        ],
+        "narrative": ["investment-weekly-analysis", "report-generate"],
+    }
     criteria = [
         {
             "label": "冻结输入快照",
@@ -159,7 +175,7 @@ def investment_weekly_v3() -> ProfileSpec:
                         if kind == "collect_sources"
                         else ["run_recipe"]
                     ),
-                    "skill_whitelist": [],
+                    "skill_whitelist": skills_by_kind.get(kind, []),
                     "max_steps": 8,
                     "timeout_seconds": 240,
                     "max_provider_tokens": 25_000,
@@ -190,7 +206,17 @@ def investment_daily_v1() -> ProfileSpec:
             required=task.required,
             depends_on=list(task.depends_on),
             agent_id=task.agent_id,
-            payload=dict(task.payload),
+            payload={
+                **task.payload,
+                "skill_whitelist": [
+                    (
+                        "investment-daily-analysis"
+                        if skill == "investment-weekly-analysis"
+                        else skill
+                    )
+                    for skill in task.payload.get("skill_whitelist", [])
+                ],
+            },
         )
         for task in weekly.tasks
     ]

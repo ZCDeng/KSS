@@ -318,7 +318,7 @@ def sha256_bytes(data: bytes) -> str:
 class ReportCompiler:
     """Compile a typed report IR into static HTML plus auditable sidecars."""
 
-    required_anchors = [
+    weekly_required_anchors = [
         "overview",
         "temperature",
         "theme-consensus",
@@ -328,6 +328,22 @@ class ReportCompiler:
         "methodology",
         "audit",
     ]
+    daily_required_anchors = [
+        "overview",
+        "temperature",
+        "theme-consensus",
+        "risk-radar",
+        "precision-cards",
+        "methodology",
+        "audit",
+    ]
+
+    def _required_anchors(self, document: ReportDocument) -> list[str]:
+        return (
+            self.daily_required_anchors
+            if document.profile_id == "investment-daily-v1"
+            else self.weekly_required_anchors
+        )
 
     def compile(self, document: ReportDocument, *, draft: bool = False) -> dict[str, Any]:
         audit = self.audit(document)
@@ -365,9 +381,10 @@ class ReportCompiler:
         metric_ids = set(document.metric_ledger.by_id())
         evidence_ids = {e.evidence_id for e in document.evidence}
         anchors = [section.anchor for section in document.sections]
+        required_anchors = self._required_anchors(document)
         formula_inputs = document.metadata.get("formula_inputs")
         formula_inputs = formula_inputs if isinstance(formula_inputs, dict) else {}
-        missing_anchors = [a for a in self.required_anchors if a not in anchors]
+        missing_anchors = [a for a in required_anchors if a not in anchors]
         if missing_anchors:
             findings.append({"severity": "block", "code": "missing_anchor", "detail": missing_anchors})
         if len(set(anchors)) != len(anchors):
@@ -401,7 +418,7 @@ class ReportCompiler:
                 )
             if not metric.as_of:
                 findings.append({"severity": "block", "code": "metric_without_as_of", "metric_id": metric.metric_id})
-            if metric.formula_version != "v1":
+            if metric.formula_version not in {"v1", "kss-equivalent-v1"}:
                 findings.append({"severity": "block", "code": "unsupported_formula_version", "metric_id": metric.metric_id, "version": metric.formula_version})
             recomputed = self._recompute_metric(
                 metric,
@@ -531,7 +548,7 @@ class ReportCompiler:
             "status": status,
             "coverage": {
                 "anchors": anchors,
-                "required_anchors": self.required_anchors,
+                "required_anchors": required_anchors,
                 "metric_count": len(metric_ids),
                 "claim_count": len(document.claims),
                 "evidence_count": len(evidence_ids),
@@ -691,6 +708,48 @@ class ReportCompiler:
         values = formula_inputs.get(metric.metric_id)
         if not isinstance(values, list) or not values:
             return None
+        if metric.formula_id == "investment_temperature":
+            numerator = 0.0
+            denominator = 0.0
+            for value in values:
+                if not isinstance(value, dict):
+                    return None
+                try:
+                    stance = float(value["stance_score"])
+                    conviction = float(value["conviction_weight"])
+                    analyst = float(value["analyst_weight"])
+                except (KeyError, TypeError, ValueError):
+                    return None
+                if bool(value.get("is_sellside_forward")):
+                    continue
+                numerator += stance * conviction * analyst
+                denominator += conviction * analyst
+            return numerator / denominator if denominator else 0.0
+        if metric.formula_id == "investment_theme_strength":
+            numeric = [
+                float(value)
+                for value in values
+                if isinstance(value, (int, float)) and not isinstance(value, bool)
+            ]
+            if len(numeric) != len(values):
+                return None
+            return max(numeric, key=abs)
+        if metric.formula_id == "investment_risk_severity":
+            severities: list[float] = []
+            for value in values:
+                if not isinstance(value, dict):
+                    return None
+                mentions = value.get("mention_card_count")
+                analysts = value.get("distinct_analyst_count")
+                if (
+                    isinstance(mentions, bool)
+                    or not isinstance(mentions, (int, float))
+                    or isinstance(analysts, bool)
+                    or not isinstance(analysts, (int, float))
+                ):
+                    return None
+                severities.append(float(mentions) + 0.5 * float(analysts))
+            return max(severities) if severities else 0.0
         numeric = [
             float(value)
             for value in values

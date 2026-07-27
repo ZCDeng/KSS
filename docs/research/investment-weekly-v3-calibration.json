@@ -1,0 +1,56 @@
+{
+  "calibration_version": "investment-weekly-v3-calibration-v1",
+  "sample": {
+    "sha256": "2992be89c70231898513ac098b2a3355806163aa5948dd1c02d8d72e77fdcbe3",
+    "size_bytes": 132877,
+    "period": "2026-07-13_to_2026-07-17",
+    "observed_card_count": 1143,
+    "observed_analyst_count": 6,
+    "source_file_committed": false
+  },
+  "sample_exact": {
+    "risk_severity": "mention_card_count + 0.5 * distinct_analyst_count",
+    "persistent_theme": "same theme and direction on at least 3 trading days with at least 2 analysts",
+    "catalyst_status": "date_anchor <= period_end is realized; future or unparseable dates are pending",
+    "sellside_forwarding": "background only and excluded from analyst consensus",
+    "analyst_profile_dimensions": [
+      "card_count",
+      "direction_distribution",
+      "theme_coverage",
+      "evidence_grade_distribution"
+    ]
+  },
+  "not_identifiable_from_sample": [
+    "raw precision-card corpus",
+    "stance-label extraction rubric",
+    "conviction extraction rubric",
+    "per-analyst weight values and approval history",
+    "source-quality checker prompts and model versions",
+    "complete evidence payloads behind every aggregate",
+    "unique implementation of theme trend confidence"
+  ],
+  "kss_equivalent_v1": {
+    "stance_scores": {
+      "strong_bearish": -2,
+      "bearish": -1,
+      "neutral": 0,
+      "bullish": 1,
+      "strong_bullish": 2
+    },
+    "conviction_weights": {
+      "low": 0.5,
+      "medium": 0.75,
+      "high": 1.0
+    },
+    "default_analyst_weight": 1.0,
+    "temperature": "sum((stance_score / 2) * analyst_weight * conviction_weight) / sum(analyst_weight * conviction_weight)",
+    "theme_strength": "sum((stance_score / 2) * analyst_weight * conviction_weight) per instrument and theme",
+    "trend": "second-half daily theme-strength mean minus first-half mean with snapshot-seeded bootstrap interval"
+  },
+  "differences": [
+    "The sample states that temperature is analyst-weight and conviction weighted, but does not disclose either mapping.",
+    "The sample chart labels a visual scale from -2 to +2 while published daily values are near zero; KSS normalizes the deterministic metric to [-1, 1].",
+    "KSS labels temperature, theme strength, and trend as kss_equivalent rather than sample_exact.",
+    "KSS removes action, position, target-price, and personalized trading outputs from the method contract."
+  ]
+}

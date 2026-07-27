@@ -19,6 +19,11 @@ struct DashboardView: View {
     var realtimeUpdatedAt: Date? = nil
     var onLoadRealtime: () -> Void = {}
     var onRetryRealtime: () -> Void = {}
+    var usMarketQuotes: [String: USMarketQuote] = [:]
+    var usMarketPhase: String? = nil
+    var usMarketCoverage: USMarketCoverage? = nil
+    var usMarketUpdatedAt: Date? = nil
+    var onLoadUSMarket: () -> Void = {}
 
     // Material 3 响应式栅格：统一外边距 / 沟槽，内容封顶居中，断点决定主区列数。
     private let margin: CGFloat = 24
@@ -45,6 +50,22 @@ struct DashboardView: View {
             receivedAtBySymbol: realtimeReceivedAtBySymbol
         ) else { return nil }
         return String(format: "最旧: %@ · %.0fs", worst.symbol, worst.ageSeconds)
+    }
+
+    private var usMarketCaption: String {
+        let coverage = USMarketQuoteMerge.summary(usMarketCoverage)
+        let phase: String
+        switch usMarketPhase {
+        case "regular": phase = "常规交易"
+        case "pre": phase = "盘前"
+        case "post": phase = "盘后"
+        case "closed": phase = "已休市"
+        default: phase = "阶段未知"
+        }
+        guard let usMarketUpdatedAt else {
+            return "\(coverage) · \(phase)"
+        }
+        return "\(coverage) · \(phase) · \(usMarketUpdatedAt.formatted(date: .omitted, time: .shortened))"
     }
 
     var body: some View {
@@ -102,8 +123,14 @@ struct DashboardView: View {
 
                     // 隔夜美股：固定名单顺序，不按涨跌重排；≥1 才显示
                     if let overnight = snapshot.marketStrip?.overnightUS, !overnight.isEmpty {
-                        SectionHeader("隔夜美股", caption: "美股/ETF 与全球指数 · 收盘或延迟行情")
-                        OvernightUSMarquee(indices: overnight)
+                        SectionHeader(
+                            "隔夜美股",
+                            caption: usMarketCaption
+                        )
+                        OvernightUSMarquee(
+                            indices: overnight,
+                            quotes: usMarketQuotes
+                        )
                     }
 
                     if let pulse = snapshot.sectorReviews?.first, !pulse.themes.isEmpty {
@@ -135,7 +162,10 @@ struct DashboardView: View {
             .scrollContentBackground(.hidden)
             .background(theme.canvas)
         }
-        .onAppear { onLoadRealtime() }   // U2: 页面加载触发实时拉取（交易时段门控在 store 内）
+        .onAppear {
+            onLoadRealtime()
+            onLoadUSMarket()
+        }
     }
 
     /// 主区：今日推荐 | 纸交易跟踪。宽屏并排（推荐自适应 + 跟踪定宽），窄屏纵向堆叠。
@@ -1097,10 +1127,112 @@ private struct MarqueeWidthKey: PreferenceKey {
 
 /// 隔夜美股跑马灯：名单固定顺序，不按涨跌重排；纸白底芯片，区别于上方指数 raised 跑马灯。
 struct OvernightUSMarquee: View {
+    @Environment(\.kssTheme) private var theme
     var indices: [IndexQuote]
+    var quotes: [String: USMarketQuote] = [:]
 
     var body: some View {
-        IndexMarquee(indices: indices, quotes: [:], sortByPct: false, chipSurface: .paper)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(indices) { index in
+                    chip(index)
+                }
+            }
+            .padding(.vertical, 1)
+        }
+        .mask(
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .black, location: 0.025),
+                    .init(color: .black, location: 0.975),
+                    .init(color: .clear, location: 1),
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        )
+    }
+
+    private func chip(_ index: IndexQuote) -> some View {
+        let live = quotes[index.code.uppercased()]
+        let close = live?.last ?? index.close
+        let pct = live?.pct ?? index.pct
+        let status = live?.status ?? "static"
+        let source = live?.source ?? "历史收盘"
+        let isObserved = ["live", "delayed"].contains(status)
+
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Image(
+                    systemName: pct >= 0
+                        ? "arrowtriangle.up.fill"
+                        : "arrowtriangle.down.fill"
+                )
+                .font(KSSFont.themed(9, .bold, theme: theme))
+                .foregroundStyle(theme.signColor(pct))
+                Text(index.name)
+                    .font(KSSFont.themed(12.5, .bold, theme: theme))
+                    .foregroundStyle(Color(white: 0.12))
+                    .lineLimit(1)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                LivePriceText(
+                    value: close,
+                    text: String(format: "%.2f", close),
+                    baseColor: Color(white: 0.35),
+                    isLive: isObserved,
+                    font: .system(
+                        size: 12,
+                        weight: .semibold,
+                        design: .monospaced
+                    )
+                )
+                LivePriceText(
+                    value: pct,
+                    text: String(format: "%+.2f%%", pct),
+                    baseColor: theme.signColor(pct),
+                    isLive: isObserved,
+                    font: .system(
+                        size: 12,
+                        weight: .heavy,
+                        design: .monospaced
+                    )
+                )
+            }
+            Text("\(statusLabel(status)) · \(sourceLabel(source))")
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundStyle(Color(white: 0.42))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: KSSTheme.shapeL))
+        .overlay(
+            RoundedRectangle(cornerRadius: KSSTheme.shapeL)
+                .strokeBorder(Color.black.opacity(0.08), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.04), radius: 2, y: 1)
+        .fixedSize()
+        .help(live?.error ?? "")
+    }
+
+    private func statusLabel(_ status: String) -> String {
+        switch status {
+        case "live": return "实时"
+        case "delayed": return "可能延迟"
+        case "stale": return "已过期"
+        case "unavailable": return "不可用"
+        default: return "静态"
+        }
+    }
+
+    private func sourceLabel(_ source: String) -> String {
+        switch source {
+        case "longbridge": return "Longbridge"
+        case "yfinance": return "yFinance"
+        default: return source
+        }
     }
 }
 

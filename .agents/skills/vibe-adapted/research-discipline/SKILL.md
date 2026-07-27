@@ -6,7 +6,7 @@ source: vibe-trading
 upstream_commit: 4cede84635df372e56ad4fb0a0647f19be56c892
 protected: false
 required_tools: [research_search, research_bundle]
-allowed_profiles: [chat, generic-research-v1, investment-weekly-v3]
+allowed_profiles: [chat, generic-research-v1, investment-daily-v1, investment-weekly-v3]
 description: 研究开始与交付前的偏差自检：覆盖范围、反证、时效、来源层级和数字绑定。
 ---
 

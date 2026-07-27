@@ -280,7 +280,14 @@ struct ContentView: View {
                     realtimeAuthFailed: store.realtimeAuthFailed,
                     realtimeUpdatedAt: store.realtimeUpdatedAt,
                     onLoadRealtime: { Task { await store.loadRealtimeData() } },
-                    onRetryRealtime: { Task { await store.retryRealtime() } }
+                    onRetryRealtime: { Task { await store.retryRealtime() } },
+                    usMarketQuotes: store.usMarketQuotesByCode,
+                    usMarketPhase: store.usMarketPhase,
+                    usMarketCoverage: store.usMarketCoverage,
+                    usMarketUpdatedAt: store.usMarketUpdatedAt,
+                    onLoadUSMarket: {
+                        Task { await store.loadUSMarketData() }
+                    }
                 )
             case .recommendations:
                 RecommendationsView(

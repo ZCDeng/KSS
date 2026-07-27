@@ -3639,6 +3639,58 @@ struct LongbridgeQuote: Codable, Hashable {
     var isLive: Bool { error == nil && lastDone != nil }
 }
 
+/// 独立美股行情桥接结果。它不复用 A 股 `RealtimeMerge`，避免把美股权限、
+/// 交易阶段和延迟口径混入 ChinaConnect 的实时语义。
+struct USMarketQuotesResponse: Codable, Equatable {
+    var quotes: [USMarketQuote]
+    var count: Int?
+    var marketPhase: String?
+    var receivedAt: String?
+    var coverage: USMarketCoverage?
+
+    enum CodingKeys: String, CodingKey {
+        case quotes, count, coverage
+        case marketPhase = "market_phase"
+        case receivedAt = "received_at"
+    }
+}
+
+struct USMarketCoverage: Codable, Equatable {
+    var live: Int?
+    var delayed: Int?
+    var stale: Int?
+    var `static`: Int?
+    var unavailable: Int?
+}
+
+struct USMarketQuote: Codable, Equatable, Hashable, Identifiable {
+    var code: String
+    var name: String
+    var last: Double?
+    var prevClose: Double?
+    var pct: Double?
+    var source: String?
+    var sourceAsOf: String?
+    var receivedAt: String?
+    var marketPhase: String?
+    var status: String
+    var error: String?
+
+    var id: String { code }
+
+    enum CodingKeys: String, CodingKey {
+        case code, name, last, pct, source, status, error
+        case prevClose = "prev_close"
+        case sourceAsOf = "source_as_of"
+        case receivedAt = "received_at"
+        case marketPhase = "market_phase"
+    }
+
+    var hasUsablePrice: Bool {
+        last != nil && pct != nil && status != "unavailable"
+    }
+}
+
 /// 单根 OHLCV bar（intraday-snapshot 的 `bar` / intraday-bars 的 `bars[]` 元素）。
 struct OHLCBar: Codable, Hashable {
     var timestamp: String?

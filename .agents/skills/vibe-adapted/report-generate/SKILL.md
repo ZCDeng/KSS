@@ -6,7 +6,7 @@ source: vibe-trading
 upstream_commit: 4cede84635df372e56ad4fb0a0647f19be56c892
 protected: false
 required_tools: [get_report, research_bundle]
-allowed_profiles: [generic-research-v1, investment-weekly-v3]
+allowed_profiles: [generic-research-v1, investment-daily-v1, investment-weekly-v3]
 description: 将已验证 Claim、Metric 与 Evidence 编排成结构化研究报告，不直接生成绕过审计的最终 HTML。
 ---
 

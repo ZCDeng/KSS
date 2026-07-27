@@ -171,6 +171,20 @@ final class KSSStore: ObservableObject {
     /// 不可复用 realtimeUpdatedAt（全局），否则单标的新鲜度会被其他标的的刷新成功掩盖。
     @Published var realtimeReceivedAtBySymbol: [String: Date] = [:]
 
+    // MARK: 隔夜美股行情——独立于 ChinaConnect 的状态、覆盖与定时器
+    @Published var usMarketQuotesByCode: [String: USMarketQuote] = [:]
+    @Published var usMarketPhase: String?
+    @Published var usMarketUpdatedAt: Date?
+    @Published var usMarketCoverage: USMarketCoverage?
+    @Published var usMarketLastError: String?
+
+    nonisolated static let usMarketCodes = [
+        "MCHI", "IXIC", "DJI", "XIN9", "ROBO", "BOTZ",
+        "NVDA", "SOXX", "SMH", "TSLA", "MU", "AVGO",
+    ]
+    private var usMarketTimerCancellable: AnyCancellable?
+    nonisolated private static let usMarketRefreshIntervalSeconds: Double = 60
+
     // MARK: U5 Timer 基础设施（R9/R10/R13/R14）
     @Published var refreshTimestamp: Date?             // 定时刷新 tick（紫苏叶/国产替代 Section 监听此值触发重算）
     private var timerCancellable: AnyCancellable?
@@ -2432,6 +2446,7 @@ final class KSSStore: ObservableObject {
     func updateSceneActive(_ active: Bool) {
         scenePhaseActive = active
         reevaluateTimer()
+        reevaluateUSMarketTimer()
     }
 
     /// 交易时段门控更新后重新评估两条独立 timer（trading-hours 查询与 loadTradingHours 异步）。
@@ -2455,6 +2470,74 @@ final class KSSStore: ObservableObject {
         } else {
             stopSparklineTimer()
         }
+    }
+
+    /// 美股只在正常交易时段轮询。该门与 A 股交易时段、认证状态完全独立。
+    func reevaluateUSMarketTimer() {
+        if scenePhaseActive && usMarketPhase == "regular" {
+            startUSMarketTimer()
+        } else {
+            stopUSMarketTimer()
+        }
+    }
+
+    private func startUSMarketTimer() {
+        guard usMarketTimerCancellable == nil else { return }
+        usMarketTimerCancellable = Timer.publish(
+            every: Self.usMarketRefreshIntervalSeconds,
+            on: .main,
+            in: .common
+        )
+        .autoconnect()
+        .sink { [weak self] _ in
+            guard let self, self.scenePhaseActive,
+                  self.usMarketPhase == "regular" else { return }
+            Task { await self.loadUSMarketData() }
+        }
+    }
+
+    private func stopUSMarketTimer() {
+        usMarketTimerCancellable?.cancel()
+        usMarketTimerCancellable = nil
+    }
+
+    /// 拉取独立美股快照；逐项失败保留上一条有效值并显式降级为 stale。
+    func loadUSMarketData() async {
+        guard let bridge else { return }
+        do {
+            let response = try await Task.detached {
+                try bridge.usMarketQuotes(symbols: Self.usMarketCodes)
+            }.value
+            usMarketQuotesByCode = USMarketQuoteMerge.merge(
+                previous: usMarketQuotesByCode,
+                incoming: response.quotes
+            )
+            usMarketPhase = response.marketPhase
+            usMarketCoverage = USMarketQuoteMerge.coverage(
+                quotes: usMarketQuotesByCode,
+                orderedCodes: Self.usMarketCodes
+            )
+            usMarketUpdatedAt = Date()
+            usMarketLastError = response.quotes.allSatisfy {
+                $0.status == "unavailable"
+            } ? "美股行情源当前不可用" : nil
+        } catch {
+            usMarketQuotesByCode = USMarketQuoteMerge.merge(
+                previous: usMarketQuotesByCode,
+                incoming: usMarketQuotesByCode.values.map {
+                    var stale = $0
+                    stale.status = stale.status == "static" ? "static" : "stale"
+                    stale.error = "bridge_failed"
+                    return stale
+                }
+            )
+            usMarketCoverage = USMarketQuoteMerge.coverage(
+                quotes: usMarketQuotesByCode,
+                orderedCodes: Self.usMarketCodes
+            )
+            usMarketLastError = error.localizedDescription
+        }
+        reevaluateUSMarketTimer()
     }
 
     func startRefreshTimer(intervalSeconds: Double = 120) {
@@ -2717,6 +2800,83 @@ final class KSSStore: ObservableObject {
 
     func openInvestmentAnalysisReport(_ goalId: String) async {
         await openResearchGoal(goalId)
+    }
+
+    /// 为投资分析创建独立草稿 Goal，并导入用户通过系统文件选择器明确授权的语料。
+    /// 这里只登记来源与哈希；没有通过独立 checker 的精判卡时不会启动正式报告。
+    func importInvestmentAnalystCorpus(
+        at url: URL,
+        profileId: String,
+        cadence: String
+    ) async -> Bool {
+        guard let bridge else {
+            errorMessage = "Cannot locate KSS project root"
+            return false
+        }
+        guard ["investment-daily-v1", "investment-weekly-v3"].contains(profileId),
+              ["daily", "weekly"].contains(cadence)
+        else {
+            errorMessage = "不支持的投资分析类型"
+            return false
+        }
+        isLoadingResearch = true
+        errorMessage = nil
+        defer { isLoadingResearch = false }
+        let inputs = profileId == "investment-daily-v1"
+            ? Self.defaultInvestmentDailyInputs()
+            : Self.defaultResearchInputs()
+        let objective = cadence == "daily"
+            ? "基于受控分析师语料生成投资分析日报"
+            : "基于受控分析师语料生成投资分析周报"
+        do {
+            let response = try await Task.detached {
+                let created = try bridge.agentResearch(
+                    action: "create",
+                    clientRequestId: UUID().uuidString,
+                    profileId: profileId,
+                    executionMode: "single",
+                    objective: objective,
+                    inputs: inputs,
+                    origin: "manual",
+                    cadence: cadence)
+                if let error = created.error, !error.isEmpty {
+                    throw NSError(
+                        domain: "KSS.InvestmentAnalysis",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: error])
+                }
+                guard let goalId = created.goal?.goalId, !goalId.isEmpty else {
+                    throw NSError(
+                        domain: "KSS.InvestmentAnalysis",
+                        code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: "研究目标创建后未返回 goal_id"])
+                }
+                do {
+                    let imported = try bridge.agentResearch(
+                        action: "import_corpus",
+                        goalId: goalId,
+                        path: url.path)
+                    if let error = imported.error, !error.isEmpty {
+                        throw NSError(
+                            domain: "KSS.InvestmentAnalysis",
+                            code: 3,
+                            userInfo: [NSLocalizedDescriptionKey: error])
+                    }
+                } catch {
+                    // The source import and Goal creation cross a process boundary. If import
+                    // fails, settle the draft explicitly so it cannot appear as runnable work.
+                    _ = try? bridge.agentResearch(action: "cancel", goalId: goalId)
+                    throw error
+                }
+                return goalId
+            }.value
+            selectedResearchGoalId = response
+            await openResearchGoal(response)
+            return true
+        } catch {
+            errorMessage = "导入分析师语料失败：\(error.localizedDescription)"
+            return false
+        }
     }
 
     func openResearchGoal(_ goalId: String) async {

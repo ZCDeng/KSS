@@ -28,12 +28,15 @@
     {"anchor": "methodology", "required": true},
     {"anchor": "audit", "required": true}
   ],
+  "tool_whitelist": ["research-bundle", "research-fetch", "research-search", "read_skill_resource"],
+  "skill_whitelist": ["investment-daily-analysis", "research-discipline", "report-generate"],
   "audit_rules": {
     "no_javascript": true,
     "no_remote_resources": true,
     "strict_csp": true,
     "html_escape_model_text": true,
     "all_financial_numbers_require_metric_refs": true,
+    "metric_formula_version": "kss-equivalent-v1",
     "publish_requires_audit_pass": true
   },
   "allow_model_to_extend_dag": false

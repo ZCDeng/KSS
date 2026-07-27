@@ -95,6 +95,32 @@ def test_research_migration_v5_adds_report_archive_metadata(tmp_path):
     assert "idx_research_goals_origin_cadence_created" in indexes
 
 
+def test_research_migration_v6_adds_corpus_card_and_formula_indexes(tmp_path):
+    db_path = tmp_path / "storage" / "kss.db"
+    with connect(db_path) as conn:
+        applied = ensure_schema(conn)
+        tables = {
+            row["name"]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        card_indexes = {
+            row["name"]
+            for row in conn.execute(
+                "PRAGMA index_list(research_precision_cards)"
+            )
+        }
+
+    assert 6 in applied
+    assert {
+        "research_source_records",
+        "research_precision_cards",
+        "research_formula_runs",
+    } <= tables
+    assert "idx_research_cards_verified" in card_indexes
+
+
 def test_daily_profile_freezes_one_trade_day_and_uses_daily_anchors(tmp_path):
     service = ResearchService(
         state_root=tmp_path,
@@ -350,7 +376,7 @@ def test_artifact_events_allocate_unique_sequences_under_concurrency(tmp_path):
     assert sequences == sorted(sequences)
 
 
-def test_research_service_runs_goal_to_completed_and_publishes(tmp_path):
+def test_synthetic_research_stays_draft_and_cannot_publish(tmp_path):
     service = ResearchService(state_root=tmp_path, project_root=Path(__file__).resolve().parents[2], allow_synthetic_fixture=True)
     created = service.create_goal(payload={
         "client_request_id": "req-1",
@@ -368,19 +394,29 @@ def test_research_service_runs_goal_to_completed_and_publishes(tmp_path):
 
     assert started["ok"] is True
     assert settled["ok"] is True
-    assert opened["detail"]["status"] == "completed"
+    assert opened["detail"]["status"] == "insufficient_evidence"
     assert all(t["status"] == "succeeded" for t in opened["detail"]["tasks"])
     assert any(a["kind"] == "report_html" for a in artifacts["artifacts"])
     assert [event["sequence"] for event in events] == sorted(event["sequence"] for event in events)
     assert all(event["event_id"] and event["timestamp"] for event in events)
 
     destination = tmp_path / "published" / "weekly.html"
-    published = service.publish_artifact(goal_id=goal_id, payload={"destination": str(destination), "overwrite": True})
+    published = service.publish_artifact(
+        goal_id=goal_id,
+        payload={"destination": str(destination), "overwrite": True},
+    )
+    draft = service.export_draft(
+        goal_id=goal_id,
+        payload={
+            "destination": str(tmp_path / "published" / "weekly-draft.html"),
+            "overwrite": True,
+        },
+    )
 
-    assert published["ok"] is True
-    assert destination.exists()
-    assert published["sha256"]
-    assert destination.read_text(encoding="utf-8").startswith("<!doctype html>")
+    assert published["ok"] is False
+    assert published["error"] == "audit_not_passed"
+    assert draft["ok"] is True
+    assert Path(draft["destination"]).exists()
 
 
 def test_transient_incomplete_attempt_is_requeued_without_reusing_attempt(
@@ -763,7 +799,7 @@ def test_publish_rejects_draft_even_if_goal_has_passed_audit(tmp_path):
     )
 
     assert blocked["ok"] is False
-    assert blocked["error"] == "artifact_not_current_completed_snapshot"
+    assert blocked["error"] == "audit_not_passed"
 
 
 def test_retry_requires_retryable_state_and_succeeded_dependencies(tmp_path):

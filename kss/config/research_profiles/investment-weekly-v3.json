@@ -38,7 +38,7 @@
     {"kind": "preview_publish_gate", "title": "生成预览，等待发布确认", "required": true, "depends_on": ["delivery_audit"], "protected": true}
   ],
   "tool_whitelist": ["research-bundle", "research-fetch", "research-search", "read_skill_resource"],
-  "skill_whitelist": ["kss-review", "kss-orientation", "kss-indicator-pipeline"],
+  "skill_whitelist": ["investment-weekly-analysis", "research-discipline", "report-generate"],
   "freshness": {
     "market_data_days": 14,
     "analysis_source_days": 14,
@@ -67,7 +67,7 @@
     "strict_csp": true,
     "html_escape_model_text": true,
     "all_financial_numbers_require_metric_refs": true,
-    "metric_formula_version": "v1",
+    "metric_formula_version": "kss-equivalent-v1",
     "sample": {"mode": "stratified", "ratio": 0.15, "min": 30, "max": 200},
     "publish_requires_audit_pass": true
   },

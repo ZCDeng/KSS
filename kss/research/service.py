@@ -18,8 +18,16 @@ from kss.storage.db import connect, ensure_schema
 
 from .artifacts import ArtifactStore
 from .compiler import ReportCompiler, make_investment_weekly_fixture, stable_json
+from .corpus import ANALYST_CORPUS_VERSION, AnalystCorpusError, load_analyst_corpus
 from .execution_slot import ResearchExecutionSlot
 from .graph import get_profile as get_graph_profile
+from .investment_analysis import (
+    KSS_EQUIVALENT_VERSION,
+    PrecisionCard,
+    PrecisionCardError,
+    aggregate_kss_equivalent,
+    check_precision_cards,
+)
 from .models import Claim, Evidence
 from .profiles import get_profile as get_packaged_profile
 from .profiles import list_profiles as list_packaged_profiles
@@ -251,6 +259,504 @@ class ResearchService:
             "detail": self._wire_goal(goal),
             "goal_id": goal_id,
         }
+
+    def import_analyst_corpus(
+        self,
+        goal_id: str | None = None,
+        payload: dict[str, Any] | None = None,
+        **_: Any,
+    ) -> dict[str, Any]:
+        """导入用户明确选择的语料，并登记通过 checker 的精判卡。
+
+        导入动作不会启动网络抓取，也不会执行语料或 Skill 中的脚本。原文只写
+        内容寻址对象库；SQLite 仅保存哈希、来源、引用区间和 checker 结果。
+        """
+
+        payload = payload or {}
+        if not goal_id:
+            return {"protocol_version": 1, "ok": False, "error": "goal_id_required"}
+        goal = self.repo.get_goal(goal_id)
+        if not goal:
+            return {
+                "protocol_version": 1,
+                "ok": False,
+                "error": "goal_not_found",
+                "goal_id": goal_id,
+            }
+        if str(goal.get("profile_id") or "") not in {
+            "investment-daily-v1",
+            "investment-weekly-v3",
+        }:
+            return {
+                "protocol_version": 1,
+                "ok": False,
+                "error": "profile_does_not_accept_analyst_corpus",
+                "goal_id": goal_id,
+            }
+        path_value = payload.get("path")
+        if not isinstance(path_value, str) or not path_value.strip():
+            return {
+                "protocol_version": 1,
+                "ok": False,
+                "error": "corpus_path_required",
+                "goal_id": goal_id,
+            }
+        try:
+            records = load_analyst_corpus(path_value)
+            raw_cards = payload.get("precision_cards") or []
+            if not isinstance(raw_cards, list) or any(
+                not isinstance(item, dict) for item in raw_cards
+            ):
+                raise PrecisionCardError("precision_cards 必须是 JSON object 数组")
+            cards = check_precision_cards(raw_cards, records)
+            if cards:
+                aggregate_kss_equivalent(
+                    cards,
+                    period_end=self._investment_period_end(goal),
+                    snapshot_hash=self._snapshot_id(goal_id),
+                    config={
+                        "analyst_weights": payload.get("analyst_weights"),
+                    },
+                )
+        except (AnalystCorpusError, PrecisionCardError) as exc:
+            return {
+                "protocol_version": 1,
+                "ok": False,
+                "error": "analyst_corpus_invalid",
+                "detail": str(exc),
+                "goal_id": goal_id,
+            }
+        if not records:
+            return {
+                "protocol_version": 1,
+                "ok": False,
+                "error": "analyst_corpus_empty",
+                "goal_id": goal_id,
+            }
+        with connect(self.db_path) as conn:
+            ensure_schema(conn)
+            existing_rows = conn.execute(
+                """
+                SELECT source_id, source_message_id, content_hash,
+                       corpus_artifact_id
+                FROM research_source_records
+                WHERE goal_id=?
+                ORDER BY line_number
+                """,
+                (goal_id,),
+            ).fetchall()
+            existing_count = len(existing_rows)
+        if existing_count:
+            if cards:
+                existing_by_message = {
+                    str(row["source_message_id"]): row for row in existing_rows
+                }
+                if len(existing_by_message) != len(records) or any(
+                    record.source_message_id not in existing_by_message
+                    or str(
+                        existing_by_message[record.source_message_id][
+                            "content_hash"
+                        ]
+                    )
+                    != record.content_hash
+                    for record in records
+                ):
+                    return {
+                        "protocol_version": 1,
+                        "ok": False,
+                        "error": "analyst_corpus_does_not_match_imported_sources",
+                        "goal_id": goal_id,
+                    }
+                source_ids = {
+                    message_id: str(row["source_id"])
+                    for message_id, row in existing_by_message.items()
+                }
+                source_evidence_ids = self._source_evidence_ids(goal_id)
+                if set(source_evidence_ids) != set(source_ids):
+                    return {
+                        "protocol_version": 1,
+                        "ok": False,
+                        "error": "analyst_corpus_evidence_incomplete",
+                        "goal_id": goal_id,
+                    }
+                try:
+                    formula_artifact = self._persist_precision_cards_and_formula(
+                        goal=goal,
+                        cards=cards,
+                        source_ids=source_ids,
+                        source_evidence_ids=source_evidence_ids,
+                        analyst_weights=payload.get("analyst_weights"),
+                    )
+                except (sqlite3.IntegrityError, PrecisionCardError) as exc:
+                    return {
+                        "protocol_version": 1,
+                        "ok": False,
+                        "error": "precision_cards_invalid_or_already_imported",
+                        "detail": str(exc),
+                        "goal_id": goal_id,
+                    }
+                self._emit(
+                    goal_id,
+                    "precision_cards_imported",
+                    {
+                        "record_count": existing_count,
+                        "verified_card_count": len(cards),
+                        "formula_artifact_id": formula_artifact["artifact_id"],
+                    },
+                )
+                return {
+                    "protocol_version": 1,
+                    "ok": True,
+                    "event": "precision_cards_imported",
+                    "goal_id": goal_id,
+                    "record_count": existing_count,
+                    "verified_card_count": len(cards),
+                    "requires_card_extraction": False,
+                    "formula_artifact": self._wire_artifact(formula_artifact),
+                }
+            return {
+                "protocol_version": 1,
+                "ok": False,
+                "error": "analyst_corpus_already_imported",
+                "goal_id": goal_id,
+                "record_count": existing_count,
+            }
+        canonical_lines = [
+            stable_json(
+                {
+                    "protocol_version": ANALYST_CORPUS_VERSION,
+                    **record.to_dict(),
+                }
+            )
+            for record in records
+        ]
+        canonical_bytes = ("\n".join(canonical_lines) + "\n").encode("utf-8")
+        corpus_artifact = self.artifacts.put_bytes(
+            goal_id=goal_id,
+            kind="analyst_corpus",
+            name="analyst-corpus-v1.jsonl",
+            data=canonical_bytes,
+            media_type="application/x-ndjson; charset=utf-8",
+            metadata={
+                "protocol_version": ANALYST_CORPUS_VERSION,
+                "record_count": len(records),
+                "snapshot_id": self._snapshot_id(goal_id),
+            },
+        )
+        source_ids: dict[str, str] = {}
+        source_evidence_ids: dict[str, str] = {}
+        now = utc_now()
+        try:
+            with connect(self.db_path) as conn:
+                ensure_schema(conn)
+                conn.execute("BEGIN IMMEDIATE")
+                for line_number, record in enumerate(records, start=1):
+                    source_id = new_id("source")
+                    source_ids[record.source_message_id] = source_id
+                    conn.execute(
+                        """
+                        INSERT INTO research_source_records (
+                            source_id, goal_id, source_message_id, analyst_id,
+                            published_at, source_uri, content_hash,
+                            corpus_artifact_id, line_number, provenance_json,
+                            attachment_refs_json, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            source_id,
+                            goal_id,
+                            record.source_message_id,
+                            record.analyst_id,
+                            record.published_at,
+                            record.source_uri,
+                            record.content_hash,
+                            corpus_artifact["artifact_id"],
+                            line_number,
+                            dumps(record.provenance),
+                            dumps([item.to_dict() for item in record.attachments]),
+                            now,
+                        ),
+                    )
+        except sqlite3.IntegrityError:
+            return {
+                "protocol_version": 1,
+                "ok": False,
+                "error": "analyst_corpus_already_imported",
+                "goal_id": goal_id,
+            }
+
+        source_criterion = self._criterion_for_validator(
+            goal_id, "source_coverage"
+        )
+        for record in records:
+            source_tier = str(
+                record.provenance.get("source_tier") or "reputable_secondary"
+            )
+            if source_tier not in {
+                "official_or_primary",
+                "reputable_secondary",
+            }:
+                source_tier = "reputable_secondary"
+            evidence = Evidence(
+                evidence_id=new_id("ev"),
+                goal_id=goal_id,
+                criterion_id=(
+                    source_criterion["criterion_id"] if source_criterion else None
+                ),
+                source_tool="analyst_corpus_import",
+                source_tier=source_tier,
+                provider=str(record.provenance.get("provider") or "local_import"),
+                uri=record.source_uri,
+                artifact_id=corpus_artifact["artifact_id"],
+                data_as_of=record.published_at,
+                method="analyst-corpus-v1",
+                scope="analyst_source",
+                hash=record.content_hash,
+                metadata={
+                    "snapshot_id": self._snapshot_id(goal_id),
+                    "source_message_id": record.source_message_id,
+                    "analyst_id": record.analyst_id,
+                },
+            )
+            self.repo.register_evidence(evidence)
+            self.repo.verify_evidence(
+                evidence.evidence_id,
+                checker="analyst_corpus_hash_checker",
+                detail={
+                    "content_hash": record.content_hash,
+                    "protocol_version": ANALYST_CORPUS_VERSION,
+                },
+            )
+            source_evidence_ids[record.source_message_id] = evidence.evidence_id
+
+        formula_artifact: dict[str, Any] | None = None
+        if cards:
+            formula_artifact = self._persist_precision_cards_and_formula(
+                goal=goal,
+                cards=cards,
+                source_ids=source_ids,
+                source_evidence_ids=source_evidence_ids,
+                analyst_weights=payload.get("analyst_weights"),
+            )
+
+        self._emit(
+            goal_id,
+            "analyst_corpus_imported",
+            {
+                "record_count": len(records),
+                "verified_card_count": len(cards),
+                "corpus_artifact_id": corpus_artifact["artifact_id"],
+                "formula_artifact_id": (
+                    formula_artifact["artifact_id"] if formula_artifact else None
+                ),
+            },
+        )
+        return {
+            "protocol_version": 1,
+            "ok": True,
+            "event": "analyst_corpus_imported",
+            "goal_id": goal_id,
+            "record_count": len(records),
+            "verified_card_count": len(cards),
+            "requires_card_extraction": not bool(cards),
+            "corpus_artifact": self._wire_artifact(corpus_artifact),
+            "formula_artifact": (
+                self._wire_artifact(formula_artifact) if formula_artifact else None
+            ),
+        }
+
+    def _source_evidence_ids(self, goal_id: str) -> dict[str, str]:
+        """按真实 source_message_id 恢复已登记的来源证据映射。"""
+
+        result: dict[str, str] = {}
+        for evidence in self.repo.evidence_for_goal(goal_id):
+            if evidence.get("source_tool") != "analyst_corpus_import":
+                continue
+            source_message_id = (evidence.get("metadata") or {}).get(
+                "source_message_id"
+            )
+            if isinstance(source_message_id, str) and source_message_id:
+                result[source_message_id] = str(evidence["evidence_id"])
+        return result
+
+    def _persist_precision_cards_and_formula(
+        self,
+        *,
+        goal: dict[str, Any],
+        cards: list[PrecisionCard],
+        source_ids: dict[str, str],
+        source_evidence_ids: dict[str, str],
+        analyst_weights: Any,
+    ) -> dict[str, Any]:
+        """原子登记通过 checker 的卡片，再固化版本化公式结果。"""
+
+        goal_id = str(goal["goal_id"])
+        now = utc_now()
+        result = aggregate_kss_equivalent(
+            cards,
+            period_end=self._investment_period_end(goal),
+            snapshot_hash=self._snapshot_id(goal_id),
+            config={
+                "analyst_weights": analyst_weights,
+            },
+        )
+        with connect(self.db_path) as conn:
+            ensure_schema(conn)
+            conn.execute("BEGIN IMMEDIATE")
+            for card in cards:
+                conn.execute(
+                    """
+                    INSERT INTO research_precision_cards (
+                        card_id, goal_id, source_id, evidence_id, analyst_id,
+                        trading_date, symbols_json, themes_json, stance_label,
+                        stance_score, conviction_label, conviction_weight,
+                        risks_json, catalysts_json, date_anchor, evidence_grade,
+                        quote_start, quote_end, quote_hash, sell_side_forward,
+                        extractor_json, checker_json, verified, exclusion_reason,
+                        created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?)
+                    """,
+                    (
+                        card.card_id,
+                        goal_id,
+                        source_ids[card.source_message_id],
+                        source_evidence_ids[card.source_message_id],
+                        card.analyst_id,
+                        card.trade_date,
+                        dumps([card.instrument]),
+                        dumps([card.theme]),
+                        str(card.stance_label),
+                        card.stance_label,
+                        card.conviction,
+                        card.conviction_weight,
+                        dumps([card.risk] if card.risk else []),
+                        dumps([card.catalyst] if card.catalyst else []),
+                        card.date_anchor,
+                        card.evidence_grade,
+                        card.quote_span.start,
+                        card.quote_span.end,
+                        hashlib.sha256(
+                            card.quote_span.text.encode("utf-8")
+                        ).hexdigest(),
+                        1 if card.is_sellside_forward else 0,
+                        dumps(card.extractor),
+                        dumps(card.checker),
+                        now,
+                    ),
+                )
+
+        formula_artifact = self.artifacts.put_bytes(
+            goal_id=goal_id,
+            kind="investment_formula_result",
+            name="investment-formulas-kss-equivalent-v1.json",
+            data=stable_json(result).encode("utf-8"),
+            media_type="application/json",
+            metadata={
+                "formula_version": KSS_EQUIVALENT_VERSION,
+                "snapshot_id": self._snapshot_id(goal_id),
+                "card_count": len(cards),
+                "input_hash": result["hashes"]["input_hash"],
+                "config_hash": result["hashes"]["config_hash"],
+            },
+        )
+        hashes = result["hashes"]
+        with connect(self.db_path) as conn:
+            ensure_schema(conn)
+            conn.execute(
+                """
+                INSERT INTO research_formula_runs (
+                    formula_run_id, goal_id, snapshot_id, formula_version,
+                    config_hash, input_hash, result_artifact_id,
+                    model_versions_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    new_id("formula"),
+                    goal_id,
+                    self._snapshot_id(goal_id),
+                    KSS_EQUIVALENT_VERSION,
+                    hashes["config_hash"],
+                    hashes["input_hash"],
+                    formula_artifact["artifact_id"],
+                    dumps(
+                        {
+                            "extractors": sorted(
+                                {stable_json(card.extractor) for card in cards}
+                            ),
+                            "checkers": sorted(
+                                {stable_json(card.checker) for card in cards}
+                            ),
+                        }
+                    ),
+                    now,
+                ),
+            )
+        self._register_formula_evidence(
+            goal_id=goal_id,
+            artifact=formula_artifact,
+            result=result,
+        )
+        return formula_artifact
+
+    def _investment_period_end(self, goal: dict[str, Any]) -> str:
+        inputs = goal.get("inputs") or {}
+        if str(goal.get("profile_id") or "") == "investment-daily-v1":
+            return str(inputs.get("trade_date") or inputs.get("as_of") or "")
+        date_range = str(inputs.get("date_range") or "")
+        match = DATE_RANGE_RE.fullmatch(date_range)
+        return (
+            match.group("end")
+            if match
+            else str(inputs.get("as_of") or self._goal_as_of(str(goal["goal_id"])))
+        )
+
+    def _register_formula_evidence(
+        self,
+        *,
+        goal_id: str,
+        artifact: dict[str, Any],
+        result: dict[str, Any],
+    ) -> None:
+        """把同一确定性公式产物映射到各 Criterion，避免模型正文充当数字证据。"""
+
+        mapping = {
+            "metric_ledger": "market_temperature",
+            "theme_consensus": "theme_strength",
+            "risk_radar": "risk_severity",
+            "precision_cards": "verified_precision_cards",
+        }
+        for validator, scope in mapping.items():
+            criterion = self._criterion_for_validator(goal_id, validator)
+            if not criterion:
+                continue
+            evidence = Evidence(
+                evidence_id=new_id("ev"),
+                goal_id=goal_id,
+                criterion_id=criterion["criterion_id"],
+                source_tool="investment_formula_engine",
+                source_tier="deterministic_calculation",
+                artifact_id=artifact["artifact_id"],
+                data_as_of=self._goal_as_of(goal_id),
+                method=KSS_EQUIVALENT_VERSION,
+                scope=scope,
+                hash=artifact["object_hash"],
+                metadata={
+                    "snapshot_id": self._snapshot_id(goal_id),
+                    "formula_version": KSS_EQUIVALENT_VERSION,
+                    "formula_classification": result.get(
+                        "formula_classification"
+                    ),
+                },
+            )
+            self.repo.register_evidence(evidence)
+            self.repo.verify_evidence(
+                evidence.evidence_id,
+                checker="investment_formula_engine",
+                detail={
+                    "artifact_hash": artifact["object_hash"],
+                    "formula_version": KSS_EQUIVALENT_VERSION,
+                },
+            )
 
     def start_goal(self, goal_id: str | None = None, **_: Any) -> dict[str, Any]:
         if not goal_id:
@@ -591,6 +1097,47 @@ class ResearchService:
         criterion_statuses: dict[str, str] = {}
         snapshot_id = str((goal.get("snapshot") or {}).get("snapshot_id") or "")
         coverage: dict[str, Any] = {"criteria": {}, "tasks": {}, "artifact_count": len(artifacts)}
+        if str(goal.get("profile_id") or "") in {
+            "investment-daily-v1",
+            "investment-weekly-v3",
+        }:
+            investment_coverage = self._investment_input_coverage(
+                goal_id=goal_id,
+                evidence=evidence,
+            )
+            coverage["investment_inputs"] = investment_coverage
+            if investment_coverage["source_records"] == 0:
+                findings.append(
+                    {
+                        "severity": "block",
+                        "code": "missing_analyst_corpus",
+                        "detail": "正式投资分析必须导入受控 analyst-corpus-v1 语料",
+                    }
+                )
+            if investment_coverage["verified_precision_cards"] == 0:
+                findings.append(
+                    {
+                        "severity": "block",
+                        "code": "missing_verified_precision_cards",
+                        "detail": "正式投资分析必须至少包含一张通过独立 checker 的精判卡",
+                    }
+                )
+            if investment_coverage["formula_runs"] == 0:
+                findings.append(
+                    {
+                        "severity": "block",
+                        "code": "missing_investment_formula_run",
+                        "detail": "正式投资分析缺少可复算的版本化公式结果",
+                    }
+                )
+            if investment_coverage["synthetic_evidence"] > 0:
+                findings.append(
+                    {
+                        "severity": "block",
+                        "code": "synthetic_evidence_forbidden",
+                        "detail": "合成 fixture 只能用于测试，不能满足正式报告完成门",
+                    }
+                )
         for criterion in goal.get("criteria", []):
             allowed_tiers = set(criterion.get("allowed_tiers") or [])
             verified = [
@@ -768,6 +1315,70 @@ class ResearchService:
             "detail": self._wire_goal(refreshed_goal),
             "goal_id": goal_id,
             **audit,
+        }
+
+    def _investment_input_coverage(
+        self,
+        *,
+        goal_id: str,
+        evidence: list[dict[str, Any]],
+    ) -> dict[str, int]:
+        """返回正式投资分析完成门所需的受控输入覆盖。
+
+        SQLite 只保存来源、哈希和 checker 结果；私密原文仍位于内容寻址
+        对象库。这里不读取原文，也不把模型正文或 Skill 当成有效输入。
+        """
+
+        with connect(self.db_path) as conn:
+            ensure_schema(conn)
+            source_records = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS count FROM research_source_records WHERE goal_id=?",
+                    (goal_id,),
+                ).fetchone()["count"]
+            )
+            verified_cards = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM research_precision_cards
+                    WHERE goal_id=? AND verified=1
+                    """,
+                    (goal_id,),
+                ).fetchone()["count"]
+            )
+            eligible_cards = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM research_precision_cards
+                    WHERE goal_id=? AND verified=1 AND sell_side_forward=0
+                    """,
+                    (goal_id,),
+                ).fetchone()["count"]
+            )
+            formula_runs = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM research_formula_runs
+                    WHERE goal_id=? AND formula_version='kss-equivalent-v1'
+                    """,
+                    (goal_id,),
+                ).fetchone()["count"]
+            )
+        synthetic_evidence = sum(
+            1
+            for item in evidence
+            if str(item.get("uri") or "").startswith("kss-fixture://")
+            or bool((item.get("metadata") or {}).get("synthetic"))
+        )
+        return {
+            "source_records": source_records,
+            "verified_precision_cards": verified_cards,
+            "eligible_precision_cards": eligible_cards,
+            "formula_runs": formula_runs,
+            "synthetic_evidence": synthetic_evidence,
         }
 
     def list_events(self, goal_id: str | None = None, after_sequence: int = 0, **_: Any) -> list[dict[str, Any]]:
@@ -1270,8 +1881,19 @@ class ResearchService:
             },
         }
         derived_metrics: dict[str, MetricEntry] = {}
-        formula_inputs: dict[str, list[float]] = {}
+        formula_inputs: dict[str, Any] = {}
+        investment_formula = self._investment_formula_document_data(
+            goal_id,
+            as_of=self._goal_as_of(goal_id),
+        )
+        if investment_formula:
+            derived_metrics.update(investment_formula["metrics"])
+            formula_inputs.update(investment_formula["formula_inputs"])
+            if investment_formula["card_rows"]:
+                card_rows = investment_formula["card_rows"]
         for task_kind, expected in metric_specs.items():
+            if expected["metric_id"] in derived_metrics:
+                continue
             task_result = task_results.get(task_kind) or {}
             for raw_claim in task_result.get("claims") or []:
                 if not isinstance(raw_claim, dict):
@@ -1385,12 +2007,20 @@ class ResearchService:
                 ),
                 MetricEntry(
                     "m_card_count",
-                    "证据卡数量",
-                    len(card_rows),
+                    "精判卡数量",
+                    int(
+                        investment_formula["verified_card_count"]
+                        if investment_formula
+                        else len(card_rows)
+                    ),
                     "张",
                     0,
                     "card_count",
-                    "v1",
+                    (
+                        KSS_EQUIVALENT_VERSION
+                        if investment_formula
+                        else "v1"
+                    ),
                     all_refs,
                     self._goal_as_of(goal_id),
                 ),
@@ -1539,6 +2169,174 @@ class ResearchService:
                 "formula_inputs": formula_inputs,
             },
         )
+
+    def _investment_formula_document_data(
+        self,
+        goal_id: str,
+        *,
+        as_of: str,
+    ) -> dict[str, Any] | None:
+        """从最新公式产物和精判卡索引构建可独立复算的报告指标。"""
+
+        with connect(self.db_path) as conn:
+            ensure_schema(conn)
+            formula_row = conn.execute(
+                """
+                SELECT a.object_hash
+                FROM research_formula_runs f
+                JOIN research_artifacts a
+                  ON a.artifact_id=f.result_artifact_id
+                WHERE f.goal_id=? AND f.formula_version=?
+                ORDER BY f.created_at DESC
+                LIMIT 1
+                """,
+                (goal_id, KSS_EQUIVALENT_VERSION),
+            ).fetchone()
+            cards = conn.execute(
+                """
+                SELECT card_id, evidence_id, analyst_id, symbols_json,
+                       themes_json, stance_label, conviction_label,
+                       evidence_grade, sell_side_forward
+                FROM research_precision_cards
+                WHERE goal_id=? AND verified=1
+                ORDER BY trading_date, card_id
+                """,
+                (goal_id,),
+            ).fetchall()
+        if formula_row is None or not cards:
+            return None
+        try:
+            result = json.loads(
+                self.artifacts.read_bytes(
+                    str(formula_row["object_hash"])
+                ).decode("utf-8")
+            )
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            return None
+        equivalent = result.get("kss_equivalent")
+        audit_inputs = result.get("audit_inputs")
+        if not isinstance(equivalent, dict) or not isinstance(audit_inputs, list):
+            return None
+        theme_rows = equivalent.get("theme_strength")
+        risk_rows = equivalent.get("risk_severity")
+        temperature = equivalent.get("temperature")
+        if (
+            isinstance(temperature, bool)
+            or not isinstance(temperature, (int, float))
+            or not isinstance(theme_rows, list)
+            or not isinstance(risk_rows, list)
+        ):
+            return None
+        source_refs = sorted(
+            {
+                str(row["evidence_id"])
+                for row in cards
+                if row["evidence_id"]
+            }
+        )
+        theme_contributions = [
+            float(row["contribution_sum"])
+            for row in theme_rows
+            if isinstance(row, dict)
+            and isinstance(row.get("contribution_sum"), (int, float))
+            and not isinstance(row.get("contribution_sum"), bool)
+        ]
+        risk_inputs = [
+            {
+                "mention_card_count": row["mention_card_count"],
+                "distinct_analyst_count": row["distinct_analyst_count"],
+            }
+            for row in risk_rows
+            if isinstance(row, dict)
+            and isinstance(row.get("mention_card_count"), (int, float))
+            and isinstance(row.get("distinct_analyst_count"), (int, float))
+        ]
+        strongest_theme = (
+            max(theme_contributions, key=abs) if theme_contributions else 0.0
+        )
+        strongest_risk = max(
+            (
+                float(row["mention_card_count"])
+                + 0.5 * float(row["distinct_analyst_count"])
+                for row in risk_inputs
+            ),
+            default=0.0,
+        )
+        metrics = {
+            "m_temperature": MetricEntry(
+                "m_temperature",
+                "市场温度",
+                float(temperature),
+                "",
+                3,
+                "investment_temperature",
+                KSS_EQUIVALENT_VERSION,
+                source_refs,
+                as_of,
+            ),
+            "m_consensus": MetricEntry(
+                "m_consensus",
+                "最强主题贡献",
+                strongest_theme,
+                "",
+                3,
+                "investment_theme_strength",
+                KSS_EQUIVALENT_VERSION,
+                source_refs,
+                as_of,
+            ),
+            "m_risk": MetricEntry(
+                "m_risk",
+                "最高风险严重度",
+                strongest_risk,
+                "",
+                1,
+                "investment_risk_severity",
+                KSS_EQUIVALENT_VERSION,
+                source_refs,
+                as_of,
+            ),
+        }
+        card_rows = []
+        stance_names = {
+            "-2": "强烈看空",
+            "-1": "看空",
+            "0": "中性",
+            "1": "看多",
+            "2": "强烈看多",
+        }
+        for row in cards:
+            symbols = loads(row["symbols_json"], [])
+            themes = loads(row["themes_json"], [])
+            card_rows.append(
+                {
+                    "card_id": str(row["card_id"]),
+                    "title": " · ".join(
+                        [
+                            str(symbols[0] if symbols else "未指定标的"),
+                            str(themes[0] if themes else "未指定主题"),
+                        ]
+                    ),
+                    "summary": (
+                        f"立场 {stance_names.get(str(row['stance_label']), '未分类')} · "
+                        f"置信度 {row['conviction_label']} · "
+                        f"证据等级 {row['evidence_grade']}"
+                    ),
+                    "metric_refs": ["m_card_count"],
+                    "evidence_refs": [str(row["evidence_id"])],
+                    "source_group": str(row["analyst_id"]),
+                }
+            )
+        return {
+            "metrics": metrics,
+            "formula_inputs": {
+                "m_temperature": audit_inputs,
+                "m_consensus": theme_contributions,
+                "m_risk": risk_inputs,
+            },
+            "card_rows": card_rows,
+            "verified_card_count": len(cards),
+        }
 
     def _current_task_results(self, goal_id: str) -> dict[str, dict[str, Any]]:
         with connect(self.db_path) as conn:

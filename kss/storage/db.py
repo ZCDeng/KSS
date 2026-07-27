@@ -661,6 +661,92 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             ON research_goals(origin, cadence, created_at DESC);
         """,
     ),
+    (
+        6,
+        """
+        -- ---------------------------------------------------------------
+        -- Controlled analyst corpus and verified precision cards
+        -- (plan 2026-07-28). Private source text stays in the content-
+        -- addressed artifact store; SQLite only indexes provenance,
+        -- immutable hashes, checker results and reproducible formula inputs.
+        -- ---------------------------------------------------------------
+        CREATE TABLE IF NOT EXISTS research_source_records (
+            source_id            TEXT PRIMARY KEY,
+            goal_id              TEXT NOT NULL,
+            source_message_id    TEXT NOT NULL,
+            analyst_id           TEXT NOT NULL,
+            published_at         TEXT NOT NULL,
+            source_uri           TEXT NOT NULL,
+            content_hash         TEXT NOT NULL,
+            corpus_artifact_id   TEXT NOT NULL,
+            line_number          INTEGER NOT NULL,
+            provenance_json      TEXT NOT NULL,
+            attachment_refs_json TEXT NOT NULL,
+            created_at           TEXT NOT NULL,
+            UNIQUE(goal_id, source_message_id),
+            FOREIGN KEY(goal_id) REFERENCES research_goals(goal_id),
+            FOREIGN KEY(corpus_artifact_id) REFERENCES research_artifacts(artifact_id)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS idx_research_sources_goal_published
+            ON research_source_records(goal_id, published_at);
+        CREATE INDEX IF NOT EXISTS idx_research_sources_hash
+            ON research_source_records(content_hash);
+
+        CREATE TABLE IF NOT EXISTS research_precision_cards (
+            card_id                 TEXT PRIMARY KEY,
+            goal_id                 TEXT NOT NULL,
+            source_id               TEXT NOT NULL,
+            evidence_id             TEXT,
+            analyst_id              TEXT NOT NULL,
+            trading_date            TEXT NOT NULL,
+            symbols_json            TEXT NOT NULL,
+            themes_json             TEXT NOT NULL,
+            stance_label            TEXT NOT NULL,
+            stance_score            INTEGER NOT NULL,
+            conviction_label        TEXT,
+            conviction_weight       REAL,
+            risks_json              TEXT NOT NULL,
+            catalysts_json          TEXT NOT NULL,
+            date_anchor             TEXT,
+            evidence_grade          TEXT NOT NULL,
+            quote_start             INTEGER NOT NULL,
+            quote_end               INTEGER NOT NULL,
+            quote_hash              TEXT NOT NULL,
+            sell_side_forward       INTEGER NOT NULL,
+            extractor_json          TEXT NOT NULL,
+            checker_json            TEXT NOT NULL,
+            verified                INTEGER NOT NULL,
+            exclusion_reason        TEXT,
+            created_at              TEXT NOT NULL,
+            FOREIGN KEY(goal_id) REFERENCES research_goals(goal_id),
+            FOREIGN KEY(source_id) REFERENCES research_source_records(source_id),
+            FOREIGN KEY(evidence_id) REFERENCES research_evidence(evidence_id)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS idx_research_cards_goal_date
+            ON research_precision_cards(goal_id, trading_date);
+        CREATE INDEX IF NOT EXISTS idx_research_cards_source
+            ON research_precision_cards(source_id);
+        CREATE INDEX IF NOT EXISTS idx_research_cards_verified
+            ON research_precision_cards(goal_id, verified, sell_side_forward);
+
+        CREATE TABLE IF NOT EXISTS research_formula_runs (
+            formula_run_id       TEXT PRIMARY KEY,
+            goal_id              TEXT NOT NULL,
+            snapshot_id          TEXT NOT NULL,
+            formula_version      TEXT NOT NULL,
+            config_hash          TEXT NOT NULL,
+            input_hash           TEXT NOT NULL,
+            result_artifact_id   TEXT,
+            model_versions_json  TEXT NOT NULL,
+            created_at           TEXT NOT NULL,
+            UNIQUE(goal_id, snapshot_id, formula_version, config_hash, input_hash),
+            FOREIGN KEY(goal_id) REFERENCES research_goals(goal_id),
+            FOREIGN KEY(result_artifact_id) REFERENCES research_artifacts(artifact_id)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS idx_research_formula_goal
+            ON research_formula_runs(goal_id, created_at);
+        """,
+    ),
 )
 
 

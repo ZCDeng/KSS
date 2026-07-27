@@ -123,6 +123,39 @@ def test_agent_research_supports_all_required_actions(monkeypatch, tmp_path):
         assert payload["event"]
 
 
+def test_agent_research_import_corpus_passes_explicit_path(monkeypatch, tmp_path):
+    calls: list[dict] = []
+
+    class Service:
+        def import_analyst_corpus(self, goal_id=None, payload=None):
+            calls.append({"goal_id": goal_id, "payload": payload})
+            return {
+                "goal_id": goal_id,
+                "event": "analyst_corpus_imported",
+                "record_count": 1,
+            }
+
+    _install_fake_service(monkeypatch, tmp_path, Service())
+
+    payload = _payload(sc._handle_agent_json_command({
+        "cmd": "agent-research",
+        "action": "import_corpus",
+        "goal_id": "g1",
+        "path": "/tmp/selected.jsonl",
+    }))
+
+    assert payload["event"] == "analyst_corpus_imported"
+    assert calls == [{
+        "goal_id": "g1",
+        "payload": {
+            "cmd": "agent-research",
+            "action": "import_corpus",
+            "goal_id": "g1",
+            "path": "/tmp/selected.jsonl",
+        },
+    }]
+
+
 def test_agent_research_events_replay_after_sequence(monkeypatch, tmp_path):
     class Service:
         def open_goal(self, goal_id=None):

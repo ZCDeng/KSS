@@ -367,3 +367,36 @@ def test_vibe_adapted_bundle_has_fixed_safe_skill_set_and_attribution():
     notice = (adapted_root / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
     assert "HKUDS/Vibe-Trading" in notice
     assert "MIT" in notice
+
+
+def test_investment_analysis_skills_are_protected_method_only_entries() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    skills = {
+        skill.name: skill
+        for skill in SkillManager(repo_root).discover()[0]
+        if skill.name
+        in {"investment-daily-analysis", "investment-weekly-analysis"}
+    }
+
+    assert set(skills) == {
+        "investment-daily-analysis",
+        "investment-weekly-analysis",
+    }
+    assert all(skill.protected and skill.trust == "packaged" for skill in skills.values())
+    assert skills["investment-daily-analysis"].allowed_profiles == (
+        "investment-daily-v1",
+    )
+    assert skills["investment-weekly-analysis"].allowed_profiles == (
+        "investment-weekly-v3",
+    )
+    forbidden_instructions = (
+        "建议买入",
+        "建议卖出",
+        "目标价为",
+        "建议仓位",
+        "运行以下脚本",
+        "自动运行脚本",
+    )
+    for skill in skills.values():
+        text = skill.path.read_text(encoding="utf-8")
+        assert not any(term in text for term in forbidden_instructions)

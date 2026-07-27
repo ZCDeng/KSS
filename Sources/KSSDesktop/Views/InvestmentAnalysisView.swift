@@ -1,7 +1,8 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
-/// Read-only archive for completed daily and weekly research. Research control
-/// stays in the task workbench so this view cannot accidentally rerun work.
+/// 日报与周报档案。页面只允许用户显式导入本地受控语料；研究执行、重试和
+/// 发布仍留在任务台，避免读取报告时意外启动模型或工具。
 struct InvestmentAnalysisView: View {
     enum Cadence: String, CaseIterable, Identifiable {
         case daily = "日报"
@@ -15,6 +16,8 @@ struct InvestmentAnalysisView: View {
     @State private var cadence: Cadence = .daily
     @State private var selectedID: String?
     @State private var hoveredID: String?
+    @State private var showCorpusImporter = false
+    @State private var corpusImportMessage: String?
 
     private var isXcom: Bool { XcomListChrome.isXcom(theme.system) }
     private var reports: [InvestmentAnalysisReportSummary] {
@@ -56,6 +59,47 @@ struct InvestmentAnalysisView: View {
         }
         .onChange(of: selectedID) { _, goalID in
             if let goalID { Task { await store.openInvestmentAnalysisReport(goalID) } }
+        }
+        .fileImporter(
+            isPresented: $showCorpusImporter,
+            allowedContentTypes: [UTType(filenameExtension: "jsonl") ?? .plainText],
+            allowsMultipleSelection: false
+        ) { result in
+            guard case let .success(urls) = result, let url = urls.first else {
+                if case let .failure(error) = result {
+                    corpusImportMessage = "选择语料失败：\(error.localizedDescription)"
+                }
+                return
+            }
+            Task {
+                let didAccess = url.startAccessingSecurityScopedResource()
+                defer {
+                    if didAccess { url.stopAccessingSecurityScopedResource() }
+                }
+                let imported = await store.importInvestmentAnalystCorpus(
+                    at: url,
+                    profileId: cadence.profileId,
+                    cadence: cadence == .daily ? "daily" : "weekly")
+                corpusImportMessage = imported
+                    ? "语料来源与哈希已登记。正式报告仍需独立抽取、复核和证据审计。"
+                    : (store.errorMessage ?? "语料导入失败")
+            }
+        }
+        .alert(
+            "分析师语料",
+            isPresented: Binding(
+                get: { corpusImportMessage != nil },
+                set: { if !$0 { corpusImportMessage = nil } })
+        ) {
+            Button("好", role: .cancel) { corpusImportMessage = nil }
+            if store.selectedResearchGoalId != nil {
+                Button("查看研究过程") {
+                    corpusImportMessage = nil
+                    store.selectedSection = .runbook
+                }
+            }
+        } message: {
+            Text(corpusImportMessage ?? "")
         }
     }
 
@@ -111,15 +155,29 @@ struct InvestmentAnalysisView: View {
             if let goal = selectedGoal {
                 InvestmentAnalysisDetail(goal: goal, report: report, stateRoot: store.bridge?.stateRoot, onOpenResearch: {
                     store.selectedSection = .runbook
-                })
+                }, onImportCorpus: { showCorpusImporter = true })
             } else if store.isLoadingResearch {
                 ProgressView("正在打开报告…").frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ContentUnavailableView("报告详情不可用", systemImage: "exclamationmark.triangle")
             }
         } else {
-            ContentUnavailableView("选择一份投资分析", systemImage: "doc.text.image",
-                                   description: Text("日报和周报均会保留审计结果与证据时点。"))
+            VStack(spacing: 14) {
+                ContentUnavailableView(
+                    reports.isEmpty ? "尚无投资分析" : "选择一份投资分析",
+                    systemImage: "doc.text.image",
+                    description: Text(
+                        reports.isEmpty
+                            ? "可导入受控 JSONL 语料开始研究；未通过复核与证据门的内容不会成为正式报告。"
+                            : "日报和周报均会保留审计结果与证据时点。"))
+                Button {
+                    showCorpusImporter = true
+                } label: {
+                    Label("导入分析师语料", systemImage: "doc.badge.plus")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -175,6 +233,7 @@ private struct InvestmentAnalysisDetail: View {
     let report: InvestmentAnalysisReportSummary
     let stateRoot: URL?
     let onOpenResearch: () -> Void
+    let onImportCorpus: () -> Void
 
     private var htmlArtifact: ResearchArtifact? {
         goal.artifacts.last(where: { $0.kind == "report_html" })
@@ -192,6 +251,11 @@ private struct InvestmentAnalysisDetail: View {
                         .foregroundStyle(theme.textSecondary)
                 }
                 Spacer()
+                Button(action: onImportCorpus) {
+                    Label("导入新语料", systemImage: "doc.badge.plus")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(theme.accent)
                 Button(action: onOpenResearch) {
                     Label("查看研究过程", systemImage: "arrow.up.right.square")
                 }
