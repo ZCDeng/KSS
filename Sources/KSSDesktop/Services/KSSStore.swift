@@ -1553,14 +1553,17 @@ final class KSSStore: ObservableObject {
         }
     }
 
-    func setAgentSkillPinned(_ skill: AgentSkill, pinned: Bool) {
-        if pinned { pinnedAgentSkillIds.insert(skill.id) } else { pinnedAgentSkillIds.remove(skill.id) }
+    /// Adds or removes a Skill from the currently selected conversation.
+    /// The sidecar action remains `pin` for protocol-v1 compatibility; "pin" is
+    /// deliberately not exposed as user-facing Seesaw vocabulary.
+    func setAgentSkillInConversation(_ skill: AgentSkill, selected: Bool) {
+        if selected { pinnedAgentSkillIds.insert(skill.id) } else { pinnedAgentSkillIds.remove(skill.id) }
         guard let bridge else { return }
         let sessionId = selectedAgentSessionId
         Task {
             let response = try? await Task.detached {
                 try bridge.agentSkills(
-                    action: "pin", sessionId: sessionId, skillId: skill.id, pinned: pinned)
+                    action: "pin", sessionId: sessionId, skillId: skill.id, pinned: selected)
             }.value
             if let response {
                 agentSkills = response.skills
@@ -1568,6 +1571,11 @@ final class KSSStore: ObservableObject {
                 pinnedAgentSkillIds = Set(response.skills.filter { $0.pinned == true }.map(\.id))
             }
         }
+    }
+
+    /// Compatibility shim for retired UI surfaces until their removal.
+    func setAgentSkillPinned(_ skill: AgentSkill, pinned: Bool) {
+        setAgentSkillInConversation(skill, selected: pinned)
     }
 
     func setAgentSkillEnabled(_ skill: AgentSkill, enabled: Bool) {

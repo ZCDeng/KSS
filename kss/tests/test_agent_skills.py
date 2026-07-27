@@ -68,7 +68,7 @@ def test_skill_manager_reports_duplicates_invalid_and_pin_limit(tmp_path):
     manager.pin_skill("s1", ok_ids[0])
     manager.pin_skill("s1", ok_ids[1])
     manager.pin_skill("s1", ok_ids[2])
-    with pytest.raises(ValueError, match="最多置顶 3 个"):
+    with pytest.raises(ValueError, match="最多加入 3 个"):
         manager.pin_skill("s1", ok_ids[3])
 
     manager.set_enabled(ok_ids[0], False)

@@ -129,11 +129,12 @@ final class SeesawXcomDesignTests: XCTestCase {
     func testFocusComposerIsSharedAndSkillsRemainExplicit() throws {
         let source = try source
         XCTAssertTrue(source.contains("private var focusComposer"))
-        XCTAssertTrue(source.contains("focusPinnedSkillChips"))
+        XCTAssertTrue(source.contains("focusSessionSkillChips"))
         XCTAssertTrue(source.contains("availableSkillStarters"))
         XCTAssertTrue(source.contains("private var focusSkillPalette"))
         XCTAssertTrue(source.contains("Toggle(\"启用\""))
-        XCTAssertTrue(source.contains("Toggle(\"置顶\""))
+        XCTAssertTrue(source.contains("加入本会话"))
+        XCTAssertTrue(source.contains("focusSkillFilterTabs"))
     }
 
     func testFocusConversationKeepsOneComposerAndUsesLandscapeUtilitySurfaces() throws {

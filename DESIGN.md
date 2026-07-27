@@ -28,9 +28,9 @@
 
 ## Design principles
 - Focus, not dashboard: the active prompt is the visual center. On wide windows, a compact Right Rail shows only active progress, available evidence, live market state, Skills and context; narrow windows use a trailing drawer. It must not repeat Composer or header actions.
-- Skills before settings: pinned Skills sit beside the composer. Provider configuration belongs to Seesaw's Models Center, not global KSS Settings; API keys remain in Keychain and route/explicit-test state is the only source of readiness.
+- Skills before settings: Skills selected for the current conversation sit beside the composer. Provider configuration belongs to Seesaw's Models Center, not global KSS Settings; API keys remain in Keychain and route/explicit-test state is the only source of readiness.
 - Flat by design: hairlines establish structure; cards and shadows are reserved for the Composer and content attachments.
-- Preserve agency: stop, archive, enable, pin, approve, and reject controls remain explicit and close to their effects.
+- Preserve agency: stop, archive, enable, join/remove a session Skill, approve, and reject controls remain explicit and close to their effects.
 - Tradeoffs: every theme shares a 760pt transcript and 680pt Composer measure with the same information architecture; themes may only vary visual tokens.
 
 ## Visual language
@@ -41,7 +41,7 @@
 - Motion: short, interruptible state changes; no ornamental entrance animation. Respect Reduce Motion.
 - Composer stability: the empty and hydrated transcript share one Composer identity; loading history must never dissolve, replace or dim the input surface.
 - Utility workspaces: Skills and Context & Memory open as landscape desktop panels. They preserve the visible Composer and use a transparent outside-click surface rather than a full-window dimmer.
-- Utility workspace typography: Skills and Context & Memory reuse the Settings → Tasks hierarchy: 14.5pt item titles, 12.5pt explanations, 11.5pt metadata, 12pt row/card insets and 8pt group headers. Arrange them as summary card → group header → action row rather than a phone-style stacked popover.
+- Utility workspace typography: Skills and Context & Memory reuse the Settings → Tasks type scale: 14.5pt item titles, 12.5pt explanations and 11.5pt metadata. Skills is a flat x.com list: only its search field receives a capsule fill; filters use an underline tab bar and list titles/rows use hairlines rather than filled group cards. “加入本会话 / 移出本会话” selects at most three Skills for later replies in the current session; never expose the internal `pin` term as the primary action.
 - Transcript readability: assistant prose renders native block Markdown. Titles, lists, quotes and market-data tables are formatted for reading; raw Markdown syntax is reserved for explicit code blocks.
 - Imagery/iconography: SF Symbols and 36–44pt control hit areas; do not add repeated avatar chrome to assistant responses.
 
@@ -75,7 +75,7 @@
 ## Content voice
 - Tone: direct, factual, and compact.
 - Terminology: `Seesaw`, `会话`, `技能`, `记忆`, `只解释 · 不荐买卖`.
-- Microcopy rules: name the action (`发送`, `停止`, `启用`, `置顶`); do not rely on icon-only adjacent controls.
+- Microcopy rules: name the action (`发送`, `停止`, `启用`, `加入本会话`); do not rely on icon-only adjacent controls.
 
 ## Implementation constraints
 - Framework/styling system: native SwiftUI; no new dependencies.

@@ -816,7 +816,7 @@ class KSSAgentService:
         for skill in discovered:
             if skill.enabled and (skill.id in pinned or skill.name in pinned):
                 skill_summaries.append(
-                    f"置顶 Skill {skill.name}:\n{self.skills.load_skill(skill.id)}"
+                    f"本会话 Skill {skill.name}:\n{self.skills.load_skill(skill.id)}"
                 )
 
         assembly = await self._assemble_context(

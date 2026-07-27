@@ -78,7 +78,7 @@ struct AIChatView: View {
     private enum SkillFilter: String, CaseIterable, Identifiable {
         case all = "全部"
         case enabled = "已启用"
-        case pinned = "已置顶"
+        case inConversation = "本会话"
 
         var id: String { rawValue }
     }
@@ -494,10 +494,10 @@ struct AIChatView: View {
                 }
 
                 inspectorSection(.skills, systemImage: "slider.horizontal.3", opens: .skills) {
-                    Text("\(pinnedSkills.count) 个置顶 · \(enabledSkillCount) 个启用")
+                    Text("\(sessionSkills.count) 个本会话技能 · \(enabledSkillCount) 个启用")
                         .foregroundStyle(theme.textSecondary)
-                    if !pinnedSkills.isEmpty {
-                        ForEach(pinnedSkills) { skill in
+                    if !sessionSkills.isEmpty {
+                        ForEach(sessionSkills) { skill in
                             Text(skill.name)
                                 .font(KSSFont.themed(12, .semibold, theme: theme))
                                 .foregroundStyle(theme.textPrimary)
@@ -1269,7 +1269,7 @@ struct AIChatView: View {
             composerInlineStatus
             queuedInputPanel
             pendingAttachmentStrip
-            focusPinnedSkillChips
+            focusSessionSkillChips
 
             TextField(
                 store.chatMessages.isEmpty ? "问问盘面、个股或一个研究问题…" : "继续追问…",
@@ -1380,11 +1380,11 @@ struct AIChatView: View {
     }
 
     @ViewBuilder
-    private var focusPinnedSkillChips: some View {
-        if !pinnedSkills.isEmpty {
+    private var focusSessionSkillChips: some View {
+        if !sessionSkills.isEmpty {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 7) {
-                ForEach(pinnedSkills) { skill in
+                ForEach(sessionSkills) { skill in
                     Button {
                         selectedSkillId = skill.id
                         skillSearch = skill.name
@@ -1399,11 +1399,11 @@ struct AIChatView: View {
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
-                        Button("取消置顶") {
-                            store.setAgentSkillPinned(skill, pinned: false)
+                        Button("移出本会话") {
+                            store.setAgentSkillInConversation(skill, selected: false)
                         }
                     }
-                    .help("查看 \(skill.name) 技能详情")
+                    .help("\(skill.name) 已加入本会话；点击查看或移出")
                 }
             }
             }
@@ -1633,42 +1633,19 @@ struct AIChatView: View {
                     .padding(.horizontal, SettingsFormStyle.cardPadding)
                     .kssCard(.filled, padding: 0)
 
-                    HStack(spacing: SettingsFormStyle.rowHSpacing) {
-                        Picker("技能筛选", selection: $skillFilter) {
-                            ForEach(SkillFilter.allCases) { filter in
-                                Text(filter.rawValue).tag(filter)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .frame(maxWidth: 280)
+                    focusSkillFilterTabs
 
-                        Spacer(minLength: 0)
-                        SettingsStatusCapsule(
-                            text: "\(enabledSkillCount) 个启用",
-                            tint: theme.accent
-                        )
-                        SettingsStatusCapsule(text: "\(pinnedSkills.count) 个置顶")
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .kssCard(.filled, padding: 8)
-
-                    seesawPanelSummary(
-                        systemImage: "slider.horizontal.3",
-                        title: "技能工作区",
-                        detail: "置顶的技能会随本会话注入；启用状态在所有会话中共享。",
-                        status: "\(filteredSkills.count) 项可见"
+                    focusSkillListHeader(
+                        title: "选择本会话技能",
+                        detail: "加入后会在当前会话的后续回复中使用；启用状态在所有会话中共享。",
+                        trailing: "\(sessionSkills.count) / 3 已加入"
                     )
 
-                    if let selected = selectedSkill {
-                        Label("当前查看：\(selected.name)", systemImage: "pin.fill")
-                            .font(KSSFont.themed(SettingsFormStyle.bodyHint, .semibold, theme: theme))
-                            .foregroundStyle(theme.accent)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .kssCard(.info, padding: SettingsFormStyle.bannerPadding)
-                    }
-
-                    seesawPanelGroupHeader("技能目录", count: filteredSkills.count, trailing: "来源 · 信任 · 所需工具")
+                    focusSkillListHeader(
+                        title: "技能目录",
+                        trailing: "\(filteredSkills.count) 项 · 来源 · 信任 · 所需工具",
+                        compact: true
+                    )
 
                     LazyVStack(spacing: SettingsFormStyle.groupSpacing) {
                         ForEach(filteredSkills) { skill in
@@ -1679,11 +1656,15 @@ struct AIChatView: View {
                     if filteredSkills.isEmpty {
                         SettingsHintText(text: "没有匹配的技能", empty: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .kssCard(padding: SettingsFormStyle.cardPadding)
+                            .padding(.vertical, SettingsFormStyle.cardPadding)
                     }
 
                     if !store.agentSkillDiagnostics.isEmpty {
-                        seesawPanelGroupHeader("诊断", count: store.agentSkillDiagnostics.count)
+                        focusSkillListHeader(
+                            title: "诊断",
+                            trailing: "\(store.agentSkillDiagnostics.count) 项",
+                            compact: true
+                        )
                         ForEach(store.agentSkillDiagnostics) { diagnostic in
                             seesawPanelRow {
                                 VStack(alignment: .leading, spacing: SettingsFormStyle.titleMetaSpacing) {
@@ -1705,9 +1686,95 @@ struct AIChatView: View {
         .background(theme.surface)
     }
 
+    /// Skills use the same x.com underline hierarchy as the information radar.
+    /// The search field is the only filled control in this workspace; filters
+    /// and list headings stay flat so they do not compete with the skill rows.
+    private var focusSkillFilterTabs: some View {
+        HStack(alignment: .bottom, spacing: 0) {
+            ForEach(SkillFilter.allCases) { filter in
+                let isActive = skillFilter == filter
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        skillFilter = filter
+                    }
+                } label: {
+                    VStack(spacing: 0) {
+                        Text(filter.rawValue)
+                            .font(KSSFont.themed(15, isActive ? .bold : .medium, theme: theme))
+                            .foregroundStyle(isActive ? theme.textPrimary : theme.textSecondary)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                        Capsule()
+                            .fill(isActive ? theme.accent : Color.clear)
+                            .frame(height: 4)
+                            .padding(.horizontal, 8)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(isActive ? .isSelected : [])
+            }
+
+            Spacer(minLength: 12)
+
+            Text("\(enabledSkillCount) 个启用 · \(sessionSkills.count) 个本会话")
+                .font(KSSFont.themed(SettingsFormStyle.meta, .medium, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+                .lineLimit(1)
+                .padding(.bottom, 12)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(theme.hairline).frame(height: 1)
+        }
+    }
+
+    private func focusSkillListHeader(
+        title: String,
+        detail: String? = nil,
+        trailing: String,
+        compact: Bool = false
+    ) -> some View {
+        HStack(alignment: detail == nil ? .center : .top, spacing: 10) {
+            if !compact {
+                Image(systemName: "slider.horizontal.3")
+                    .font(KSSFont.themed(16, .semibold, theme: theme))
+                    .foregroundStyle(theme.accent)
+                    .frame(width: 22)
+            }
+            VStack(alignment: .leading, spacing: detail == nil ? 0 : 3) {
+                Text(title)
+                    .font(KSSFont.themed(
+                        compact ? 15 : SettingsFormStyle.itemTitle,
+                        compact ? .semibold : .bold,
+                        theme: theme
+                    ))
+                    .foregroundStyle(theme.textPrimary)
+                if let detail {
+                    Text(detail)
+                        .font(KSSFont.themed(SettingsFormStyle.bodyHint, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 12)
+            Text(trailing)
+                .font(KSSFont.themed(SettingsFormStyle.meta, .medium, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(compact ? 1 : 2)
+        }
+        .padding(.top, compact ? 6 : 10)
+        .padding(.bottom, compact ? 7 : 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(theme.hairline).frame(height: 1)
+        }
+    }
+
     private func focusSkillRow(_ skill: AgentSkill) -> some View {
-        let isPinned = store.pinnedAgentSkillIds.contains(skill.id)
-        let exceedsPinLimit = !isPinned && pinnedSkills.count >= 3
+        let isInConversation = store.pinnedAgentSkillIds.contains(skill.id)
+        let exceedsSessionSkillLimit = !isInConversation && sessionSkills.count >= 3
 
         return seesawPanelRow {
             HStack(alignment: .top, spacing: SettingsFormStyle.rowHSpacing) {
@@ -1739,8 +1806,8 @@ struct AIChatView: View {
                         Text("缺少工具：\((skill.missingRequiredTools ?? []).joined(separator: "、"))")
                             .font(KSSFont.themed(SettingsFormStyle.meta, .semibold, theme: theme))
                             .foregroundStyle(theme.ma5)
-                    } else if exceedsPinLimit {
-                        Text("每个会话最多置顶 3 个技能")
+                    } else if exceedsSessionSkillLimit {
+                        Text("每个会话最多加入 3 个技能")
                             .font(KSSFont.themed(SettingsFormStyle.meta, theme: theme))
                             .foregroundStyle(theme.textSecondary)
                     }
@@ -1755,16 +1822,17 @@ struct AIChatView: View {
                     ))
                     .disabled(skill.available == false)
 
-                    Toggle("置顶", isOn: Binding(
-                        get: { isPinned },
-                        set: { store.setAgentSkillPinned(skill, pinned: $0) }
-                    ))
-                    .disabled(exceedsPinLimit)
+                    Button(isInConversation ? "移出本会话" : "加入本会话") {
+                        store.setAgentSkillInConversation(skill, selected: !isInConversation)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(isInConversation ? theme.textSecondary : theme.accent)
+                    .disabled(skill.available == false || exceedsSessionSkillLimit)
                 }
-                .toggleStyle(.checkbox)
                 .font(KSSFont.themed(SettingsFormStyle.actionLabel, .semibold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
-                .frame(width: 84, alignment: .leading)
+                .frame(width: 112, alignment: .leading)
             }
         }
     }
@@ -1965,7 +2033,7 @@ struct AIChatView: View {
         }
     }
 
-    private var pinnedSkills: [AgentSkill] {
+    private var sessionSkills: [AgentSkill] {
         Array(store.agentSkills.filter { store.pinnedAgentSkillIds.contains($0.id) }.prefix(3))
     }
 
@@ -2018,7 +2086,7 @@ struct AIChatView: View {
                 switch skillFilter {
                 case .all: matchesFilter = true
                 case .enabled: matchesFilter = skill.enabled != false
-                case .pinned: matchesFilter = store.pinnedAgentSkillIds.contains(skill.id)
+                case .inConversation: matchesFilter = store.pinnedAgentSkillIds.contains(skill.id)
                 }
                 guard matchesFilter else { return false }
                 guard !query.isEmpty else { return true }

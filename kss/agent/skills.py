@@ -286,25 +286,25 @@ class SkillManager:
         self._append_state("trust", {"skill_id": skill.id, "trust": trust})
 
     def pin_skill(self, session_id: str, skill_id: str) -> tuple[str, ...]:
-        """为会话置顶技能，最多三个."""
+        """将技能加入会话上下文，最多三个。"""
         pins = list(self._pins.get(session_id, ()))
         if skill_id not in pins:
             if len(pins) >= self.MAX_PINS_PER_SESSION:
-                raise ValueError("每个会话最多置顶 3 个技能")
+                raise ValueError("每个会话最多加入 3 个技能")
             pins.append(skill_id)
         self._pins[session_id] = tuple(pins)
         self._append_state("pins", {"session_id": session_id, "pins": list(self._pins[session_id])})
         return self._pins[session_id]
 
     def unpin_skill(self, session_id: str, skill_id: str) -> tuple[str, ...]:
-        """取消会话技能置顶."""
+        """将技能移出会话上下文。"""
         pins = tuple(item for item in self._pins.get(session_id, ()) if item != skill_id)
         self._pins[session_id] = pins
         self._append_state("pins", {"session_id": session_id, "pins": list(pins)})
         return pins
 
     def pinned_skill_ids(self, session_id: str) -> tuple[str, ...]:
-        """返回会话已置顶的技能 ID."""
+        """返回当前会话已选择的技能 ID（协议字段保留原名）。"""
         return self._pins.get(session_id, ())
 
     def load_skill(self, skill_id: str) -> str:
