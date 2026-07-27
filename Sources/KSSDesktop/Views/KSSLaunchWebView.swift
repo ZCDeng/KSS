@@ -7,8 +7,12 @@ import WebKit
 ///
 /// - 仅加载本地 bundle 文件；外部 URL / popup / 非预期导航一律 cancel。
 /// - document-start 注入当前主题 payload，避免首帧闪错色。
-/// - boot watchdog：2.5s 内未收到 `ready` → `.failure(.watchdog)`，保证用户能看到原生按钮。
+/// - boot watchdog：在受限冷启动窗口内未收到 `ready` → `.failure(.watchdog)`，保证用户能看到原生按钮。
 struct KSSLaunchWebView: NSViewRepresentable {
+    /// WebKit 首次创建 WebContent 进程并读取本地 GSAP 资源会明显慢于热启动。
+    /// 不能用过短 timeout 抢先覆盖正常时间线，但仍须有安全上限以处理真实故障。
+    static let webReadyWatchdogInterval: TimeInterval = 5
+
     let payload: KSSWebThemePayload
     let canvas: NSColor
     let onEvent: (LaunchEvent) -> Void
@@ -84,7 +88,8 @@ struct KSSLaunchWebView: NSViewRepresentable {
 
         func startWatchdog() {
             watchdog?.invalidate()
-            watchdog = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: false) { [weak self] _ in
+            watchdog = Timer.scheduledTimer(withTimeInterval: KSSLaunchWebView.webReadyWatchdogInterval,
+                                             repeats: false) { [weak self] _ in
                 guard let self, !self.ready else { return }
                 self.emit(.failure(.watchdog))
             }

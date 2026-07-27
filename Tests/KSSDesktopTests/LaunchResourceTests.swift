@@ -5,6 +5,14 @@ import XCTest
 /// 主题注入 payload 可 JSON round-trip 且覆盖全部已支持系统 × 亮暗。
 final class LaunchResourceTests: XCTestCase {
 
+    func testLaunchWebViewAllowsEnoughTimeForColdWebKitStartup() {
+        // 本机冷启动下，本地 GSAP 页面 ready 已接近 2 秒；短 watchdog 会先让
+        // LaunchGate 降级为原生静态页，从视觉上看像“启动动效丢失”。仍保留上限，
+        // 以便真实的资源或 WebContent 失败可回退。
+        XCTAssertGreaterThanOrEqual(KSSLaunchWebView.webReadyWatchdogInterval, 5)
+        XCTAssertLessThanOrEqual(KSSLaunchWebView.webReadyWatchdogInterval, 8)
+    }
+
     private func launchURL(_ name: String, _ ext: String) -> URL? {
         Bundle.module.url(forResource: name, withExtension: ext, subdirectory: "Launch")
             ?? Bundle.module.url(forResource: name, withExtension: ext)
