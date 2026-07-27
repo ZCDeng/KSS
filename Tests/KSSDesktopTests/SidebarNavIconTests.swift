@@ -13,6 +13,7 @@ final class SidebarNavIconTests: XCTestCase {
             .newsDigest: "newsDigest",
             .backtests: "backtests",
             .stocks: "stocks",
+            .investmentAnalysis: "investmentAnalysis",
         ]
         for (section, base) in expected {
             XCTAssertEqual(SidebarNavIconCatalog.resourceBase(for: section), base, section.rawValue)
@@ -31,7 +32,7 @@ final class SidebarNavIconTests: XCTestCase {
 
     func testBundledPDFLoadsForOutlineAndFilled() {
         let bases = ["dashboard", "recommendations", "watchlist", "themes", "trends",
-                     "reviews", "newsDigest", "backtests", "stocks", "seesaw"]
+                     "reviews", "newsDigest", "backtests", "stocks", "investmentAnalysis", "seesaw"]
         for base in bases {
             XCTAssertNotNil(SidebarNavIconCatalog.image(base: base, filled: false), "\(base)-outline")
             XCTAssertNotNil(SidebarNavIconCatalog.image(base: base, filled: true), "\(base)-filled")
