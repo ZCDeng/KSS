@@ -47,4 +47,25 @@ final class AgentSkillDrawerTests: XCTestCase {
         XCTAssertTrue(context.contains("seesawPanelGroupHeader"))
         XCTAssertTrue(context.contains("seesawPanelRow"))
     }
+
+    func testSkillWorkspaceCountsUseSwiftInterpolation() throws {
+        let sourceURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "Sources/KSSDesktop/Views/AIChatView.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+        let skillsStart = try XCTUnwrap(source.range(of: "private var focusSkillPalette"))
+        let contextStart = try XCTUnwrap(
+            source.range(of: "private var focusContextPopover", range: skillsStart.upperBound..<source.endIndex)
+        )
+        let palette = String(source[skillsStart.lowerBound..<contextStart.lowerBound])
+
+        XCTAssertTrue(palette.contains("\\(enabledSkillCount) 个启用"))
+        XCTAssertTrue(palette.contains("\\(pinnedSkills.count) 个置顶"))
+        XCTAssertTrue(palette.contains("\\(filteredSkills.count) 项可见"))
+        XCTAssertFalse(palette.contains("text: \"(enabledSkillCount) 个启用\""))
+        XCTAssertFalse(palette.contains("SettingsStatusCapsule(text: \"(pinnedSkills.count) 个置顶\")"))
+        XCTAssertFalse(palette.contains("status: \"(filteredSkills.count) 项可见\""))
+    }
 }

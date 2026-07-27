@@ -1645,10 +1645,10 @@ struct AIChatView: View {
 
                         Spacer(minLength: 0)
                         SettingsStatusCapsule(
-                            text: "(enabledSkillCount) 个启用",
+                            text: "\(enabledSkillCount) 个启用",
                             tint: theme.accent
                         )
-                        SettingsStatusCapsule(text: "(pinnedSkills.count) 个置顶")
+                        SettingsStatusCapsule(text: "\(pinnedSkills.count) 个置顶")
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .kssCard(.filled, padding: 8)
@@ -1657,7 +1657,7 @@ struct AIChatView: View {
                         systemImage: "slider.horizontal.3",
                         title: "技能工作区",
                         detail: "置顶的技能会随本会话注入；启用状态在所有会话中共享。",
-                        status: "(filteredSkills.count) 项可见"
+                        status: "\(filteredSkills.count) 项可见"
                     )
 
                     if let selected = selectedSkill {
