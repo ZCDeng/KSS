@@ -157,6 +157,26 @@ final class SeesawXcomDesignTests: XCTestCase {
         XCTAssertFalse(messageCell.contains("markdownText(message.text)\n                        .font(KSSFont.themed(15"))
     }
 
+    func testConversationContentSupportsSelectionAndWholeMessageCopy() throws {
+        let source = try source
+        let start = try XCTUnwrap(source.range(of: "private func focusMessageCell"))
+        let end = try XCTUnwrap(
+            source.range(of: "private func focusToolRow", range: start.upperBound..<source.endIndex)
+        )
+        let messageCell = String(source[start.lowerBound..<end.lowerBound])
+
+        XCTAssertTrue(source.contains("import AppKit"))
+        XCTAssertTrue(source.contains("private func copyMessageText(_ text: String)"))
+        XCTAssertTrue(source.contains("NSPasteboard.general"))
+        XCTAssertEqual(
+            messageCell.components(
+                separatedBy: "Button(\"复制内容\", systemImage: \"doc.on.doc\")"
+            ).count - 1,
+            2
+        )
+        XCTAssertTrue(messageCell.contains(".textSelection(.enabled)"))
+    }
+
     func testSeesawNavigationCollapseIsTransient() throws {
         let source = try contentSource
         XCTAssertTrue(source.contains("@State private var seesawNavigationExpanded"))

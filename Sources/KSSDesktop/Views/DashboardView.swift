@@ -52,20 +52,13 @@ struct DashboardView: View {
         return String(format: "最旧: %@ · %.0fs", worst.symbol, worst.ageSeconds)
     }
 
-    private var usMarketCaption: String {
-        let coverage = USMarketQuoteMerge.summary(usMarketCoverage)
-        let phase: String
-        switch usMarketPhase {
-        case "regular": phase = "常规交易"
-        case "pre": phase = "盘前"
-        case "post": phase = "盘后"
-        case "closed": phase = "已休市"
-        default: phase = "阶段未知"
-        }
-        guard let usMarketUpdatedAt else {
-            return "\(coverage) · \(phase)"
-        }
-        return "\(coverage) · \(phase) · \(usMarketUpdatedAt.formatted(date: .omitted, time: .shortened))"
+    private var usMarketHeaderStatus: USMarketHeaderStatus {
+        USMarketQuoteMerge.headerStatus(usMarketCoverage, phase: usMarketPhase)
+    }
+
+    private var usMarketHeaderText: String {
+        guard let usMarketUpdatedAt else { return usMarketHeaderStatus.text }
+        return "\(usMarketHeaderStatus.text) · \(usMarketUpdatedAt.formatted(date: .omitted, time: .shortened))"
     }
 
     var body: some View {
@@ -123,10 +116,22 @@ struct DashboardView: View {
 
                     // 隔夜美股：固定名单顺序，不按涨跌重排；≥1 才显示
                     if let overnight = snapshot.marketStrip?.overnightUS, !overnight.isEmpty {
-                        SectionHeader(
-                            "隔夜美股",
-                            caption: usMarketCaption
-                        )
+                        HStack(alignment: .center, spacing: 12) {
+                            SectionHeader("隔夜美股")
+                            Spacer(minLength: 12)
+                            Label(
+                                usMarketHeaderText,
+                                systemImage: usMarketHeaderStatus.systemImage
+                            )
+                            .font(KSSFont.themed(11.5, .medium, theme: theme))
+                            .foregroundStyle(
+                                usMarketHeaderStatus.isActive
+                                    ? theme.accent
+                                    : theme.textSecondary
+                            )
+                            .lineLimit(1)
+                            .padding(.top, 6)
+                        }
                         OvernightUSMarquee(
                             indices: overnight,
                             quotes: usMarketQuotes
@@ -1125,33 +1130,53 @@ private struct MarqueeWidthKey: PreferenceKey {
     }
 }
 
-/// 隔夜美股跑马灯：名单固定顺序，不按涨跌重排；纸白底芯片，区别于上方指数 raised 跑马灯。
+/// 隔夜美股跑马灯：名单固定顺序，不按涨跌重排；行情状态集中放在分区标题，
+/// chip 只承载名称、价格与涨跌，保持密度与连续滚动。
 struct OvernightUSMarquee: View {
     @Environment(\.kssTheme) private var theme
     var indices: [IndexQuote]
     var quotes: [String: USMarketQuote] = [:]
 
+    private let gap: CGFloat = 10
+    private let speed: Double = 34
+    @State private var rowWidth: CGFloat = 0
+
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                ForEach(indices) { index in
-                    chip(index)
+        GeometryReader { geo in
+            TimelineView(.animation) { timeline in
+                let period = rowWidth + gap
+                let elapsed = timeline.date.timeIntervalSinceReferenceDate
+                let offset = period > 0
+                    ? -CGFloat((elapsed * speed).truncatingRemainder(dividingBy: Double(period)))
+                    : 0
+                HStack(spacing: gap) {
+                    row(measured: true)
+                    row(measured: false)
+                }
+                .offset(x: offset)
+                .frame(width: geo.size.width, alignment: .leading)
+            }
+        }
+        .frame(height: 46)
+        .clipped()
+        .mask(edgeFade)
+        .onPreferenceChange(MarqueeWidthKey.self) { rowWidth = $0 }
+    }
+
+    private func row(measured: Bool) -> some View {
+        HStack(spacing: gap) {
+            ForEach(indices) { chip($0) }
+        }
+        .background {
+            if measured {
+                GeometryReader { geometry in
+                    Color.clear.preference(
+                        key: MarqueeWidthKey.self,
+                        value: geometry.size.width
+                    )
                 }
             }
-            .padding(.vertical, 1)
         }
-        .mask(
-            LinearGradient(
-                stops: [
-                    .init(color: .clear, location: 0),
-                    .init(color: .black, location: 0.025),
-                    .init(color: .black, location: 0.975),
-                    .init(color: .clear, location: 1),
-                ],
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-        )
     }
 
     private func chip(_ index: IndexQuote) -> some View {
@@ -1159,54 +1184,39 @@ struct OvernightUSMarquee: View {
         let close = live?.last ?? index.close
         let pct = live?.pct ?? index.pct
         let status = live?.status ?? "static"
-        let source = live?.source ?? "历史收盘"
         let isObserved = ["live", "delayed"].contains(status)
 
-        return VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 6) {
-                Image(
-                    systemName: pct >= 0
-                        ? "arrowtriangle.up.fill"
-                        : "arrowtriangle.down.fill"
-                )
-                .font(KSSFont.themed(9, .bold, theme: theme))
-                .foregroundStyle(theme.signColor(pct))
-                Text(index.name)
-                    .font(KSSFont.themed(12.5, .bold, theme: theme))
-                    .foregroundStyle(Color(white: 0.12))
-                    .lineLimit(1)
-            }
-            HStack(alignment: .firstTextBaseline, spacing: 7) {
-                LivePriceText(
-                    value: close,
-                    text: String(format: "%.2f", close),
-                    baseColor: Color(white: 0.35),
-                    isLive: isObserved,
-                    font: .system(
-                        size: 12,
-                        weight: .semibold,
-                        design: .monospaced
-                    )
-                )
-                LivePriceText(
-                    value: pct,
-                    text: String(format: "%+.2f%%", pct),
-                    baseColor: theme.signColor(pct),
-                    isLive: isObserved,
-                    font: .system(
-                        size: 12,
-                        weight: .heavy,
-                        design: .monospaced
-                    )
-                )
-            }
-            Text("\(statusLabel(status)) · \(sourceLabel(source))")
-                .font(.system(size: 9.5, weight: .medium))
-                .foregroundStyle(Color(white: 0.42))
+        return HStack(spacing: 7) {
+            Image(
+                systemName: pct >= 0
+                    ? "arrowtriangle.up.fill"
+                    : "arrowtriangle.down.fill"
+            )
+            .font(KSSFont.themed(9, .bold, theme: theme))
+            .foregroundStyle(theme.signColor(pct))
+            Text(index.name)
+                .font(KSSFont.themed(12.5, .bold, theme: theme))
+                .foregroundStyle(Color(white: 0.12))
                 .lineLimit(1)
+            LivePriceText(
+                value: close,
+                text: String(format: "%.2f", close),
+                baseColor: Color(white: 0.35),
+                isLive: isObserved,
+                font: .system(size: 12, weight: .semibold, design: .monospaced)
+            )
+            .lineLimit(1)
+            LivePriceText(
+                value: pct,
+                text: String(format: "%+.2f%%", pct),
+                baseColor: theme.signColor(pct),
+                isLive: isObserved,
+                font: .system(size: 12, weight: .heavy, design: .monospaced)
+            )
+            .lineLimit(1)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.vertical, 9)
         .background(Color.white, in: RoundedRectangle(cornerRadius: KSSTheme.shapeL))
         .overlay(
             RoundedRectangle(cornerRadius: KSSTheme.shapeL)
@@ -1217,22 +1227,17 @@ struct OvernightUSMarquee: View {
         .help(live?.error ?? "")
     }
 
-    private func statusLabel(_ status: String) -> String {
-        switch status {
-        case "live": return "实时"
-        case "delayed": return "可能延迟"
-        case "stale": return "已过期"
-        case "unavailable": return "不可用"
-        default: return "静态"
-        }
-    }
-
-    private func sourceLabel(_ source: String) -> String {
-        switch source {
-        case "longbridge": return "Longbridge"
-        case "yfinance": return "yFinance"
-        default: return source
-        }
+    private var edgeFade: some View {
+        LinearGradient(
+            stops: [
+                .init(color: .clear, location: 0),
+                .init(color: .black, location: 0.035),
+                .init(color: .black, location: 0.965),
+                .init(color: .clear, location: 1),
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
     }
 }
 

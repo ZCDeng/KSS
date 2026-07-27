@@ -48,6 +48,46 @@ final class USMarketQuoteMergeTests: XCTestCase {
         )
     }
 
+    func testHeaderStatusMovesFreshnessOutOfIndividualCards() {
+        let regular = USMarketQuoteMerge.headerStatus(
+            USMarketCoverage(live: 2, delayed: 1, stale: 0, static: 9, unavailable: 0),
+            phase: "regular"
+        )
+        XCTAssertEqual(regular.text, "盘中 · 2 实时 · 1 延迟")
+        XCTAssertEqual(regular.systemImage, "dot.radiowaves.left.and.right")
+        XCTAssertTrue(regular.isActive)
+        XCTAssertFalse(regular.text.contains("静态"))
+
+        let post = USMarketQuoteMerge.headerStatus(
+            USMarketCoverage(live: 0, delayed: 0, stale: 0, static: 12, unavailable: 0),
+            phase: "post"
+        )
+        XCTAssertEqual(post.text, "盘后 · 收盘数据")
+        XCTAssertEqual(post.systemImage, "moon.stars")
+        XCTAssertFalse(post.isActive)
+        XCTAssertFalse(post.text.contains("yFinance"))
+    }
+
+    func testOvernightMarqueeUsesContinuousTimelineAndNoPerCardSourceLabel() throws {
+        let sourceURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "Sources/KSSDesktop/Views/DashboardView.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+        let start = try XCTUnwrap(source.range(of: "struct OvernightUSMarquee"))
+        let end = try XCTUnwrap(
+            source.range(of: "struct MarketIndexRow", range: start.upperBound..<source.endIndex)
+        )
+        let marquee = String(source[start.lowerBound..<end.lowerBound])
+
+        XCTAssertTrue(marquee.contains("TimelineView(.animation"))
+        XCTAssertTrue(marquee.contains("row(measured: true)"))
+        XCTAssertTrue(marquee.contains("row(measured: false)"))
+        XCTAssertFalse(marquee.contains("statusLabel("))
+        XCTAssertFalse(marquee.contains("sourceLabel("))
+    }
+
     private func quote(_ code: String, status: String) -> USMarketQuote {
         USMarketQuote(
             code: code, name: code, last: 1, prevClose: 1, pct: 0,

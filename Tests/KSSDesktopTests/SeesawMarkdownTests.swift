@@ -46,4 +46,14 @@ final class SeesawMarkdownTests: XCTestCase {
             ]
         )
     }
+
+    func testReadingTypographyStaysCompactAndFiveColumnTablesFitTheFeed() {
+        XCTAssertEqual(SeesawMarkdownLayout.bodyFontSize, 14)
+        XCTAssertLessThanOrEqual(SeesawMarkdownLayout.headingSize(for: 1), 20)
+        XCTAssertLessThanOrEqual(
+            SeesawMarkdownLayout.tableContentWidth(columnCount: 5),
+            680
+        )
+        XCTAssertLessThan(SeesawMarkdownLayout.tableFontSize, 13)
+    }
 }

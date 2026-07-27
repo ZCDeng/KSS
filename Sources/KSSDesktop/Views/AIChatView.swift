@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
@@ -1191,18 +1192,24 @@ struct AIChatView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     if !message.text.isEmpty {
                         markdownText(message.text)
-                            .font(KSSFont.themed(15, theme: theme))
+                            .font(KSSFont.themed(14, theme: theme))
                             .foregroundStyle(theme.textPrimary)
                             .textSelection(.enabled)
+                            .lineSpacing(2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     messageAttachmentStrip(message.attachments)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 11)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 10)
                 .frame(maxWidth: SeesawXcomChrome.feedColumnWidth * 0.78, alignment: .leading)
                 .background(theme.accentSoft, in: RoundedRectangle(cornerRadius: 18))
                 .contextMenu {
+                    Button("复制内容", systemImage: "doc.on.doc") {
+                        copyMessageText(message.text)
+                    }
+                    .disabled(message.text.nilIfBlank == nil)
+                    Divider()
                     Button("记住这条消息") { store.proposeAgentMemory(message.text) }
                 }
             }
@@ -1246,9 +1253,21 @@ struct AIChatView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contextMenu {
+                Button("复制内容", systemImage: "doc.on.doc") {
+                    copyMessageText(message.text)
+                }
+                .disabled(message.text.nilIfBlank == nil)
+                Divider()
                 Button("记住这条消息") { store.proposeAgentMemory(message.text) }
             }
         }
+    }
+
+    private func copyMessageText(_ text: String) {
+        guard text.nilIfBlank != nil else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
     }
 
     private func focusToolRow(_ tool: String) -> some View {
