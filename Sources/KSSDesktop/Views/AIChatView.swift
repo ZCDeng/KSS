@@ -1618,72 +1618,88 @@ struct AIChatView: View {
                 store.reloadAgentSkills()
             }
 
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(theme.textSecondary)
-                TextField("搜索名称、分类或来源", text: $skillSearch)
-                    .textFieldStyle(.plain)
-                    .font(KSSFont.themed(13, theme: theme))
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 38)
-            .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: 10))
-            .padding(.horizontal, 12)
-            .padding(.top, 12)
-
-            Picker("技能筛选", selection: $skillFilter) {
-                ForEach(SkillFilter.allCases) { filter in
-                    Text(filter.rawValue).tag(filter)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-
             ScrollView {
-                LazyVStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: SettingsFormStyle.blockSpacing) {
+                    HStack(spacing: SettingsFormStyle.rowHSpacing) {
+                        Image(systemName: "magnifyingglass")
+                            .font(KSSFont.themed(14, .semibold, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                            .frame(width: 22)
+                        TextField("搜索名称、分类或来源", text: $skillSearch)
+                            .textFieldStyle(.plain)
+                            .font(KSSFont.themed(SettingsFormStyle.bodyHint, theme: theme))
+                    }
+                    .frame(height: 38)
+                    .padding(.horizontal, SettingsFormStyle.cardPadding)
+                    .kssCard(.filled, padding: 0)
+
+                    HStack(spacing: SettingsFormStyle.rowHSpacing) {
+                        Picker("技能筛选", selection: $skillFilter) {
+                            ForEach(SkillFilter.allCases) { filter in
+                                Text(filter.rawValue).tag(filter)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(maxWidth: 280)
+
+                        Spacer(minLength: 0)
+                        SettingsStatusCapsule(
+                            text: "(enabledSkillCount) 个启用",
+                            tint: theme.accent
+                        )
+                        SettingsStatusCapsule(text: "(pinnedSkills.count) 个置顶")
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .kssCard(.filled, padding: 8)
+
+                    seesawPanelSummary(
+                        systemImage: "slider.horizontal.3",
+                        title: "技能工作区",
+                        detail: "置顶的技能会随本会话注入；启用状态在所有会话中共享。",
+                        status: "(filteredSkills.count) 项可见"
+                    )
+
                     if let selected = selectedSkill {
-                        Label("正在查看：\(selected.name)", systemImage: "pin.fill")
-                            .font(KSSFont.themed(11.5, .semibold, theme: theme))
+                        Label("当前查看：\(selected.name)", systemImage: "pin.fill")
+                            .font(KSSFont.themed(SettingsFormStyle.bodyHint, .semibold, theme: theme))
                             .foregroundStyle(theme.accent)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 12)
-                            .padding(.bottom, 8)
+                            .kssCard(.info, padding: SettingsFormStyle.bannerPadding)
                     }
 
-                    ForEach(filteredSkills) { skill in
-                        focusSkillRow(skill)
+                    seesawPanelGroupHeader("技能目录", count: filteredSkills.count, trailing: "来源 · 信任 · 所需工具")
+
+                    LazyVStack(spacing: SettingsFormStyle.groupSpacing) {
+                        ForEach(filteredSkills) { skill in
+                            focusSkillRow(skill)
+                        }
                     }
 
                     if filteredSkills.isEmpty {
-                        Text("没有匹配的技能")
-                            .font(KSSFont.themed(13, theme: theme))
-                            .foregroundStyle(theme.textSecondary)
-                            .padding(.vertical, 26)
+                        SettingsHintText(text: "没有匹配的技能", empty: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .kssCard(padding: SettingsFormStyle.cardPadding)
                     }
 
                     if !store.agentSkillDiagnostics.isEmpty {
-                        Divider().overlay(theme.hairline)
-                            .padding(.vertical, 6)
-                        Text("诊断")
-                            .font(KSSFont.themed(13, .bold, theme: theme))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 12)
+                        seesawPanelGroupHeader("诊断", count: store.agentSkillDiagnostics.count)
                         ForEach(store.agentSkillDiagnostics) { diagnostic in
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(diagnostic.code)
-                                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                                    .foregroundStyle(Color.red)
-                                Text(diagnostic.message)
-                                    .font(KSSFont.themed(12, theme: theme))
-                                    .foregroundStyle(theme.textSecondary)
+                            seesawPanelRow {
+                                VStack(alignment: .leading, spacing: SettingsFormStyle.titleMetaSpacing) {
+                                    Text(diagnostic.code)
+                                        .font(.system(size: SettingsFormStyle.monoMeta, weight: .semibold, design: .monospaced))
+                                        .foregroundStyle(Color.red)
+                                    Text(diagnostic.message)
+                                        .font(KSSFont.themed(SettingsFormStyle.bodyHint, theme: theme))
+                                        .foregroundStyle(theme.textSecondary)
+                                }
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(12)
                         }
                     }
                 }
+                .padding(SettingsFormStyle.detailHPadding)
+                .padding(.bottom, SettingsFormStyle.detailVPadding)
             }
         }
         .background(theme.surface)
@@ -1693,56 +1709,63 @@ struct AIChatView: View {
         let isPinned = store.pinnedAgentSkillIds.contains(skill.id)
         let exceedsPinLimit = !isPinned && pinnedSkills.count >= 3
 
-        return HStack(alignment: .top, spacing: 10) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(skill.name)
-                    .font(KSSFont.themed(13.5, .bold, theme: theme))
-                    .foregroundStyle(theme.textPrimary)
-                if let description = skill.description, !description.isEmpty {
-                    Text(description)
-                        .font(KSSFont.themed(11.5, theme: theme))
+        return seesawPanelRow {
+            HStack(alignment: .top, spacing: SettingsFormStyle.rowHSpacing) {
+                Image(systemName: skill.available == false ? "exclamationmark.triangle" : "slider.horizontal.3")
+                    .font(KSSFont.themed(16, .semibold, theme: theme))
+                    .foregroundStyle(skill.available == false ? theme.ma5 : theme.accent)
+                    .frame(width: 22, alignment: .center)
+
+                VStack(alignment: .leading, spacing: SettingsFormStyle.titleMetaSpacing) {
+                    HStack(spacing: 8) {
+                        Text(skill.name)
+                            .font(KSSFont.themed(SettingsFormStyle.itemTitle, .bold, theme: theme))
+                            .foregroundStyle(theme.textPrimary)
+                        if skill.protected == true {
+                            SettingsStatusCapsule(text: "受保护", tint: theme.accent)
+                        }
+                    }
+                    if let description = skill.description, !description.isEmpty {
+                        Text(description)
+                            .font(KSSFont.themed(SettingsFormStyle.bodyHint, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text(skillMetadata(skill))
+                        .font(KSSFont.themed(SettingsFormStyle.meta, .medium, theme: theme))
                         .foregroundStyle(theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if skill.available == false {
+                        Text("缺少工具：\((skill.missingRequiredTools ?? []).joined(separator: "、"))")
+                            .font(KSSFont.themed(SettingsFormStyle.meta, .semibold, theme: theme))
+                            .foregroundStyle(theme.ma5)
+                    } else if exceedsPinLimit {
+                        Text("每个会话最多置顶 3 个技能")
+                            .font(KSSFont.themed(SettingsFormStyle.meta, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                    }
                 }
-                Text(skillMetadata(skill))
-                    .font(KSSFont.themed(10.5, .medium, theme: theme))
-                    .foregroundStyle(theme.textSecondary)
-                if skill.available == false {
-                    Text("缺少工具：\((skill.missingRequiredTools ?? []).joined(separator: "、"))")
-                        .font(KSSFont.themed(10.5, .medium, theme: theme))
-                        .foregroundStyle(Color.orange)
+
+                Spacer(minLength: 12)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("启用", isOn: Binding(
+                        get: { skill.enabled != false },
+                        set: { store.setAgentSkillEnabled(skill, enabled: $0) }
+                    ))
+                    .disabled(skill.available == false)
+
+                    Toggle("置顶", isOn: Binding(
+                        get: { isPinned },
+                        set: { store.setAgentSkillPinned(skill, pinned: $0) }
+                    ))
+                    .disabled(exceedsPinLimit)
                 }
-                if exceedsPinLimit {
-                    Text("每个会话最多置顶 3 个技能")
-                        .font(KSSFont.themed(10.5, theme: theme))
-                        .foregroundStyle(theme.textSecondary)
-                }
+                .toggleStyle(.checkbox)
+                .font(KSSFont.themed(SettingsFormStyle.actionLabel, .semibold, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+                .frame(width: 84, alignment: .leading)
             }
-
-            Spacer(minLength: 4)
-
-            VStack(alignment: .leading, spacing: 7) {
-                Toggle("启用", isOn: Binding(
-                    get: { skill.enabled != false },
-                    set: { store.setAgentSkillEnabled(skill, enabled: $0) }
-                ))
-                .disabled(skill.available == false)
-
-                Toggle("置顶", isOn: Binding(
-                    get: { isPinned },
-                    set: { store.setAgentSkillPinned(skill, pinned: $0) }
-                ))
-                .disabled(exceedsPinLimit)
-            }
-            .toggleStyle(.checkbox)
-            .font(KSSFont.themed(11.5, .semibold, theme: theme))
-            .foregroundStyle(theme.textPrimary)
-            .fixedSize()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(theme.hairline).frame(height: 1)
         }
     }
 
@@ -1754,60 +1777,65 @@ struct AIChatView: View {
             }
 
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(contextUsageShort)
-                            .font(KSSFont.themed(13, .bold, theme: theme))
-                        Text(providerComposerLabel)
-                            .font(KSSFont.themed(11.5, theme: theme))
-                            .foregroundStyle(theme.textSecondary)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.top, 12)
+                VStack(alignment: .leading, spacing: SettingsFormStyle.blockSpacing) {
+                    seesawPanelSummary(
+                        systemImage: "circle.dotted.circle",
+                        title: "会话上下文",
+                        detail: providerComposerLabel,
+                        status: contextUsageShort
+                    )
 
                     if !store.agentSourceRecalls.isEmpty {
-                        focusContextSectionTitle("本轮召回")
+                        seesawPanelGroupHeader("本轮召回", count: store.agentSourceRecalls.count, trailing: "真实来源与有效期")
                         ForEach(store.agentSourceRecalls) { recall in
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(recall.title)
-                                    .font(KSSFont.themed(12.5, .semibold, theme: theme))
-                                if let metadata = recallMetadata(recall) {
-                                    Text(metadata)
-                                        .font(KSSFont.themed(10.5, theme: theme))
-                                        .foregroundStyle(recall.reviewRequired == true ? Color.orange : theme.textSecondary)
-                                }
-                                if let excerpt = recall.excerpt, !excerpt.isEmpty {
-                                    Text(excerpt)
-                                        .font(KSSFont.themed(11.5, theme: theme))
-                                        .foregroundStyle(theme.textSecondary)
+                            seesawPanelRow {
+                                VStack(alignment: .leading, spacing: SettingsFormStyle.titleMetaSpacing) {
+                                    Text(recall.title)
+                                        .font(KSSFont.themed(SettingsFormStyle.itemTitle, .bold, theme: theme))
+                                    if let metadata = recallMetadata(recall) {
+                                        Text(metadata)
+                                            .font(KSSFont.themed(SettingsFormStyle.meta, theme: theme))
+                                            .foregroundStyle(recall.reviewRequired == true ? theme.ma5 : theme.textSecondary)
+                                    }
+                                    if let excerpt = recall.excerpt, !excerpt.isEmpty {
+                                        Text(excerpt)
+                                            .font(KSSFont.themed(SettingsFormStyle.bodyHint, theme: theme))
+                                            .foregroundStyle(theme.textSecondary)
+                                            .lineLimit(3)
+                                    }
                                 }
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 12)
                         }
                     }
 
                     if !store.agentMemoryCandidates.isEmpty {
-                        focusContextSectionTitle("待确认记忆")
+                        seesawPanelGroupHeader("待确认记忆", count: store.agentMemoryCandidates.count)
                         ForEach(store.agentMemoryCandidates) { candidate in
-                            VStack(alignment: .leading, spacing: 7) {
-                                Text(candidate.text)
-                                    .font(KSSFont.themed(12, theme: theme))
-                                HStack(spacing: 10) {
-                                    Button("记住") { store.resolveMemoryCandidate(candidate, approved: true) }
-                                    Button("忽略") { store.resolveMemoryCandidate(candidate, approved: false) }
+                            seesawPanelRow {
+                                HStack(alignment: .top, spacing: SettingsFormStyle.rowHSpacing) {
+                                    VStack(alignment: .leading, spacing: SettingsFormStyle.titleMetaSpacing) {
+                                        Text(candidate.text)
+                                            .font(KSSFont.themed(SettingsFormStyle.bodyHint, theme: theme))
+                                        Text("需由你确认后才会写入长期记忆")
+                                            .font(KSSFont.themed(SettingsFormStyle.meta, theme: theme))
+                                            .foregroundStyle(theme.textSecondary)
+                                    }
+                                    Spacer(minLength: 8)
+                                    HStack(spacing: 8) {
+                                        SettingsPrimaryAction(title: "记住", systemImage: "checkmark") {
+                                            store.resolveMemoryCandidate(candidate, approved: true)
+                                        }
+                                        SettingsBorderedAction(title: "忽略", systemImage: "xmark") {
+                                            store.resolveMemoryCandidate(candidate, approved: false)
+                                        }
+                                    }
                                 }
-                                .font(KSSFont.themed(11.5, .semibold, theme: theme))
-                                .buttonStyle(.borderless)
                             }
-                            .padding(10)
-                            .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: 10))
-                            .padding(.horizontal, 12)
                         }
                     }
 
-                    DisclosureGroup("管理记忆", isExpanded: $showMemoryManagement) {
-                        VStack(alignment: .leading, spacing: 10) {
+                    DisclosureGroup(isExpanded: $showMemoryManagement) {
+                        VStack(alignment: .leading, spacing: SettingsFormStyle.groupSpacing) {
                             HStack(spacing: 8) {
                                 TextField("搜索记忆或来源", text: $memorySearch)
                                     .textFieldStyle(.roundedBorder)
@@ -1817,33 +1845,35 @@ struct AIChatView: View {
                                 }
                             }
                             ForEach(store.agentMemories) { memory in
-                                HStack(alignment: .top, spacing: 8) {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(memory.text)
-                                            .font(KSSFont.themed(12, theme: theme))
-                                        if let metadata = memoryMetadata(memory) {
-                                            Text(metadata)
-                                                .font(KSSFont.themed(10.5, theme: theme))
-                                                .foregroundStyle(memory.reviewRequired == true ? Color.orange : theme.textSecondary)
+                                seesawPanelRow {
+                                    HStack(alignment: .top, spacing: SettingsFormStyle.rowHSpacing) {
+                                        VStack(alignment: .leading, spacing: SettingsFormStyle.titleMetaSpacing) {
+                                            Text(memory.text)
+                                                .font(KSSFont.themed(SettingsFormStyle.bodyHint, theme: theme))
+                                            if let metadata = memoryMetadata(memory) {
+                                                Text(metadata)
+                                                    .font(KSSFont.themed(SettingsFormStyle.meta, theme: theme))
+                                                    .foregroundStyle(memory.reviewRequired == true ? theme.ma5 : theme.textSecondary)
+                                            }
+                                        }
+                                        Spacer(minLength: 2)
+                                        Button { store.archiveAgentMemory(memory) } label: {
+                                            Label("归档", systemImage: "archivebox").labelStyle(.iconOnly)
+                                        }
+                                        Button { store.deleteAgentMemory(memory) } label: {
+                                            Label("删除", systemImage: "trash").labelStyle(.iconOnly)
                                         }
                                     }
-                                    Spacer(minLength: 2)
-                                    Button { store.archiveAgentMemory(memory) } label: {
-                                        Label("归档", systemImage: "archivebox").labelStyle(.iconOnly)
-                                    }
-                                    Button { store.deleteAgentMemory(memory) } label: {
-                                        Label("删除", systemImage: "trash").labelStyle(.iconOnly)
-                                    }
                                 }
-                                .buttonStyle(.borderless)
                             }
                         }
-                        .padding(.top, 6)
+                        .padding(.top, SettingsFormStyle.groupSpacing)
+                    } label: {
+                        seesawPanelGroupHeader("管理记忆", count: store.agentMemories.count, trailing: "搜索、归档或删除")
                     }
-                    .font(KSSFont.themed(12.5, .semibold, theme: theme))
-                    .padding(12)
                 }
-                .padding(.bottom, 14)
+                .padding(SettingsFormStyle.detailHPadding)
+                .padding(.bottom, SettingsFormStyle.detailVPadding)
             }
         }
         .background(theme.surface)
@@ -1852,18 +1882,65 @@ struct AIChatView: View {
         }
     }
 
-    private func focusContextSectionTitle(_ title: String) -> some View {
-        Text(title)
-            .font(KSSFont.themed(12, .bold, theme: theme))
-            .foregroundStyle(theme.textSecondary)
-            .padding(.horizontal, 12)
-            .padding(.top, 4)
+    private func seesawPanelSummary(
+        systemImage: String,
+        title: String,
+        detail: String,
+        status: String
+    ) -> some View {
+        HStack(spacing: SettingsFormStyle.rowHSpacing) {
+            Image(systemName: systemImage)
+                .font(KSSFont.themed(16, .semibold, theme: theme))
+                .foregroundStyle(theme.accent)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: SettingsFormStyle.titleMetaSpacing) {
+                Text(title)
+                    .font(KSSFont.themed(SettingsFormStyle.itemTitle, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                Text(detail)
+                    .font(KSSFont.themed(SettingsFormStyle.bodyHint, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 8)
+            SettingsStatusCapsule(text: status, tint: theme.accent)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .kssCard(padding: SettingsFormStyle.cardPadding)
+    }
+
+    private func seesawPanelGroupHeader(
+        _ title: String,
+        count: Int,
+        trailing: String? = nil
+    ) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(KSSFont.themed(SettingsFormStyle.sectionHeader, .bold, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+            SettingsStatusCapsule(text: "\(count)")
+            Spacer(minLength: 8)
+            if let trailing {
+                Text(trailing)
+                    .font(KSSFont.themed(SettingsFormStyle.meta, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .kssCard(.filled, padding: 8)
+    }
+
+    private func seesawPanelRow<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        content()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .kssCard(padding: SettingsFormStyle.cardPadding)
     }
 
     private func focusPanelHeader(title: String, action: @escaping () -> Void) -> some View {
         HStack(spacing: 8) {
             Text(title)
-                .font(KSSFont.themed(16, .bold, theme: theme))
+                .font(KSSFont.themed(SettingsFormStyle.pageTitle, .bold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
             Spacer()
             Button(action: action) {
@@ -1881,7 +1958,7 @@ struct AIChatView: View {
             .buttonStyle(.plain)
             .foregroundStyle(theme.textSecondary)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, SettingsFormStyle.detailHPadding)
         .frame(height: SeesawXcomChrome.headerHeight)
         .overlay(alignment: .bottom) {
             Rectangle().fill(theme.hairline).frame(height: 1)

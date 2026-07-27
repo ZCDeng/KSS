@@ -41,6 +41,7 @@
 - Motion: short, interruptible state changes; no ornamental entrance animation. Respect Reduce Motion.
 - Composer stability: the empty and hydrated transcript share one Composer identity; loading history must never dissolve, replace or dim the input surface.
 - Utility workspaces: Skills and Context & Memory open as landscape desktop panels. They preserve the visible Composer and use a transparent outside-click surface rather than a full-window dimmer.
+- Utility workspace typography: Skills and Context & Memory reuse the Settings → Tasks hierarchy: 14.5pt item titles, 12.5pt explanations, 11.5pt metadata, 12pt row/card insets and 8pt group headers. Arrange them as summary card → group header → action row rather than a phone-style stacked popover.
 - Transcript readability: assistant prose renders native block Markdown. Titles, lists, quotes and market-data tables are formatted for reading; raw Markdown syntax is reserved for explicit code blocks.
 - Imagery/iconography: SF Symbols and 36–44pt control hit areas; do not add repeated avatar chrome to assistant responses.
 
