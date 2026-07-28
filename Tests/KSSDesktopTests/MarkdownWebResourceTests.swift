@@ -17,48 +17,50 @@ final class MarkdownWebResourceTests: XCTestCase {
 
     func testMarkdownShellBundlesKamiReaderAndBridgeAPIs() throws {
         let html = try markdownHTML()
-        // 内容壳默认并固定 Kami print 阅读皮（demo-kami-print 节奏）。
         XCTAssertTrue(html.contains("data-reader=\"kami\""))
         XCTAssertTrue(html.contains("html[data-reader=\"kami\"]"))
         XCTAssertTrue(html.contains("return \"kami\""))
         XCTAssertTrue(html.contains("demo-kami-print"))
         XCTAssertTrue(html.contains("--brand: #1B365D"))
         XCTAssertTrue(html.contains("setProperty(\"--brand\", \"#1B365D\")"))
-        XCTAssertTrue(html.contains("TsangerJinKai02-W02.ttf"))
-        XCTAssertTrue(html.contains("font-family: \"TsangerJinKai02\""))
+        XCTAssertTrue(html.contains("LXGWWenKaiMonoTC-Regular.ttf"))
+        XCTAssertTrue(html.contains("LXGW WenKai Mono TC"))
         XCTAssertTrue(html.contains("window.kssSetTheme"))
         XCTAssertTrue(html.contains("window.kssSetMarkdown"))
         XCTAssertTrue(html.contains("window.kssSetHTML"))
         XCTAssertTrue(html.contains("kssMarkdown"))
         XCTAssertTrue(html.contains("readerForPayload"))
-        // 不强制羊皮纸暖底（打印版 / xcom 兼容）。
         XCTAssertFalse(html.contains("background: #f5f4ed"))
-        // 纯离线：不得拉 CDN / 远端字体。
+        // 纯离线：不得外链加载字体
         XCTAssertFalse(html.lowercased().contains("https://"))
-        XCTAssertFalse(html.lowercased().contains("cdn"))
+        XCTAssertFalse(html.lowercased().contains("http://"))
+        XCTAssertFalse(html.lowercased().contains("gstatic.com"))
+        XCTAssertFalse(html.lowercased().contains("fonts.googleapis.com"))
     }
 
-    func testEditorialContentThemeKeepsChromeColorsUsesPrintSerif() {
+    func testLXGWWenKaiMonoTCFontResourceIsBundled() throws {
+        for name in ["LXGWWenKaiMonoTC-Regular", "LXGWWenKaiMonoTC-Medium"] {
+            let url = try XCTUnwrap(
+                Bundle.module.url(forResource: name, withExtension: "ttf"),
+                "\(name).ttf 必须打进 Bundle.module"
+            )
+            let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+            let size = try XCTUnwrap(attrs[.size] as? NSNumber)
+            XCTAssertGreaterThan(size.intValue, 1_000_000, name)
+        }
+    }
+
+    func testEditorialContentThemeUsesLXGWWenKaiMonoTC() {
         let xcom = ThemeCatalog.palette(for: .xcom, appearance: .light).webPayload
         XCTAssertEqual(xcom.id, "xcom")
         let editorial = xcom.asEditorialContentTheme()
-        // 配色跟 chrome；正文/标题字栈走 print 衬线（仓耳今楷），不再 Chirp。
         XCTAssertEqual(editorial.id, "xcom")
         XCTAssertEqual(editorial.mode, xcom.mode)
         XCTAssertEqual(editorial.colors, xcom.colors)
-        XCTAssertTrue(editorial.typography.serif.contains("TsangerJinKai02"))
-        XCTAssertTrue(editorial.typography.sans.contains("TsangerJinKai02"))
+        XCTAssertTrue(editorial.typography.serif.contains("LXGW WenKai Mono TC"))
+        XCTAssertTrue(editorial.typography.sans.contains("LXGW WenKai Mono TC"))
         XCTAssertFalse(editorial.typography.serif.contains("Chirp"))
         XCTAssertFalse(editorial.typography.sans.contains("Chirp"))
-    }
-
-    func testTsangerFontResourceIsBundled() throws {
-        let url = try XCTUnwrap(
-            Bundle.module.url(forResource: "TsangerJinKai02-W02", withExtension: "ttf")
-        )
-        let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
-        let size = try XCTUnwrap(attrs[.size] as? NSNumber)
-        XCTAssertGreaterThan(size.intValue, 1_000_000)
     }
 
     func testArtifactPreviewPrefersHTMLBodyFragmentAndMarkdown() throws {
@@ -101,5 +103,33 @@ final class MarkdownWebResourceTests: XCTestCase {
     func testHtmlBodyFragmentFallsBackForBareSnippet() {
         let snippet = "<section><p>片段</p></section>"
         XCTAssertEqual(ResearchArtifactPreviewSupport.htmlBodyFragment(snippet), snippet)
+    }
+
+    func testDemoInvestmentReportHTMLIsLoadableAsFragment() throws {
+        let demoURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("storage/demo/kami_reader_smoke_report.html")
+        let raw = try String(contentsOf: demoURL, encoding: .utf8)
+        let fragment = ResearchArtifactPreviewSupport.htmlBodyFragment(raw)
+        XCTAssertTrue(fragment.contains("科创板半导体") || fragment.contains("Kami"))
+        XCTAssertFalse(fragment.lowercased().contains("<!doctype"))
+        let artifact = try decodeArtifact("""
+        {
+          "artifact_id": "demo-weekly",
+          "kind": "report_html",
+          "logical_name": "kami_reader_smoke_report.html",
+          "media_type": "text/html",
+          "relative_path": "demo/kami_reader_smoke_report.html",
+          "content": \(String(data: try JSONEncoder().encode(raw), encoding: .utf8) ?? "\"\"")
+        }
+        """)
+        let spec = ResearchArtifactPreviewSupport.renderSpec(
+            artifact: artifact,
+            loadedContent: artifact.content
+        )
+        XCTAssertEqual(spec.kind, .htmlFragment)
+        XCTAssertTrue(spec.text.contains("LXGW") || spec.text.contains("墨蓝") || spec.text.contains("半导体"))
     }
 }

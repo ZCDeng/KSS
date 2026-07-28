@@ -156,11 +156,18 @@ struct ThemeTypography: Equatable {
     /// 避免正文/侧边栏这些非标题场景也被强制显示成粗体中文。
     var nativeCJKFamily: String? = nil
 
-    /// 暖纸 / Kami 编辑向：标题 serif 优先 TsangerJinKai02（仓耳今楷），正文 sans 走系统中文。
+    /// 暖纸 UI 壳仍可用系统/仓耳；**内容阅读皮**用 `contentPrint`。
     static let claySerif = ThemeTypography(
         serif: "\"TsangerJinKai02\", Charter, Georgia, \"Songti SC\", serif",
         sans: "-apple-system, \"SF Pro Text\", \"PingFang SC\", sans-serif",
         mono: "ui-monospace, \"SF Mono\", Menlo, monospace",
+        titleDesign: .serif
+    )
+    /// 报告/资讯/对话交付物：LXGW WenKai Mono TC（Google Fonts 同款，离线 ttf）。
+    static let contentPrint = ThemeTypography(
+        serif: "\"LXGW WenKai Mono TC\", \"Songti SC\", serif",
+        sans: "\"LXGW WenKai Mono TC\", \"PingFang SC\", sans-serif",
+        mono: "\"LXGW WenKai Mono TC\", ui-monospace, monospace",
         titleDesign: .serif
     )
     static let pureSans = ThemeTypography(

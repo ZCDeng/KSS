@@ -433,7 +433,8 @@ struct SectorReviewPanel: View {
                                 theme: theme
                             ))
                             .foregroundStyle(isXcom ? theme.textSecondary : theme.textPrimary)
-                        CommentaryView(markdown: commentary)
+                        // 与个股复盘同一 Kami 内容壳（fitsContent 嵌在外层 ScrollView）
+                        MarkdownWebView(text: commentary, fitsContent: true, minHeight: 120)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .kssCard(padding: isXcom ? SettingsFormStyle.cardPadding : 16)
                     }
@@ -448,10 +449,8 @@ struct SectorReviewPanel: View {
                                 theme: theme
                             ))
                             .foregroundStyle(theme.textSecondary)
-                        Text(pulse.note)
-                            .font(KSSFont.themed(isXcom ? SettingsFormStyle.bodyHint : 12, theme: theme))
-                            .foregroundStyle(isXcom ? theme.textSecondary : theme.textBody)
-                            .fixedSize(horizontal: false, vertical: true)
+                        MarkdownWebView(text: pulse.note, fitsContent: true, minHeight: 72)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .kssCard(padding: isXcom ? SettingsFormStyle.cardPadding : 14)
@@ -477,62 +476,13 @@ struct SectorReviewPanel: View {
     }
 }
 
-/// 投顾点评：把 `## 段标题` + `**强调**` 的 Markdown 原生渲染（避免 ScrollView 内嵌 WebView 测高问题）。
+/// 投顾点评 / 短 Markdown：统一走 Kami 内容壳（`fitsContent` 解决 ScrollView 双滚动）。
 struct CommentaryView: View {
-    @Environment(\.kssTheme) private var theme
     var markdown: String
 
-    private struct Block: Identifiable {
-        let id = UUID()
-        let isHeader: Bool
-        let text: String
-    }
-
-    private var blocks: [Block] {
-        var out: [Block] = []
-        for para in markdown.components(separatedBy: "\n\n") {
-            let trimmed = para.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty { continue }
-            if trimmed.hasPrefix("## ") {
-                out.append(Block(isHeader: true, text: String(trimmed.dropFirst(3))))
-            } else {
-                out.append(Block(isHeader: false, text: trimmed))
-            }
-        }
-        return out
-    }
-
-    private var isXcom: Bool { XcomListChrome.isXcom(theme.system) }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: isXcom ? 10 : 11) {
-            ForEach(blocks) { block in
-                if block.isHeader {
-                    Text(block.text)
-                        .font(KSSFont.themed(
-                            isXcom ? SettingsFormStyle.itemTitle : 14,
-                            .bold,
-                            theme: theme
-                        ))
-                        .foregroundStyle(isXcom ? theme.textPrimary : theme.accent)
-                        .padding(.top, 2)
-                } else {
-                    Text(attributed(block.text))
-                        .font(KSSFont.themed(isXcom ? 15 : 13, theme: theme))
-                        .foregroundStyle(isXcom ? theme.textPrimary : theme.textBody)
-                        .lineSpacing(isXcom ? 4 : 3)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-        }
-    }
-
-    private func attributed(_ text: String) -> AttributedString {
-        (try? AttributedString(
-            markdown: text,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        )) ?? AttributedString(text)
+        MarkdownWebView(text: markdown, fitsContent: true, minHeight: 100)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

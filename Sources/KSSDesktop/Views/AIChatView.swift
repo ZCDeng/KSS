@@ -2745,12 +2745,18 @@ struct AIChatView: View {
                             .foregroundStyle(theme.textSecondary)
                     }
                 } else if !message.text.isEmpty {
-                    markdownText(message.text)
-                        .font(KSSFont.themed(15, theme: theme))
-                        .foregroundStyle(message.isError ? Color.red : theme.textPrimary)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    // 助手长文走 Kami 内容壳；用户气泡仍用轻量 Text 避免 WebView 嵌套过重
+                    if isUser {
+                        markdownText(message.text)
+                            .font(KSSFont.themed(15, theme: theme))
+                            .foregroundStyle(message.isError ? Color.red : theme.textPrimary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        SeesawMarkdownView(markdown: message.text, errorTint: message.isError ? Color.red : nil)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
 
                 if !message.thinkingBlocks.isEmpty {
@@ -3735,11 +3741,7 @@ struct AIChatView: View {
                         HStack(spacing: 8) { ProgressView().controlSize(.small); Text("思考中…")
                             .font(KSSFont.themed(12, theme: theme)).foregroundStyle(theme.textSecondary) }
                     } else if !msg.text.isEmpty {
-                        markdownText(msg.text)
-                            .font(KSSFont.themed(13, theme: theme))
-                            .foregroundStyle(msg.isError ? theme.up : theme.textPrimary)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
+                        SeesawMarkdownView(markdown: msg.text, errorTint: msg.isError ? theme.up : nil)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     if !msg.thinkingBlocks.isEmpty {
