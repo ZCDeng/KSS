@@ -332,21 +332,38 @@ def _cn_items_from_name_index(limit: int = 8000) -> list[dict[str, Any]]:
         logger.warning("bind_catalog: read name index failed: %s", exc)
         return []
 
-    # 兼容 {name: code} 或 {code: name} 或 list
+    # 兼容：
+    # - { byName: {name: code}, byCode: {code: name}, ... }
+    # - {name: code} / {code: name}
+    # - list[{ts_code,name}]
     pairs: list[tuple[str, str]] = []
     if isinstance(data, dict):
-        # 常见：name -> code 或 code -> {name}
-        for k, v in data.items():
-            if isinstance(v, str):
-                if _TS_CODE_RE.match(v):
-                    pairs.append((v.upper(), str(k)))
-                elif _TS_CODE_RE.match(k):
-                    pairs.append((k.upper(), v))
-            elif isinstance(v, dict):
-                code = str(v.get("ts_code") or v.get("code") or k).upper()
-                name = str(v.get("name") or v.get("symbol") or k)
-                if _TS_CODE_RE.match(code):
-                    pairs.append((code, name))
+        by_name = data.get("byName") if isinstance(data.get("byName"), dict) else None
+        by_code = data.get("byCode") if isinstance(data.get("byCode"), dict) else None
+        if by_name:
+            for name, code in by_name.items():
+                c = str(code).upper()
+                if _TS_CODE_RE.match(c):
+                    pairs.append((c, str(name)))
+        if by_code:
+            for code, name in by_code.items():
+                c = str(code).upper()
+                if _TS_CODE_RE.match(c):
+                    pairs.append((c, str(name)))
+        if not pairs:
+            for k, v in data.items():
+                if k in ("byName", "byCode", "updated_at", "version"):
+                    continue
+                if isinstance(v, str):
+                    if _TS_CODE_RE.match(v):
+                        pairs.append((v.upper(), str(k)))
+                    elif _TS_CODE_RE.match(k):
+                        pairs.append((k.upper(), v))
+                elif isinstance(v, dict):
+                    code = str(v.get("ts_code") or v.get("code") or k).upper()
+                    name = str(v.get("name") or v.get("symbol") or k)
+                    if _TS_CODE_RE.match(code):
+                        pairs.append((code, name))
     elif isinstance(data, list):
         for row in data:
             if not isinstance(row, dict):
