@@ -874,7 +874,7 @@ struct MarketStripRow: View {
     var onOpenAIWithRegion: ((String) -> Void)? = nil
     @State private var metricBusy = false
     @State private var metricError: String?
-    @State private var nlText = ""
+    @State private var showNlCompose = false
     @State private var bindDraft: SurfaceBindDraft?
 
     private static let metricChoices: [(id: String, title: String)] = [
@@ -909,6 +909,24 @@ struct MarketStripRow: View {
             }
             metricCard
         }
+        .sheet(isPresented: $showNlCompose) {
+            SurfaceNlComposeSheet(
+                region: "strip_metric",
+                title: "用中文换指标",
+                placeholder: "例如：改成封板率、最高连板、科创50",
+                examples: ["改成封板率", "最高连板", "创业板指"],
+                bridge: bridge,
+                onOpenAI: onOpenAIWithRegion.map { cb in { cb("strip_metric") } },
+                onDraft: { draft in
+                    showNlCompose = false
+                    // 等 compose sheet 收起后再弹确认，避免双 sheet 叠态
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        bindDraft = draft
+                    }
+                },
+                onCancel: { showNlCompose = false }
+            )
+        }
         .sheet(item: $bindDraft) { draft in
             SurfaceBindConfirm(
                 draft: draft,
@@ -934,17 +952,16 @@ struct MarketStripRow: View {
                     .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                if onOpenAIWithRegion != nil {
-                    Button {
-                        onOpenAIWithRegion?("strip_metric")
-                    } label: {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(theme.accent)
-                    }
-                    .buttonStyle(.plain)
-                    .help("用 AI 换指标（预填 region）")
+                Button {
+                    showNlCompose = true
+                } label: {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(theme.accent)
                 }
+                .buttonStyle(.plain)
+                .disabled(metricBusy || bridge == nil)
+                .help("用中文换指标")
                 Menu {
                     ForEach(Self.metricChoices, id: \.id) { choice in
                         Button(choice.title) {
@@ -973,71 +990,14 @@ struct MarketStripRow: View {
                 }
                 Spacer(minLength: 0)
             }
-            // 主路径：组件旁 NL
-            HStack(spacing: 6) {
-                TextField("用中文换指标…", text: $nlText)
-                    .textFieldStyle(.roundedBorder)
-                    .font(KSSFont.themed(11, theme: theme))
-                    .disabled(metricBusy || bridge == nil)
-                    .onSubmit { submitMetricNL() }
-                Button("解析") { submitMetricNL() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(metricBusy || bridge == nil || nlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
             Text(metricError ?? sub)
                 .font(.system(size: 10.5, design: .monospaced))
                 .foregroundStyle(metricError == nil ? theme.textSecondary : .red.opacity(0.85))
-                .lineLimit(2)
+                .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .kssCard(padding: 14)
         .opacity(metricBusy ? 0.7 : 1)
-    }
-
-    private func submitMetricNL() {
-        guard let bridge else { return }
-        let text = nlText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        metricBusy = true
-        metricError = nil
-        Task {
-            do {
-                let resp = try await Task.detached {
-                    try bridge.surfaceNlInterpret(region: "strip_metric", text: text)
-                }.value
-                await MainActor.run {
-                    metricBusy = false
-                    if resp.ok != true {
-                        metricError = resp.errorZh ?? resp.error ?? "无法解析"
-                        if let s = resp.suggestions, !s.isEmpty {
-                            metricError = (metricError ?? "") + " · 例：" + s.prefix(3).joined(separator: "、")
-                        }
-                        return
-                    }
-                    guard let ops = resp.ops, !ops.isEmpty,
-                          let opsJSON = SurfaceBindEncoding.encodeOps(ops) else {
-                        metricError = "无可用操作"
-                        return
-                    }
-                    let summary = resp.previews?.first?.label
-                        ?? "切换为 \(resp.stripMetric?.title ?? resp.metricId ?? "指标")"
-                    bindDraft = SurfaceBindDraft(
-                        region: "strip_metric",
-                        summary: summary,
-                        opsJSON: opsJSON,
-                        previews: resp.previews ?? [],
-                        failed: resp.failed ?? [],
-                        partial: resp.partial == true
-                    )
-                }
-            } catch {
-                await MainActor.run {
-                    metricBusy = false
-                    metricError = error.localizedDescription
-                }
-            }
-        }
     }
 
     private func confirmBind(_ draft: SurfaceBindDraft) {
@@ -1055,7 +1015,6 @@ struct MarketStripRow: View {
                         metricError = resp.error ?? "应用失败"
                     } else {
                         bindDraft = nil
-                        nlText = ""
                         onReloadSnapshot()
                     }
                 }
@@ -1345,7 +1304,7 @@ struct OvernightUSSection: View {
     @State private var filter = ""
     @State private var busy = false
     @State private var errorText: String?
-    @State private var nlText = ""
+    @State private var showNlCompose = false
     @State private var bindDraft: SurfaceBindDraft?
 
     private var defaultCodes: Set<String> {
@@ -1403,27 +1362,16 @@ struct OvernightUSSection: View {
                     addPopover
                 }
                 Button {
-                    onOpenAI()
+                    showNlCompose = true
                 } label: {
                     Image(systemName: "sparkles")
                         .font(.system(size: 14, weight: .semibold))
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(theme.accent)
-                .help("用 AI 追加/调整（预填 region）")
+                .disabled(bridge == nil || busy)
+                .help("用中文追加/调整隔夜")
                 .padding(.top, 4)
-            }
-            // 主路径：组件旁 NL
-            HStack(spacing: 8) {
-                TextField("用中文描述，如：加上苹果和阿斯麦", text: $nlText)
-                    .textFieldStyle(.roundedBorder)
-                    .font(KSSFont.themed(12, theme: theme))
-                    .disabled(bridge == nil || busy)
-                    .onSubmit { submitOvernightNL() }
-                Button("解析") { submitOvernightNL() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(bridge == nil || busy || nlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             if let errorText {
                 Text(errorText)
@@ -1437,11 +1385,28 @@ struct OvernightUSSection: View {
                     onRemoveUser: removeUser
                 )
             } else {
-                Text("暂无隔夜报价 · 用上方中文输入追加，或 + 列表兜底")
+                Text("暂无隔夜报价 · 点 ✦ 用中文追加，或 + 列表兜底")
                     .font(KSSFont.themed(12, theme: theme))
                     .foregroundStyle(theme.textSecondary)
                     .padding(.leading, 4)
             }
+        }
+        .sheet(isPresented: $showNlCompose) {
+            SurfaceNlComposeSheet(
+                region: "overnight_us",
+                title: "用中文调整隔夜",
+                placeholder: "例如：加上苹果和阿斯麦、去掉苹果、清空我的追加",
+                examples: ["加上苹果", "加上苹果和阿斯麦", "去掉苹果"],
+                bridge: bridge,
+                onOpenAI: onOpenAI,
+                onDraft: { draft in
+                    showNlCompose = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        bindDraft = draft
+                    }
+                },
+                onCancel: { showNlCompose = false }
+            )
         }
         .sheet(item: $bindDraft) { draft in
             SurfaceBindConfirm(
@@ -1450,60 +1415,6 @@ struct OvernightUSSection: View {
                 onCancel: { bindDraft = nil },
                 onConfirm: { confirmBind(draft) }
             )
-        }
-    }
-
-    private func submitOvernightNL() {
-        guard let bridge else { return }
-        let text = nlText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        busy = true
-        errorText = nil
-        Task {
-            do {
-                let resp = try await Task.detached {
-                    try bridge.surfaceNlInterpret(region: "overnight_us", text: text)
-                }.value
-                await MainActor.run {
-                    busy = false
-                    if resp.ok != true {
-                        var msg = resp.errorZh ?? resp.error ?? "无法解析"
-                        if let s = resp.suggestions, !s.isEmpty {
-                            msg += " · 例：" + s.prefix(3).joined(separator: "、")
-                        }
-                        errorText = msg
-                        return
-                    }
-                    guard let ops = resp.ops, !ops.isEmpty,
-                          let opsJSON = SurfaceBindEncoding.encodeOps(ops) else {
-                        errorText = "无可用操作"
-                        return
-                    }
-                    let summary: String
-                    if resp.partial == true {
-                        summary = "部分成功：将应用 \(ops.count) 项（另有失败项见下）"
-                    } else if let first = resp.previews?.first?.label {
-                        summary = resp.previews?.count == 1
-                            ? first
-                            : "将执行 \(resp.previews?.count ?? ops.count) 项变更"
-                    } else {
-                        summary = "确认应用 \(ops.count) 项变更"
-                    }
-                    bindDraft = SurfaceBindDraft(
-                        region: "overnight_us",
-                        summary: summary,
-                        opsJSON: opsJSON,
-                        previews: resp.previews ?? [],
-                        failed: resp.failed ?? resp.items?.filter { $0.status != "ok" } ?? [],
-                        partial: resp.partial == true
-                    )
-                }
-            } catch {
-                await MainActor.run {
-                    busy = false
-                    errorText = error.localizedDescription
-                }
-            }
         }
     }
 
@@ -1522,7 +1433,6 @@ struct OvernightUSSection: View {
                         errorText = resp.error ?? "应用失败"
                     } else {
                         bindDraft = nil
-                        nlText = ""
                         onReloadSnapshot()
                         Task.detached {
                             _ = try? bridge.runTask(.refreshMarketStrip)
@@ -2279,7 +2189,7 @@ struct LabeledMetric: View {
     }
 }
 
-// MARK: - Surface NL bind confirm（档 A 人话真值，非 raw JSON）
+// MARK: - Surface NL（compose 弹层 + 确认真值，布局不撑高组件）
 
 enum SurfaceBindEncoding {
     /// 将 interpret 返回的 ops 编成 surface-apply 所需 JSON 数组（snake_case 键）。
@@ -2301,6 +2211,182 @@ enum SurfaceBindEncoding {
               let data = try? JSONSerialization.data(withJSONObject: arr, options: []),
               let s = String(data: data, encoding: .utf8) else { return nil }
         return s
+    }
+
+    static func draft(
+        from resp: SurfaceNlInterpretResponse,
+        region: String
+    ) -> (SurfaceBindDraft?, String?) {
+        if resp.ok != true {
+            var msg = resp.errorZh ?? resp.error ?? "无法解析"
+            if let s = resp.suggestions, !s.isEmpty {
+                msg += " · 例：" + s.prefix(3).joined(separator: "、")
+            }
+            return (nil, msg)
+        }
+        guard let ops = resp.ops, !ops.isEmpty,
+              let opsJSON = encodeOps(ops) else {
+            return (nil, "无可用操作")
+        }
+        let summary: String
+        if resp.partial == true {
+            summary = "部分成功：将应用 \(ops.count) 项（另有失败项见下）"
+        } else if let first = resp.previews?.first?.label {
+            summary = (resp.previews?.count ?? 0) <= 1
+                ? first
+                : "将执行 \(resp.previews?.count ?? ops.count) 项变更"
+        } else {
+            summary = "确认应用 \(ops.count) 项变更"
+        }
+        let draft = SurfaceBindDraft(
+            region: region,
+            summary: summary,
+            opsJSON: opsJSON,
+            previews: resp.previews ?? [],
+            failed: resp.failed ?? resp.items?.filter { $0.status != "ok" } ?? [],
+            partial: resp.partial == true
+        )
+        return (draft, nil)
+    }
+}
+
+/// sparkles 入口：确认卡风格的 NL 输入层（不挤占组件布局）。
+struct SurfaceNlComposeSheet: View {
+    @Environment(\.kssTheme) private var theme
+    let region: String
+    let title: String
+    let placeholder: String
+    let examples: [String]
+    var bridge: BridgeClient?
+    var onOpenAI: (() -> Void)? = nil
+    let onDraft: (SurfaceBindDraft) -> Void
+    let onCancel: () -> Void
+
+    @State private var text = ""
+    @State private var busy = false
+    @State private var errorText: String?
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 10) {
+                Image(systemName: "sparkles")
+                    .font(KSSFont.themed(18, theme: theme))
+                    .foregroundStyle(theme.accent)
+                Text(title)
+                    .font(KSSFont.themed(16, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                Spacer()
+            }
+
+            Text("用自然语言描述要改的内容，解析后会展示代码算出的真值，确认才写入。")
+                .font(KSSFont.themed(12, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            TextField(placeholder, text: $text, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(KSSFont.themed(14, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+                .lineLimit(2...4)
+                .padding(12)
+                .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+                .focused($focused)
+                .disabled(busy || bridge == nil)
+                .onSubmit { interpret() }
+
+            if !examples.isEmpty {
+                FlowExampleChips(examples: examples) { example in
+                    text = example
+                    focused = true
+                }
+            }
+
+            if let errorText {
+                Text(errorText)
+                    .font(KSSFont.themed(12, theme: theme))
+                    .foregroundStyle(.red.opacity(0.9))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 12) {
+                if let onOpenAI {
+                    Button("AI 辅助") {
+                        onCancel()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            onOpenAI()
+                        }
+                    }
+                    .disabled(busy)
+                }
+                Spacer()
+                Button("取消") { onCancel() }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(busy)
+                Button(busy ? "解析中…" : "解析") { interpret() }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(busy || bridge == nil
+                              || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(22)
+        .frame(width: 420)
+        .background(theme.canvas)
+        .opacity(busy ? 0.85 : 1)
+        .onAppear { focused = true }
+    }
+
+    private func interpret() {
+        guard let bridge else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        busy = true
+        errorText = nil
+        Task {
+            do {
+                let resp = try await Task.detached {
+                    try bridge.surfaceNlInterpret(region: region, text: trimmed)
+                }.value
+                await MainActor.run {
+                    busy = false
+                    let (draft, err) = SurfaceBindEncoding.draft(from: resp, region: region)
+                    if let draft {
+                        onDraft(draft)
+                    } else {
+                        errorText = err ?? "无法解析"
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    busy = false
+                    errorText = error.localizedDescription
+                }
+            }
+        }
+    }
+}
+
+/// 示例 chip 行（简单换行，不引入额外依赖）。
+private struct FlowExampleChips: View {
+    @Environment(\.kssTheme) private var theme
+    let examples: [String]
+    let onPick: (String) -> Void
+
+    var body: some View {
+        // 示例通常 ≤4，单行 HStack 足够；过长则截断展示
+        HStack(spacing: 6) {
+            ForEach(examples.prefix(4), id: \.self) { ex in
+                Button(ex) { onPick(ex) }
+                    .buttonStyle(.plain)
+                    .font(KSSFont.themed(11, theme: theme))
+                    .foregroundStyle(theme.accent)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(theme.accent.opacity(0.12), in: Capsule())
+            }
+            Spacer(minLength: 0)
+        }
     }
 }
 
@@ -2362,8 +2448,8 @@ struct SurfaceBindConfirm: View {
                     .disabled(busy)
             }
         }
-        .padding(20)
-        .frame(minWidth: 380, idealWidth: 440)
+        .padding(22)
+        .frame(width: 420)
         .background(theme.canvas)
         .opacity(busy ? 0.75 : 1)
     }
