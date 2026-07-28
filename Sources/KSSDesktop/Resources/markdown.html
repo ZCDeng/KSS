@@ -70,10 +70,10 @@
      对照 demo-kami-print（白底打印版 one-pager）：
      - 不强制羊皮纸底：bg 透明，由宿主 underPageBackgroundColor / 主题 canvas 承接（xcom 不跳色）
      - 衬线只承担标题层级（字重 400/500）；正文走 --sans，与 chrome 字栈一致
-     - 单一强调色 --brand（来自主题 accent）；无硬阴影、无暖纸填充
+     - 单一强调色固定官方墨蓝 #1B365D（demo-kami-print --brand）；无硬阴影、无暖纸填充
      源：kami.tw93.fun/assets/demos/demo-kami-print.pdf */
   html[data-reader="kami"] {
-    --brand: var(--clay);
+    --brand: #1B365D;
   }
   html[data-reader="kami"] body {
     color: var(--body);
@@ -455,9 +455,8 @@
         Object.keys(map).forEach(k => { if (c[k] != null) r.setProperty(map[k], c[k]); });
         // accent 缺失时退回 clay 键兼容旧 payload
         if (c.accent == null && c.clay != null) r.setProperty("--clay", c.clay);
-        // print 模板 --brand 映射主题 accent，避免另起一套墨蓝与 xcom chrome 撞色
-        const brand = c.accent != null ? c.accent : c.clay;
-        if (brand != null) r.setProperty("--brand", brand);
+        // Kami print 强调色固定官方墨蓝，不跟主题 accent 漂移
+        r.setProperty("--brand", "#1B365D");
         if (p && p.typography) {
           r.setProperty("--serif", p.typography.serif);
           r.setProperty("--sans", p.typography.sans);

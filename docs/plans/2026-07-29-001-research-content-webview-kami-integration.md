@@ -163,7 +163,7 @@ KSS 已在 `5ee5854c` 落地离线子集：
 | 维度 | demo-kami-print | KSS 内容 WebView |
 |------|-----------------|------------------|
 | 页底 | `#ffffff` | 透明 + 宿主 canvas（跟 xcom/clay） |
-| 强调色 | 墨蓝 `#1B365D` | 映射主题 `accent` → `--brand`（跟 chrome） |
+| 强调色 | 墨蓝 `#1B365D` | **固定** `#1B365D`（不跟主题 accent） |
 | 衬线 | 全文 serif | **仅标题** serif（仓耳今楷）；正文 `--sans`（xcom=Chirp） |
 | 字重 | 400 / 500 | strong/heading = 500，不用 700 |
 | h2 | 干净衬线，无左边条 | 同左 |
