@@ -148,19 +148,21 @@ struct KSSWebThemePayload: Codable, Equatable {
         return str
     }
 
-    /// 报告/资讯长文：对齐 Kami **白底打印版**（demo-kami-print）节奏，而非羊皮纸暖底。
-    /// - colors / mode / sans / mono：完整跟随当前 UI chrome（xcom 不跳色）
-    /// - serif：标题层级用仓耳今楷栈（print 模板「衬线承担层次」）
+    /// 报告/资讯长文：对齐 Kami **白底打印版**（demo-kami-print），而非羊皮纸暖底。
+    /// - colors / mode：跟随当前 UI chrome（xcom 不跳暖纸底色）
+    /// - serif + sans：正文与标题均仓耳今楷栈（print 模板 `--sans: var(--serif)`）
+    /// - mono：保留主题等宽（代码/数字列）
     /// - 阅读皮由 markdown.html 固定为 kami；此处不改 id
     func asEditorialContentTheme() -> KSSWebThemePayload {
-        KSSWebThemePayload(
+        let printFace = ThemeTypography.claySerif
+        return KSSWebThemePayload(
             version: version,
             id: id,
             mode: mode,
             colors: colors,
             typography: Typography(
-                serif: ThemeTypography.claySerif.serif,
-                sans: typography.sans,
+                serif: printFace.serif,
+                sans: printFace.serif,
                 mono: typography.mono
             ),
             shape: shape,

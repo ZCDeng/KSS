@@ -69,15 +69,17 @@
   /* ========== Kami print reader (data-reader=kami) ==========
      对照 demo-kami-print（白底打印版 one-pager）：
      - 不强制羊皮纸底：bg 透明，由宿主 underPageBackgroundColor / 主题 canvas 承接（xcom 不跳色）
-     - 衬线只承担标题层级（字重 400/500）；正文走 --sans，与 chrome 字栈一致
-     - 单一强调色固定官方墨蓝 #1B365D（demo-kami-print --brand）；无硬阴影、无暖纸填充
+     - 衬线承担正文与标题（对齐 demo-kami-print：--sans: var(--serif)）
+     - 字重 400/500；强调色固定官方墨蓝 #1B365D；无硬阴影、无暖纸填充
+     - 页底透明，宿主 canvas 承接（不与 xcom chrome 撞成暖纸色块）
      源：kami.tw93.fun/assets/demos/demo-kami-print.pdf */
   html[data-reader="kami"] {
     --brand: #1B365D;
   }
   html[data-reader="kami"] body {
     color: var(--body);
-    font-family: var(--sans);
+    /* print 模板全文 serif；仓耳今楷由主题桥注入 --serif */
+    font-family: var(--serif);
     font-size: 15.5px;
     line-height: 1.55;
     letter-spacing: 0.01em;
@@ -249,7 +251,7 @@
     color: var(--muted);
     font-size: 15px;
     padding: 36px 0;
-    font-family: var(--sans);
+    font-family: var(--serif);
   }
 
   /* ========== xcom thread 阅读皮（data-reader=xcom）========== */

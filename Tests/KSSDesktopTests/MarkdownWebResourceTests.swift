@@ -38,17 +38,18 @@ final class MarkdownWebResourceTests: XCTestCase {
         XCTAssertFalse(html.lowercased().contains("cdn"))
     }
 
-    func testEditorialContentThemeKeepsChromeColorsAndSans() {
+    func testEditorialContentThemeKeepsChromeColorsUsesPrintSerif() {
         let xcom = ThemeCatalog.palette(for: .xcom, appearance: .light).webPayload
         XCTAssertEqual(xcom.id, "xcom")
         let editorial = xcom.asEditorialContentTheme()
-        // 不改 chrome 身份 / 配色 / 正文 sans（Chirp），只换标题 serif。
+        // 配色跟 chrome；正文/标题字栈走 print 衬线（仓耳今楷），不再 Chirp。
         XCTAssertEqual(editorial.id, "xcom")
         XCTAssertEqual(editorial.mode, xcom.mode)
         XCTAssertEqual(editorial.colors, xcom.colors)
-        XCTAssertEqual(editorial.typography.sans, xcom.typography.sans)
         XCTAssertTrue(editorial.typography.serif.contains("TsangerJinKai02"))
+        XCTAssertTrue(editorial.typography.sans.contains("TsangerJinKai02"))
         XCTAssertFalse(editorial.typography.serif.contains("Chirp"))
+        XCTAssertFalse(editorial.typography.sans.contains("Chirp"))
     }
 
     func testTsangerFontResourceIsBundled() throws {
