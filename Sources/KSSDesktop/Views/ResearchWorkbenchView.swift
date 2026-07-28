@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import WebKit
 
 struct ResearchWorkbenchView: View {
     @Environment(\.kssTheme) private var theme
@@ -729,60 +728,87 @@ enum ResearchArtifactPreviewLoader {
     }
 }
 
-struct ResearchArtifactPreview: NSViewRepresentable {
+enum ResearchArtifactPreviewSupport {
+    struct RenderSpec: Equatable {
+        let text: String
+        let kind: MarkdownWebView.ContentKind
+    }
+
+    static func renderSpec(artifact: ResearchArtifact, loadedContent: String?) -> RenderSpec {
+        let ext = URL(fileURLWithPath: artifact.relativePath ?? artifact.logicalName)
+            .pathExtension
+            .lowercased()
+        let media = (artifact.mediaType ?? "").lowercased()
+        let content = loadedContent?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if media.hasPrefix("text/html") || ext == "html" || ext == "htm",
+           let content, !content.isEmpty {
+            return RenderSpec(text: htmlBodyFragment(content), kind: .htmlFragment)
+        }
+        if ext == "md" || ext == "markdown" || media.contains("markdown"),
+           let content, !content.isEmpty {
+            return RenderSpec(text: content, kind: .markdown)
+        }
+        if let content, !content.isEmpty {
+            if ext == "json" || media.contains("json") {
+                return RenderSpec(text: "```json\n" + content + "\n```", kind: .markdown)
+            }
+            return RenderSpec(text: "```\n" + content + "\n```", kind: .markdown)
+        }
+        let name = artifact.logicalName
+        let type = artifact.mediaType ?? artifact.kind
+        let path = artifact.relativePath ?? "由后端管理"
+        let fallback = """
+        ### \(name)
+
+        尚无内嵌预览。
+
+        - 类型：\(type)
+        - 路径：\(path)
+        """
+        return RenderSpec(text: fallback, kind: .markdown)
+    }
+
+    /// 完整 HTML 文档只取 body 片段，复用 Kami/markdown 阅读壳；片段则原样注入。
+    static func htmlBodyFragment(_ html: String) -> String {
+        let lower = html.lowercased()
+        guard let bodyOpen = lower.range(of: "<body"),
+              let gtRel = html[bodyOpen.upperBound...].firstIndex(of: ">"),
+              let bodyCloseRel = lower.range(of: "</body>") else {
+            return html
+        }
+        let start = html.index(after: gtRel)
+        let end = html.index(
+            html.startIndex,
+            offsetBy: lower.distance(from: lower.startIndex, to: bodyCloseRel.lowerBound)
+        )
+        guard start < end else { return html }
+        return String(html[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+struct ResearchArtifactPreview: View {
     let artifact: ResearchArtifact
     let stateRoot: URL?
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    func makeNSView(context: Context) -> WKWebView {
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .nonPersistent()
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
-        let webView = WKWebView(frame: .zero, configuration: configuration)
-        webView.navigationDelegate = context.coordinator
-        webView.underPageBackgroundColor = .clear
-        return webView
-    }
-
-    func updateNSView(_ webView: WKWebView, context: Context) {
-        let body: String
-        let loadedContent = artifact.content
+    var body: some View {
+        let loaded = artifact.content
             ?? ResearchArtifactPreviewLoader.load(
                 relativePath: artifact.relativePath,
                 under: stateRoot)
-        if artifact.mediaType?.hasPrefix("text/html") == true, let content = loadedContent {
-            body = content
-        } else {
-            let preview = loadedContent
-                ?? "尚无内嵌预览。\n\n文件：\(artifact.logicalName)\n类型：\(artifact.mediaType ?? artifact.kind)\n路径：\(artifact.relativePath ?? "由后端管理")"
-            body = "<pre>\(Self.escape(preview))</pre>"
-        }
-        webView.loadHTMLString("""
-        <!doctype html><html><head><meta charset="utf-8">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
-        <style>body{font:13px -apple-system;margin:18px;color:#25313c;background:transparent;line-height:1.55}
-        pre{white-space:pre-wrap;word-break:break-word;font:13px ui-monospace,monospace}</style>
-        </head><body>\(body)</body></html>
-        """, baseURL: nil)
-    }
-
-    private static func escape(_ text: String) -> String {
-        text.replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
-            .replacingOccurrences(of: "\"", with: "&quot;")
-    }
-
-    final class Coordinator: NSObject, WKNavigationDelegate {
-        func webView(
-            _ webView: WKWebView,
-            decidePolicyFor navigationAction: WKNavigationAction,
-            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
-        ) {
-            decisionHandler(
-                ResearchArtifactNavigationPolicy.allows(navigationAction.request.url)
-                    ? .allow : .cancel)
-        }
+        let rendered = ResearchArtifactPreviewSupport.renderSpec(
+            artifact: artifact,
+            loadedContent: loaded
+        )
+        MarkdownWebView(
+            text: rendered.text,
+            kind: rendered.kind,
+            fitsContent: false,
+            minHeight: 240
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
+
+
+

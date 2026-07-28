@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
-  /* x.com「新版」字体：原生注册的字体不跨进程可见给 WebContent，WebView 侧独立走 @font-face。 */
+  /* WebContent 进程看不到 App 原生注册字体，WebView 侧独立 @font-face。 */
   @font-face { font-family: "Chirp"; src: url("chirp-regular-web.woff") format("woff"); font-weight: 400; font-style: normal; }
   @font-face { font-family: "Chirp"; src: url("chirp-medium-web.woff") format("woff"); font-weight: 500; font-style: normal; }
   @font-face { font-family: "Chirp"; src: url("chirp-bold-web.woff") format("woff"); font-weight: 700; font-style: normal; }
@@ -13,15 +13,18 @@
   @font-face { font-family: "HarmonyOS Sans SC"; src: url("HarmonyOS_Sans_SC_Medium.ttf") format("truetype"); font-weight: 500; font-style: normal; }
   @font-face { font-family: "HarmonyOS Sans SC"; src: url("HarmonyOS_Sans_SC_Bold.ttf") format("truetype"); font-weight: 700; font-style: normal; }
   @font-face { font-family: "HarmonyOS Sans SC"; src: url("HarmonyOS_Sans_SC_Black.ttf") format("truetype"); font-weight: 900; font-style: normal; }
+  @font-face { font-family: "TsangerJinKai02"; src: url("TsangerJinKai02-W02.ttf") format("truetype"); font-weight: 400 500; font-style: normal; }
+
   :root {
-    /* 默认值仅作首帧 fallback；原生 kssSetTheme 会覆盖全部 token。 */
-    --bg:#FFFFFF; --ink:#141413; --body:#3D3D3A; --muted:#87867F;
-    --line:#D1CFC5; --clay:#D97757; --code:#F0EEE6; --th:#F0EEE6; --zebra:rgba(20,20,19,0.025);
-    --serif: ui-serif, Georgia, "Songti SC", serif;
+    --bg: #FAF9F5; --ink: #141413; --body: #3D3D3A; --muted: #6F6E68;
+    --line: #D1CFC5; --line-soft: #E5E3D8; --clay: #D97757; --code: #F0EEE6;
+    --th: #F0EEE6; --zebra: rgba(20,20,19,0.025); --surface: #FFFFFF;
+    --tag: #E4ECF5;
+    --serif: "TsangerJinKai02", ui-serif, Georgia, "Songti SC", serif;
     --sans: -apple-system, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
     --mono: ui-monospace, "SF Mono", Menlo, monospace;
   }
-  html, body { margin: 0; padding: 0; background: var(--bg); }
+  html, body { margin: 0; padding: 0; background: transparent; }
   body {
     color: var(--body);
     font-family: var(--sans);
@@ -44,7 +47,7 @@
   hr { border: none; border-top: 1px solid var(--line); margin: 22px 0; }
   blockquote {
     margin: 12px 0; padding: 6px 16px; color: var(--muted);
-    border-left: 3px solid var(--clay); background: rgba(217,119,87,0.08);
+    border-left: 3px solid var(--clay); background: color-mix(in srgb, var(--clay) 10%, transparent);
     border-radius: 0 8px 8px 0;
   }
   code {
@@ -62,6 +65,133 @@
   tr:nth-child(even) td { background: var(--zebra); }
   td:not(:first-child) { font-family: var(--mono); }
   #empty { color: var(--muted); padding: 24px 0; }
+
+  /* ========== Kami editorial reader (data-reader=kami) ==========
+     纸质编辑向：暖底、serif 层级、油墨蓝点缀、无硬阴影。 */
+  html[data-reader="kami"] body {
+    color: var(--body);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.72;
+    padding: 8px 28px 36px;
+  }
+  html[data-reader="kami"] #md { max-width: 760px; margin: 0 auto; }
+  html[data-reader="kami"] h1,
+  html[data-reader="kami"] h2,
+  html[data-reader="kami"] h3,
+  html[data-reader="kami"] h4 {
+    color: var(--ink);
+    font-family: var(--serif);
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+  html[data-reader="kami"] h1 { font-size: 28px; line-height: 1.22; margin: 20px 0 14px; }
+  html[data-reader="kami"] h1.doc-title-dup { display: none; }
+  html[data-reader="kami"] h2 {
+    font-size: 20px; line-height: 1.28; margin: 30px 0 10px;
+    padding-left: 12px;
+    border-left: 3px solid var(--clay);
+  }
+  html[data-reader="kami"] h3 { font-size: 17px; line-height: 1.35; margin: 22px 0 8px; color: var(--ink); }
+  html[data-reader="kami"] h4 { font-size: 15px; margin: 16px 0 6px; color: var(--muted); font-weight: 500; }
+  html[data-reader="kami"] p { margin: 12px 0; color: var(--body); }
+  html[data-reader="kami"] a { color: var(--clay); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--clay) 28%, transparent); }
+  html[data-reader="kami"] a:hover { border-bottom-color: var(--clay); }
+  html[data-reader="kami"] strong { color: var(--ink); font-weight: 600; }
+  html[data-reader="kami"] ul,
+  html[data-reader="kami"] ol { padding-left: 1.35em; margin: 12px 0; }
+  html[data-reader="kami"] li { margin: 7px 0; }
+  html[data-reader="kami"] li::marker { color: var(--clay); }
+  html[data-reader="kami"] hr {
+    border: none; border-top: 1px solid var(--line-soft);
+    margin: 26px 0;
+  }
+  html[data-reader="kami"] blockquote {
+    margin: 16px 0;
+    padding: 10px 0 10px 16px;
+    color: var(--muted);
+    border-left: 2px solid var(--clay);
+    background: transparent;
+    border-radius: 0;
+  }
+  html[data-reader="kami"] code {
+    font-size: 13px;
+    color: var(--ink);
+    background: var(--code);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+  html[data-reader="kami"] pre {
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    padding: 14px 16px;
+    background: var(--code);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--ink) 2%, transparent);
+  }
+  html[data-reader="kami"] pre code { color: var(--body); }
+  html[data-reader="kami"] .md-table-scroll {
+    overflow-x: auto;
+    margin: 16px 0;
+    -webkit-overflow-scrolling: touch;
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    background: var(--surface);
+  }
+  html[data-reader="kami"] .md-table-scroll table {
+    font-size: 13.5px;
+    margin: 0;
+    border-collapse: collapse;
+    width: 100%;
+    min-width: max(100%, 420px);
+  }
+  html[data-reader="kami"] th,
+  html[data-reader="kami"] td {
+    border: none;
+    border-bottom: 1px solid var(--line-soft);
+    padding: 11px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  html[data-reader="kami"] thead th {
+    background: color-mix(in srgb, var(--clay) 8%, var(--bg));
+    color: var(--muted);
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.02em;
+  }
+  html[data-reader="kami"] tbody tr:last-child td { border-bottom: none; }
+  html[data-reader="kami"] tr:nth-child(even) td { background: transparent; }
+  html[data-reader="kami"] td:not(:first-child),
+  html[data-reader="kami"] th:not(:first-child) {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  html[data-reader="kami"] th:first-child,
+  html[data-reader="kami"] td:first-child {
+    text-align: left;
+    font-family: var(--sans);
+  }
+  html[data-reader="kami"] .kami-tag {
+    display: inline-block;
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--clay);
+    background: var(--tag);
+    border-radius: 4px;
+    padding: 2px 8px;
+    margin: 0 4px 0 0;
+  }
+  html[data-reader="kami"] #empty {
+    color: var(--muted);
+    font-size: 15px;
+    padding: 36px 0;
+    font-family: var(--serif);
+  }
 
   /* ========== xcom thread 阅读皮（data-reader=xcom）========== */
   html[data-reader="xcom"] body {
@@ -83,7 +213,6 @@
     border-bottom: none;
     padding-bottom: 0;
   }
-  /* 壳层已有标题时，文内首个 h1 降为线程副标题体量 */
   html[data-reader="xcom"] h1 { font-size: 20px; margin: 12px 0 10px; }
   html[data-reader="xcom"] h1.doc-title-dup { font-size: 17px; margin: 4px 0 12px; color: var(--muted); font-weight: 700; }
   html[data-reader="xcom"] h2 { font-size: 17px; margin: 22px 0 8px; }
@@ -122,7 +251,6 @@
     background: var(--code);
   }
   html[data-reader="xcom"] pre code { color: var(--ink); }
-  /* P1 表格：无竖线、仅行底 hairline、横向可滚 */
   html[data-reader="xcom"] .md-table-scroll {
     overflow-x: auto;
     margin: 12px 0;
@@ -168,7 +296,6 @@
     text-align: left;
     font-family: var(--sans);
   }
-  /* P3：壳层已有标题时隐藏文内首 h1 */
   html[data-reader="xcom"] h1.doc-title-dup { display: none; }
   html[data-reader="xcom"] #empty {
     color: var(--muted);
@@ -184,9 +311,32 @@
   (function () {
     let pending = null;
     let readerMode = "classic";
+    let heightTimer = null;
 
-    function polishXcomDom(host) {
-      // P3：去掉文首连续空节点后的首个 h1（壳层已显示标题）
+    function postHeight() {
+      try {
+        if (!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.kssMarkdown)) return;
+        const body = document.body;
+        const root = document.documentElement;
+        const host = document.getElementById("md");
+        const h = Math.ceil(Math.max(
+          host ? host.scrollHeight : 0,
+          body ? body.scrollHeight : 0,
+          root ? root.scrollHeight : 0
+        ));
+        window.webkit.messageHandlers.kssMarkdown.postMessage({ type: "height", value: h });
+      } catch (e) { /* height report is best-effort */ }
+    }
+
+    function scheduleHeight() {
+      if (heightTimer) cancelAnimationFrame(heightTimer);
+      heightTimer = requestAnimationFrame(function () {
+        heightTimer = requestAnimationFrame(postHeight);
+      });
+    }
+
+    function polishEditorialDom(host) {
+      // 去掉文首空节点后的首个 h1（壳层已显示标题）
       let node = host.firstChild;
       while (node && (
         node.nodeType === Node.TEXT_NODE && !String(node.textContent || "").trim() ||
@@ -201,7 +351,7 @@
         firstEl.classList.add("doc-title-dup");
       }
 
-      // P1：表格外包横向滚动容器
+      // 表格外包横向滚动容器
       host.querySelectorAll("table").forEach(function (table) {
         if (table.parentElement && table.parentElement.classList.contains("md-table-scroll")) return;
         const wrap = document.createElement("div");
@@ -215,56 +365,79 @@
 
     function render(text) {
       const host = document.getElementById("md");
-      if (!text) { host.innerHTML = '<div id="empty">暂无内容</div>'; return; }
+      if (!text) { host.innerHTML = '<div id="empty">暂无内容</div>'; scheduleHeight(); return; }
       if (typeof marked === "undefined") { pending = text; return; }
       try {
         marked.setOptions({ gfm: true, breaks: false });
         host.innerHTML = marked.parse(text);
-        if (readerMode === "xcom") polishXcomDom(host);
+        if (readerMode === "xcom" || readerMode === "kami") polishEditorialDom(host);
       } catch (e) {
         host.textContent = text;
       }
+      scheduleHeight();
     }
 
-    // 主题 API：覆盖 CSS 变量 + 切换 classic / xcom 阅读皮；不重解析 Markdown。
+    function readerForPayload(p) {
+      if (p && p.id === "xcom") return "xcom";
+      // 暖纸 / clay 走 Kami 编辑向阅读皮；其余经典主题保持 classic。
+      if (p && (p.id === "clayM3" || p.id === "kami")) return "kami";
+      return "classic";
+    }
+
+    // 主题 API：覆盖 CSS 变量 + 切换 classic / kami / xcom 阅读皮；不重解析 Markdown。
     window.kssSetTheme = function (payload) {
       try {
         const p = typeof payload === "string" ? JSON.parse(payload) : payload;
         const c = (p && p.colors) || {};
         const r = document.documentElement.style;
-        const map = { bg:"--bg", ink:"--ink", body:"--body", muted:"--muted",
-                      line:"--line", accent:"--clay", code:"--code", th:"--th", zebra:"--zebra" };
+        const map = {
+          bg: "--bg", surface: "--surface", ink: "--ink", body: "--body", muted: "--muted",
+          line: "--line", lineSoft: "--line-soft", accent: "--clay", code: "--code",
+          th: "--th", zebra: "--zebra", tag: "--tag"
+        };
         Object.keys(map).forEach(k => { if (c[k] != null) r.setProperty(map[k], c[k]); });
+        // accent 缺失时退回 clay 键兼容旧 payload
+        if (c.accent == null && c.clay != null) r.setProperty("--clay", c.clay);
         if (p && p.typography) {
           r.setProperty("--serif", p.typography.serif);
           r.setProperty("--sans", p.typography.sans);
           r.setProperty("--mono", p.typography.mono);
-          if (p.typography.sans && p.typography.sans.includes("HarmonyOS Sans SC") && document.fonts) {
-            document.fonts.ready.then(() => {
-              console.log("[KSS] HarmonyOS Sans SC loaded:", document.fonts.check('16px "HarmonyOS Sans SC"'));
-            });
-          }
         }
-        // id 来自 KSSWebThemePayload（designSystem rawValue）
-        const next = (p && p.id === "xcom") ? "xcom" : "classic";
+        const next = readerForPayload(p);
         const prev = readerMode;
         readerMode = next;
         document.documentElement.setAttribute("data-reader", next);
-        // 切到 xcom 时给已渲染 DOM 补 class；切回 classic 时去掉
         const host = document.getElementById("md");
         if (host) {
-          if (next === "xcom") polishXcomDom(host);
+          if (next === "xcom" || next === "kami") polishEditorialDom(host);
           else host.querySelectorAll("h1.doc-title-dup").forEach(el => el.classList.remove("doc-title-dup"));
         }
         if (prev !== next) { /* skin 变了，字阶靠 CSS，无需重 parse */ }
+        scheduleHeight();
       } catch (e) { /* 主题失败不应破坏正文渲染 */ }
     };
 
     window.kssSetMarkdown = function (text) { render(text); };
 
+    // HTML fragment path：研究产物 / 已渲染审计 HTML 直接注入，仍走同一阅读皮。
+    window.kssSetHTML = function (html) {
+      const host = document.getElementById("md");
+      if (!html) { host.innerHTML = '<div id="empty">暂无内容</div>'; scheduleHeight(); return; }
+      try {
+        host.innerHTML = String(html);
+        if (readerMode === "xcom" || readerMode === "kami") polishEditorialDom(host);
+      } catch (e) {
+        host.textContent = String(html);
+      }
+      scheduleHeight();
+    };
+
     document.addEventListener("DOMContentLoaded", function () {
       if (pending != null) { render(pending); pending = null; }
+      scheduleHeight();
     });
+    window.addEventListener("load", scheduleHeight);
+    window.addEventListener("resize", scheduleHeight);
   })();
   </script>
 </body>

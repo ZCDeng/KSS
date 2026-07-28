@@ -845,22 +845,16 @@ struct IntelView: View {
     private func articleBodyView(item: IntelItem) -> some View {
         let article = store.intelArticleByID[item.id]
         if let md = article?.bodyMd, !md.isEmpty {
-            structuredReadingBody(md)
+            contentReader(md)
         } else if let body = article?.body, !body.isEmpty {
-            Text(body)
-                .font(KSSFont.themed(16.5, theme: theme))
-                .foregroundStyle(theme.textBody)
-                .lineSpacing(16.5 * 0.88)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
+            contentReader(body)
         } else if let sum = item.summary, !sum.isEmpty {
-            Text(sum)
-                .font(KSSFont.themed(16.5, theme: theme))
-                .foregroundStyle(theme.textBody)
-                .lineSpacing(16.5 * 0.88)
-            Text("全文抓取失败或未完成，以上为 RSS 摘要")
-                .font(KSSFont.themed(12, theme: theme))
-                .foregroundStyle(theme.textSecondary)
+            VStack(alignment: .leading, spacing: 10) {
+                contentReader(sum)
+                Text("全文抓取失败或未完成，以上为 RSS 摘要")
+                    .font(KSSFont.themed(12, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+            }
         } else {
             Text("暂无正文，可尝试外链打开")
                 .font(KSSFont.themed(14, theme: theme))
@@ -1129,55 +1123,48 @@ struct IntelView: View {
         }
     }
 
-    /// 中文改写：解析 ## / 列表 / 段落，视觉与投研分节一致。
+    /// 长文统一走 MarkdownWebView（Kami / xcom / classic 阅读皮由主题桥注入）。
     @ViewBuilder
-    private func structuredReadingBody(_ text: String) -> some View {
-        let blocks = parseReadingBlocks(text)
-        VStack(alignment: .leading, spacing: 18) {
-            ForEach(blocks) { block in
-                switch block {
-                case .heading(let title):
-                    Text(title)
-                        .font(KSSFont.themed(13, .bold, theme: theme))
-                        .foregroundStyle(theme.accent)
-                        .tracking(0.3)
-                        .padding(.top, 4)
-                case .paragraph(let p):
-                    readingBodyText(p)
-                case .list(let items):
-                    bulletList(items)
-                }
-            }
-        }
-        .textSelection(.enabled)
+    private func contentReader(_ text: String) -> some View {
+        MarkdownWebView(text: text, fitsContent: true, minHeight: 160)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// 投研改写：固定四节；无 sections 时走同一套 markdown 块解析。
+    /// 中文改写 / 译文：Markdown 正文。
+    @ViewBuilder
+    private func structuredReadingBody(_ text: String) -> some View {
+        contentReader(text)
+    }
+
+    /// 投研改写：有分节时拼成 Markdown 再走同一阅读壳；否则直接渲染原文。
     @ViewBuilder
     private func investmentStructuredBody(text: String, sections: [String: String]?) -> some View {
+        contentReader(investmentMarkdown(text: text, sections: sections))
+    }
+
+    private func investmentMarkdown(text: String, sections: [String: String]?) -> String {
         let order = ["事件", "影响", "标的线索", "待验证"]
         let parsed = parseInvestmentSections(text: text, sections: sections)
-        let hasAny = order.contains { !(parsed[$0] ?? "").isEmpty }
-
-        if hasAny {
-            VStack(alignment: .leading, spacing: 22) {
-                ForEach(order, id: \.self) { key in
-                    let body = (parsed[key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !body.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text(key)
-                                .font(KSSFont.themed(13, .bold, theme: theme))
-                                .foregroundStyle(theme.accent)
-                                .tracking(0.3)
-                            sectionBodyLines(body)
-                        }
-                    }
+        guard order.contains(where: { !(parsed[$0] ?? "").isEmpty }) else { return text }
+        var md = ""
+        for key in order {
+            let body = (parsed[key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !body.isEmpty else { continue }
+            md += "## " + key + "\n\n"
+            let lines = body
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            if lines.count <= 1 {
+                md += (lines.first ?? body) + "\n\n"
+            } else {
+                for line in lines {
+                    md += "- " + stripListMarker(line) + "\n"
                 }
+                md += "\n"
             }
-            .textSelection(.enabled)
-        } else {
-            structuredReadingBody(text)
         }
+        return md
     }
 
     @ViewBuilder
@@ -1521,52 +1508,10 @@ struct IntelView: View {
 
     /// 把 LLM 返回的 markdown bullet 文本渲染为列表（不依赖 AttributedString markdown）
     private func digestMarkdownView(_ text: String) -> some View {
-        // 兼容 `\r\n`、全角破折、无换行用 `；`/`•` 分句的模型输出
-        let normalized = text
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-        let lines: [String] = {
-            let split = normalized.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-            if split.count > 1 { return split }
-            // 单行多要点：按常见子弹切开
-            let one = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
-            if one.isEmpty { return [] }
-            for sep in ["；", ";", "•", "·"] {
-                if one.contains(sep) {
-                    return one.components(separatedBy: sep).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-                }
-            }
-            return [one]
-        }()
-        return VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                let s = line.trimmingCharacters(in: .whitespaces)
-                if s.isEmpty {
-                    EmptyView()
-                } else {
-                    HStack(alignment: .top, spacing: 6) {
-                        let bullet = s.hasPrefix("- ") || s.hasPrefix("* ") || s.hasPrefix("• ")
-                        let body: String = {
-                            if s.hasPrefix("- ") || s.hasPrefix("* ") { return String(s.dropFirst(2)) }
-                            if s.hasPrefix("• ") { return String(s.dropFirst(2)) }
-                            return s
-                        }()
-                        if bullet {
-                            Text("•").font(KSSFont.themed(12, .bold, theme: theme)).foregroundStyle(theme.accent)
-                        } else {
-                            Text("•").font(KSSFont.themed(12, .bold, theme: theme)).foregroundStyle(theme.accent.opacity(0.55))
-                        }
-                        Text(body)
-                            .font(KSSFont.themed(13, theme: theme))
-                            .foregroundStyle(theme.textBody)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
-        }
+        contentReader(text)
     }
 
-    /// 列表行：经典 entry-card；xcom timeline cell（plan 2026-07-23-002）。
+
     private func newsRow(_ item: IntelItem, track: IntelTrack) -> some View {
         let isOn = store.selectedIntelItemID == item.id
         let isHovered = hoveredIntelItemID == item.id
