@@ -94,6 +94,24 @@ def _is_openrouter_base(url: str | None) -> bool:
     return "openrouter.ai" in u or "openrouter.com" in u or "/openrouter" in u
 
 
+def _read_server_env_openrouter_key() -> str:
+    """读 yupi server/.env 里已落盘的 OPENROUTER_API_KEY（status 在 CLI 无 Keychain 时也能自检）。"""
+    env_path = server_dir() / ".env"
+    if not env_path.is_file():
+        return ""
+    try:
+        for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            s = line.strip()
+            if not s or s.startswith("#") or "=" not in s:
+                continue
+            k, _, v = s.partition("=")
+            if k.strip() == "OPENROUTER_API_KEY":
+                return v.strip().strip('"').strip("'")
+    except OSError:
+        return ""
+    return ""
+
+
 def resolve_openrouter_key_source() -> tuple[str, str]:
     """返回 (key, source)。source 便于设置页/自检展示。
 
@@ -103,6 +121,7 @@ def resolve_openrouter_key_source() -> tuple[str, str]:
     3. Seesaw 备 LLM 若 base 为 OpenRouter → ``KSS_LLM_FALLBACK_KEY``
     4. 旧四键 ``OPENAI_*`` 若 base 为 OpenRouter
     5. 任意候选 key 以 ``sk-or-`` 开头（OpenRouter 形态）
+    6. 已写入的 ``server/.env``（launchd 常驻进程不继承 App Keychain）
     """
     for k, src in (
         ("OPENROUTER_API_KEY", "openrouter_env"),
@@ -131,10 +150,16 @@ def resolve_openrouter_key_source() -> tuple[str, str]:
         ("KSS_LLM_PRIMARY_KEY", "seesaw_primary_sk_or"),
         ("KSS_LLM_FALLBACK_KEY", "seesaw_fallback_sk_or"),
         ("OPENAI_API_KEY", "openai_sk_or"),
+        ("DEEPSEEK_API_KEY", "deepseek_sk_or"),
     ):
         v = (os.environ.get(k) or "").strip()
         if v.startswith("sk-or-"):
             return v, src
+
+    # launchd 常驻 yupi 用 server/.env；App 侧 status 也应识别已落盘的 key
+    file_key = _read_server_env_openrouter_key()
+    if file_key:
+        return file_key, "server_env_file"
     return "", "none"
 
 

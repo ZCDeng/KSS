@@ -176,6 +176,7 @@ struct BacktestsView: View {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if detail?.path == selectedReport.path, let detail {
                     MarkdownWebView(text: detail.text)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .clipShape(RoundedRectangle(cornerRadius: isXcom ? 0 : theme.cardRadius))
                         .overlay(
                             RoundedRectangle(cornerRadius: isXcom ? 0 : theme.cardRadius)
@@ -183,6 +184,7 @@ struct BacktestsView: View {
                         )
                 } else {
                     MarkdownWebView(text: selectedReport.excerpt)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .clipShape(RoundedRectangle(cornerRadius: isXcom ? 0 : theme.cardRadius))
                         .overlay(
                             RoundedRectangle(cornerRadius: isXcom ? 0 : theme.cardRadius)

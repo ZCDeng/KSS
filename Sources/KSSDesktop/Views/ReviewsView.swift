@@ -313,13 +313,15 @@ struct ReviewsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
-    /// xcom：无圆角描边卡，正文直接铺在 canvas 上（thread 阅读感）。
+    /// 主栏正文：自滚 WebView 占满剩余高度（勿再套外层 ScrollView）。
     @ViewBuilder
     private func markdownBody(_ text: String) -> some View {
         if isXcom {
             MarkdownWebView(text: text)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             MarkdownWebView(text: text)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
                 .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
         }

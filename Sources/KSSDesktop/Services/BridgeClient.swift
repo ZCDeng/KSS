@@ -480,8 +480,13 @@ struct BridgeClient {
         // 禁止在 .app/Resources 写 __pycache__（会破坏 codesign sealed resources → 无法打开）
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["PYTHONPYCACHEPREFIX"] = stateRoot.appending(path: ".cache/pycache").path
-        // U3/M1：非 LLM 数据源凭据仍走 env，LLM BYOK 仅通过 nonce 绑定的本地 broker 注入 pi-ai。
-        for (key, value) in KeychainStore.sidecarEnvironment() { env[key] = value }
+        // 一次性 bridge 子进程：必须注入完整 LLM 密钥。
+        // intel-rewrite / panorama / digest 走 Python LLMClient（读 env），
+        // 不能只用 sidecarEnvironment（会剥掉 DEEPSEEK/OPENAI/PRIMARY key，导致改写全挂）。
+        // pi-ai 助手仍走 CredentialBroker；此处与 agent sidecar 密钥隔离策略分开。
+        for (key, value) in KeychainStore.injectedEnvironment(includeLLMSecrets: true) {
+            env[key] = value
+        }
         if let broker = CredentialBrokerRegistry.broker(for: stateRoot) {
             env["KSS_PI_AI_CREDENTIAL_SOCKET"] = broker.socketPath
             env["KSS_PI_AI_CREDENTIAL_NONCE"] = broker.nonce

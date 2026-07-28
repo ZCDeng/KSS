@@ -92,13 +92,14 @@
   html[data-reader="kami"] body {
     color: var(--body);
     font-family: var(--serif);
-    /* 等宽楷体略收字号，行高略松，避免 Mono 观感过挤 */
-    font-size: 15px;
-    font-weight: 400;
-    line-height: 1.65;
+    /* Medium(500) 作默认正文字重：Regular 相对系统 UI 偏细；Mono 仅 Light/Regular/Medium */
+    font-size: 15.5px;
+    font-weight: 500;
+    line-height: 1.68;
     letter-spacing: 0;
     padding: 6px 22px 32px;
     background: transparent;
+    -webkit-font-smoothing: antialiased;
   }
   html[data-reader="kami"] #md {
     max-width: 720px;
@@ -121,25 +122,25 @@
   html[data-reader="kami"] h1 {
     font-size: 24px;
     font-weight: 500;
-    line-height: 1.25;
+    line-height: 1.28;
     margin: 16px 0 10px;
   }
   html[data-reader="kami"] h1.doc-title-dup { display: none; }
   html[data-reader="kami"] h2 {
     font-size: 18px;
     font-weight: 500;
-    line-height: 1.3;
+    line-height: 1.32;
     margin: 24px 0 8px;
   }
   html[data-reader="kami"] h3 {
     font-size: 16px;
     font-weight: 500;
-    line-height: 1.35;
+    line-height: 1.36;
     margin: 18px 0 6px;
     color: var(--ink);
   }
   html[data-reader="kami"] h4 {
-    font-size: 14.5px;
+    font-size: 15px;
     margin: 14px 0 6px;
     color: var(--muted);
     font-weight: 500;
@@ -147,7 +148,8 @@
   html[data-reader="kami"] p {
     margin: 0 0 10px;
     color: var(--body);
-    line-height: 1.55;
+    font-weight: 500;
+    line-height: 1.68;
   }
   html[data-reader="kami"] a {
     color: var(--brand);
@@ -155,7 +157,7 @@
     border-bottom: 1px solid color-mix(in srgb, var(--brand) 28%, transparent);
   }
   html[data-reader="kami"] a:hover { border-bottom-color: var(--brand); }
-  /* 打印模板只允许 400/500；strong 用 500 + ink，避免 700 撞 xcom Chirp Bold 感 */
+  /* Mono TC 最高档为 Medium(500)；strong 同档 + ink 色区分 */
   html[data-reader="kami"] strong {
     color: var(--ink);
     font-weight: 500;
@@ -168,7 +170,8 @@
   }
   html[data-reader="kami"] li {
     margin: 0 0 7px;
-    line-height: 1.5;
+    line-height: 1.65;
+    font-weight: 500;
   }
   html[data-reader="kami"] li::marker { color: var(--brand); }
   html[data-reader="kami"] hr {

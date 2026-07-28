@@ -38,7 +38,9 @@ struct MarkdownWebView: NSViewRepresentable {
         webView.navigationDelegate = context.coordinator
         context.coordinator.attachRepresented(webView)
         webView.setValue(false, forKey: "drawsBackground")
-        webView.allowsMagnification = true
+        // 嵌套在外层 ScrollView 时放大手势易抢滚动手势，关掉。
+        webView.allowsMagnification = false
+        Self.configureScrolling(webView, fitsContent: fitsContent)
         if let html = KSSResources.bundle.url(forResource: "markdown", withExtension: "html") {
             webView.loadFileURL(html, allowingReadAccessTo: html.deletingLastPathComponent())
         }
@@ -50,7 +52,8 @@ struct MarkdownWebView: NSViewRepresentable {
         coord.fitsContent = fitsContent
         coord.minHeight = minHeight
         coord.attachRepresented(webView)
-        // print 模板节奏：配色/正文 sans 跟 chrome；仅标题 serif 用仓耳今楷。
+        Self.configureScrolling(webView, fitsContent: fitsContent)
+        // print 模板节奏：配色跟 chrome；字栈走 LXGW 内容皮。
         coord.latestTheme = webTheme.asEditorialContentTheme()
         let fingerprint = "\(kind == .htmlFragment ? "html" : "md")\u{1e}\(text)"
         if fingerprint != coord.latestFingerprint {
@@ -62,6 +65,37 @@ struct MarkdownWebView: NSViewRepresentable {
         webView.underPageBackgroundColor = theme.canvasNS
         coord.requestSync()
         coord.applyIntrinsicHeightIfNeeded()
+    }
+
+    /// fitsContent：禁用 WebView 内滚，交给外层 SwiftUI ScrollView，避免双滚/抢手势。
+    private static func configureScrolling(_ webView: WKWebView, fitsContent: Bool) {
+        func apply(to scroll: NSScrollView) {
+            if fitsContent {
+                scroll.hasVerticalScroller = false
+                scroll.hasHorizontalScroller = false
+                scroll.verticalScrollElasticity = .none
+                scroll.horizontalScrollElasticity = .none
+                scroll.scrollerStyle = .overlay
+                // 内层不接管滚轮，否则外层 ScrollView 卡顿
+                scroll.usesPredominantAxisScrolling = true
+            } else {
+                scroll.hasVerticalScroller = true
+                scroll.verticalScrollElasticity = .allowed
+            }
+        }
+        if let scroll = webView.enclosingScrollView {
+            apply(to: scroll)
+        }
+        for sub in webView.subviews {
+            if let scroll = sub as? NSScrollView {
+                apply(to: scroll)
+            }
+            for nested in sub.subviews {
+                if let scroll = nested as? NSScrollView {
+                    apply(to: scroll)
+                }
+            }
+        }
     }
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
@@ -89,14 +123,27 @@ struct MarkdownWebView: NSViewRepresentable {
             representedWebView = webView
         }
 
+        private var overflowScript: String {
+            fitsContent
+                ? "document.documentElement.style.overflow='hidden';if(document.body){document.body.style.overflow='hidden';document.body.style.overscrollBehavior='none';}"
+                : "document.documentElement.style.overflow='';if(document.body){document.body.style.overflow='';document.body.style.overscrollBehavior='';}"
+        }
+
+        override func themeScript() -> String? {
+            guard let base = super.themeScript() else {
+                return overflowScript
+            }
+            return base + overflowScript
+        }
+
         override func contentScript() -> String? {
             let json = (try? JSONEncoder().encode(latestText))
                 .flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
             switch latestKind {
             case .markdown:
-                return "window.kssSetMarkdown(\(json));"
+                return "window.kssSetMarkdown(\(json));" + overflowScript
             case .htmlFragment:
-                return "window.kssSetHTML(\(json));"
+                return "window.kssSetHTML(\(json));" + overflowScript
             }
         }
 
