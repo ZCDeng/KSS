@@ -137,12 +137,14 @@ struct MissingCredentialCard: View {
 /// 第一行速览小卡规格：等高、顶对齐、单行最多 5 张、等分动态宽度。
 enum DashboardStripCardSpec {
     static let height: CGFloat = 88
+    static let titleRowHeight: CGFloat = 22
+    static let valueRowMinHeight: CGFloat = 28
     static let maxPerRow = 5
     static let spacing: CGFloat = 12
     static let padding: CGFloat = 14
 }
 
-/// 标准速览小卡：标题行 + 主值行；无第三行说明，避免高度参差。
+/// 标准速览小卡：标题行 + 主值行；固定高度；trailing（如 Sparkle）叠在右上角，不把标题行撑偏。
 struct DashboardStripCard<Value: View, Trailing: View>: View {
     @Environment(\.kssTheme) private var theme
     var title: String
@@ -150,6 +152,8 @@ struct DashboardStripCard<Value: View, Trailing: View>: View {
     var isLive: Bool = false
     @ViewBuilder var trailing: () -> Trailing
     @ViewBuilder var value: () -> Value
+
+    private var hasTrailing: Bool { Trailing.self != EmptyView.self }
 
     init(
         title: String,
@@ -167,6 +171,7 @@ struct DashboardStripCard<Value: View, Trailing: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            // 标题行固定高度，保证各卡主值基线一致
             HStack(spacing: 6) {
                 Text(title)
                     .font(KSSFont.themed(13.5, .bold, theme: theme))
@@ -187,9 +192,18 @@ struct DashboardStripCard<Value: View, Trailing: View>: View {
                         .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                 }
-                trailing()
             }
+            .frame(height: DashboardStripCardSpec.titleRowHeight, alignment: .center)
+            // 有 trailing 时给右上角 icon 留位，避免与 meta 重叠
+            .padding(.trailing, hasTrailing ? DashboardChromeIconSpec.hitSize : 0)
+
             value()
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: DashboardStripCardSpec.valueRowMinHeight,
+                    alignment: .leading
+                )
+
             Spacer(minLength: 0)
         }
         .frame(
@@ -198,7 +212,15 @@ struct DashboardStripCard<Value: View, Trailing: View>: View {
             maxHeight: DashboardStripCardSpec.height,
             alignment: .topLeading
         )
+        // trailing 叠在内容区右上角；kssCard 的 padding 包在外，保证 icon 落在卡片内
+        .overlay(alignment: .topTrailing) {
+            if hasTrailing {
+                trailing()
+            }
+        }
         .kssCard(padding: DashboardStripCardSpec.padding)
+        // 等分宽：父 HStack 里每张卡都拉满分配宽度
+        .frame(maxWidth: .infinity, maxHeight: DashboardStripCardSpec.height, alignment: .top)
     }
 }
 
@@ -213,7 +235,7 @@ extension DashboardStripCard where Trailing == EmptyView {
     }
 }
 
-/// 速览行容器：顶对齐、间距统一、截断至 maxPerRow。
+/// 速览行：顶对齐 + 等分宽。子卡须自带 `frame(maxWidth: .infinity)`。
 struct DashboardStripCardRow<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
@@ -221,6 +243,7 @@ struct DashboardStripCardRow<Content: View>: View {
         HStack(alignment: .top, spacing: DashboardStripCardSpec.spacing) {
             content()
         }
+        .frame(height: DashboardStripCardSpec.height, alignment: .top)
     }
 }
 
@@ -313,10 +336,21 @@ struct DashboardSparkleControl<ListContent: View>: View {
     @State private var nlError: String?
     @FocusState private var nlFocused: Bool
 
-    private enum SparkleTab: String, CaseIterable, Identifiable {
-        case natural = "自然语言"
-        case list = "列表选择"
+    private enum SparkleTab: String, CaseIterable, Identifiable, Hashable {
+        case natural
+        case list
         var id: String { rawValue }
+
+        func label(listTitle: String) -> String {
+            switch self {
+            case .natural: return "自然语言"
+            case .list: return listTitle
+            }
+        }
+    }
+
+    private var tabOptions: [(key: SparkleTab, label: String)] {
+        SparkleTab.allCases.map { ($0, $0.label(listTitle: listTabTitle)) }
     }
 
     var body: some View {
@@ -333,7 +367,7 @@ struct DashboardSparkleControl<ListContent: View>: View {
     }
 
     private var sheetBody: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 DashboardChromeIcon(kind: .sparkles)
                 Text(sheetTitle)
@@ -341,13 +375,28 @@ struct DashboardSparkleControl<ListContent: View>: View {
                     .foregroundStyle(theme.textPrimary)
                 Spacer()
             }
+            .padding(.horizontal, 22)
+            .padding(.top, 22)
+            .padding(.bottom, 12)
 
-            Picker("", selection: $tab) {
-                ForEach(SparkleTab.allCases) { t in
-                    Text(t == .list ? listTabTitle : t.rawValue).tag(t)
+            // 与资讯雷达 / 复盘页同一套：xcom 下划线 Tab，其它主题凹槽分段
+            Group {
+                if IntelXcomChrome.usesUnderlineTabs(theme.system) {
+                    XcomUnderlineTabBar(
+                        options: tabOptions,
+                        selection: $tab,
+                        stretch: true
+                    )
+                } else {
+                    KSSSegmentedControl(
+                        options: tabOptions,
+                        selection: $tab,
+                        stretch: true
+                    )
+                    .padding(.horizontal, 22)
+                    .padding(.bottom, 6)
                 }
             }
-            .pickerStyle(.segmented)
             .onChange(of: tab) { _, new in
                 if new == .list { onListTabAppear?() }
             }
@@ -356,14 +405,15 @@ struct DashboardSparkleControl<ListContent: View>: View {
                 switch tab {
                 case .natural:
                     naturalTab
+                        .padding(22)
                 case .list:
                     listContent({ showSheet = false })
+                        .padding(22)
                         .frame(maxWidth: .infinity, minHeight: 260, alignment: .topLeading)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .padding(22)
         .frame(width: 440)
         .background(theme.canvas)
         .onAppear {
