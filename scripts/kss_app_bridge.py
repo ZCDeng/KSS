@@ -1897,13 +1897,250 @@ _MARKET_STRIP_JSON = STATE_ROOT / "storage" / "macro" / "market_strip.json"
 
 
 def _market_strip() -> dict[str, Any] | None:
-    """总览第一行市场速览：A500ETF 当日行情 + 北向资金（refresh_market_strip.py 产出）。"""
+    """总览第一行市场速览：A500ETF 当日行情 + 北向资金（refresh_market_strip.py 产出）。
+
+    读时对账：overnightUS 若仍含已从 surface 配置移除的用户追加码，过滤掉，
+    使 chip 不必等下次 refresh 才消失（AE2）。
+    """
     if not _MARKET_STRIP_JSON.exists():
         return None
     try:
-        return json.loads(_MARKET_STRIP_JSON.read_text(encoding="utf-8"))
+        data = json.loads(_MARKET_STRIP_JSON.read_text(encoding="utf-8"))
     except Exception:
         return None
+    if not isinstance(data, dict):
+        return None
+    try:
+        from kss.ui_surface.config import default_codes, load_config
+
+        cfg = load_config()
+        append_codes = {
+            str(a.get("code", "")).upper()
+            for a in (cfg.get("overnight_us") or {}).get("append") or []
+        }
+        defaults = default_codes()
+        overnight = data.get("overnightUS")
+        if isinstance(overnight, list):
+            kept: list[Any] = []
+            for row in overnight:
+                if not isinstance(row, dict):
+                    continue
+                code = str(row.get("code", "")).upper()
+                if code in defaults or code in append_codes:
+                    # 标注用户追加，供 Swift 菜单
+                    if code in append_codes:
+                        row = dict(row)
+                        row["isUserAppended"] = True
+                        meta = next(
+                            (
+                                a
+                                for a in (cfg.get("overnight_us") or {}).get("append") or []
+                                if str(a.get("code", "")).upper() == code
+                            ),
+                            None,
+                        )
+                        if meta:
+                            row["kindSource"] = meta.get("kind_source")
+                            row["probeClose"] = meta.get("probe_close")
+                    kept.append(row)
+            data["overnightUS"] = kept
+        # 附加 resolved 指标小卡 props（不写回磁盘）
+        from kss.ui_surface.resolve import resolve_metric_props
+
+        mid = (cfg.get("strip_metric") or {}).get("metric_id")
+        data["stripMetric"] = resolve_metric_props(data, mid)
+        data["surfaceConfig"] = {
+            "overnightAppend": (cfg.get("overnight_us") or {}).get("append") or [],
+            "stripMetricId": mid,
+            "degraded": bool(cfg.get("degraded")),
+            "error": cfg.get("error"),
+        }
+    except Exception:
+        # surface 模块不可用时透传原 strip
+        pass
+    return data
+
+
+def _surface_get() -> dict[str, Any]:
+    """读 surface 配置 + 预览。"""
+    from kss.ui_surface.config import load_config
+    from kss.ui_surface.resolve import (
+        candidate_overnight,
+        list_metrics_public,
+        resolve_metric_props,
+        resolve_overnight_preview,
+    )
+
+    cfg = load_config()
+    strip = _market_strip() or {}
+    # _market_strip 可能已嵌 stripMetric；这里再算一次确保一致
+    mid = (cfg.get("strip_metric") or {}).get("metric_id")
+    return {
+        "ok": True,
+        "config": cfg,
+        "overnightPreview": resolve_overnight_preview(strip, cfg),
+        "stripMetric": resolve_metric_props(strip, mid),
+        "candidates": candidate_overnight(),
+        "metrics": list_metrics_public(),
+    }
+
+
+def _surface_metrics() -> dict[str, Any]:
+    from kss.ui_surface.resolve import list_metrics_public, resolve_metric_props
+
+    strip = _market_strip() or {}
+    metrics = []
+    for m in list_metrics_public():
+        props = resolve_metric_props(strip, m["metric_id"])
+        metrics.append({**m, "sample": props})
+    return {"ok": True, "metrics": metrics}
+
+
+def _parse_ops_json(raw: str) -> list[dict[str, Any]]:
+    if not raw or not str(raw).strip():
+        return []
+    data = json.loads(raw)
+    if isinstance(data, dict) and "ops" in data:
+        data = data["ops"]
+    if not isinstance(data, list):
+        raise ValueError("OPS_JSON must be a list of ops or {ops:[...]}")
+    return data
+
+
+def _surface_propose(ops_json: str) -> dict[str, Any]:
+    """干跑 patch：校验/探针预览，不落盘。"""
+    from datetime import datetime, timezone
+
+    from kss.ui_surface.config import ALLOWED_OPS, CODE_RE, default_codes, load_config
+    from kss.ui_surface.resolve import METRIC_CATALOG, probe_overnight_code
+
+    try:
+        ops = _parse_ops_json(ops_json)
+    except (json.JSONDecodeError, ValueError) as exc:
+        return {"ok": False, "error": str(exc), "previews": []}
+
+    cfg = load_config()
+    previews: list[dict[str, Any]] = []
+    normalized: list[dict[str, Any]] = []
+    defaults = default_codes()
+
+    for op in ops:
+        if not isinstance(op, dict):
+            return {"ok": False, "error": "each op must be object", "previews": []}
+        name = str(op.get("op") or "").strip()
+        if name not in ALLOWED_OPS:
+            return {"ok": False, "error": f"unknown op: {name!r}", "previews": []}
+
+        if name == "overnight_append":
+            code = str(op.get("code") or "").strip().upper()
+            if not code or not CODE_RE.match(code):
+                return {
+                    "ok": False,
+                    "error": f"invalid code {code!r}",
+                    "previews": [],
+                    "probeCalls": 0,
+                }
+            if code in defaults:
+                return {
+                    "ok": False,
+                    "error": f"cannot append system default code: {code}",
+                    "previews": [],
+                }
+            kind = op.get("kind")
+            kind_source = op.get("kind_source") or (
+                "candidate_table" if kind else "ai_inferred"
+            )
+            probe = probe_overnight_code(code, kind if isinstance(kind, str) else None)
+            if not probe.get("ok"):
+                return {
+                    "ok": False,
+                    "error": probe.get("error") or "probe_failed",
+                    "code": code,
+                    "previews": [],
+                }
+            item = {
+                "op": "overnight_append",
+                "code": probe["code"],
+                "name": op.get("name") or probe.get("name") or code,
+                "kind": probe["kind"],
+                "kind_source": kind_source,
+                "added_via": op.get("added_via") or "ai",
+                "resolved_at": datetime.now(timezone.utc).isoformat(),
+                "probe_close": probe.get("close"),
+            }
+            normalized.append(item)
+            previews.append({
+                "op": "overnight_append",
+                "code": item["code"],
+                "name": item["name"],
+                "close": probe.get("close"),
+                "pct": probe.get("pct"),
+                "kind": item["kind"],
+            })
+        else:
+            normalized.append(dict(op))
+            previews.append({"op": name, **{k: v for k, v in op.items() if k != "op"}})
+
+        if name == "set_strip_metric":
+            mid = str(op.get("metric_id") or "").strip()
+            if mid not in METRIC_CATALOG:
+                return {"ok": False, "error": f"unknown metric_id: {mid}", "previews": []}
+
+    return {
+        "ok": True,
+        "ops": normalized,
+        "previews": previews,
+        "configBefore": cfg,
+    }
+
+
+def _surface_apply(ops_json: str) -> dict[str, Any]:
+    """写 surface 配置。"""
+    from datetime import datetime, timezone
+
+    from kss.ui_surface.config import apply_patch
+    from kss.ui_surface.resolve import probe_overnight_code
+
+    try:
+        ops = _parse_ops_json(ops_json)
+    except (json.JSONDecodeError, ValueError) as exc:
+        return {"ok": False, "error": str(exc)}
+
+    # overnight_append：若缺 kind/probe，先探针再写
+    enriched: list[dict[str, Any]] = []
+    for op in ops:
+        if not isinstance(op, dict):
+            return {"ok": False, "error": "each op must be object"}
+        if str(op.get("op")) == "overnight_append" and op.get("probe_close") is None:
+            probe = probe_overnight_code(
+                str(op.get("code") or ""),
+                str(op["kind"]) if op.get("kind") else None,
+            )
+            if not probe.get("ok"):
+                return {"ok": False, "error": probe.get("error") or "probe_failed"}
+            enriched.append({
+                **op,
+                "code": probe["code"],
+                "name": op.get("name") or probe.get("name"),
+                "kind": probe["kind"],
+                "kind_source": op.get("kind_source") or "candidate_table",
+                "resolved_at": datetime.now(timezone.utc).isoformat(),
+                "probe_close": probe.get("close"),
+            })
+        else:
+            enriched.append(op)
+
+    result = apply_patch(enriched)
+    if not result.get("ok"):
+        return result
+    # 读路径预览
+    get = _surface_get()
+    return {
+        "ok": True,
+        "config": result["config"],
+        "overnightPreview": get.get("overnightPreview"),
+        "stripMetric": get.get("stripMetric"),
+    }
 
 
 _NAME_INDEX_JSON = STATE_ROOT / "storage" / "macro" / "stock_name_index.json"
@@ -4932,6 +5169,7 @@ WRITE_COMMANDS = frozenset({
     "indicator-solidify",  # 固化：注册表 + rules + 初始 pack
     "indicator-retire",    # 退役：注册表 status=retired
     "cs-freshness",  # notify 时外发 Telegram（消息即副作用；不带 notify 纯只读）
+    "surface-apply",  # 盯盘 surface 配置写（隔夜追加 / 指标小卡）
 })
 
 # ---------------------------------------------------------------------------
@@ -5011,6 +5249,22 @@ COMMANDS = {
     "indicator-solidify": {
         "desc": "固化候选：注册表+rules+初始pack 原子写入(白名单基元族，须人工确认)",
         "args": ["FAMILY", "PARAMS_JSON", "SYMBOLS_CSV", "[VERDICT_REF]"],
+    },
+    "surface-get": {
+        "desc": "盯盘 surface 配置 + resolved 预览(隔夜追加/指标小卡)",
+        "args": [],
+    },
+    "surface-metrics": {
+        "desc": "盯盘指标小卡白名单 + 人话说明",
+        "args": [],
+    },
+    "surface-propose": {
+        "desc": "解析 surface patch ops 并返回真值预览(不落盘)",
+        "args": ["OPS_JSON"],
+    },
+    "surface-apply": {
+        "desc": "应用 surface patch(写 dashboard_v1.json,须人工确认)",
+        "args": ["OPS_JSON"],
     },
     "indicator-retire": {"desc": "退役已固化指标(status=retired，不删数据)", "args": ["ENTRY_ID"]},
     "datasource-test": {
@@ -6154,6 +6408,14 @@ def dispatch(command: str, args: list[str]) -> Any:
         if not args:
             raise ValueError("indicator-retire requires ENTRY_ID")
         return _indicator_retire(args[0])
+    if command == "surface-get":
+        return _surface_get()
+    if command == "surface-metrics":
+        return _surface_metrics()
+    if command == "surface-propose":
+        return _surface_propose(args[0] if args else "")
+    if command == "surface-apply":
+        return _surface_apply(args[0] if args else "")
     if command == "datasource-test":
         if not args:
             raise ValueError("datasource-test requires SOURCE")

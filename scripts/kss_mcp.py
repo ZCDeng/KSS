@@ -139,6 +139,24 @@ def get_orientation() -> dict:
 
 
 @mcp.tool
+def get_surface_config() -> dict:
+    """读盯盘 surface 配置与 resolved 预览（隔夜用户追加 / 指标小卡）。只读；写须走 app 内确认。"""
+    return _call("surface-get")
+
+
+@mcp.tool
+def list_surface_metrics() -> dict:
+    """指标小卡白名单与当前样例真值。只读。"""
+    return _call("surface-metrics")
+
+
+@mcp.tool
+def propose_surface_patch(ops_json: str) -> dict:
+    """解析 surface patch 并返回真值预览（不落盘）。ops_json 为 ops 数组 JSON 串。"""
+    return _call("surface-propose", [ops_json])
+
+
+@mcp.tool
 def list_recipes() -> dict:
     """编排剧本目录(确定性复盘 DAG):每条 name/desc/write/args。选一条用 run_recipe 跑。"""
     return {"recipes": _call("recipe-list")}   # 包 dict:MCP structured_content 须非 list

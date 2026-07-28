@@ -403,6 +403,16 @@ struct BridgeClient {
 
     /// 自选列表整表替换（plan 2026-07-12-005 / U15）：写 kss.db，取代原先直接写
     /// storage/watchlist_symbols.txt 的 syncWatchlistFile。
+    /// 盯盘 surface 配置读取（候选表 + 当前 append + 指标）。
+    func surfaceGet() throws -> SurfaceGetResponse {
+        try run(["surface-get"], as: SurfaceGetResponse.self)
+    }
+
+    /// 应用 surface patch（ops JSON 数组字符串）。
+    func surfaceApply(opsJSON: String) throws -> SurfaceApplyResponse {
+        try run(["surface-apply", opsJSON], as: SurfaceApplyResponse.self)
+    }
+
     func setWatchlist(_ symbols: [String]) throws -> WatchlistSetResult {
         try run(["watchlist-set", symbols.joined(separator: ",")], as: WatchlistSetResult.self)
     }
@@ -428,6 +438,8 @@ struct BridgeClient {
         "intel-digest", "intel-panorama", "intel-digest-save",
         "intel-article", "intel-rewrite", "intel-rewrite-run",
         "cron-catchup", "cron-rerun", "cron-rerun-many", "cron-enable", "cron-disable",
+        // surface-apply / propose 可能探针外网（yfinance），避免 sidecar 3s 超时双跑
+        "surface-apply", "surface-propose", "surface-get", "surface-metrics",
     ]
 
     private func run<T: Decodable>(_ args: [String], as type: T.Type) throws -> T {

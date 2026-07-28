@@ -24,6 +24,9 @@ struct DashboardView: View {
     var usMarketCoverage: USMarketCoverage? = nil
     var usMarketUpdatedAt: Date? = nil
     var onLoadUSMarket: () -> Void = {}
+    /// surface 配置变更后重载 snapshot（由 Store 注入）
+    var onReloadSnapshot: () -> Void = {}
+    var bridge: BridgeClient? = nil
 
     // Material 3 响应式栅格：统一外边距 / 沟槽，内容封顶居中，断点决定主区列数。
     private let margin: CGFloat = 24
@@ -91,10 +94,15 @@ struct DashboardView: View {
                         }
                     }
 
-                    // 第一行：市场速览（A500ETF ×2 + 北向资金）
+                    // 第一行：市场速览（A500ETF ×2 + 北向资金 + 可配指标小卡）
                     if let strip = snapshot.marketStrip,
-                       (!strip.etfs.isEmpty || strip.northMoney != nil) {
-                        MarketStripRow(strip: strip, quotes: realtimeQuotes)
+                       (!strip.etfs.isEmpty || strip.northMoney != nil || strip.stripMetric != nil) {
+                        MarketStripRow(
+                            strip: strip,
+                            quotes: realtimeQuotes,
+                            bridge: bridge,
+                            onReloadSnapshot: onReloadSnapshot
+                        )
                     }
 
                     // 第二行：三列指数堆叠（主板 / 成长 / 港股）+ Longbridge 实盘 + 分时
@@ -114,29 +122,17 @@ struct DashboardView: View {
                         IndexMarquee(indices: board, quotes: realtimeQuotes)
                     }
 
-                    // 隔夜美股：固定名单顺序，不按涨跌重排；≥1 才显示
-                    if let overnight = snapshot.marketStrip?.overnightUS, !overnight.isEmpty {
-                        HStack(alignment: .center, spacing: 12) {
-                            SectionHeader("隔夜美股")
-                            Spacer(minLength: 12)
-                            Label(
-                                usMarketHeaderText,
-                                systemImage: usMarketHeaderStatus.systemImage
-                            )
-                            .font(KSSFont.themed(11.5, .medium, theme: theme))
-                            .foregroundStyle(
-                                usMarketHeaderStatus.isActive
-                                    ? theme.accent
-                                    : theme.textSecondary
-                            )
-                            .lineLimit(1)
-                            .padding(.top, 6)
-                        }
-                        OvernightUSMarquee(
-                            indices: overnight,
-                            quotes: usMarketQuotes
-                        )
-                    }
+                    // 隔夜美股：标题行始终可管理（+ / AI）；跑马灯仅有报价时显示
+                    OvernightUSSection(
+                        overnight: snapshot.marketStrip?.overnightUS ?? [],
+                        surfaceConfig: snapshot.marketStrip?.surfaceConfig,
+                        usMarketHeaderText: usMarketHeaderText,
+                        usMarketHeaderStatus: usMarketHeaderStatus,
+                        usMarketQuotes: usMarketQuotes,
+                        bridge: bridge,
+                        onOpenAI: { onOpenSection(.aiChat) },
+                        onReloadSnapshot: onReloadSnapshot
+                    )
 
                     if let pulse = snapshot.sectorReviews?.first, !pulse.themes.isEmpty {
                         SectorPulseStrip(pulse: pulse, quotes: realtimeQuotes)
@@ -865,11 +861,22 @@ struct EditorialDateView: View {
     }
 }
 
-/// 总览第一行市场速览：A500ETF(563360/159361) 当日 + 北向资金净流入。
+/// 总览第一行市场速览：A500ETF(563360/159361) 当日 + 北向资金净流入 + 可配指标小卡。
 struct MarketStripRow: View {
     @Environment(\.kssTheme) private var theme
     var strip: MarketStrip
     var quotes: [String: LongbridgeQuote] = [:]
+    var bridge: BridgeClient? = nil
+    var onReloadSnapshot: () -> Void = {}
+    @State private var metricBusy = false
+    @State private var metricError: String?
+
+    private static let metricChoices: [(id: String, title: String)] = [
+        ("limit_max_board", "最高连板"),
+        ("limit_seal_rate", "封板率"),
+        ("index_kcb50", "科创50"),
+        ("index_cyb", "创业板指"),
+    ]
 
     var body: some View {
         HStack(spacing: 12) {
@@ -893,6 +900,86 @@ struct MarketStripRow: View {
                      delta: yi,
                      deltaText: yi >= 0 ? "净流入" : "净流出",
                      isLive: false)
+            }
+            metricCard
+        }
+    }
+
+    @ViewBuilder
+    private var metricCard: some View {
+        let props = strip.stripMetric
+        let title = props?.title ?? "最高连板"
+        let valueText = props?.valueText ?? "—"
+        let deltaText = props?.deltaText ?? ""
+        let sub = props?.sub ?? "指标"
+        let delta = props?.delta ?? 0
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(KSSFont.themed(13.5, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Menu {
+                    ForEach(Self.metricChoices, id: \.id) { choice in
+                        Button(choice.title) {
+                            setMetric(choice.id)
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                .menuStyle(.borderlessButton)
+                .disabled(metricBusy || bridge == nil)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(valueText)
+                    .font(KSSFont.harmonyNumber(22))
+                    .foregroundStyle(props?.value == nil ? theme.textSecondary : theme.signColor(delta))
+                    .lineLimit(1)
+                if !deltaText.isEmpty {
+                    Text(deltaText)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(theme.signColor(delta))
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            Text(metricError ?? sub)
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundStyle(theme.textSecondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .kssCard(padding: 14)
+        .opacity(metricBusy ? 0.7 : 1)
+    }
+
+    private func setMetric(_ metricId: String) {
+        guard let bridge else { return }
+        metricBusy = true
+        metricError = nil
+        Task {
+            do {
+                let ops = "[{\"op\":\"set_strip_metric\",\"metric_id\":\"\(metricId)\"}]"
+                let resp = try await Task.detached {
+                    try bridge.surfaceApply(opsJSON: ops)
+                }.value
+                await MainActor.run {
+                    metricBusy = false
+                    if resp.ok == false {
+                        metricError = resp.error ?? "切换失败"
+                    } else {
+                        onReloadSnapshot()
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    metricBusy = false
+                    metricError = error.localizedDescription
+                }
             }
         }
     }
@@ -1130,12 +1217,223 @@ private struct MarqueeWidthKey: PreferenceKey {
     }
 }
 
+/// 隔夜美股分区：标题常驻（+ / AI 管理入口）+ 有报价时跑马灯。
+struct OvernightUSSection: View {
+    @Environment(\.kssTheme) private var theme
+    var overnight: [IndexQuote]
+    var surfaceConfig: SurfaceConfigSnapshot?
+    var usMarketHeaderText: String
+    var usMarketHeaderStatus: USMarketHeaderStatus
+    var usMarketQuotes: [String: USMarketQuote]
+    var bridge: BridgeClient?
+    var onOpenAI: () -> Void
+    var onReloadSnapshot: () -> Void
+
+    @State private var showAdd = false
+    @State private var candidates: [SurfaceCandidate] = []
+    @State private var filter = ""
+    @State private var busy = false
+    @State private var errorText: String?
+
+    private var defaultCodes: Set<String> {
+        Set(overnight.filter { !($0.isUserAppended ?? false) }.map { $0.code.uppercased() })
+    }
+
+    private var displayOvernight: [IndexQuote] {
+        var list = overnight
+        let have = Set(list.map { $0.code.uppercased() })
+        // 配置里有、strip 尚无价的追加项 → pending chip
+        for item in surfaceConfig?.overnightAppend ?? [] {
+            let code = item.code.uppercased()
+            if have.contains(code) { continue }
+            list.append(IndexQuote(
+                code: code,
+                name: item.name ?? code,
+                close: item.probeClose ?? 0,
+                pct: 0,
+                date: nil,
+                isUserAppended: true,
+                pending: true,
+                kindSource: item.kindSource,
+                probeClose: item.probeClose
+            ))
+        }
+        return list
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
+                SectionHeader("隔夜美股")
+                Spacer(minLength: 8)
+                Label(
+                    usMarketHeaderText,
+                    systemImage: usMarketHeaderStatus.systemImage
+                )
+                .font(KSSFont.themed(11.5, .medium, theme: theme))
+                .foregroundStyle(
+                    usMarketHeaderStatus.isActive ? theme.accent : theme.textSecondary
+                )
+                .lineLimit(1)
+                .padding(.top, 6)
+                Button {
+                    loadCandidatesAndShow()
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(theme.accent)
+                .disabled(bridge == nil || busy)
+                .help("追加隔夜标的")
+                .popover(isPresented: $showAdd, arrowEdge: .bottom) {
+                    addPopover
+                }
+                Button {
+                    onOpenAI()
+                } label: {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 14, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(theme.accent)
+                .help("用 AI 追加/调整")
+                .padding(.top, 4)
+            }
+            if let errorText {
+                Text(errorText)
+                    .font(KSSFont.themed(11, theme: theme))
+                    .foregroundStyle(.red.opacity(0.85))
+            }
+            if !displayOvernight.isEmpty {
+                OvernightUSMarquee(
+                    indices: displayOvernight,
+                    quotes: usMarketQuotes,
+                    onRemoveUser: removeUser
+                )
+            } else {
+                Text("暂无隔夜报价 · 可用 + 追加标的")
+                    .font(KSSFont.themed(12, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                    .padding(.leading, 4)
+            }
+        }
+    }
+
+    private var addPopover: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("追加隔夜标的")
+                .font(KSSFont.themed(14, .semibold, theme: theme))
+            TextField("搜索代码或名称", text: $filter)
+                .textFieldStyle(.roundedBorder)
+            List {
+                ForEach(filteredCandidates) { c in
+                    Button {
+                        appendCandidate(c)
+                    } label: {
+                        HStack {
+                            Text(c.code)
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            Text(c.name ?? "")
+                                .foregroundStyle(theme.textSecondary)
+                            Spacer()
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(defaultCodes.contains(c.code.uppercased()))
+                }
+            }
+            .frame(width: 280, height: 260)
+        }
+        .padding(12)
+    }
+
+    private var filteredCandidates: [SurfaceCandidate] {
+        let q = filter.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let base = candidates.filter { !defaultCodes.contains($0.code.uppercased()) }
+        guard !q.isEmpty else { return base }
+        return base.filter {
+            $0.code.uppercased().contains(q)
+                || ($0.name ?? "").uppercased().contains(q)
+        }
+    }
+
+    private func loadCandidatesAndShow() {
+        guard let bridge else { return }
+        busy = true
+        errorText = nil
+        Task {
+            do {
+                let resp = try await Task.detached { try bridge.surfaceGet() }.value
+                await MainActor.run {
+                    candidates = resp.candidates ?? []
+                    showAdd = true
+                    busy = false
+                }
+            } catch {
+                await MainActor.run {
+                    errorText = error.localizedDescription
+                    busy = false
+                }
+            }
+        }
+    }
+
+    private func appendCandidate(_ c: SurfaceCandidate) {
+        guard let bridge else { return }
+        busy = true
+        errorText = nil
+        let name = (c.name ?? c.code).replacingOccurrences(of: "\"", with: "")
+        let kind = c.kind ?? "yfinance"
+        let ops = """
+        [{"op":"overnight_append","code":"\(c.code)","name":"\(name)","kind":"\(kind)","kind_source":"candidate_table","added_via":"plus"}]
+        """
+        Task {
+            do {
+                let resp = try await Task.detached {
+                    try bridge.surfaceApply(opsJSON: ops)
+                }.value
+                await MainActor.run {
+                    busy = false
+                    showAdd = false
+                    if resp.ok == false {
+                        errorText = resp.error ?? "追加失败"
+                    } else {
+                        onReloadSnapshot()
+                        // 尽力刷新隔夜行情
+                        Task.detached {
+                            _ = try? bridge.runTask(.refreshMarketStrip)
+                        }
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    busy = false
+                    errorText = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func removeUser(_ code: String) {
+        guard let bridge else { return }
+        let ops = "[{\"op\":\"overnight_remove\",\"code\":\"\(code)\"}]"
+        Task {
+            _ = try? await Task.detached {
+                try bridge.surfaceApply(opsJSON: ops)
+            }.value
+            await MainActor.run { onReloadSnapshot() }
+        }
+    }
+}
+
 /// 隔夜美股跑马灯：名单固定顺序，不按涨跌重排；行情状态集中放在分区标题，
 /// chip 只承载名称、价格与涨跌，保持密度与连续滚动。
 struct OvernightUSMarquee: View {
     @Environment(\.kssTheme) private var theme
     var indices: [IndexQuote]
     var quotes: [String: USMarketQuote] = [:]
+    var onRemoveUser: ((String) -> Void)? = nil
 
     private let gap: CGFloat = 10
     private let speed: Double = 34
@@ -1165,7 +1463,16 @@ struct OvernightUSMarquee: View {
 
     private func row(measured: Bool) -> some View {
         HStack(spacing: gap) {
-            ForEach(indices) { chip($0) }
+            ForEach(indices) { idx in
+                chip(idx)
+                    .contextMenu {
+                        if idx.isUserAppended == true, let onRemoveUser {
+                            Button("移除 \(idx.name)", role: .destructive) {
+                                onRemoveUser(idx.code)
+                            }
+                        }
+                    }
+            }
         }
         .background {
             if measured {
@@ -1180,6 +1487,7 @@ struct OvernightUSMarquee: View {
     }
 
     private func chip(_ index: IndexQuote) -> some View {
+        let pending = index.pending == true
         let live = quotes[index.code.uppercased()]
         let close = live?.last ?? index.close
         let pct = live?.pct ?? index.pct
@@ -1187,33 +1495,46 @@ struct OvernightUSMarquee: View {
         let isObserved = ["live", "delayed"].contains(status)
 
         return HStack(spacing: 7) {
-            Image(
-                systemName: pct >= 0
-                    ? "arrowtriangle.up.fill"
-                    : "arrowtriangle.down.fill"
-            )
-            .font(KSSFont.themed(9, .bold, theme: theme))
-            .foregroundStyle(theme.signColor(pct))
+            if pending {
+                Image(systemName: "clock")
+                    .font(KSSFont.themed(9, .bold, theme: theme))
+                    .foregroundStyle(Color(white: 0.45))
+            } else {
+                Image(
+                    systemName: pct >= 0
+                        ? "arrowtriangle.up.fill"
+                        : "arrowtriangle.down.fill"
+                )
+                .font(KSSFont.themed(9, .bold, theme: theme))
+                .foregroundStyle(theme.signColor(pct))
+            }
             Text(index.name)
                 .font(KSSFont.themed(12.5, .bold, theme: theme))
                 .foregroundStyle(Color(white: 0.12))
                 .lineLimit(1)
-            LivePriceText(
-                value: close,
-                text: String(format: "%.2f", close),
-                baseColor: Color(white: 0.35),
-                isLive: isObserved,
-                font: .system(size: 12, weight: .semibold, design: .monospaced)
-            )
-            .lineLimit(1)
-            LivePriceText(
-                value: pct,
-                text: String(format: "%+.2f%%", pct),
-                baseColor: theme.signColor(pct),
-                isLive: isObserved,
-                font: .system(size: 12, weight: .heavy, design: .monospaced)
-            )
-            .lineLimit(1)
+            if pending {
+                Text("待刷新")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color(white: 0.45))
+                    .lineLimit(1)
+            } else {
+                LivePriceText(
+                    value: close,
+                    text: String(format: "%.2f", close),
+                    baseColor: Color(white: 0.35),
+                    isLive: isObserved,
+                    font: .system(size: 12, weight: .semibold, design: .monospaced)
+                )
+                .lineLimit(1)
+                LivePriceText(
+                    value: pct,
+                    text: String(format: "%+.2f%%", pct),
+                    baseColor: theme.signColor(pct),
+                    isLive: isObserved,
+                    font: .system(size: 12, weight: .heavy, design: .monospaced)
+                )
+                .lineLimit(1)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
@@ -1224,7 +1545,7 @@ struct OvernightUSMarquee: View {
         )
         .shadow(color: Color.black.opacity(0.04), radius: 2, y: 1)
         .fixedSize()
-        .help(live?.error ?? "")
+        .help(live?.error ?? (pending ? "已追加，等待行情刷新" : ""))
     }
 
     private var edgeFade: some View {

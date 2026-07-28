@@ -287,7 +287,11 @@ struct ContentView: View {
                     usMarketUpdatedAt: store.usMarketUpdatedAt,
                     onLoadUSMarket: {
                         Task { await store.loadUSMarketData() }
-                    }
+                    },
+                    onReloadSnapshot: {
+                        Task { await store.loadSnapshot() }
+                    },
+                    bridge: store.bridge
                 )
             case .recommendations:
                 RecommendationsView(

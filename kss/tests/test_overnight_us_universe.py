@@ -31,3 +31,19 @@ def test_merge_preserves_universe_order_skips_missing():
 def test_merge_all_fail_empty():
     assert merge_overnight_quotes([]) == []
     assert merge_overnight_quotes([{"code": "IXIC"}]) == []  # no close/pct
+
+
+def test_merge_with_append_universe_after_defaults():
+    universe = list(OVERNIGHT_US_UNIVERSE) + [
+        {"code": "AAPL", "name": "苹果", "kind": "yfinance"},
+    ]
+    fetched = [
+        {"code": "IXIC", "close": 1.0, "pct": 0.1},
+        {"code": "AAPL", "close": 200.0, "pct": 1.5},
+        {"code": "NVDA", "close": 100.0, "pct": 2.0},
+    ]
+    out = merge_overnight_quotes(fetched, universe=universe)
+    codes = [x["code"] for x in out]
+    assert codes.index("IXIC") < codes.index("NVDA")
+    assert codes[-1] == "AAPL"
+    assert codes.index("NVDA") < codes.index("AAPL")

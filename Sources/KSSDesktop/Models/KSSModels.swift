@@ -682,6 +682,110 @@ struct MarketStrip: Codable, Hashable {
     var overnightUS: [IndexQuote]?
     /// 第二行三列指数堆叠（含 sparkline）
     var indexStacks: [IndexStackColumn]?
+    /// 指标小卡 resolved props（bridge 读时注入）
+    var stripMetric: StripMetricProps? = nil
+    /// L3 surface 配置摘要
+    var surfaceConfig: SurfaceConfigSnapshot? = nil
+}
+
+/// 盯盘指标小卡 props（代码 resolve，非 LLM）。
+struct StripMetricProps: Codable, Hashable {
+    var metricId: String?
+    var title: String?
+    var value: Double?
+    var valueText: String?
+    var delta: Double?
+    var deltaText: String?
+    var sub: String?
+    var reason: String?
+
+    enum CodingKeys: String, CodingKey {
+        case title, value, delta, sub, reason
+        case metricId = "metric_id"
+        case valueText = "valueText"
+        case deltaText = "deltaText"
+    }
+}
+
+/// surface 配置摘要（挂在 marketStrip 上）。
+struct SurfaceConfigSnapshot: Codable, Hashable {
+    var overnightAppend: [SurfaceAppendItem]?
+    var stripMetricId: String?
+    var degraded: Bool?
+    var error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case overnightAppend, stripMetricId, degraded, error
+    }
+}
+
+struct SurfaceAppendItem: Codable, Hashable, Identifiable {
+    var id: String { code }
+    var code: String
+    var name: String?
+    var kind: String?
+    var kindSource: String?
+    var probeClose: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case code, name, kind
+        case kindSource = "kind_source"
+        case probeClose = "probe_close"
+    }
+}
+
+/// surface-get / apply 响应。
+struct SurfaceGetResponse: Codable, Hashable {
+    var ok: Bool?
+    var config: SurfaceConfigBody?
+    var candidates: [SurfaceCandidate]?
+    var metrics: [SurfaceMetricInfo]?
+    var stripMetric: StripMetricProps?
+    var error: String?
+}
+
+struct SurfaceConfigBody: Codable, Hashable {
+    var overnightUs: SurfaceOvernightBody?
+    var stripMetric: SurfaceStripMetricBody?
+
+    enum CodingKeys: String, CodingKey {
+        case overnightUs = "overnight_us"
+        case stripMetric = "strip_metric"
+    }
+}
+
+struct SurfaceOvernightBody: Codable, Hashable {
+    var append: [SurfaceAppendItem]?
+}
+
+struct SurfaceStripMetricBody: Codable, Hashable {
+    var metricId: String?
+    enum CodingKeys: String, CodingKey { case metricId = "metric_id" }
+}
+
+struct SurfaceCandidate: Codable, Hashable, Identifiable {
+    var id: String { code }
+    var code: String
+    var name: String?
+    var kind: String?
+}
+
+struct SurfaceMetricInfo: Codable, Hashable, Identifiable {
+    var id: String { metricId }
+    var metricId: String
+    var title: String?
+    var description: String?
+
+    enum CodingKeys: String, CodingKey {
+        case title, description
+        case metricId = "metric_id"
+    }
+}
+
+struct SurfaceApplyResponse: Codable, Hashable {
+    var ok: Bool?
+    var error: String?
+    var stripMetric: StripMetricProps?
 }
 
 /// 一列堆叠（main / growth / hk）
@@ -752,6 +856,11 @@ struct IndexQuote: Codable, Hashable, Identifiable {
     var close: Double
     var pct: Double
     var date: String?
+    /// 用户 surface 追加项（bridge 读时注入）；默认项为 nil/false
+    var isUserAppended: Bool? = nil
+    var pending: Bool? = nil
+    var kindSource: String? = nil
+    var probeClose: Double? = nil
 }
 
 // MARK: - 趋势页（日历）模型（bridge trends-month / trends-day 输出）
