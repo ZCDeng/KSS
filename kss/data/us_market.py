@@ -236,7 +236,34 @@ class USMarketQuoteService:
         if symbols is None:
             return self.universe
         wanted = {s.strip().upper() for s in symbols if s and s.strip()}
-        return tuple(row for row in self.universe if row.code.upper() in wanted)
+        known = {row.code.upper(): row for row in self.universe}
+        out: list[USMarketSymbol] = []
+        for code in wanted:
+            if code in known:
+                out.append(known[code])
+            else:
+                # 未知 code：显式 unavailable 占位，不静默丢弃
+                out.append(
+                    USMarketSymbol(
+                        code,
+                        code,
+                        "static",
+                        yfinance_symbol=None,
+                        longbridge_symbol=None,
+                    )
+                )
+        # 保持 self.universe 产品顺序优先，再附加未知
+        ordered: list[USMarketSymbol] = []
+        seen: set[str] = set()
+        for row in self.universe:
+            if row.code.upper() in wanted:
+                ordered.append(row)
+                seen.add(row.code.upper())
+        for row in out:
+            if row.code.upper() not in seen:
+                ordered.append(row)
+                seen.add(row.code.upper())
+        return tuple(ordered)
 
     def _fetch_longbridge_batch(self, rows: list[USMarketSymbol]) -> dict[str, ProviderQuote]:
         if self.longbridge_provider is None or not rows:

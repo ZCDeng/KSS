@@ -178,6 +178,37 @@ TOOL_SPECS: list[dict[str, Any]] = [
           ["family", "params", "symbols", "verdict_ref"]),
     _spec("retire_indicator", "indicator-retire",
           "退役一个已固化指标(不删历史数据)。**写操作,须人工确认**", {"entry_id": _STR}, ["entry_id"]),
+    # ---- 盯盘 surface（配置化跑马灯/指标小卡）----
+    _spec(
+        "get_surface_config",
+        "surface-get",
+        "读盯盘 surface 配置与 resolved 预览(隔夜追加名单/指标小卡)",
+        execution_mode="parallel",
+    ),
+    _spec(
+        "list_surface_metrics",
+        "surface-metrics",
+        "指标小卡白名单与当前样例真值",
+        execution_mode="parallel",
+    ),
+    _spec(
+        "propose_surface_patch",
+        "surface-propose",
+        "解析 surface 变更意图并返回真值预览(不落盘)。"
+        "ops_json 为 JSON 数组，op∈overnight_append|overnight_remove|set_strip_metric|"
+        "reset_overnight_append|reset_strip_metric。"
+        "先展示预览再请用户确认后才可 apply",
+        {"ops_json": _STR},
+        ["ops_json"],
+    ),
+    _spec(
+        "apply_surface_patch",
+        "surface-apply",
+        "应用 surface patch 写入配置。**写操作,须人工确认**。"
+        "ops_json 与 propose 相同；须先 propose 展示真值再调",
+        {"ops_json": _STR},
+        ["ops_json"],
+    ),
     # ---- 写工具:经 request_write,loop 不执行(KTD-4)----
     _spec("run_task", "run",
           "执行数据任务(白名单,如 update-cs-data / refresh-sector-rotation / paper-summary)。**写操作,须人工确认**",

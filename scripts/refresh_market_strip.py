@@ -152,6 +152,8 @@ def main() -> None:
     if stack_tops:
         indices = stack_tops
 
+    limit_board = _fetch_limit_board(pro, _fetch_with_retry)
+
     payload = {
         "date": etf_date or north_date,
         "etfDate": etf_date,
@@ -162,24 +164,57 @@ def main() -> None:
         "indexBoard": index_board,
         "overnightUS": overnight_us,
         "indexStacks": index_stacks,
+        "limitBoard": limit_board,
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     n_stack = sum(len(c.get("items") or []) for c in index_stacks)
+    lb_note = ""
+    if limit_board and limit_board.get("maxBoard") is not None:
+        lb_note = f" limitBoard.max={limit_board.get('maxBoard')}"
     print(
         f"✅ 写入 {OUT.name}: etfs={len(etfs)} indices={len(indices)} board={len(index_board)} "
-        f"overnightUS={len(overnight_us)} indexStacks={n_stack}"
+        f"overnightUS={len(overnight_us)} indexStacks={n_stack}{lb_note}"
     )
 
 
+def _user_overnight_append() -> list[dict]:
+    """读 surface 用户追加；失败则空列表。"""
+    try:
+        from kss.ui_surface.config import load_config
+
+        cfg = load_config()
+        return list((cfg.get("overnight_us") or {}).get("append") or [])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("load ui_surface overnight append failed: %s", exc)
+        return []
+
+
 def _fetch_overnight_us(pro, fetch_with_retry) -> list[dict]:
-    """固定名单隔夜美股：index_global + yfinance；失败单标跳过。"""
+    """默认名单 + 用户 append：index_global + yfinance；失败单标跳过。"""
     import sys
     sys.path.insert(0, str(ROOT))
     from scripts.overnight_us_universe import OVERNIGHT_US_UNIVERSE, merge_overnight_quotes
 
+    append = _user_overnight_append()
+    universe: list[dict] = [
+        {"code": r["code"], "name": r["name"], "kind": r["kind"]}
+        for r in OVERNIGHT_US_UNIVERSE
+    ]
+    seen = {r["code"].upper() for r in universe}
+    for item in append:
+        code = str(item.get("code") or "").upper()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        universe.append({
+            "code": code,
+            "name": str(item.get("name") or code),
+            "kind": str(item.get("kind") or "yfinance"),
+        })
+
     fetched: list[dict] = []
-    for row in OVERNIGHT_US_UNIVERSE:
+    for row in universe:
         code, name, kind = row["code"], row["name"], row["kind"]
         try:
             if kind == "index_global":
@@ -190,7 +225,36 @@ def _fetch_overnight_us(pro, fetch_with_retry) -> list[dict]:
                 fetched.append(item)
         except Exception as exc:  # noqa: BLE001
             logger.warning("overnightUS %s failed: %s", code, exc)
-    return merge_overnight_quotes(fetched)
+    return merge_overnight_quotes(fetched, universe=universe)
+
+
+def _fetch_limit_board(pro, fetch_with_retry) -> dict | None:
+    """涨停情绪：最高连板 + 封板率（limit_list_d）。失败返回 None。"""
+    from datetime import datetime, timedelta
+
+    today = datetime.now().date()
+    for i in range(0, 10):
+        d = today - timedelta(days=i)
+        if d.weekday() >= 5:
+            continue
+        trade_date = d.strftime("%Y%m%d")
+        df = fetch_with_retry(
+            lambda td=trade_date: pro.limit_list_d(trade_date=td),
+            f"limit_list_d {trade_date}",
+        )
+        if df is None or getattr(df, "empty", True):
+            continue
+        try:
+            from kss.ui_surface.limit_board import aggregate_limit_board
+
+            board = aggregate_limit_board(df)
+            if board:
+                board["asOf"] = trade_date
+                return board
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("limit_board aggregate failed: %s", exc)
+            return None
+    return None
 
 
 def _quote_index_global(pro, fetch_with_retry, code: str, name: str) -> dict | None:

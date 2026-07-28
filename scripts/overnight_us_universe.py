@@ -35,16 +35,17 @@ OVERNIGHT_US_UNIVERSE: tuple[UniverseRow, ...] = (
 def merge_overnight_quotes(
     fetched: Iterable[dict[str, Any]],
     *,
-    universe: tuple[UniverseRow, ...] = OVERNIGHT_US_UNIVERSE,
+    universe: tuple[UniverseRow, ...] | list[dict[str, Any]] = OVERNIGHT_US_UNIVERSE,
 ) -> list[dict[str, Any]]:
     """按 universe 顺序合并已成功报价；缺数跳过，不重排。
 
     每项 fetched 至少含 ``code``；可选 close/pct/date/source/name。
+    ``universe`` 可为默认 tuple 或含 code/name/kind 的 list（用户 append 扩展）。
     """
     by_code = {str(x.get("code", "")).upper(): x for x in fetched if x.get("code")}
     out: list[dict[str, Any]] = []
     for row in universe:
-        code = row["code"].upper()
+        code = str(row["code"]).upper()
         hit = by_code.get(code)
         if not hit:
             continue
@@ -54,10 +55,25 @@ def merge_overnight_quotes(
             continue
         out.append({
             "code": code,
-            "name": hit.get("name") or row["name"],
+            "name": hit.get("name") or row.get("name") or code,
             "close": float(close),
             "pct": float(pct),
             "date": hit.get("date") or "",
-            "source": hit.get("source") or row["kind"],
+            "source": hit.get("source") or row.get("kind") or "",
+        })
+    return out
+
+
+def universe_from_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """把任意 code/name/kind 行规范为 merge 可用 list。"""
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        code = str(row.get("code") or "").upper()
+        if not code:
+            continue
+        out.append({
+            "code": code,
+            "name": str(row.get("name") or code),
+            "kind": str(row.get("kind") or "yfinance"),
         })
     return out
