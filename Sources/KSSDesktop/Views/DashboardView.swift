@@ -879,8 +879,13 @@ struct MarketStripRow: View {
     private static let metricChoices: [(id: String, title: String)] = [
         ("limit_max_board", "最高连板"),
         ("limit_seal_rate", "封板率"),
+        ("limit_up_count", "涨停家数"),
+        ("limit_break_rate", "破板率"),
+        ("index_sse", "上证指数"),
+        ("index_szse", "深证成指"),
         ("index_kcb50", "科创50"),
         ("index_cyb", "创业板指"),
+        ("index_a50", "富时中国A50"),
     ]
 
     /// 指标卡固定占 1 槽；北向若有占 1 槽；其余给 ETF（总 ≤ maxPerRow）。
@@ -954,8 +959,8 @@ struct MarketStripRow: View {
                     disabled: metricBusy || bridge == nil,
                     sheetTitle: "配置指标小卡",
                     region: "strip_metric",
-                    nlPlaceholder: "例如：改成封板率、最高连板、科创50",
-                    nlExamples: ["改成封板率", "最高连板", "创业板指"],
+                    nlPlaceholder: "例如：改成封板率、上证指数、富时A50",
+                    nlExamples: ["改成封板率", "上证指数", "富时A50"],
                     bridge: bridge,
                     onOpenAI: onOpenAIWithRegion.map { cb in { cb("strip_metric") } },
                     onDraft: { draft in bindDraft = draft },
@@ -1276,6 +1281,8 @@ struct OvernightUSSection: View {
     var onReloadSnapshot: () -> Void
 
     @State private var candidates: [SurfaceCandidate] = []
+    @State private var catalogItems: [SurfaceCatalogItem] = []
+    @State private var domainsOnline: [String] = []
     @State private var filter = ""
     @State private var listLoading = false
     @State private var busy = false
@@ -1333,15 +1340,22 @@ struct OvernightUSSection: View {
                     onOpenAI: onOpenAI,
                     onDraft: { draft in bindDraft = draft },
                     listTabTitle: "列表选择",
-                    onListTabAppear: { loadCandidates() },
+                    onListTabAppear: { loadCatalogList() },
                     listContent: { dismiss in
-                        DashboardCandidatePickerList(
-                            candidates: candidates,
-                            disabledCodes: defaultCodes,
-                            isLoading: listLoading,
-                            filter: $filter
-                        ) { c in
-                            appendCandidate(c, dismiss: dismiss)
+                        VStack(alignment: .leading, spacing: 8) {
+                            if !domainsOnline.isEmpty {
+                                Text("已上线域：" + domainsOnline.joined(separator: " · "))
+                                    .font(KSSFont.themed(11, theme: theme))
+                                    .foregroundStyle(theme.textSecondary)
+                            }
+                            DashboardCandidatePickerList(
+                                candidates: catalogAsCandidates,
+                                disabledCodes: defaultCodes,
+                                isLoading: listLoading,
+                                filter: $filter
+                            ) { c in
+                                appendCandidate(c, dismiss: dismiss)
+                            }
                         }
                     }
                 )
@@ -1404,11 +1418,67 @@ struct OvernightUSSection: View {
         }
     }
 
-    private func loadCandidates() {
+    private var catalogAsCandidates: [SurfaceCandidate] {
+        if !catalogItems.isEmpty {
+            return catalogItems.map {
+                SurfaceCandidate(
+                    code: $0.displayCode.isEmpty ? $0.id : $0.displayCode,
+                    name: $0.displayName,
+                    kind: $0.kind == "equity" || $0.kind == "etf" || $0.kind == "index"
+                        ? ($0.codes?["code"] != nil
+                            ? overnightKindHint(for: $0)
+                            : "yfinance")
+                        : overnightKindHint(for: $0)
+                )
+            }
+        }
+        return candidates
+    }
+
+    private func overnightKindHint(for item: SurfaceCatalogItem) -> String {
+        if item.market == "CN" { return "a_share" }
+        if item.market == "HK" { return "hk" }
+        if item.kind == "index" { return "index_global" }
+        return "yfinance"
+    }
+
+    private func loadCatalogList() {
         guard let bridge else { return }
-        if !candidates.isEmpty { return }
         listLoading = true
         errorText = nil
+        let q = filter
+        Task {
+            do {
+                let resp = try await Task.detached {
+                    try bridge.surfaceCatalog(slot: "overnight_marquee", q: q)
+                }.value
+                await MainActor.run {
+                    domainsOnline = resp.domainsOnline ?? []
+                    catalogItems = resp.items ?? []
+                    if catalogItems.isEmpty {
+                        // fallback surface-get 旧候选
+                        loadCandidatesFallback()
+                    } else {
+                        listLoading = false
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    loadCandidatesFallback()
+                    if candidates.isEmpty {
+                        errorText = error.localizedDescription
+                    }
+                    listLoading = false
+                }
+            }
+        }
+    }
+
+    private func loadCandidatesFallback() {
+        guard let bridge else {
+            listLoading = false
+            return
+        }
         Task {
             do {
                 let resp = try await Task.detached { try bridge.surfaceGet() }.value

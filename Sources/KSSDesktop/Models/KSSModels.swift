@@ -788,6 +788,54 @@ struct SurfaceApplyResponse: Codable, Hashable {
     var stripMetric: StripMetricProps?
 }
 
+/// surface-catalog 响应（Bind Catalog 只读）。
+struct SurfaceCatalogResponse: Codable, Hashable {
+    var ok: Bool?
+    var slot: String?
+    var q: String?
+    var domainsOnline: [String]?
+    var items: [SurfaceCatalogItem]?
+    var total: Int?
+    var error: String?
+    var errorZh: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, slot, q, items, total, error
+        case domainsOnline = "domains_online"
+        case errorZh = "error_zh"
+    }
+}
+
+struct SurfaceCatalogItem: Codable, Hashable, Identifiable {
+    var id: String
+    var kind: String?
+    var market: String?
+    var names: [String]?
+    var aliases: [String]?
+    var metricId: String?
+    var codes: [String: String]?
+    var allowedSlots: [String]?
+    var status: String?
+    var domains: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case id, kind, market, names, aliases, codes, status, domains
+        case metricId = "metric_id"
+        case allowedSlots = "allowed_slots"
+    }
+
+    var displayName: String {
+        if let n = names?.first, !n.isEmpty { return n }
+        if let mid = metricId, !mid.isEmpty { return mid }
+        if let c = codes?["primary"] ?? codes?["code"] { return c }
+        return id
+    }
+
+    var displayCode: String {
+        codes?["primary"] ?? codes?["code"] ?? metricId ?? ""
+    }
+}
+
 /// surface-nl-interpret 响应（不落盘 draft + 人话真值预览）。
 struct SurfaceNlInterpretResponse: Codable, Hashable {
     var ok: Bool?

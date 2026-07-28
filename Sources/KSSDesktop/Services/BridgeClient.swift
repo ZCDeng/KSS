@@ -413,9 +413,17 @@ struct BridgeClient {
         try run(["surface-apply", opsJSON], as: SurfaceApplyResponse.self)
     }
 
-    /// 档 A 自然语言解析 surface draft（不落盘；可能探针外网）。
+    /// 档 A/B 自然语言解析 surface draft（不落盘；可能探针外网）。
     func surfaceNlInterpret(region: String, text: String) throws -> SurfaceNlInterpretResponse {
         try run(["surface-nl-interpret", region, text], as: SurfaceNlInterpretResponse.self)
+    }
+
+    /// Bind Catalog 只读搜索（slot + 可选 q）。
+    func surfaceCatalog(slot: String, q: String = "") throws -> SurfaceCatalogResponse {
+        if q.isEmpty {
+            return try run(["surface-catalog", slot], as: SurfaceCatalogResponse.self)
+        }
+        return try run(["surface-catalog", slot, q], as: SurfaceCatalogResponse.self)
     }
 
     func setWatchlist(_ symbols: [String]) throws -> WatchlistSetResult {
@@ -444,7 +452,8 @@ struct BridgeClient {
         "intel-article", "intel-rewrite", "intel-rewrite-run",
         "cron-catchup", "cron-rerun", "cron-rerun-many", "cron-enable", "cron-disable",
         // surface-apply / propose / nl-interpret 可能探针外网（yfinance），避免 sidecar 3s 超时双跑
-        "surface-apply", "surface-propose", "surface-get", "surface-metrics", "surface-nl-interpret",
+        "surface-apply", "surface-propose", "surface-get", "surface-metrics",
+        "surface-nl-interpret", "surface-catalog",
     ]
 
     private func run<T: Decodable>(_ args: [String], as type: T.Type) throws -> T {

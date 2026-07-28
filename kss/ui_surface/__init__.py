@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from kss.ui_surface.bind_catalog import load_catalog, search as catalog_search
 from kss.ui_surface.config import (
     DEFAULT_STRIP_METRIC,
     MAX_APPEND,
@@ -25,8 +26,10 @@ __all__ = [
     "MAX_APPEND",
     "METRIC_CATALOG",
     "apply_patch",
+    "catalog_search",
     "default_codes",
     "effective_overnight_universe",
+    "load_catalog",
     "load_config",
     "probe_overnight_code",
     "resolve_metric_props",

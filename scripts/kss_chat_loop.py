@@ -204,11 +204,20 @@ TOOL_SPECS: list[dict[str, Any]] = [
     _spec(
         "surface_nl_interpret",
         "surface-nl-interpret",
-        "档A自然语言解析 surface 绑定(不落盘)。region=overnight_us|strip_metric；"
+        "档A/B自然语言解析 surface 绑定(不落盘)。region=overnight_us|strip_metric；"
         "返回 ops/previews 真值预览。组件旁 NL 主路径；chat 为辅。"
         "落盘仍须 apply_surface_patch + 人确认",
         {"region": _STR, "text": _STR},
         ["region", "text"],
+        execution_mode="parallel",
+    ),
+    _spec(
+        "surface_catalog",
+        "surface-catalog",
+        "Bind Catalog 只读搜索。slot=overnight_marquee|strip_metric；"
+        "q 为名称/代码；可选 market/kind/limit。与 NL 同一可绑目录",
+        {"slot": _STR, "q": _STR, "market": _STR, "kind": _STR, "limit": _STR},
+        ["slot"],
         execution_mode="parallel",
     ),
     _spec(

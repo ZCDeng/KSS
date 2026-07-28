@@ -255,6 +255,34 @@ final class DashboardSurfaceConfigTests: XCTestCase {
         XCTAssertEqual(resp.suggestions?.count, 4)
     }
 
+    func testSurfaceCatalogResponseDecodes() throws {
+        let json = """
+        {
+          "ok": true,
+          "slot": "strip_metric",
+          "q": "封板",
+          "domains_online": ["metric_hot", "equity_us"],
+          "total": 1,
+          "items": [{
+            "id": "metric.limit_seal_rate",
+            "kind": "breadth_metric",
+            "market": "CN",
+            "names": ["封板率"],
+            "metric_id": "limit_seal_rate",
+            "codes": {"metric_id": "limit_seal_rate"},
+            "allowed_slots": ["strip_metric"],
+            "status": "active",
+            "domains": ["metric_hot"]
+          }]
+        }
+        """
+        let resp = try decoder.decode(SurfaceCatalogResponse.self, from: data(json))
+        XCTAssertEqual(resp.ok, true)
+        XCTAssertEqual(resp.domainsOnline?.contains("metric_hot"), true)
+        XCTAssertEqual(resp.items?.first?.metricId, "limit_seal_rate")
+        XCTAssertEqual(resp.items?.first?.displayName, "封板率")
+    }
+
     func testStripMetricEmptyReason() throws {
         let json = """
         {

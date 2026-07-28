@@ -86,12 +86,19 @@ def _resolve_token(
     token: str,
     alias_index: dict[str, dict[str, str]],
 ) -> dict[str, Any]:
-    """token → {status, code?, name?, kind?, error?}"""
+    """token → {status, code?, name?, kind?, error?}；优先 Bind Catalog。"""
+    from kss.ui_surface.bind_catalog import (
+        SLOT_OVERNIGHT,
+        guess_overnight_kind,
+        resolve_overnight_from_catalog_item,
+        search as catalog_search,
+    )
+
     raw = token.strip()
     if not raw:
         return {"status": "failed", "token": token, "error": "empty_token"}
 
-    # 别名
+    # 1) 静态别名表优先（档 A 黄金句 / 避免「纳指」子串命中 QQQ）
     key_lower = raw.lower()
     hit = alias_index.get(key_lower) or alias_index.get(raw) or lookup_symbol(raw)
     if hit:
@@ -103,22 +110,40 @@ def _resolve_token(
             "kind": hit.get("kind") or "yfinance",
         }
 
-    # 直接 ticker
+    # 2) catalog 检索（overnight 槽）
+    cat_hit = catalog_search(SLOT_OVERNIGHT, raw, limit=5)
+    if cat_hit.get("ok") and cat_hit.get("items"):
+        item = cat_hit["items"][0]
+        resolved = resolve_overnight_from_catalog_item(item)
+        if resolved.get("code"):
+            return {
+                "status": "ok",
+                "token": token,
+                "code": resolved["code"].upper(),
+                "name": resolved.get("name") or resolved["code"],
+                "kind": resolved.get("kind") or "yfinance",
+                "catalog_id": item.get("id"),
+            }
+
+    # 3) 精确 code ad-hoc（probe 由上层决定成败）
     code = raw.upper()
     if CODE_RE.match(code):
+        kind = guess_overnight_kind(code)
         return {
             "status": "ok",
             "token": token,
             "code": code,
             "name": code,
-            "kind": "yfinance",
+            "kind": kind,
         }
 
+    domains = cat_hit.get("domains_online") or []
+    domain_hint = f" 已上线域：{', '.join(domains)}" if domains else ""
     return {
         "status": "failed",
         "token": token,
         "error": "unknown_symbol",
-        "error_zh": f"无法识别「{raw}」，可说：苹果、英伟达、AAPL",
+        "error_zh": f"无法识别「{raw}」{domain_hint}。可说：苹果、茅台、AAPL、00700.HK",
     }
 
 
@@ -365,24 +390,46 @@ def interpret_strip_metric(
     _, rest = _strip_leading_verbs(t, _METRIC_VERBS)
     # 再去掉「指标」等
     rest = rest.strip()
-    for noise in ("指标", "小卡", "显示", "一下"):
+    for noise in ("指标", "小卡", "显示", "一下", "改成", "改为", "换成"):
         rest = rest.replace(noise, " ")
     rest = rest.strip() or t
 
-    metric_id = lookup_metric(rest)
-    if not metric_id:
-        # 尝试整句别名
-        metric_id = lookup_metric(t)
-    if not metric_id:
-        # 子串匹配登记别名键
-        from kss.ui_surface.aliases import METRIC_ALIASES
+    from kss.ui_surface.bind_catalog import (
+        SLOT_STRIP,
+        resolve_metric_id_from_catalog_item,
+        search as catalog_search,
+    )
 
-        for key, mid in sorted(METRIC_ALIASES.items(), key=lambda x: -len(x[0])):
-            if key in t or key in rest:
-                metric_id = mid
-                break
+    metric_id = lookup_metric(rest) or lookup_metric(t)
+    if not metric_id:
+        cat = catalog_search(SLOT_STRIP, rest or t, limit=5)
+        domains = cat.get("domains_online") or []
+        if cat.get("ok") and cat.get("items"):
+            metric_id = resolve_metric_id_from_catalog_item(cat["items"][0])
+        if not metric_id:
+            from kss.ui_surface.aliases import METRIC_ALIASES
 
-    if not metric_id or metric_id not in METRIC_CATALOG:
+            for key, mid in sorted(METRIC_ALIASES.items(), key=lambda x: -len(x[0])):
+                if key in t or key in rest:
+                    metric_id = mid
+                    break
+        if not metric_id or metric_id not in METRIC_CATALOG:
+            domain_hint = f" 已上线域：{', '.join(domains)}" if domains else ""
+            return {
+                "ok": False,
+                "region": "strip_metric",
+                "action": "set_strip_metric",
+                "error": "unknown_metric",
+                "error_zh": (
+                    f"暂不支持「{rest or t}」{domain_hint}。"
+                    "可说：" + "、".join(METRIC_SUGGESTIONS)
+                ),
+                "suggestions": list(METRIC_SUGGESTIONS),
+                "domains_online": domains,
+                "previews": [],
+                "ops": [],
+            }
+    if metric_id not in METRIC_CATALOG:
         return {
             "ok": False,
             "region": "strip_metric",

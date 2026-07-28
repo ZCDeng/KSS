@@ -158,6 +158,16 @@ def test_set_metric_seal_rate() -> None:
     assert r["previews"][0].get("title")
 
 
+def test_set_metric_a50() -> None:
+    strip = {
+        "overnightUS": [{"code": "XIN9", "name": "A50", "close": 12000.0, "pct": 0.5}],
+    }
+    r = interpret_strip_metric("改为富时中国A50指数", market_strip=strip)
+    assert r["ok"] is True
+    assert r["metric_id"] == "index_a50"
+    assert r["previews"][0].get("valueText")
+
+
 def test_metric_without_verb() -> None:
     r = interpret("strip_metric", "最高连板", market_strip={})
     assert r["ok"] is True

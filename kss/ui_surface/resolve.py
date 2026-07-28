@@ -77,6 +77,18 @@ METRIC_CATALOG: dict[str, dict[str, Any]] = {
         "description": "涨停封板 / (封板+曾开板) 近似",
         "unit": "%",
     },
+    "limit_up_count": {
+        "metric_id": "limit_up_count",
+        "title": "涨停家数",
+        "description": "涨停家数（limitBoard.total）",
+        "unit": "家",
+    },
+    "limit_break_rate": {
+        "metric_id": "limit_break_rate",
+        "title": "破板率",
+        "description": "涨停破板率（limitBoard.breakRate）",
+        "unit": "%",
+    },
     "index_kcb50": {
         "metric_id": "index_kcb50",
         "title": "科创50",
@@ -90,6 +102,27 @@ METRIC_CATALOG: dict[str, dict[str, Any]] = {
         "description": "指数一览中的创业板指 收盘与涨跌",
         "unit": "",
         "index_code": "399006.SZ",
+    },
+    "index_sse": {
+        "metric_id": "index_sse",
+        "title": "上证指数",
+        "description": "上证指数 收盘与涨跌",
+        "unit": "",
+        "index_code": "000001.SH",
+    },
+    "index_szse": {
+        "metric_id": "index_szse",
+        "title": "深证成指",
+        "description": "深证成指 收盘与涨跌",
+        "unit": "",
+        "index_code": "399001.SZ",
+    },
+    "index_a50": {
+        "metric_id": "index_a50",
+        "title": "富时中国A50",
+        "description": "富时中国A50（XIN9）",
+        "unit": "",
+        "index_code": "XIN9",
     },
 }
 
@@ -122,29 +155,37 @@ def probe_overnight_code(code: str, kind: str | None = None) -> dict[str, Any]:
     """轻量报价探针：成功返回 close/pct/kind；失败 ok=False。
 
     不落盘。用于 AI 表外码写入前校验。
+    kind: yfinance | index_global | a_share | hk
     """
-    from kss.ui_surface.config import CODE_RE
+    from kss.ui_surface.bind_catalog import guess_overnight_kind
+    from kss.ui_surface.config import is_valid_overnight_code
 
     raw = (code or "").strip().upper()
-    if not raw or not CODE_RE.match(raw):
+    kind_in = (kind or "").strip().lower() or None
+    if not raw:
+        return {"ok": False, "error": "invalid_code", "code": raw}
+    if kind_in is None:
+        kind_in = guess_overnight_kind(raw)
+    if not is_valid_overnight_code(raw, kind_in):
         return {"ok": False, "error": "invalid_code", "code": raw}
 
     # 候选表命中
+    name = raw
     for row in candidate_overnight():
         if row["code"].upper() == raw:
-            kind = row["kind"]
+            kind_in = row["kind"]
             name = row["name"]
             break
-    else:
-        name = raw
-        kind = (kind or "yfinance").strip().lower()
-        if kind not in ("yfinance", "index_global"):
-            kind = "yfinance"
+    kind = kind_in
 
     try:
         if kind == "index_global":
             close, pct, date = _probe_index_global(raw)
             source = "index_global"
+        elif kind == "a_share":
+            close, pct, date, source = _probe_a_share(raw)
+        elif kind == "hk":
+            close, pct, date, source = _probe_hk(raw)
         else:
             close, pct, date = _probe_yfinance(raw)
             source = "yfinance"
@@ -172,6 +213,75 @@ def probe_overnight_code(code: str, kind: str | None = None) -> dict[str, Any]:
         "date": date or "",
         "source": source,
     }
+
+
+def _probe_a_share(code: str) -> tuple[float | None, float | None, str, str]:
+    """A 股：longbridge 优先，否则日线 parquet/cs 不强制；失败 (None,None,'',src)。"""
+    # Longbridge 产品码：600519.SH → 600519.SH 或 SH600519 视 ro 而定
+    try:
+        from kss.longbridge import ro as lb_ro  # type: ignore
+
+        quote = None
+        if hasattr(lb_ro, "get_quote"):
+            quote = lb_ro.get_quote(code)
+        elif hasattr(lb_ro, "quote"):
+            quote = lb_ro.quote(code)
+        if isinstance(quote, dict):
+            last = quote.get("last") or quote.get("close") or quote.get("price")
+            prev = quote.get("prev_close") or quote.get("prevClose")
+            if last is not None:
+                last_f = float(last)
+                pct = 0.0
+                if prev:
+                    pct = (last_f / float(prev) - 1.0) * 100.0
+                elif quote.get("pct") is not None:
+                    pct = float(quote["pct"])
+                return round(last_f, 4), round(pct, 2), "", "longbridge"
+    except Exception:  # noqa: BLE001
+        pass
+    # 日线简单 fallback：tushare daily 最新
+    try:
+        from kss.data.tushare_client import TushareClient, _fetch_with_retry
+
+        pro = TushareClient().get_pro()
+        df = _fetch_with_retry(
+            lambda: pro.daily(ts_code=code, limit=5),
+            f"daily {code}",
+        )
+        if df is not None and not df.empty:
+            df = df.sort_values("trade_date")
+            r = df.iloc[-1]
+            close = float(r["close"])
+            pct = float(r["pct_chg"]) if r.get("pct_chg") is not None else 0.0
+            return round(close, 4), round(pct, 2), str(r["trade_date"]), "tushare_daily"
+    except Exception:  # noqa: BLE001
+        pass
+    return None, None, "", "a_share"
+
+
+def _probe_hk(code: str) -> tuple[float | None, float | None, str, str]:
+    try:
+        from kss.longbridge import ro as lb_ro  # type: ignore
+
+        quote = None
+        if hasattr(lb_ro, "get_quote"):
+            quote = lb_ro.get_quote(code)
+        elif hasattr(lb_ro, "quote"):
+            quote = lb_ro.quote(code)
+        if isinstance(quote, dict):
+            last = quote.get("last") or quote.get("close") or quote.get("price")
+            prev = quote.get("prev_close") or quote.get("prevClose")
+            if last is not None:
+                last_f = float(last)
+                pct = 0.0
+                if prev:
+                    pct = (last_f / float(prev) - 1.0) * 100.0
+                elif quote.get("pct") is not None:
+                    pct = float(quote["pct"])
+                return round(last_f, 4), round(pct, 2), "", "longbridge"
+    except Exception:  # noqa: BLE001
+        pass
+    return None, None, "", "hk"
 
 
 def _probe_yfinance(code: str) -> tuple[float | None, float | None, str]:
@@ -310,30 +420,103 @@ def resolve_metric_props(
             "reason": None,
         }
 
+    if mid == "limit_up_count":
+        lb = strip.get("limitBoard") or {}
+        total = lb.get("total")
+        if total is None:
+            return _empty_metric(mid, title, "no_limit_total")
+        return {
+            "metric_id": mid,
+            "title": title,
+            "value": float(total),
+            "valueText": f"{int(total)} 家",
+            "delta": float(total),
+            "deltaText": "涨停",
+            "sub": "涨停情绪",
+            "reason": None,
+        }
+
+    if mid == "limit_break_rate":
+        lb = strip.get("limitBoard") or {}
+        rate = lb.get("breakRate")
+        if rate is None:
+            return _empty_metric(mid, title, "no_break_rate")
+        pct = float(rate) * 100.0 if float(rate) <= 1.0 else float(rate)
+        return {
+            "metric_id": mid,
+            "title": title,
+            "value": pct,
+            "valueText": f"{pct:.1f}%",
+            "delta": pct,
+            "deltaText": "破板率",
+            "sub": "涨停情绪",
+            "reason": None,
+        }
+
     index_code = meta.get("index_code")
     if index_code:
-        board = strip.get("indexBoard") or []
-        for idx in board:
-            if str(idx.get("code", "")).upper() == index_code.upper():
-                close = idx.get("close")
-                pct = idx.get("pct")
-                if close is None:
-                    return _empty_metric(mid, title, "no_index_quote")
-                return {
-                    "metric_id": mid,
-                    "title": title,
-                    "value": float(close),
-                    "valueText": f"{float(close):.2f}",
-                    "delta": float(pct) if pct is not None else None,
-                    "deltaText": (
-                        f"{float(pct):+.2f}%" if pct is not None else ""
-                    ),
-                    "sub": index_code,
-                    "reason": None,
-                }
+        found = _find_index_quote(strip, index_code)
+        if found:
+            close, pct = found
+            return {
+                "metric_id": mid,
+                "title": title,
+                "value": float(close),
+                "valueText": f"{float(close):.2f}",
+                "delta": float(pct) if pct is not None else None,
+                "deltaText": (
+                    f"{float(pct):+.2f}%" if pct is not None else ""
+                ),
+                "sub": index_code,
+                "reason": None,
+            }
+        # A50 等可能只在 overnightUS
+        if index_code.upper() == "XIN9":
+            for row in strip.get("overnightUS") or []:
+                if str(row.get("code", "")).upper() == "XIN9":
+                    close = row.get("close")
+                    pct = row.get("pct")
+                    if close is not None:
+                        return {
+                            "metric_id": mid,
+                            "title": title,
+                            "value": float(close),
+                            "valueText": f"{float(close):.2f}",
+                            "delta": float(pct) if pct is not None else None,
+                            "deltaText": (
+                                f"{float(pct):+.2f}%" if pct is not None else ""
+                            ),
+                            "sub": "XIN9",
+                            "reason": None,
+                        }
         return _empty_metric(mid, title, "index_not_in_board")
 
     return _empty_metric(mid, title, "unresolved")
+
+
+def _find_index_quote(
+    strip: dict[str, Any], index_code: str
+) -> tuple[float, float | None] | None:
+    code_u = index_code.upper()
+    for board_key in ("indexBoard", "indices"):
+        for idx in strip.get(board_key) or []:
+            if str(idx.get("code", "")).upper() == code_u:
+                close = idx.get("close")
+                if close is None:
+                    return None
+                return float(close), (
+                    float(idx["pct"]) if idx.get("pct") is not None else None
+                )
+    for stack in strip.get("indexStacks") or []:
+        for idx in (stack.get("items") or []):
+            if str(idx.get("code", "")).upper() == code_u:
+                close = idx.get("close")
+                if close is None:
+                    return None
+                return float(close), (
+                    float(idx["pct"]) if idx.get("pct") is not None else None
+                )
+    return None
 
 
 def _empty_metric(metric_id: str, title: str, reason: str) -> dict[str, Any]:

@@ -86,6 +86,10 @@ METRIC_ALIASES: dict[str, str] = {
     "封板": "limit_seal_rate",
     "sealrate": "limit_seal_rate",
     "limit_seal_rate": "limit_seal_rate",
+    "涨停家数": "limit_up_count",
+    "涨停数": "limit_up_count",
+    "破板率": "limit_break_rate",
+    "破板": "limit_break_rate",
     "科创50": "index_kcb50",
     "科创": "index_kcb50",
     "kcb50": "index_kcb50",
@@ -94,13 +98,32 @@ METRIC_ALIASES: dict[str, str] = {
     "创业板": "index_cyb",
     "cyb": "index_cyb",
     "index_cyb": "index_cyb",
+    "上证指数": "index_sse",
+    "上证": "index_sse",
+    "沪指": "index_sse",
+    "index_sse": "index_sse",
+    "深证成指": "index_szse",
+    "深成指": "index_szse",
+    "深证": "index_szse",
+    "index_szse": "index_szse",
+    "富时中国a50": "index_a50",
+    "富时中国A50": "index_a50",
+    "富时a50": "index_a50",
+    "富时A50": "index_a50",
+    "a50": "index_a50",
+    "A50": "index_a50",
+    "index_a50": "index_a50",
 }
 
 METRIC_SUGGESTIONS = (
     "最高连板",
     "封板率",
+    "涨停家数",
+    "破板率",
     "科创50",
     "创业板指",
+    "上证指数",
+    "富时A50",
 )
 
 # 与 config.NORTH_METRICS 对齐的口语

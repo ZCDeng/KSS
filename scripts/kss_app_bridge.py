@@ -2144,7 +2144,7 @@ def _surface_apply(ops_json: str) -> dict[str, Any]:
 
 
 def _surface_nl_interpret(region: str, text: str) -> dict[str, Any]:
-    """档 A 确定性 NL → draft ops + 真值预览（不落盘）。"""
+    """档 A/B 确定性 NL → draft ops + 真值预览（不落盘）。"""
     from kss.ui_surface.config import load_config
     from kss.ui_surface.nl_interpret import interpret
 
@@ -2155,6 +2155,28 @@ def _surface_nl_interpret(region: str, text: str) -> dict[str, Any]:
         text,
         config=cfg,
         market_strip=strip,
+    )
+
+
+def _surface_catalog(
+    slot: str,
+    q: str = "",
+    market: str = "",
+    kind: str = "",
+    limit: str = "",
+) -> dict[str, Any]:
+    """只读 Bind Catalog 搜索（不落盘）。"""
+    from kss.ui_surface.bind_catalog import search as catalog_search
+
+    lim = 50
+    if limit and str(limit).strip().isdigit():
+        lim = int(limit)
+    return catalog_search(
+        slot,
+        q or "",
+        market=market or None,
+        kind=kind or None,
+        limit=lim,
     )
 
 
@@ -5282,8 +5304,12 @@ COMMANDS = {
         "args": ["OPS_JSON"],
     },
     "surface-nl-interpret": {
-        "desc": "档A自然语言解析为 surface draft(不落盘)。REGION=overnight_us|strip_metric",
+        "desc": "档A/B自然语言解析为 surface draft(不落盘)。REGION=overnight_us|strip_metric",
         "args": ["REGION", "TEXT"],
+    },
+    "surface-catalog": {
+        "desc": "Bind Catalog 只读搜索。SLOT=overnight_marquee|strip_metric；可选 Q MARKET KIND LIMIT",
+        "args": ["SLOT", "[Q]", "[MARKET]", "[KIND]", "[LIMIT]"],
     },
     "indicator-retire": {"desc": "退役已固化指标(status=retired，不删数据)", "args": ["ENTRY_ID"]},
     "datasource-test": {
@@ -6439,6 +6465,16 @@ def dispatch(command: str, args: list[str]) -> Any:
         if len(args) < 2:
             raise ValueError("surface-nl-interpret requires REGION TEXT")
         return _surface_nl_interpret(args[0], args[1])
+    if command == "surface-catalog":
+        if not args:
+            raise ValueError("surface-catalog requires SLOT")
+        return _surface_catalog(
+            args[0],
+            args[1] if len(args) > 1 else "",
+            args[2] if len(args) > 2 else "",
+            args[3] if len(args) > 3 else "",
+            args[4] if len(args) > 4 else "",
+        )
     if command == "datasource-test":
         if not args:
             raise ValueError("datasource-test requires SOURCE")
