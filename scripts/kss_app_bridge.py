@@ -2143,6 +2143,21 @@ def _surface_apply(ops_json: str) -> dict[str, Any]:
     }
 
 
+def _surface_nl_interpret(region: str, text: str) -> dict[str, Any]:
+    """档 A 确定性 NL → draft ops + 真值预览（不落盘）。"""
+    from kss.ui_surface.config import load_config
+    from kss.ui_surface.nl_interpret import interpret
+
+    cfg = load_config()
+    strip = _market_strip() or {}
+    return interpret(
+        region,
+        text,
+        config=cfg,
+        market_strip=strip,
+    )
+
+
 _NAME_INDEX_JSON = STATE_ROOT / "storage" / "macro" / "stock_name_index.json"
 
 
@@ -5266,6 +5281,10 @@ COMMANDS = {
         "desc": "应用 surface patch(写 dashboard_v1.json,须人工确认)",
         "args": ["OPS_JSON"],
     },
+    "surface-nl-interpret": {
+        "desc": "档A自然语言解析为 surface draft(不落盘)。REGION=overnight_us|strip_metric",
+        "args": ["REGION", "TEXT"],
+    },
     "indicator-retire": {"desc": "退役已固化指标(status=retired，不删数据)", "args": ["ENTRY_ID"]},
     "datasource-test": {
         "desc": "数据源连通性测试(tushare/longbridge/telegram/llm)，只读",
@@ -6416,6 +6435,10 @@ def dispatch(command: str, args: list[str]) -> Any:
         return _surface_propose(args[0] if args else "")
     if command == "surface-apply":
         return _surface_apply(args[0] if args else "")
+    if command == "surface-nl-interpret":
+        if len(args) < 2:
+            raise ValueError("surface-nl-interpret requires REGION TEXT")
+        return _surface_nl_interpret(args[0], args[1])
     if command == "datasource-test":
         if not args:
             raise ValueError("datasource-test requires SOURCE")

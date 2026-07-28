@@ -157,6 +157,12 @@ def propose_surface_patch(ops_json: str) -> dict:
 
 
 @mcp.tool
+def surface_nl_interpret(region: str, text: str) -> dict:
+    """档A自然语言解析为 surface draft（不落盘）。region=overnight_us|strip_metric；写须 surface-apply + 人确认。"""
+    return _call("surface-nl-interpret", [region, text])
+
+
+@mcp.tool
 def list_recipes() -> dict:
     """编排剧本目录(确定性复盘 DAG):每条 name/desc/write/args。选一条用 run_recipe 跑。"""
     return {"recipes": _call("recipe-list")}   # 包 dict:MCP structured_content 须非 list

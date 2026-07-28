@@ -202,6 +202,16 @@ TOOL_SPECS: list[dict[str, Any]] = [
         ["ops_json"],
     ),
     _spec(
+        "surface_nl_interpret",
+        "surface-nl-interpret",
+        "档A自然语言解析 surface 绑定(不落盘)。region=overnight_us|strip_metric；"
+        "返回 ops/previews 真值预览。组件旁 NL 主路径；chat 为辅。"
+        "落盘仍须 apply_surface_patch + 人确认",
+        {"region": _STR, "text": _STR},
+        ["region", "text"],
+        execution_mode="parallel",
+    ),
+    _spec(
         "apply_surface_patch",
         "surface-apply",
         "应用 surface patch 写入配置。**写操作,须人工确认**。"

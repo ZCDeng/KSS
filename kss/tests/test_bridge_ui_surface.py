@@ -19,11 +19,18 @@ def state_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def test_surface_commands_registered() -> None:
-    for cmd in ("surface-get", "surface-metrics", "surface-propose", "surface-apply"):
+    for cmd in (
+        "surface-get",
+        "surface-metrics",
+        "surface-propose",
+        "surface-apply",
+        "surface-nl-interpret",
+    ):
         assert cmd in bridge.COMMANDS
     assert "surface-apply" in bridge.WRITE_COMMANDS
     assert "surface-get" not in bridge.WRITE_COMMANDS
     assert "surface-propose" not in bridge.WRITE_COMMANDS
+    assert "surface-nl-interpret" not in bridge.WRITE_COMMANDS
 
 
 def test_surface_apply_append_and_get(state_root: Path) -> None:
@@ -95,3 +102,34 @@ def test_surface_propose_does_not_write(state_root: Path) -> None:
         )
     assert result.get("ok") is True
     assert not (state_root / "storage" / "ui_surface" / "dashboard_v1.json").is_file()
+
+
+def test_surface_nl_interpret_append_preview(state_root: Path) -> None:
+    with patch("kss.ui_surface.resolve.probe_overnight_code") as probe:
+        probe.return_value = {
+            "ok": True,
+            "code": "AAPL",
+            "name": "苹果",
+            "kind": "yfinance",
+            "close": 190.0,
+            "pct": 1.0,
+        }
+        result = bridge.dispatch("surface-nl-interpret", ["overnight_us", "加上苹果"])
+    assert result.get("ok") is True
+    assert result.get("ops")
+    assert result["ops"][0]["code"] == "AAPL"
+    assert result.get("previews")
+    assert not (state_root / "storage" / "ui_surface" / "dashboard_v1.json").is_file()
+
+
+def test_surface_nl_interpret_metric(state_root: Path) -> None:
+    result = bridge.dispatch("surface-nl-interpret", ["strip_metric", "改成封板率"])
+    assert result.get("ok") is True
+    assert result.get("metric_id") == "limit_seal_rate"
+    assert result["ops"][0]["op"] == "set_strip_metric"
+
+
+def test_surface_nl_interpret_bad_region(state_root: Path) -> None:
+    result = bridge.dispatch("surface-nl-interpret", ["nope", "加上苹果"])
+    assert result.get("ok") is False
+    assert result.get("error") == "bad_region"

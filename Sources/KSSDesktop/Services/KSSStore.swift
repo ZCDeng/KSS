@@ -203,6 +203,8 @@ final class KSSStore: ObservableObject {
     @Published var isChatStreaming = false
     @Published var chatToolInProgress: String?            // 正在调用的工具名（进度指示）
     @Published var pendingWriteConfirm: PendingWriteConfirm?   // 待人工确认的写（app-modal）
+    /// 从盯盘组件旁 AI 钮预填 Seesaw 输入（region 上下文）；AIChatView 消费后清空。
+    @Published var chatComposerPrefill: String?
     @Published var agentSessions: [AgentSession] = []
     @Published var selectedAgentSessionId: String?
     @Published var agentSkills: [AgentSkill] = []
@@ -381,6 +383,15 @@ final class KSSStore: ObservableObject {
     }
 
     // MARK: - 聊天一轮（流式 + 人在环内写闸）
+
+    /// 盯盘组件旁 AI 入口：预填 region，引导用 surface 工具（组件旁 NL 仍是主路径）。
+    func seedSurfaceAIPrefill(region: String) {
+        let r = region.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !r.isEmpty else { return }
+        chatComposerPrefill = """
+        region=\(r)。请用 surface_nl_interpret 解析我的自然语言绑定意图并展示真值预览；确认后再 apply_surface_patch。组件旁输入是主路径，这里是辅助。
+        """
+    }
 
     func sendChat(
         _ text: String,

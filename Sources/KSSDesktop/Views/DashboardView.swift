@@ -27,6 +27,8 @@ struct DashboardView: View {
     /// surface 配置变更后重载 snapshot（由 Store 注入）
     var onReloadSnapshot: () -> Void = {}
     var bridge: BridgeClient? = nil
+    /// 打开 Seesaw 并预填 surface region 上下文（U5 / R10）
+    var onOpenSurfaceAI: (String) -> Void = { _ in }
 
     // Material 3 响应式栅格：统一外边距 / 沟槽，内容封顶居中，断点决定主区列数。
     private let margin: CGFloat = 24
@@ -101,7 +103,8 @@ struct DashboardView: View {
                             strip: strip,
                             quotes: realtimeQuotes,
                             bridge: bridge,
-                            onReloadSnapshot: onReloadSnapshot
+                            onReloadSnapshot: onReloadSnapshot,
+                            onOpenAIWithRegion: onOpenSurfaceAI
                         )
                     }
 
@@ -130,7 +133,7 @@ struct DashboardView: View {
                         usMarketHeaderStatus: usMarketHeaderStatus,
                         usMarketQuotes: usMarketQuotes,
                         bridge: bridge,
-                        onOpenAI: { onOpenSection(.aiChat) },
+                        onOpenAI: { onOpenSurfaceAI("overnight_us") },
                         onReloadSnapshot: onReloadSnapshot
                     )
 
@@ -868,8 +871,11 @@ struct MarketStripRow: View {
     var quotes: [String: LongbridgeQuote] = [:]
     var bridge: BridgeClient? = nil
     var onReloadSnapshot: () -> Void = {}
+    var onOpenAIWithRegion: ((String) -> Void)? = nil
     @State private var metricBusy = false
     @State private var metricError: String?
+    @State private var nlText = ""
+    @State private var bindDraft: SurfaceBindDraft?
 
     private static let metricChoices: [(id: String, title: String)] = [
         ("limit_max_board", "最高连板"),
@@ -903,6 +909,14 @@ struct MarketStripRow: View {
             }
             metricCard
         }
+        .sheet(item: $bindDraft) { draft in
+            SurfaceBindConfirm(
+                draft: draft,
+                busy: metricBusy,
+                onCancel: { bindDraft = nil },
+                onConfirm: { confirmBind(draft) }
+            )
+        }
     }
 
     @ViewBuilder
@@ -920,6 +934,17 @@ struct MarketStripRow: View {
                     .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
+                if onOpenAIWithRegion != nil {
+                    Button {
+                        onOpenAIWithRegion?("strip_metric")
+                    } label: {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(theme.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .help("用 AI 换指标（预填 region）")
+                }
                 Menu {
                     ForEach(Self.metricChoices, id: \.id) { choice in
                         Button(choice.title) {
@@ -933,6 +958,7 @@ struct MarketStripRow: View {
                 }
                 .menuStyle(.borderlessButton)
                 .disabled(metricBusy || bridge == nil)
+                .help("菜单兜底换指标")
             }
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(valueText)
@@ -947,14 +973,99 @@ struct MarketStripRow: View {
                 }
                 Spacer(minLength: 0)
             }
+            // 主路径：组件旁 NL
+            HStack(spacing: 6) {
+                TextField("用中文换指标…", text: $nlText)
+                    .textFieldStyle(.roundedBorder)
+                    .font(KSSFont.themed(11, theme: theme))
+                    .disabled(metricBusy || bridge == nil)
+                    .onSubmit { submitMetricNL() }
+                Button("解析") { submitMetricNL() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(metricBusy || bridge == nil || nlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
             Text(metricError ?? sub)
                 .font(.system(size: 10.5, design: .monospaced))
-                .foregroundStyle(theme.textSecondary)
-                .lineLimit(1)
+                .foregroundStyle(metricError == nil ? theme.textSecondary : .red.opacity(0.85))
+                .lineLimit(2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .kssCard(padding: 14)
         .opacity(metricBusy ? 0.7 : 1)
+    }
+
+    private func submitMetricNL() {
+        guard let bridge else { return }
+        let text = nlText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        metricBusy = true
+        metricError = nil
+        Task {
+            do {
+                let resp = try await Task.detached {
+                    try bridge.surfaceNlInterpret(region: "strip_metric", text: text)
+                }.value
+                await MainActor.run {
+                    metricBusy = false
+                    if resp.ok != true {
+                        metricError = resp.errorZh ?? resp.error ?? "无法解析"
+                        if let s = resp.suggestions, !s.isEmpty {
+                            metricError = (metricError ?? "") + " · 例：" + s.prefix(3).joined(separator: "、")
+                        }
+                        return
+                    }
+                    guard let ops = resp.ops, !ops.isEmpty,
+                          let opsJSON = SurfaceBindEncoding.encodeOps(ops) else {
+                        metricError = "无可用操作"
+                        return
+                    }
+                    let summary = resp.previews?.first?.label
+                        ?? "切换为 \(resp.stripMetric?.title ?? resp.metricId ?? "指标")"
+                    bindDraft = SurfaceBindDraft(
+                        region: "strip_metric",
+                        summary: summary,
+                        opsJSON: opsJSON,
+                        previews: resp.previews ?? [],
+                        failed: resp.failed ?? [],
+                        partial: resp.partial == true
+                    )
+                }
+            } catch {
+                await MainActor.run {
+                    metricBusy = false
+                    metricError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func confirmBind(_ draft: SurfaceBindDraft) {
+        guard let bridge else { return }
+        metricBusy = true
+        metricError = nil
+        Task {
+            do {
+                let resp = try await Task.detached {
+                    try bridge.surfaceApply(opsJSON: draft.opsJSON)
+                }.value
+                await MainActor.run {
+                    metricBusy = false
+                    if resp.ok == false {
+                        metricError = resp.error ?? "应用失败"
+                    } else {
+                        bindDraft = nil
+                        nlText = ""
+                        onReloadSnapshot()
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    metricBusy = false
+                    metricError = error.localizedDescription
+                }
+            }
+        }
     }
 
     private func setMetric(_ metricId: String) {
@@ -1234,6 +1345,8 @@ struct OvernightUSSection: View {
     @State private var filter = ""
     @State private var busy = false
     @State private var errorText: String?
+    @State private var nlText = ""
+    @State private var bindDraft: SurfaceBindDraft?
 
     private var defaultCodes: Set<String> {
         Set(overnight.filter { !($0.isUserAppended ?? false) }.map { $0.code.uppercased() })
@@ -1285,7 +1398,7 @@ struct OvernightUSSection: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(theme.accent)
                 .disabled(bridge == nil || busy)
-                .help("追加隔夜标的")
+                .help("列表兜底追加")
                 .popover(isPresented: $showAdd, arrowEdge: .bottom) {
                     addPopover
                 }
@@ -1297,8 +1410,20 @@ struct OvernightUSSection: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(theme.accent)
-                .help("用 AI 追加/调整")
+                .help("用 AI 追加/调整（预填 region）")
                 .padding(.top, 4)
+            }
+            // 主路径：组件旁 NL
+            HStack(spacing: 8) {
+                TextField("用中文描述，如：加上苹果和阿斯麦", text: $nlText)
+                    .textFieldStyle(.roundedBorder)
+                    .font(KSSFont.themed(12, theme: theme))
+                    .disabled(bridge == nil || busy)
+                    .onSubmit { submitOvernightNL() }
+                Button("解析") { submitOvernightNL() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(bridge == nil || busy || nlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             if let errorText {
                 Text(errorText)
@@ -1312,10 +1437,103 @@ struct OvernightUSSection: View {
                     onRemoveUser: removeUser
                 )
             } else {
-                Text("暂无隔夜报价 · 可用 + 追加标的")
+                Text("暂无隔夜报价 · 用上方中文输入追加，或 + 列表兜底")
                     .font(KSSFont.themed(12, theme: theme))
                     .foregroundStyle(theme.textSecondary)
                     .padding(.leading, 4)
+            }
+        }
+        .sheet(item: $bindDraft) { draft in
+            SurfaceBindConfirm(
+                draft: draft,
+                busy: busy,
+                onCancel: { bindDraft = nil },
+                onConfirm: { confirmBind(draft) }
+            )
+        }
+    }
+
+    private func submitOvernightNL() {
+        guard let bridge else { return }
+        let text = nlText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        busy = true
+        errorText = nil
+        Task {
+            do {
+                let resp = try await Task.detached {
+                    try bridge.surfaceNlInterpret(region: "overnight_us", text: text)
+                }.value
+                await MainActor.run {
+                    busy = false
+                    if resp.ok != true {
+                        var msg = resp.errorZh ?? resp.error ?? "无法解析"
+                        if let s = resp.suggestions, !s.isEmpty {
+                            msg += " · 例：" + s.prefix(3).joined(separator: "、")
+                        }
+                        errorText = msg
+                        return
+                    }
+                    guard let ops = resp.ops, !ops.isEmpty,
+                          let opsJSON = SurfaceBindEncoding.encodeOps(ops) else {
+                        errorText = "无可用操作"
+                        return
+                    }
+                    let summary: String
+                    if resp.partial == true {
+                        summary = "部分成功：将应用 \(ops.count) 项（另有失败项见下）"
+                    } else if let first = resp.previews?.first?.label {
+                        summary = resp.previews?.count == 1
+                            ? first
+                            : "将执行 \(resp.previews?.count ?? ops.count) 项变更"
+                    } else {
+                        summary = "确认应用 \(ops.count) 项变更"
+                    }
+                    bindDraft = SurfaceBindDraft(
+                        region: "overnight_us",
+                        summary: summary,
+                        opsJSON: opsJSON,
+                        previews: resp.previews ?? [],
+                        failed: resp.failed ?? resp.items?.filter { $0.status != "ok" } ?? [],
+                        partial: resp.partial == true
+                    )
+                }
+            } catch {
+                await MainActor.run {
+                    busy = false
+                    errorText = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func confirmBind(_ draft: SurfaceBindDraft) {
+        guard let bridge else { return }
+        busy = true
+        errorText = nil
+        Task {
+            do {
+                let resp = try await Task.detached {
+                    try bridge.surfaceApply(opsJSON: draft.opsJSON)
+                }.value
+                await MainActor.run {
+                    busy = false
+                    if resp.ok == false {
+                        errorText = resp.error ?? "应用失败"
+                    } else {
+                        bindDraft = nil
+                        nlText = ""
+                        onReloadSnapshot()
+                        Task.detached {
+                            _ = try? bridge.runTask(.refreshMarketStrip)
+                        }
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    busy = false
+                    errorText = error.localizedDescription
+                }
             }
         }
     }
@@ -2058,6 +2276,136 @@ struct LabeledMetric: View {
                 .foregroundStyle(tint ?? theme.textPrimary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// MARK: - Surface NL bind confirm（档 A 人话真值，非 raw JSON）
+
+enum SurfaceBindEncoding {
+    /// 将 interpret 返回的 ops 编成 surface-apply 所需 JSON 数组（snake_case 键）。
+    static func encodeOps(_ ops: [SurfaceNlOp]) -> String? {
+        var arr: [[String: Any]] = []
+        for op in ops {
+            guard let name = op.op else { continue }
+            var d: [String: Any] = ["op": name]
+            if let code = op.code { d["code"] = code }
+            if let n = op.name { d["name"] = n }
+            if let k = op.kind { d["kind"] = k }
+            if let ks = op.kindSource { d["kind_source"] = ks }
+            if let av = op.addedVia { d["added_via"] = av }
+            if let pc = op.probeClose { d["probe_close"] = pc }
+            if let mid = op.metricId { d["metric_id"] = mid }
+            arr.append(d)
+        }
+        guard !arr.isEmpty,
+              let data = try? JSONSerialization.data(withJSONObject: arr, options: []),
+              let s = String(data: data, encoding: .utf8) else { return nil }
+        return s
+    }
+}
+
+/// 组件旁 NL 确认 sheet：展示代码算出的真值行，确认后才 apply。
+struct SurfaceBindConfirm: View {
+    @Environment(\.kssTheme) private var theme
+    let draft: SurfaceBindDraft
+    var busy: Bool = false
+    let onCancel: () -> Void
+    let onConfirm: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Image(systemName: "text.badge.checkmark")
+                    .foregroundStyle(theme.accent)
+                Text("确认绑定")
+                    .font(KSSFont.themed(16, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                Spacer()
+            }
+            Text(draft.summary)
+                .font(KSSFont.themed(13, .semibold, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+
+            if !draft.previews.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(draft.previews) { row in
+                        previewRow(row)
+                    }
+                }
+            }
+
+            if !draft.failed.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(draft.partial ? "未纳入本次应用" : "失败项")
+                        .font(KSSFont.themed(11, .semibold, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                    ForEach(Array(draft.failed.enumerated()), id: \.offset) { _, item in
+                        Text(item.errorZh ?? item.error ?? item.token ?? "失败")
+                            .font(KSSFont.themed(11, theme: theme))
+                            .foregroundStyle(.red.opacity(0.85))
+                    }
+                }
+            }
+
+            Text("数字来自代码探针/配置，确认后写入 surface。")
+                .font(KSSFont.themed(11, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+
+            HStack {
+                Spacer()
+                Button("取消") { onCancel() }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(busy)
+                Button("确认应用") { onConfirm() }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(busy)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 380, idealWidth: 440)
+        .background(theme.canvas)
+        .opacity(busy ? 0.75 : 1)
+    }
+
+    @ViewBuilder
+    private func previewRow(_ row: SurfaceNlPreview) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(row.label ?? row.title ?? "\(row.op ?? "") \(row.code ?? row.metricId ?? "")")
+                .font(KSSFont.themed(13, .semibold, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+            HStack(spacing: 12) {
+                if let code = row.code {
+                    Text(code)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                if let close = row.close {
+                    Text(String(format: "%.2f", close))
+                        .font(KSSFont.harmonyNumber(14))
+                        .foregroundStyle(theme.textPrimary)
+                }
+                if let pct = row.pct {
+                    Text(String(format: "%+.2f%%", pct))
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(theme.signColor(pct))
+                }
+                if let vt = row.valueText {
+                    Text(vt)
+                        .font(KSSFont.harmonyNumber(14))
+                        .foregroundStyle(theme.textPrimary)
+                }
+                if let dt = row.deltaText, !dt.isEmpty {
+                    Text(dt)
+                        .font(KSSFont.themed(11, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
     }
 }
 

@@ -291,7 +291,11 @@ struct ContentView: View {
                     onReloadSnapshot: {
                         Task { await store.loadSnapshot() }
                     },
-                    bridge: store.bridge
+                    bridge: store.bridge,
+                    onOpenSurfaceAI: { region in
+                        store.seedSurfaceAIPrefill(region: region)
+                        store.selectedSection = .aiChat
+                    }
                 )
             case .recommendations:
                 RecommendationsView(
