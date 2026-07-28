@@ -952,16 +952,13 @@ struct MarketStripRow: View {
                     .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                Button {
+                DashboardChromeIconButton(
+                    kind: .sparkles,
+                    help: "用中文换指标",
+                    disabled: metricBusy || bridge == nil
+                ) {
                     showNlCompose = true
-                } label: {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(theme.accent)
                 }
-                .buttonStyle(.plain)
-                .disabled(metricBusy || bridge == nil)
-                .help("用中文换指标")
                 Menu {
                     ForEach(Self.metricChoices, id: \.id) { choice in
                         Button(choice.title) {
@@ -969,9 +966,15 @@ struct MarketStripRow: View {
                         }
                     }
                 } label: {
+                    // 菜单兜底与 chrome 动作同色阶，尺寸略小于主动作以免抢 sparkles
                     Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(theme.textSecondary)
+                        .font(.system(size: DashboardChromeIconSpec.pointSize - 2, weight: .medium))
+                        .foregroundStyle(theme.textPrimary)
+                        .frame(
+                            width: DashboardChromeIconSpec.hitSize,
+                            height: DashboardChromeIconSpec.hitSize
+                        )
+                        .contentShape(Rectangle())
                 }
                 .menuStyle(.borderlessButton)
                 .disabled(metricBusy || bridge == nil)
@@ -1348,30 +1351,29 @@ struct OvernightUSSection: View {
                 )
                 .lineLimit(1)
                 .padding(.top, 6)
-                Button {
+                DashboardChromeIconButton(
+                    kind: .plus,
+                    help: "列表兜底追加",
+                    disabled: bridge == nil || busy
+                ) {
                     loadCandidatesAndShow()
-                } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 16, weight: .semibold))
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(theme.accent)
-                .disabled(bridge == nil || busy)
-                .help("列表兜底追加")
                 .popover(isPresented: $showAdd, arrowEdge: .bottom) {
-                    addPopover
+                    DashboardCandidatePickerPopover(
+                        title: "追加隔夜标的",
+                        candidates: candidates,
+                        disabledCodes: defaultCodes,
+                        filter: $filter,
+                        onSelect: appendCandidate
+                    )
                 }
-                Button {
+                DashboardChromeIconButton(
+                    kind: .sparkles,
+                    help: "用中文追加/调整隔夜",
+                    disabled: bridge == nil || busy
+                ) {
                     showNlCompose = true
-                } label: {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 14, weight: .semibold))
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(theme.accent)
-                .disabled(bridge == nil || busy)
-                .help("用中文追加/调整隔夜")
-                .padding(.top, 4)
             }
             if let errorText {
                 Text(errorText)
@@ -1445,44 +1447,6 @@ struct OvernightUSSection: View {
                     errorText = error.localizedDescription
                 }
             }
-        }
-    }
-
-    private var addPopover: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("追加隔夜标的")
-                .font(KSSFont.themed(14, .semibold, theme: theme))
-            TextField("搜索代码或名称", text: $filter)
-                .textFieldStyle(.roundedBorder)
-            List {
-                ForEach(filteredCandidates) { c in
-                    Button {
-                        appendCandidate(c)
-                    } label: {
-                        HStack {
-                            Text(c.code)
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            Text(c.name ?? "")
-                                .foregroundStyle(theme.textSecondary)
-                            Spacer()
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(defaultCodes.contains(c.code.uppercased()))
-                }
-            }
-            .frame(width: 280, height: 260)
-        }
-        .padding(12)
-    }
-
-    private var filteredCandidates: [SurfaceCandidate] {
-        let q = filter.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        let base = candidates.filter { !defaultCodes.contains($0.code.uppercased()) }
-        guard !q.isEmpty else { return base }
-        return base.filter {
-            $0.code.uppercased().contains(q)
-                || ($0.name ?? "").uppercased().contains(q)
         }
     }
 
@@ -2270,9 +2234,7 @@ struct SurfaceNlComposeSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
-                Image(systemName: "sparkles")
-                    .font(KSSFont.themed(18, theme: theme))
-                    .foregroundStyle(theme.accent)
+                DashboardChromeIcon(kind: .sparkles)
                 Text(title)
                     .font(KSSFont.themed(16, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)

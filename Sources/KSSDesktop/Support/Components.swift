@@ -132,6 +132,121 @@ struct MissingCredentialCard: View {
     }
 }
 
+// MARK: - Dashboard chrome actions（sparkles / + 标准件）
+
+/// 盯盘区动作图标规格：与 Seesaw 侧栏同色（textPrimary / 黑墨），统一尺寸，略放大强调。
+/// 小卡、隔夜美股及未来同类入口必须用此规格，禁止各处手写 size/tint。
+enum DashboardChromeIconSpec {
+    /// 略大于旧版 12–16，保证 sparkles 与 + 同框同重。
+    static let pointSize: CGFloat = 18
+    static let weight: Font.Weight = .semibold
+    /// 命中热区，避免 18pt 符号难点。
+    static let hitSize: CGFloat = 28
+}
+
+enum DashboardChromeIconKind {
+    case sparkles
+    case plus
+
+    var systemName: String {
+        switch self {
+        case .sparkles: return "sparkles"
+        case .plus: return "plus.circle.fill"
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .sparkles: return "自然语言"
+        case .plus: return "列表追加"
+        }
+    }
+}
+
+/// 纯图标（不带按钮语义），供 Menu label 等复用。
+struct DashboardChromeIcon: View {
+    @Environment(\.kssTheme) private var theme
+    let kind: DashboardChromeIconKind
+    var enabled: Bool = true
+
+    var body: some View {
+        Image(systemName: kind.systemName)
+            .font(.system(size: DashboardChromeIconSpec.pointSize, weight: DashboardChromeIconSpec.weight))
+            .foregroundStyle(enabled ? theme.textPrimary : theme.textSecondary.opacity(0.45))
+            .frame(width: DashboardChromeIconSpec.hitSize, height: DashboardChromeIconSpec.hitSize)
+            .contentShape(Rectangle())
+            .accessibilityLabel(kind.accessibilityLabel)
+    }
+}
+
+/// 标准动作按钮：sparkles（NL）/ +（列表兜底）。色 = Seesaw 黑墨 textPrimary。
+struct DashboardChromeIconButton: View {
+    let kind: DashboardChromeIconKind
+    var help: String
+    var disabled: Bool = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            DashboardChromeIcon(kind: kind, enabled: !disabled)
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .help(help)
+    }
+}
+
+/// 兜底「+」打开形态：搜索 + 候选列表（以隔夜美股 + 为准，未来同类入口复用）。
+struct DashboardCandidatePickerPopover: View {
+    @Environment(\.kssTheme) private var theme
+    var title: String
+    var searchPlaceholder: String = "搜索代码或名称"
+    var candidates: [SurfaceCandidate]
+    /// 已在默认/不可再选集合中的 code（大写比较）。
+    var disabledCodes: Set<String> = []
+    @Binding var filter: String
+    var onSelect: (SurfaceCandidate) -> Void
+
+    private var filtered: [SurfaceCandidate] {
+        let base = candidates.filter { !disabledCodes.contains($0.code.uppercased()) }
+        let q = filter.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard !q.isEmpty else { return base }
+        return base.filter {
+            $0.code.uppercased().contains(q) || ($0.name ?? "").uppercased().contains(q)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(KSSFont.themed(14, .semibold, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+            TextField(searchPlaceholder, text: $filter)
+                .textFieldStyle(.roundedBorder)
+            List {
+                ForEach(filtered) { c in
+                    Button {
+                        onSelect(c)
+                    } label: {
+                        HStack {
+                            Text(c.code)
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(theme.textPrimary)
+                            Text(c.name ?? "")
+                                .foregroundStyle(theme.textSecondary)
+                            Spacer()
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(disabledCodes.contains(c.code.uppercased()))
+                }
+            }
+            .frame(width: 280, height: 260)
+        }
+        .padding(12)
+    }
+}
+
 /// 可点击排序列头：点击切到该列（默认降序），已选中再点切换升/降。
 /// 与 SortControl 共享同一对 selection/ascending 绑定，下拉控件与列头状态一致。
 /// width=nil 时占满弹性宽度，否则固定宽度（对齐数据行列宽）。
