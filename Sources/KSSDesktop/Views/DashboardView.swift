@@ -864,7 +864,7 @@ struct EditorialDateView: View {
     }
 }
 
-/// 总览第一行市场速览：A500ETF(563360/159361) 当日 + 北向资金净流入 + 可配指标小卡。
+/// 总览第一行市场速览：标准等高小卡（≤5）+ 指标 Sparkle（NL/列表双 Tab）。
 struct MarketStripRow: View {
     @Environment(\.kssTheme) private var theme
     var strip: MarketStrip
@@ -874,7 +874,6 @@ struct MarketStripRow: View {
     var onOpenAIWithRegion: ((String) -> Void)? = nil
     @State private var metricBusy = false
     @State private var metricError: String?
-    @State private var showNlCompose = false
     @State private var bindDraft: SurfaceBindDraft?
 
     private static let metricChoices: [(id: String, title: String)] = [
@@ -884,48 +883,50 @@ struct MarketStripRow: View {
         ("index_cyb", "创业板指"),
     ]
 
+    /// 指标卡固定占 1 槽；北向若有占 1 槽；其余给 ETF（总 ≤ maxPerRow）。
+    private var etfSlots: Int {
+        var slots = DashboardStripCardSpec.maxPerRow - 1 // metric
+        if strip.northMoney != nil { slots -= 1 }
+        return max(0, slots)
+    }
+
     var body: some View {
-        HStack(spacing: 12) {
-            ForEach(strip.etfs) { etf in
-                let live = RealtimeMerge.applyLive(close: etf.close, pct: etf.pct, quote: quotes[etf.code.uppercased()])
-                card(title: etf.name,
-                     sub: etf.code,
-                     close: live.close,
-                     closeText: String(format: "%.3f", live.close),
-                     delta: live.pct,
-                     deltaText: String(format: "%+.2f%%", live.pct),
-                     isLive: live.isLive)
+        VStack(alignment: .leading, spacing: 6) {
+            DashboardStripCardRow {
+                ForEach(Array(strip.etfs.prefix(etfSlots))) { etf in
+                    let live = RealtimeMerge.applyLive(
+                        close: etf.close, pct: etf.pct, quote: quotes[etf.code.uppercased()]
+                    )
+                    priceCard(
+                        title: etf.name,
+                        meta: etf.code,
+                        close: live.close,
+                        closeText: String(format: "%.3f", live.close),
+                        delta: live.pct,
+                        deltaText: String(format: "%+.2f%%", live.pct),
+                        isLive: live.isLive
+                    )
+                }
+                if let nm = strip.northMoney {
+                    let yi = nm / 10000.0
+                    priceCard(
+                        title: "北向资金",
+                        meta: northSub,
+                        close: yi,
+                        closeText: String(format: "%+.1f", yi) + " 亿",
+                        delta: yi,
+                        deltaText: yi >= 0 ? "净流入" : "净流出",
+                        isLive: false
+                    )
+                }
+                metricCard
             }
-            if let nm = strip.northMoney {
-                let yi = nm / 10000.0
-                // 北向资金非 Longbridge 价，不做 live flash
-                card(title: "北向资金",
-                     sub: northSub,
-                     close: yi,
-                     closeText: String(format: "%+.1f", yi) + " 亿",
-                     delta: yi,
-                     deltaText: yi >= 0 ? "净流入" : "净流出",
-                     isLive: false)
+            if let metricError {
+                Text(metricError)
+                    .font(KSSFont.themed(11, theme: theme))
+                    .foregroundStyle(.red.opacity(0.85))
+                    .padding(.leading, 4)
             }
-            metricCard
-        }
-        .sheet(isPresented: $showNlCompose) {
-            SurfaceNlComposeSheet(
-                region: "strip_metric",
-                title: "用中文换指标",
-                placeholder: "例如：改成封板率、最高连板、科创50",
-                examples: ["改成封板率", "最高连板", "创业板指"],
-                bridge: bridge,
-                onOpenAI: onOpenAIWithRegion.map { cb in { cb("strip_metric") } },
-                onDraft: { draft in
-                    showNlCompose = false
-                    // 等 compose sheet 收起后再弹确认，避免双 sheet 叠态
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                        bindDraft = draft
-                    }
-                },
-                onCancel: { showNlCompose = false }
-            )
         }
         .sheet(item: $bindDraft) { draft in
             SurfaceBindConfirm(
@@ -937,70 +938,88 @@ struct MarketStripRow: View {
         }
     }
 
-    @ViewBuilder
     private var metricCard: some View {
         let props = strip.stripMetric
         let title = props?.title ?? "最高连板"
         let valueText = props?.valueText ?? "—"
         let deltaText = props?.deltaText ?? ""
-        let sub = props?.sub ?? "指标"
         let delta = props?.delta ?? 0
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Text(title)
-                    .font(KSSFont.themed(13.5, .bold, theme: theme))
-                    .foregroundStyle(theme.textPrimary)
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-                DashboardChromeIconButton(
-                    kind: .sparkles,
-                    help: "用中文换指标",
-                    disabled: metricBusy || bridge == nil
-                ) {
-                    showNlCompose = true
-                }
-                Menu {
-                    ForEach(Self.metricChoices, id: \.id) { choice in
-                        Button(choice.title) {
-                            setMetric(choice.id)
+        return DashboardStripCard(
+            title: title,
+            meta: nil,
+            isLive: false,
+            trailing: {
+                DashboardSparkleControl(
+                    help: "用中文或列表换指标",
+                    disabled: metricBusy || bridge == nil,
+                    sheetTitle: "配置指标小卡",
+                    region: "strip_metric",
+                    nlPlaceholder: "例如：改成封板率、最高连板、科创50",
+                    nlExamples: ["改成封板率", "最高连板", "创业板指"],
+                    bridge: bridge,
+                    onOpenAI: onOpenAIWithRegion.map { cb in { cb("strip_metric") } },
+                    onDraft: { draft in bindDraft = draft },
+                    listTabTitle: "列表选择",
+                    listContent: { dismiss in
+                        DashboardSimpleChoiceList(
+                            choices: Self.metricChoices,
+                            selectedId: props?.metricId
+                        ) { mid in
+                            setMetric(mid)
+                            dismiss()
                         }
                     }
-                } label: {
-                    // 菜单兜底与 chrome 动作同色阶，尺寸略小于主动作以免抢 sparkles
-                    Image(systemName: "ellipsis.circle")
-                        .font(.system(size: DashboardChromeIconSpec.pointSize - 2, weight: .medium))
-                        .foregroundStyle(theme.textPrimary)
-                        .frame(
-                            width: DashboardChromeIconSpec.hitSize,
-                            height: DashboardChromeIconSpec.hitSize
-                        )
-                        .contentShape(Rectangle())
-                }
-                .menuStyle(.borderlessButton)
-                .disabled(metricBusy || bridge == nil)
-                .help("菜单兜底换指标")
-            }
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(valueText)
-                    .font(KSSFont.harmonyNumber(22))
-                    .foregroundStyle(props?.value == nil ? theme.textSecondary : theme.signColor(delta))
-                    .lineLimit(1)
-                if !deltaText.isEmpty {
-                    Text(deltaText)
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(theme.signColor(delta))
+                )
+            },
+            value: {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(valueText)
+                        .font(KSSFont.harmonyNumber(22))
+                        .foregroundStyle(props?.value == nil ? theme.textSecondary : theme.signColor(delta))
                         .lineLimit(1)
+                    if !deltaText.isEmpty, deltaText != title {
+                        Text(deltaText)
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(theme.signColor(delta))
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
                 }
+            }
+        )
+        .opacity(metricBusy ? 0.7 : 1)
+    }
+
+    private func priceCard(
+        title: String,
+        meta: String,
+        close: Double,
+        closeText: String,
+        delta: Double,
+        deltaText: String,
+        isLive: Bool
+    ) -> some View {
+        DashboardStripCard(title: title, meta: meta, isLive: isLive) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                LivePriceText(
+                    value: close,
+                    text: closeText,
+                    baseColor: theme.signColor(delta),
+                    isLive: isLive,
+                    font: KSSFont.harmonyNumber(22)
+                )
+                .lineLimit(1)
+                LivePriceText(
+                    value: delta,
+                    text: deltaText,
+                    baseColor: theme.signColor(delta),
+                    isLive: isLive,
+                    font: .system(size: 12, weight: .semibold, design: .monospaced)
+                )
+                .lineLimit(1)
                 Spacer(minLength: 0)
             }
-            Text(metricError ?? sub)
-                .font(.system(size: 10.5, design: .monospaced))
-                .foregroundStyle(metricError == nil ? theme.textSecondary : .red.opacity(0.85))
-                .lineLimit(1)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .kssCard(padding: 14)
-        .opacity(metricBusy ? 0.7 : 1)
     }
 
     private func confirmBind(_ draft: SurfaceBindDraft) {
@@ -1060,52 +1079,6 @@ struct MarketStripRow: View {
     private var northSub: String {
         guard let d = strip.northDate, d.count == 8 else { return "沪深港通" }
         return "\(d.prefix(4))-\(d.dropFirst(4).prefix(2))-\(d.suffix(2))"
-    }
-
-    private func card(title: String, sub: String, close: Double, closeText: String, delta: Double, deltaText: String, isLive: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Text(title)
-                    .font(KSSFont.themed(13.5, .bold, theme: theme))
-                    .foregroundStyle(theme.textPrimary)
-                    .lineLimit(1)
-                // R6 R2：命中实时 quote 时的轻量标识（与堆叠卡「实时」chip 同规格）
-                if isLive {
-                    Text("实时")
-                        .font(KSSFont.themed(9, .bold, theme: theme))
-                        .foregroundStyle(theme.accent)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(theme.accent.opacity(0.12), in: Capsule())
-                }
-                Spacer(minLength: 4)
-                Text(sub)
-                    .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(theme.textSecondary)
-                    .lineLimit(1)
-            }
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                LivePriceText(
-                    value: close,
-                    text: closeText,
-                    baseColor: theme.signColor(delta),
-                    isLive: isLive,
-                    font: KSSFont.harmonyNumber(22)
-                )
-                .lineLimit(1)
-                LivePriceText(
-                    value: delta,
-                    text: deltaText,
-                    baseColor: theme.signColor(delta),
-                    isLive: isLive,
-                    font: .system(size: 12, weight: .semibold, design: .monospaced)
-                )
-                .lineLimit(1)
-                Spacer(minLength: 0)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .kssCard(padding: 14)
     }
 }
 
@@ -1290,7 +1263,7 @@ private struct MarqueeWidthKey: PreferenceKey {
     }
 }
 
-/// 隔夜美股分区：标题常驻（+ / AI 管理入口）+ 有报价时跑马灯。
+/// 隔夜美股分区：标题 + Sparkle（NL / 列表双 Tab）+ 跑马灯。
 struct OvernightUSSection: View {
     @Environment(\.kssTheme) private var theme
     var overnight: [IndexQuote]
@@ -1302,12 +1275,11 @@ struct OvernightUSSection: View {
     var onOpenAI: () -> Void
     var onReloadSnapshot: () -> Void
 
-    @State private var showAdd = false
     @State private var candidates: [SurfaceCandidate] = []
     @State private var filter = ""
+    @State private var listLoading = false
     @State private var busy = false
     @State private var errorText: String?
-    @State private var showNlCompose = false
     @State private var bindDraft: SurfaceBindDraft?
 
     private var defaultCodes: Set<String> {
@@ -1317,7 +1289,6 @@ struct OvernightUSSection: View {
     private var displayOvernight: [IndexQuote] {
         var list = overnight
         let have = Set(list.map { $0.code.uppercased() })
-        // 配置里有、strip 尚无价的追加项 → pending chip
         for item in surfaceConfig?.overnightAppend ?? [] {
             let code = item.code.uppercased()
             if have.contains(code) { continue }
@@ -1351,29 +1322,29 @@ struct OvernightUSSection: View {
                 )
                 .lineLimit(1)
                 .padding(.top, 6)
-                DashboardChromeIconButton(
-                    kind: .plus,
-                    help: "列表兜底追加",
-                    disabled: bridge == nil || busy
-                ) {
-                    loadCandidatesAndShow()
-                }
-                .popover(isPresented: $showAdd, arrowEdge: .bottom) {
-                    DashboardCandidatePickerPopover(
-                        title: "追加隔夜标的",
-                        candidates: candidates,
-                        disabledCodes: defaultCodes,
-                        filter: $filter,
-                        onSelect: appendCandidate
-                    )
-                }
-                DashboardChromeIconButton(
-                    kind: .sparkles,
-                    help: "用中文追加/调整隔夜",
-                    disabled: bridge == nil || busy
-                ) {
-                    showNlCompose = true
-                }
+                DashboardSparkleControl(
+                    help: "用中文或列表调整隔夜",
+                    disabled: bridge == nil || busy,
+                    sheetTitle: "调整隔夜美股",
+                    region: "overnight_us",
+                    nlPlaceholder: "例如：加上苹果和阿斯麦、去掉苹果、清空我的追加",
+                    nlExamples: ["加上苹果", "加上苹果和阿斯麦", "去掉苹果"],
+                    bridge: bridge,
+                    onOpenAI: onOpenAI,
+                    onDraft: { draft in bindDraft = draft },
+                    listTabTitle: "列表选择",
+                    onListTabAppear: { loadCandidates() },
+                    listContent: { dismiss in
+                        DashboardCandidatePickerList(
+                            candidates: candidates,
+                            disabledCodes: defaultCodes,
+                            isLoading: listLoading,
+                            filter: $filter
+                        ) { c in
+                            appendCandidate(c, dismiss: dismiss)
+                        }
+                    }
+                )
             }
             if let errorText {
                 Text(errorText)
@@ -1387,28 +1358,11 @@ struct OvernightUSSection: View {
                     onRemoveUser: removeUser
                 )
             } else {
-                Text("暂无隔夜报价 · 点 ✦ 用中文追加，或 + 列表兜底")
+                Text("暂无隔夜报价 · 点 ✦ 用中文或列表追加")
                     .font(KSSFont.themed(12, theme: theme))
                     .foregroundStyle(theme.textSecondary)
                     .padding(.leading, 4)
             }
-        }
-        .sheet(isPresented: $showNlCompose) {
-            SurfaceNlComposeSheet(
-                region: "overnight_us",
-                title: "用中文调整隔夜",
-                placeholder: "例如：加上苹果和阿斯麦、去掉苹果、清空我的追加",
-                examples: ["加上苹果", "加上苹果和阿斯麦", "去掉苹果"],
-                bridge: bridge,
-                onOpenAI: onOpenAI,
-                onDraft: { draft in
-                    showNlCompose = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                        bindDraft = draft
-                    }
-                },
-                onCancel: { showNlCompose = false }
-            )
         }
         .sheet(item: $bindDraft) { draft in
             SurfaceBindConfirm(
@@ -1450,28 +1404,28 @@ struct OvernightUSSection: View {
         }
     }
 
-    private func loadCandidatesAndShow() {
+    private func loadCandidates() {
         guard let bridge else { return }
-        busy = true
+        if !candidates.isEmpty { return }
+        listLoading = true
         errorText = nil
         Task {
             do {
                 let resp = try await Task.detached { try bridge.surfaceGet() }.value
                 await MainActor.run {
                     candidates = resp.candidates ?? []
-                    showAdd = true
-                    busy = false
+                    listLoading = false
                 }
             } catch {
                 await MainActor.run {
                     errorText = error.localizedDescription
-                    busy = false
+                    listLoading = false
                 }
             }
         }
     }
 
-    private func appendCandidate(_ c: SurfaceCandidate) {
+    private func appendCandidate(_ c: SurfaceCandidate, dismiss: @escaping () -> Void) {
         guard let bridge else { return }
         busy = true
         errorText = nil
@@ -1487,12 +1441,11 @@ struct OvernightUSSection: View {
                 }.value
                 await MainActor.run {
                     busy = false
-                    showAdd = false
                     if resp.ok == false {
                         errorText = resp.error ?? "追加失败"
                     } else {
+                        dismiss()
                         onReloadSnapshot()
-                        // 尽力刷新隔夜行情
                         Task.detached {
                             _ = try? bridge.runTask(.refreshMarketStrip)
                         }
@@ -2211,144 +2164,6 @@ enum SurfaceBindEncoding {
             partial: resp.partial == true
         )
         return (draft, nil)
-    }
-}
-
-/// sparkles 入口：确认卡风格的 NL 输入层（不挤占组件布局）。
-struct SurfaceNlComposeSheet: View {
-    @Environment(\.kssTheme) private var theme
-    let region: String
-    let title: String
-    let placeholder: String
-    let examples: [String]
-    var bridge: BridgeClient?
-    var onOpenAI: (() -> Void)? = nil
-    let onDraft: (SurfaceBindDraft) -> Void
-    let onCancel: () -> Void
-
-    @State private var text = ""
-    @State private var busy = false
-    @State private var errorText: String?
-    @FocusState private var focused: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 10) {
-                DashboardChromeIcon(kind: .sparkles)
-                Text(title)
-                    .font(KSSFont.themed(16, .bold, theme: theme))
-                    .foregroundStyle(theme.textPrimary)
-                Spacer()
-            }
-
-            Text("用自然语言描述要改的内容，解析后会展示代码算出的真值，确认才写入。")
-                .font(KSSFont.themed(12, theme: theme))
-                .foregroundStyle(theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            TextField(placeholder, text: $text, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(KSSFont.themed(14, theme: theme))
-                .foregroundStyle(theme.textPrimary)
-                .lineLimit(2...4)
-                .padding(12)
-                .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
-                .focused($focused)
-                .disabled(busy || bridge == nil)
-                .onSubmit { interpret() }
-
-            if !examples.isEmpty {
-                FlowExampleChips(examples: examples) { example in
-                    text = example
-                    focused = true
-                }
-            }
-
-            if let errorText {
-                Text(errorText)
-                    .font(KSSFont.themed(12, theme: theme))
-                    .foregroundStyle(.red.opacity(0.9))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            HStack(spacing: 12) {
-                if let onOpenAI {
-                    Button("AI 辅助") {
-                        onCancel()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                            onOpenAI()
-                        }
-                    }
-                    .disabled(busy)
-                }
-                Spacer()
-                Button("取消") { onCancel() }
-                    .keyboardShortcut(.cancelAction)
-                    .disabled(busy)
-                Button(busy ? "解析中…" : "解析") { interpret() }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(busy || bridge == nil
-                              || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        }
-        .padding(22)
-        .frame(width: 420)
-        .background(theme.canvas)
-        .opacity(busy ? 0.85 : 1)
-        .onAppear { focused = true }
-    }
-
-    private func interpret() {
-        guard let bridge else { return }
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        busy = true
-        errorText = nil
-        Task {
-            do {
-                let resp = try await Task.detached {
-                    try bridge.surfaceNlInterpret(region: region, text: trimmed)
-                }.value
-                await MainActor.run {
-                    busy = false
-                    let (draft, err) = SurfaceBindEncoding.draft(from: resp, region: region)
-                    if let draft {
-                        onDraft(draft)
-                    } else {
-                        errorText = err ?? "无法解析"
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    busy = false
-                    errorText = error.localizedDescription
-                }
-            }
-        }
-    }
-}
-
-/// 示例 chip 行（简单换行，不引入额外依赖）。
-private struct FlowExampleChips: View {
-    @Environment(\.kssTheme) private var theme
-    let examples: [String]
-    let onPick: (String) -> Void
-
-    var body: some View {
-        // 示例通常 ≤4，单行 HStack 足够；过长则截断展示
-        HStack(spacing: 6) {
-            ForEach(examples.prefix(4), id: \.self) { ex in
-                Button(ex) { onPick(ex) }
-                    .buttonStyle(.plain)
-                    .font(KSSFont.themed(11, theme: theme))
-                    .foregroundStyle(theme.accent)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(theme.accent.opacity(0.12), in: Capsule())
-            }
-            Spacer(minLength: 0)
-        }
     }
 }
 
