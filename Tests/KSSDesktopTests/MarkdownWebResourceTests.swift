@@ -17,9 +17,10 @@ final class MarkdownWebResourceTests: XCTestCase {
 
     func testMarkdownShellBundlesKamiReaderAndBridgeAPIs() throws {
         let html = try markdownHTML()
-        XCTAssertTrue(html.contains("data-reader=\"classic\""))
+        // 内容壳默认并固定 Kami（不再按 xcom chrome 切阅读皮）。
+        XCTAssertTrue(html.contains("data-reader=\"kami\""))
         XCTAssertTrue(html.contains("html[data-reader=\"kami\"]"))
-        XCTAssertTrue(html.contains("html[data-reader=\"xcom\"]"))
+        XCTAssertTrue(html.contains("return \"kami\""))
         XCTAssertTrue(html.contains("TsangerJinKai02-W02.ttf"))
         XCTAssertTrue(html.contains("font-family: \"TsangerJinKai02\""))
         XCTAssertTrue(html.contains("window.kssSetTheme"))
@@ -27,10 +28,20 @@ final class MarkdownWebResourceTests: XCTestCase {
         XCTAssertTrue(html.contains("window.kssSetHTML"))
         XCTAssertTrue(html.contains("kssMarkdown"))
         XCTAssertTrue(html.contains("readerForPayload"))
-        XCTAssertTrue(html.contains("p.id === \"clayM3\""))
         // 纯离线：不得拉 CDN / 远端字体。
         XCTAssertFalse(html.lowercased().contains("https://"))
         XCTAssertFalse(html.lowercased().contains("cdn"))
+    }
+
+    func testEditorialContentThemeForcesClayIdAndSerifStack() {
+        let xcom = ThemeCatalog.palette(for: .xcom, appearance: .light).webPayload
+        XCTAssertEqual(xcom.id, "xcom")
+        let editorial = xcom.asEditorialContentTheme()
+        XCTAssertEqual(editorial.id, "clayM3")
+        XCTAssertEqual(editorial.mode, xcom.mode)
+        XCTAssertEqual(editorial.colors, xcom.colors)
+        XCTAssertTrue(editorial.typography.serif.contains("TsangerJinKai02"))
+        XCTAssertFalse(editorial.typography.serif.contains("Chirp"))
     }
 
     func testTsangerFontResourceIsBundled() throws {

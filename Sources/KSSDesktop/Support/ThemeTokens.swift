@@ -147,6 +147,25 @@ struct KSSWebThemePayload: Codable, Equatable {
               let str = String(data: data, encoding: .utf8) else { return "{}" }
         return str
     }
+
+    /// 报告/资讯长文专用：固定 Kami 阅读皮身份 + 衬线字栈，colors 保留调用方 palette。
+    /// UI chrome 可以是 xcom，纸面仍走仓耳今楷编辑向（见 content-webview-kami 调研）。
+    func asEditorialContentTheme() -> KSSWebThemePayload {
+        let serif = ThemeTypography.claySerif
+        return KSSWebThemePayload(
+            version: version,
+            id: KSSDesignSystem.clayM3.rawValue,
+            mode: mode,
+            colors: colors,
+            typography: Typography(
+                serif: serif.serif,
+                sans: serif.sans,
+                mono: serif.mono
+            ),
+            shape: shape,
+            elevation: elevation
+        )
+    }
 }
 
 extension KSSPalette {

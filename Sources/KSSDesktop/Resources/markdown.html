@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh" data-reader="classic">
+<html lang="zh" data-reader="kami">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -377,11 +377,11 @@
       scheduleHeight();
     }
 
-    function readerForPayload(p) {
-      if (p && p.id === "xcom") return "xcom";
-      // 暖纸 / clay 走 Kami 编辑向阅读皮；其余经典主题保持 classic。
-      if (p && (p.id === "clayM3" || p.id === "kami")) return "kami";
-      return "classic";
+    // 内容壳固定 Kami 编辑向：报告/资讯长文不跟 UI chrome（xcom 等）切换阅读皮。
+    // chrome 只通过 colors/typography 变量影响配色；排版节奏始终是纸面编辑皮。
+    // xcom/classic CSS 仍保留作历史对照，但本壳不再激活。
+    function readerForPayload(_p) {
+      return "kami";
     }
 
     // 主题 API：覆盖 CSS 变量 + 切换 classic / kami / xcom 阅读皮；不重解析 Markdown。

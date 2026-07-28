@@ -4,10 +4,12 @@ import WebKit
 
 /// Renders Markdown / HTML report content inside a themed WKWebView shell.
 ///
-/// 主题与内容分离：`kssSetTheme` 覆盖配色与阅读皮（classic / kami / xcom），
-/// `kssSetMarkdown` / `kssSetHTML` 只更新正文。不引入第三方 JSBridge 或
-/// SwiftUI-WebView 包装——KSS 已有 `BridgedWebCoordinator` 状态机，更贴合
-/// 离线本地资源 + 主题同步 + 外链拦截。
+/// 主题与内容分离：`kssSetTheme` 推配色；`kssSetMarkdown` / `kssSetHTML` 只更新正文。
+/// 阅读皮固定 **Kami 编辑向**（见 `asEditorialContentTheme`），不跟 xcom chrome 切换，
+/// 这样在「新版 x.com」UI 下长文仍是纸面衬线排版。
+/// 不引入第三方 JSBridge / SwiftUI-WebView——`BridgedWebCoordinator` 已覆盖
+/// 离线资源、theme→content 串行、高度回传、外链拦截。
+/// 调研结论：`docs/plans/2026-07-29-001-research-content-webview-kami-integration.md`。
 struct MarkdownWebView: NSViewRepresentable {
     enum ContentKind: Equatable {
         case markdown
@@ -48,7 +50,8 @@ struct MarkdownWebView: NSViewRepresentable {
         coord.fitsContent = fitsContent
         coord.minHeight = minHeight
         coord.attachRepresented(webView)
-        coord.latestTheme = webTheme
+        // 内容面强制编辑向：id 驱动 kami 阅读皮 + 衬线栈；colors 仍跟当前 UI palette。
+        coord.latestTheme = webTheme.asEditorialContentTheme()
         let fingerprint = "\(kind == .htmlFragment ? "html" : "md")\u{1e}\(text)"
         if fingerprint != coord.latestFingerprint {
             coord.latestFingerprint = fingerprint
