@@ -149,27 +149,50 @@ KSS 已在 `5ee5854c` 落地离线子集：
 
 ---
 
-## 4. 本轮落地（相对调研的最小补丁）
+## 4. 本轮落地
 
-1. `markdown.html`：默认 `data-reader=kami`；`readerForPayload` **恒返回 kami**（内容壳不再跟 xcom/classic 切换）  
-2. `MarkdownWebView`：推送主题前 `asEditorialContentTheme()`——`id=clayM3` + 强制衬线 typography  
-3. 单测同步断言  
-4. （可选后续）把 light 强调色对齐官方 ink-blue `#1B365D`；暗色保持暖黑体系  
+### 4.1 库裁决（不变）
+
+- 不引入 JSBridge / SwiftUI-WebView（见 §2）
+
+### 4.2 视觉基准更正（用户 2026-07-29）
+
+**不要**绝对羊皮纸暖底（与 xcom chrome 色差过大）。  
+**要对齐** [demo-kami-print](https://kami.tw93.fun/assets/demos/demo-kami-print.pdf)（白底打印版 one-pager）：
+
+| 维度 | demo-kami-print | KSS 内容 WebView |
+|------|-----------------|------------------|
+| 页底 | `#ffffff` | 透明 + 宿主 canvas（跟 xcom/clay） |
+| 强调色 | 墨蓝 `#1B365D` | 映射主题 `accent` → `--brand`（跟 chrome） |
+| 衬线 | 全文 serif | **仅标题** serif（仓耳今楷）；正文 `--sans`（xcom=Chirp） |
+| 字重 | 400 / 500 | strong/heading = 500，不用 700 |
+| h2 | 干净衬线，无左边条 | 同左 |
+| callout | 左墨线、无填充 | `blockquote` 同构 |
+| 代码块 | ivory 抬升 + 细边 | 主题 `--code` + 细边，无阴影 |
+
+实现要点：
+
+1. `markdown.html`：`data-reader=kami` 恒定；CSS 按 print 节奏重写；注释引用 demo  
+2. `asEditorialContentTheme()`：**保留** chrome 的 id/colors/sans/mono；**只**把 `typography.serif` 换成仓耳今楷栈  
+3. 单测：xcom 配色与 sans 不被改写；禁止硬编码 `#f5f4ed` 暖底  
 
 **明确不做**
 
 - SPM 拉 Bridge / SwiftUI-WebView  
-- 把 Kami skill 整站 HTML 嵌进 App  
+- 嵌整站 Kami HTML / 强制 clayM3 palette  
 - 舆情热点卡片 WebView 化  
 
 ---
 
 ## 5. 验收
 
-1. 设置保持「新版 x.com」时，打开 **AI 复盘 / AI 回测 / 资讯长文**：窄栏 + 衬线标题 + 编辑向 h2 左边线  
-2. 字体为仓耳今楷（标题），非 Chirp 线程感  
-3. `swift test --filter MarkdownWebResourceTests` 通过  
-4. 无新增 SPM 依赖  
+1. UI 保持「新版 x.com」时打开 **AI 复盘 / AI 回测 / 资讯长文**：  
+   - 背景与侧栏同系（无暖纸色块）  
+   - 标题衬线、字重 500、无 h2 左边粗条  
+   - 正文 Chirp/系统 sans，与 chrome 一致  
+   - 链接/列表 marker 用主题 accent  
+2. `swift test --filter MarkdownWebResourceTests` 通过  
+3. 无新增 SPM 依赖  
 
 ---
 
@@ -177,6 +200,7 @@ KSS 已在 `5ee5854c` 落地离线子集：
 
 | 选项 | 决策 |
 |------|------|
-| WKWebViewJavascriptBridge | **拒绝**（iOS 向、协议过重、与 BridgedWebCoordinator 重复） |
-| SwiftUI-WebView 封装 | **拒绝**（导航壳，不匹配离线内容同步） |
-| 自研 MarkdownWebView + Kami 阅读皮 | **采用并强化**（内容面固定 Kami，chrome 可 xcom） |
+| WKWebViewJavascriptBridge | **拒绝** |
+| SwiftUI-WebView 封装 | **拒绝** |
+| 羊皮纸暖底 Kami | **拒绝**（与 xcom 冲突） |
+| demo-kami-print 节奏 + chrome 配色 | **采用** |
