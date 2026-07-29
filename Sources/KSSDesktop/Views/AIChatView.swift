@@ -1141,14 +1141,14 @@ struct AIChatView: View {
 
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Image(systemName: "sparkle")
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(theme.accent)
                     Text("今天想研究什么？")
-                        .font(KSSFont.themed(25, .bold, theme: theme))
+                        .font(KSSFont.themed(26, .bold, theme: theme))
                         .foregroundStyle(theme.textPrimary)
                 }
 
-                Text("选一个起点，或直接在下方描述你想弄清的市场问题。")
+                Text("对话已升级为混合节奏：你的问题是聊天气泡，助手答复是印刷体。")
                     .font(KSSFont.themed(14, theme: theme))
                     .foregroundStyle(theme.textSecondary)
                     .padding(.top, 10)
@@ -1173,7 +1173,7 @@ struct AIChatView: View {
     private var focusMessageList: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 22) {
+                LazyVStack(spacing: 28) {
                     ForEach(store.chatMessages) { message in
                         focusMessageCell(message)
                             .id(message.id)
@@ -1201,33 +1201,35 @@ struct AIChatView: View {
         let isUser = message.role == .user
 
         if isUser {
-            // Hybrid C: chat-style user bubble (right-biased).
+            // Hybrid C: solid accent chat bubble — clearly product, not tool card.
             HStack(alignment: .bottom, spacing: 0) {
-                Spacer(minLength: 72)
+                Spacer(minLength: 96)
                 VStack(alignment: .trailing, spacing: 6) {
                     if !message.text.isEmpty {
                         markdownText(message.text)
                             .font(KSSFont.themed(14.5, theme: theme))
-                            .foregroundStyle(theme.textPrimary)
+                            .foregroundStyle(Color.white)
                             .textSelection(.enabled)
                             .lineSpacing(3)
                             .fixedSize(horizontal: false, vertical: true)
                             .multilineTextAlignment(.leading)
+                            .tint(.white)
                     }
                     messageAttachmentStrip(message.attachments)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 11)
-                .frame(maxWidth: SeesawXcomChrome.feedColumnWidth * 0.72, alignment: .trailing)
+                .padding(.horizontal, 15)
+                .padding(.vertical, 12)
+                .frame(maxWidth: SeesawXcomChrome.feedColumnWidth * 0.68, alignment: .trailing)
                 .background(
-                    theme.accent.opacity(theme.appearance == .dark ? 0.22 : 0.12),
+                    theme.accent,
                     in: UnevenRoundedRectangle(
-                        topLeadingRadius: 16,
-                        bottomLeadingRadius: 16,
-                        bottomTrailingRadius: 6,
-                        topTrailingRadius: 16
+                        topLeadingRadius: 18,
+                        bottomLeadingRadius: 18,
+                        bottomTrailingRadius: 5,
+                        topTrailingRadius: 18
                     )
                 )
+                .shadow(color: theme.accent.opacity(0.28), radius: 8, y: 3)
                 .contextMenu {
                     Button("复制内容", systemImage: "doc.on.doc") {
                         copyMessageText(message.text)
@@ -1237,49 +1239,63 @@ struct AIChatView: View {
                     Button("记住这条消息") { store.proposeAgentMemory(message.text) }
                 }
             }
-            .padding(.vertical, 2)
+            .padding(.vertical, 4)
         } else {
-            // Hybrid C: print-style assistant column (no heavy chat bubble).
-            VStack(alignment: .leading, spacing: 10) {
-                if message.text.isEmpty && store.isChatStreaming {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text("思考中…")
-                            .font(KSSFont.themed(13, theme: theme))
+            // Hybrid C: print column with ink rule — not a chat bubble.
+            HStack(alignment: .top, spacing: 0) {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(Color(red: 0x1B / 255, green: 0x36 / 255, blue: 0x5D / 255).opacity(0.85))
+                    .frame(width: 3)
+                    .padding(.top, 4)
+                    .padding(.bottom, 2)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Seesaw")
+                        .font(KSSFont.themed(11, .semibold, theme: theme))
+                        .foregroundStyle(Color(red: 0x1B / 255, green: 0x36 / 255, blue: 0x5D / 255))
+                        .tracking(0.4)
+
+                    if message.text.isEmpty && store.isChatStreaming {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("思考中…")
+                                .font(KSSFont.themed(13, theme: theme))
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                        .padding(.vertical, 2)
+                    } else if !message.text.isEmpty {
+                        SeesawMarkdownView(markdown: message.text, errorTint: message.isError ? Color.red : nil)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    if !message.thinkingBlocks.isEmpty {
+                        AgentThinkingDisclosure(blocks: message.thinkingBlocks)
+                    }
+
+                    messageAttachmentStrip(message.attachments)
+
+                    if message.numbersUnverified && store.isChatStreaming {
+                        Label("数字校验中（以工具真值为准）", systemImage: "exclamationmark.triangle")
+                            .font(KSSFont.themed(12, theme: theme))
                             .foregroundStyle(theme.textSecondary)
                     }
-                    .padding(.vertical, 2)
-                } else if !message.text.isEmpty {
-                    SeesawMarkdownView(markdown: message.text, errorTint: message.isError ? Color.red : nil)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
 
-                if !message.thinkingBlocks.isEmpty {
-                    AgentThinkingDisclosure(blocks: message.thinkingBlocks)
-                }
+                    if message.evidenceSummary.hasEvidence || message.evidenceSummary.provider != nil {
+                        EvidenceDrawerView(summary: message.evidenceSummary, drawer: message.evidenceDrawer)
+                            .padding(.top, 2)
+                    }
 
-                messageAttachmentStrip(message.attachments)
-
-                if message.numbersUnverified && store.isChatStreaming {
-                    Label("数字校验中（以工具真值为准）", systemImage: "exclamationmark.triangle")
-                        .font(KSSFont.themed(12, theme: theme))
-                        .foregroundStyle(theme.textSecondary)
+                    if let chart = message.chartAttachment, !chart.bars.isEmpty {
+                        ChartWebView(points: [], intradayBars: chart.bars)
+                            .frame(height: 300)
+                            .background(theme.chartSurface)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
                 }
-
-                if message.evidenceSummary.hasEvidence || message.evidenceSummary.provider != nil {
-                    EvidenceDrawerView(summary: message.evidenceSummary, drawer: message.evidenceDrawer)
-                        .padding(.top, 2)
-                }
-
-                if let chart = message.chartAttachment, !chart.bars.isEmpty {
-                    ChartWebView(points: [], intradayBars: chart.bars)
-                        .frame(height: 300)
-                        .background(theme.chartSurface)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
+                .padding(.leading, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.trailing, 8)
+            .padding(.trailing, 12)
             .contextMenu {
                 Button("复制内容", systemImage: "doc.on.doc") {
                     copyMessageText(message.text)
@@ -1288,7 +1304,7 @@ struct AIChatView: View {
                 Divider()
                 Button("记住这条消息") { store.proposeAgentMemory(message.text) }
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, 8)
         }
     }
 
@@ -1337,13 +1353,24 @@ struct AIChatView: View {
             composerControlBar
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 13)
-        .background(theme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(.vertical, 14)
+        .background(theme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(theme.hairline.opacity(0.95))
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(
+                    isComposerFocused
+                        ? theme.accent.opacity(0.55)
+                        : theme.hairline.opacity(0.95),
+                    lineWidth: isComposerFocused ? 1.5 : 1
+                )
         }
-        .shadow(color: .black.opacity(theme.appearance == .dark ? 0.18 : 0.06), radius: 14, y: 5)
+        .shadow(
+            color: isComposerFocused
+                ? theme.accent.opacity(0.18)
+                : .black.opacity(theme.appearance == .dark ? 0.18 : 0.07),
+            radius: isComposerFocused ? 16 : 14,
+            y: 5
+        )
         .accessibilityElement(children: .contain)
     }
 
