@@ -44,7 +44,12 @@ def main(argv: list[str] | None = None) -> int:
                     f"{s['trade_date']}: cards={s['n_cards']} written={s['written']} "
                     f"by_type={s['by_type']} failed={s['failed']}"
                 )
-        return 0 if all(not r.failed_generators or r.cards for r in results) else 1
+        # 全程零卡 = 无数据源可用 → 明确失败（U6）
+        if not results or all(not r.cards for r in results):
+            print("no cards produced across backfill window (no source data?)", file=sys.stderr)
+            return 1
+        # 某日仅异常且零卡 → 失败；有卡的部分成功日可接受
+        return 0 if all(r.cards or not r.failed_generators for r in results) else 1
 
     if not args.date:
         # 默认：ETF 最新日
@@ -71,10 +76,8 @@ def main(argv: list[str] | None = None) -> int:
             f"{result.trade_date}: cards={len(result.cards)} written={result.written} "
             f"by_type={result.by_type} failed={result.failed_generators}"
         )
-    if not result.cards and result.failed_generators:
-        return 1
-    if not result.cards and not result.by_type:
-        # 无任何数据源
+    # U6：零卡一律明确失败（by_type 总会被填成 0 计数，不能当「无数据」判据）
+    if not result.cards:
         print("no cards produced (no source data?)", file=sys.stderr)
         return 1
     return 0

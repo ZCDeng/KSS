@@ -190,11 +190,14 @@ def aggregate_week(
     non_val = [c for c in cards if c["card_type"] != "valuation"]
     # ETF 不进持续聚合（自相关），只进演变
     non_etf = [c for c in non_val if c["card_type"] != "etf_flow"]
+    # 持续信号/观察项只用 covered：empty volume_ratio 等 insufficient_data
+    # 可进演变/风险，不得冒充「连续 N 日信号」
+    covered = [c for c in non_etf if c.get("coverage") == "covered"]
 
-    backtested = [c for c in non_etf if c.get("threshold_source") == "backtested"]
+    backtested = [c for c in covered if c.get("threshold_source") == "backtested"]
     conventionish = [
         c
-        for c in non_etf
+        for c in covered
         if c.get("threshold_source") in ("convention", "derived", "gated")
     ]
 

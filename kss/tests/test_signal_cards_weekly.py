@@ -99,3 +99,43 @@ def test_empty_week(tmp_path: Path) -> None:
     md = render_markdown(agg)
     assert "本周无" in md
     assert md.strip()
+
+
+def test_insufficient_data_volume_not_in_persistent_observations(tmp_path: Path) -> None:
+    """empty volume_ratio → insufficient_data 可进演变，不得进持续观察项。"""
+    db = tmp_path / "t.db"
+    cards = []
+    # 噪声：空量比卡连续 3 日
+    for i, d in enumerate(["20260713", "20260715", "20260716"]):
+        cards.append(
+            {
+                "card_id": f"noise{i}",
+                "card_type": "volume_spike",
+                "trade_date": d,
+                "subject": "159915.SZ",
+                "threshold_source": "convention",
+                "direction": None,
+                "coverage": "insufficient_data",
+                "metrics": {"volume_ratio": None, "pct_chg": None},
+                "rule_id": "volume_spike_empty_ratio",
+            }
+        )
+    # 真信号：covered sector_move 连续 3 日
+    for i, d in enumerate(["20260713", "20260715", "20260716"]):
+        cards.append(
+            _card(f"real{i}", "sector_move", d, "光刻机", thr="convention")
+        )
+    write_cards(cards, db_path=db)
+    agg = aggregate_week("20260713", "20260717", db_path=db, expected_trade_days=5)
+    obs_subjects = {r["subject"] for r in agg["persistent_observations"]}
+    assert "光刻机" in obs_subjects
+    assert "159915.SZ" not in obs_subjects
+    # 演变栏仍可见 noise（covered_dates 来自全量 cards）
+    evo = agg["evolution"]
+    noise_in_evo = any(
+        any(it["card_id"].startswith("noise") for it in items)
+        for day in evo.values()
+        for items in day.values()
+    )
+    assert noise_in_evo
+
