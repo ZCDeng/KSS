@@ -15,18 +15,21 @@ enum SeesawMarkdownBlock: Equatable {
 }
 
 enum SeesawMarkdownLayout {
-    static let bodyFontSize: CGFloat = 14
-    static let tableFontSize: CGFloat = 11.5
+    /// Print-oriented body for hybrid assistant columns (compact, not report-page).
+    static let bodyFontSize: CGFloat = 14.5
+    static let tableFontSize: CGFloat = 12
     static let tableHorizontalPadding: CGFloat = 8
-
     static func headingSize(for level: Int) -> CGFloat {
         switch level {
-        case 1: return 20
-        case 2: return 17.5
-        case 3: return 15.5
+        case 1: return 19
+        case 2: return 16.5
+        case 3: return 15
         default: return 14.5
         }
     }
+
+    /// Transcript stays native-only so height tracks content (no nested WebView min-height bloat).
+    /// Long-form report pages keep using `MarkdownWebView` directly.
 
     static func tableColumnWidth(columnCount: Int) -> CGFloat {
         switch max(1, columnCount) {
@@ -210,17 +213,25 @@ struct SeesawMarkdownView: View {
     }
 
     var body: some View {
-        // 助手交付物与复盘/资讯同一 Kami 内容壳；错误态保留红色提示条。
+        // Always native in transcript: height == content (WebView fitsContent
+        // inflated short replies into tall empty frames).
         VStack(alignment: .leading, spacing: 6) {
             if errorTint != nil {
                 Text("生成异常")
-                    .font(KSSFont.themed(11, .semibold, theme: theme))
+                    .font(KSSFont.chiron(11, .semibold))
                     .foregroundStyle(errorTint ?? theme.down)
             }
-            MarkdownWebView(text: markdown, fitsContent: true, minHeight: 64)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .opacity(errorTint == nil ? 1 : 0.92)
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(Array(SeesawMarkdown.parse(markdown).enumerated()), id: \.offset) { _, block in
+                    blockView(block)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .opacity(errorTint == nil ? 1 : 0.92)
+            .textSelection(.enabled)
         }
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
@@ -228,25 +239,25 @@ struct SeesawMarkdownView: View {
         switch block {
         case let .heading(level, text):
             inlineText(text)
-                .font(KSSFont.themed(SeesawMarkdownLayout.headingSize(for: level), .bold, theme: theme))
-                .foregroundStyle(foreground)
-                .padding(.top, level <= 2 ? 7 : 3)
+                .font(KSSFont.chiron(SeesawMarkdownLayout.headingSize(for: level), .bold))
+                .foregroundStyle(level <= 2 ? theme.textPrimary : foreground)
+                .padding(.top, level <= 2 ? 4 : 2)
         case let .paragraph(text):
             inlineText(text)
-                .font(KSSFont.themed(SeesawMarkdownLayout.bodyFontSize, theme: theme))
+                .font(KSSFont.chiron(SeesawMarkdownLayout.bodyFontSize))
                 .foregroundStyle(foreground)
-                .lineSpacing(3)
+                .lineSpacing(2.5)
                 .fixedSize(horizontal: false, vertical: true)
         case let .list(ordered, items):
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(ordered ? "\(index + 1)." : "•")
-                            .font(KSSFont.themed(13, .semibold, theme: theme))
-                            .foregroundStyle(theme.textSecondary)
-                            .frame(width: ordered ? 22 : 12, alignment: .trailing)
+                            .font(KSSFont.chiron(12.5, .semibold))
+                            .foregroundStyle(theme.accent.opacity(0.85))
+                            .frame(width: ordered ? 20 : 12, alignment: .trailing)
                         inlineText(item)
-                            .font(KSSFont.themed(SeesawMarkdownLayout.bodyFontSize, theme: theme))
+                            .font(KSSFont.chiron(SeesawMarkdownLayout.bodyFontSize))
                             .foregroundStyle(foreground)
                             .lineSpacing(2)
                             .fixedSize(horizontal: false, vertical: true)
@@ -261,7 +272,7 @@ struct SeesawMarkdownView: View {
                     .fill(theme.accent.opacity(0.7))
                     .frame(width: 3)
                 inlineText(text)
-                    .font(KSSFont.themed(13.5, theme: theme))
+                    .font(KSSFont.chiron(13.5, .medium))
                     .foregroundStyle(theme.textSecondary)
                     .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
@@ -310,10 +321,9 @@ struct SeesawMarkdownView: View {
             ForEach(cells.indices, id: \.self) { index in
                 inlineText(cells[index])
                     .font(
-                        KSSFont.themed(
+                        KSSFont.chiron(
                             SeesawMarkdownLayout.tableFontSize,
-                            isHeader ? .semibold : .regular,
-                            theme: theme
+                            isHeader ? .semibold : .regular
                         )
                     )
                     .foregroundStyle(isHeader ? theme.textPrimary : foreground)

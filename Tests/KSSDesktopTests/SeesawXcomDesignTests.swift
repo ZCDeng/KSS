@@ -96,7 +96,9 @@ final class SeesawXcomDesignTests: XCTestCase {
         XCTAssertTrue(source.contains("researchTaskRow("))
         XCTAssertTrue(source.contains("$0.name == starter.skillId"))
         XCTAssertTrue(source.contains("private var composerInlineStatus"))
-        XCTAssertTrue(source.contains("private var composerControlBar"))
+        // FlowDown-style: send sits on the same row as TextField (no stacked control bar).
+        XCTAssertTrue(source.contains("FlowDown-inspired input"))
+        XCTAssertTrue(source.contains("focusSendButton"))
         XCTAssertFalse(source.contains("private var focusProviderIssue"))
     }
 
