@@ -174,7 +174,10 @@ if find "$APP_RESOURCES/pi-ai-helper/node_modules" -type f -name '*.node' -print
   echo "ERROR: pi-ai helper contains unsupported native .node modules." >&2
   exit 1
 fi
-codesign --force --options runtime --timestamp \
+# Prefer explicit Apple HTTP TSA — bare --timestamp sometimes fails with
+# "The timestamp service is not available" when the default endpoint flakes.
+CODESIGN_TIMESTAMP="${KSS_CODESIGN_TIMESTAMP:-http://timestamp.apple.com/ts01}"
+codesign --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
   --entitlements "$NODE_ENTITLEMENTS" \
   --sign "$SIGN_IDENTITY" "$APP_RESOURCES/pi-ai-runtime/bin/node"
 codesign --verify --strict --verbose=2 "$APP_RESOURCES/pi-ai-runtime/bin/node"
@@ -186,7 +189,7 @@ fi
 # The scheduler helper is a nested executable.  It owns the ephemeral
 # Keychain credential broker used by launchd jobs, so it must be independently
 # signed before sealing the parent application bundle.
-codesign --force --options runtime --timestamp \
+codesign --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
   --entitlements "$ENTITLEMENTS" \
   --sign "$SIGN_IDENTITY" "$APP_HELPERS/KSSResearchSchedulerHelper"
 codesign --verify --strict --verbose=2 "$APP_HELPERS/KSSResearchSchedulerHelper"
@@ -211,10 +214,10 @@ if [ -d "$APP_RESOURCE_BUNDLE" ]; then
 </plist>
 RESPLIST
   fi
-  codesign --force --options runtime --timestamp \
+  codesign --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
     --sign "$SIGN_IDENTITY" "$APP_RESOURCE_BUNDLE"
 fi
-codesign --force --options runtime --timestamp \
+codesign --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
   --entitlements "$ENTITLEMENTS" \
   --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
 
