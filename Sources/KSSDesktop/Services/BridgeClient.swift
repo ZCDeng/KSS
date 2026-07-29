@@ -413,6 +413,19 @@ struct BridgeClient {
         try run(["surface-apply", opsJSON], as: SurfaceApplyResponse.self)
     }
 
+    /// 档 A/B 自然语言解析 surface draft（不落盘；可能探针外网）。
+    func surfaceNlInterpret(region: String, text: String) throws -> SurfaceNlInterpretResponse {
+        try run(["surface-nl-interpret", region, text], as: SurfaceNlInterpretResponse.self)
+    }
+
+    /// Bind Catalog 只读搜索（slot + 可选 q）。
+    func surfaceCatalog(slot: String, q: String = "") throws -> SurfaceCatalogResponse {
+        if q.isEmpty {
+            return try run(["surface-catalog", slot], as: SurfaceCatalogResponse.self)
+        }
+        return try run(["surface-catalog", slot, q], as: SurfaceCatalogResponse.self)
+    }
+
     func setWatchlist(_ symbols: [String]) throws -> WatchlistSetResult {
         try run(["watchlist-set", symbols.joined(separator: ",")], as: WatchlistSetResult.self)
     }
@@ -438,8 +451,9 @@ struct BridgeClient {
         "intel-digest", "intel-panorama", "intel-digest-save",
         "intel-article", "intel-rewrite", "intel-rewrite-run",
         "cron-catchup", "cron-rerun", "cron-rerun-many", "cron-enable", "cron-disable",
-        // surface-apply / propose 可能探针外网（yfinance），避免 sidecar 3s 超时双跑
+        // surface-apply / propose / nl-interpret 可能探针外网（yfinance），避免 sidecar 3s 超时双跑
         "surface-apply", "surface-propose", "surface-get", "surface-metrics",
+        "surface-nl-interpret", "surface-catalog",
     ]
 
     private func run<T: Decodable>(_ args: [String], as type: T.Type) throws -> T {
@@ -466,8 +480,18 @@ struct BridgeClient {
         // 禁止在 .app/Resources 写 __pycache__（会破坏 codesign sealed resources → 无法打开）
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["PYTHONPYCACHEPREFIX"] = stateRoot.appending(path: ".cache/pycache").path
-        // U3/M1：非 LLM 数据源凭据仍走 env，LLM BYOK 仅通过 nonce 绑定的本地 broker 注入 pi-ai。
-        for (key, value) in KeychainStore.sidecarEnvironment() { env[key] = value }
+        // 一次性 bridge：完整 LLM + provider 映射（见 KeychainStore.bridgeEnvironment）。
+        // intel-rewrite / panorama / digest 走 Python LLMClient，不能只用 sidecarEnvironment。
+        for (key, value) in KeychainStore.bridgeEnvironment() {
+            env[key] = value
+        }
+        // 诊断：不落密钥，只记是否注入成功（便于排「改写仍无凭据」）
+        let hasLLM = env["KSS_LLM_PRIMARY_KEY"] != nil
+            || env["DEEPSEEK_API_KEY"] != nil
+            || env["OPENAI_API_KEY"] != nil
+        if !hasLLM {
+            NSLog("[KSS bridge] WARNING: no LLM key injected for subprocess cmd=%@", args.first ?? "?")
+        }
         if let broker = CredentialBrokerRegistry.broker(for: stateRoot) {
             env["KSS_PI_AI_CREDENTIAL_SOCKET"] = broker.socketPath
             env["KSS_PI_AI_CREDENTIAL_NONCE"] = broker.nonce

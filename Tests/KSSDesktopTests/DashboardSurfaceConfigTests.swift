@@ -164,6 +164,125 @@ final class DashboardSurfaceConfigTests: XCTestCase {
         XCTAssertTrue(resp.error?.contains("北向") == true)
     }
 
+    func testSurfaceNlInterpretOvernightDecodes() throws {
+        let json = """
+        {
+          "ok": true,
+          "region": "overnight_us",
+          "action": "overnight_append",
+          "partial": false,
+          "ops": [{
+            "op": "overnight_append",
+            "code": "AAPL",
+            "name": "苹果",
+            "kind": "yfinance",
+            "kind_source": "candidate_table",
+            "added_via": "nl",
+            "probe_close": 190.0
+          }],
+          "previews": [{
+            "op": "overnight_append",
+            "code": "AAPL",
+            "name": "苹果",
+            "close": 190.0,
+            "pct": 1.0,
+            "label": "追加 苹果 (AAPL)"
+          }],
+          "items": [{"status":"ok","token":"苹果","code":"AAPL","name":"苹果","close":190.0,"pct":1.0}],
+          "failed": [],
+          "error": null,
+          "error_zh": null,
+          "suggestions": []
+        }
+        """
+        let resp = try decoder.decode(SurfaceNlInterpretResponse.self, from: data(json))
+        XCTAssertEqual(resp.ok, true)
+        XCTAssertEqual(resp.ops?.first?.code, "AAPL")
+        XCTAssertEqual(resp.ops?.first?.probeClose, 190.0)
+        XCTAssertEqual(resp.previews?.first?.label, "追加 苹果 (AAPL)")
+        XCTAssertEqual(resp.previews?.first?.close, 190.0)
+        let encoded = SurfaceBindEncoding.encodeOps(resp.ops ?? [])
+        XCTAssertNotNil(encoded)
+        XCTAssertTrue(encoded?.contains("overnight_append") == true)
+        XCTAssertTrue(encoded?.contains("AAPL") == true)
+    }
+
+    func testSurfaceNlInterpretMetricDecodes() throws {
+        let json = """
+        {
+          "ok": true,
+          "region": "strip_metric",
+          "action": "set_strip_metric",
+          "metric_id": "limit_seal_rate",
+          "ops": [{"op":"set_strip_metric","metric_id":"limit_seal_rate"}],
+          "previews": [{
+            "op": "set_strip_metric",
+            "metric_id": "limit_seal_rate",
+            "title": "封板率",
+            "valueText": "55.0%",
+            "label": "切换为 封板率（55.0%）"
+          }],
+          "stripMetric": {
+            "metric_id": "limit_seal_rate",
+            "title": "封板率",
+            "value": 55.0,
+            "valueText": "55.0%"
+          }
+        }
+        """
+        let resp = try decoder.decode(SurfaceNlInterpretResponse.self, from: data(json))
+        XCTAssertEqual(resp.metricId, "limit_seal_rate")
+        XCTAssertEqual(resp.previews?.first?.valueText, "55.0%")
+        XCTAssertEqual(resp.stripMetric?.title, "封板率")
+    }
+
+    func testSurfaceNlInterpretNorthFailsWithSuggestions() throws {
+        let json = """
+        {
+          "ok": false,
+          "region": "strip_metric",
+          "error": "north_forbidden",
+          "error_zh": "第一行已固定展示北向资金，小卡不能再绑北向类指标",
+          "suggestions": ["最高连板", "封板率", "科创50", "创业板指"],
+          "ops": [],
+          "previews": []
+        }
+        """
+        let resp = try decoder.decode(SurfaceNlInterpretResponse.self, from: data(json))
+        XCTAssertEqual(resp.ok, false)
+        XCTAssertEqual(resp.error, "north_forbidden")
+        XCTAssertTrue(resp.errorZh?.contains("北向") == true)
+        XCTAssertEqual(resp.suggestions?.count, 4)
+    }
+
+    func testSurfaceCatalogResponseDecodes() throws {
+        let json = """
+        {
+          "ok": true,
+          "slot": "strip_metric",
+          "q": "封板",
+          "domains_online": ["metric_hot", "equity_us"],
+          "total": 1,
+          "items": [{
+            "id": "metric.limit_seal_rate",
+            "kind": "breadth_metric",
+            "market": "CN",
+            "names": ["封板率"],
+            "metric_id": "limit_seal_rate",
+            "codes": {"metric_id": "limit_seal_rate"},
+            "allowed_slots": ["strip_metric"],
+            "status": "active",
+            "domains": ["metric_hot"]
+          }]
+        }
+        """
+        let resp = try decoder.decode(SurfaceCatalogResponse.self, from: data(json))
+        XCTAssertEqual(resp.ok, true)
+        XCTAssertEqual(resp.domainsOnline?.contains("metric_hot"), true)
+        XCTAssertEqual(resp.items?.first?.metricId, "limit_seal_rate")
+        XCTAssertEqual(resp.items?.first?.displayName, "封板率")
+    }
+
     func testStripMetricEmptyReason() throws {
         let json = """
         {

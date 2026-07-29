@@ -17,10 +17,13 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 VERSION = 1
-MAX_APPEND = 8
+MAX_APPEND = 24  # 档 B：用户追加上限（KTD4）
 DEFAULT_STRIP_METRIC = "limit_max_board"
-ALLOWED_KINDS = frozenset({"yfinance", "index_global"})
-CODE_RE = re.compile(r"^[A-Z0-9.^-]{1,12}$")
+ALLOWED_KINDS = frozenset({"yfinance", "index_global", "a_share", "hk"})
+# 美股 ticker；A 股 600519.SH；港股 00700.HK
+CODE_RE = re.compile(r"^[A-Z0-9.^-]{1,16}$")
+_TS_CODE_RE = re.compile(r"^\d{6}\.(SH|SZ|BJ)$", re.I)
+_HK_CODE_RE = re.compile(r"^\d{1,5}\.HK$", re.I)
 ALLOWED_OPS = frozenset({
     "overnight_append",
     "overnight_remove",
@@ -30,6 +33,19 @@ ALLOWED_OPS = frozenset({
 })
 # 北向已在第一行固定展示；不得作小卡 metric
 NORTH_METRICS = frozenset({"north_money", "north", "hsgt_north"})
+
+
+def is_valid_overnight_code(code: str, kind: str | None = None) -> bool:
+    """分 kind 校验 code 形态。"""
+    c = (code or "").strip().upper()
+    if not c or not CODE_RE.match(c):
+        return False
+    k = (kind or "yfinance").strip().lower()
+    if k == "a_share":
+        return bool(_TS_CODE_RE.match(c))
+    if k == "hk":
+        return bool(_HK_CODE_RE.match(c))
+    return True
 
 
 def _state_root() -> Path:
@@ -61,13 +77,13 @@ def empty_config() -> dict[str, Any]:
     }
 
 
-def _normalize_code(raw: Any) -> str:
+def _normalize_code(raw: Any, kind: str | None = None) -> str:
     if not isinstance(raw, str):
         raise ValueError("code must be a string")
     code = raw.strip().upper()
-    if not code or not CODE_RE.match(code):
+    if not code or not is_valid_overnight_code(code, kind):
         raise ValueError(
-            f"invalid code {raw!r}: must match ^[A-Z0-9.^-]{{1,12}}$"
+            f"invalid code {raw!r} for kind {kind!r}"
         )
     return code
 
@@ -75,16 +91,17 @@ def _normalize_code(raw: Any) -> str:
 def _normalize_append_item(item: Any) -> dict[str, Any]:
     if not isinstance(item, dict):
         raise ValueError("append item must be an object")
-    code = _normalize_code(item.get("code"))
     kind = str(item.get("kind") or "yfinance").strip().lower()
     if kind not in ALLOWED_KINDS:
         raise ValueError(f"invalid kind {kind!r}; allowed={sorted(ALLOWED_KINDS)}")
+    code = _normalize_code(item.get("code"), kind)
     name = item.get("name")
     if name is not None and not isinstance(name, str):
         raise ValueError("name must be a string or null")
     kind_source = item.get("kind_source") or "candidate_table"
-    if kind_source not in ("candidate_table", "ai_inferred"):
-        raise ValueError("kind_source must be candidate_table or ai_inferred")
+    if kind_source not in ("candidate_table", "ai_inferred", "catalog", "nl"):
+        # 兼容扩展来源；未知时降为 candidate_table
+        kind_source = "candidate_table"
     out: dict[str, Any] = {
         "id": str(item.get("id") or f"usr-{code.lower()}"),
         "code": code,

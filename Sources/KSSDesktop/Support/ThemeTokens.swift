@@ -147,6 +147,24 @@ struct KSSWebThemePayload: Codable, Equatable {
               let str = String(data: data, encoding: .utf8) else { return "{}" }
         return str
     }
+
+    /// 报告/资讯/对话交付物：Kami print 节奏 + Chiron GoRound TC，配色跟 chrome。
+    func asEditorialContentTheme() -> KSSWebThemePayload {
+        let face = ThemeTypography.contentPrint
+        return KSSWebThemePayload(
+            version: version,
+            id: id,
+            mode: mode,
+            colors: colors,
+            typography: Typography(
+                serif: face.serif,
+                sans: face.sans,
+                mono: face.mono
+            ),
+            shape: shape,
+            elevation: elevation
+        )
+    }
 }
 
 extension KSSPalette {
@@ -175,6 +193,10 @@ extension KSSPalette {
             "code": surfaceRaised.css,
             "th": surfaceRaised.css,
             "zebra": ink.withAlpha(zebraA).css,
+            // Kami tag fill：ink-blue 叠在 parchment 上的等效实色，避免 rgba 双绘
+            "tag": system == .clayM3
+                ? (appearance == .dark ? ThemeColor(0x243247).css : ThemeColor(0xE4ECF5).css)
+                : accent.withAlpha(appearance == .dark ? 0.18 : 0.14).css,
             // 架构图专用
             "olive": secondary.css,
             "oliveSoft": secondary.withAlpha(0.14).css,

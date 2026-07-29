@@ -132,6 +132,491 @@ struct MissingCredentialCard: View {
     }
 }
 
+// MARK: - Dashboard strip card（市场速览小卡标准件）
+
+/// 第一行速览小卡规格：等高、顶对齐、单行最多 5 张、等分动态宽度。
+enum DashboardStripCardSpec {
+    static let height: CGFloat = 88
+    static let titleRowHeight: CGFloat = 22
+    static let valueRowMinHeight: CGFloat = 28
+    static let maxPerRow = 5
+    static let spacing: CGFloat = 12
+    static let padding: CGFloat = 14
+}
+
+/// 标准速览小卡：标题行 + 主值行；固定高度；trailing（如 Sparkle）叠在右上角，不把标题行撑偏。
+struct DashboardStripCard<Value: View, Trailing: View>: View {
+    @Environment(\.kssTheme) private var theme
+    var title: String
+    var meta: String? = nil
+    var isLive: Bool = false
+    @ViewBuilder var trailing: () -> Trailing
+    @ViewBuilder var value: () -> Value
+
+    private var hasTrailing: Bool { Trailing.self != EmptyView.self }
+
+    init(
+        title: String,
+        meta: String? = nil,
+        isLive: Bool = false,
+        @ViewBuilder trailing: @escaping () -> Trailing,
+        @ViewBuilder value: @escaping () -> Value
+    ) {
+        self.title = title
+        self.meta = meta
+        self.isLive = isLive
+        self.trailing = trailing
+        self.value = value
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // 标题行固定高度；Sparkle/plus 直接进标题 HStack，避免 overlay 被裁切或点不中。
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(KSSFont.themed(13.5, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                    .lineLimit(1)
+                if isLive {
+                    Text("实时")
+                        .font(KSSFont.themed(9, .bold, theme: theme))
+                        .foregroundStyle(theme.accent)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(theme.accent.opacity(0.12), in: Capsule())
+                }
+                Spacer(minLength: 4)
+                if let meta, !meta.isEmpty {
+                    Text(meta)
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
+                }
+                if hasTrailing {
+                    trailing()
+                        .layoutPriority(1)
+                }
+            }
+            .frame(height: DashboardStripCardSpec.titleRowHeight, alignment: .center)
+
+            value()
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: DashboardStripCardSpec.valueRowMinHeight,
+                    alignment: .leading
+                )
+
+            Spacer(minLength: 0)
+        }
+        .frame(
+            maxWidth: .infinity,
+            minHeight: DashboardStripCardSpec.height,
+            maxHeight: DashboardStripCardSpec.height,
+            alignment: .topLeading
+        )
+        .kssCard(padding: DashboardStripCardSpec.padding)
+        // 等分宽：父 HStack 里每张卡都拉满分配宽度
+        .frame(maxWidth: .infinity, maxHeight: DashboardStripCardSpec.height, alignment: .top)
+    }
+}
+
+extension DashboardStripCard where Trailing == EmptyView {
+    init(
+        title: String,
+        meta: String? = nil,
+        isLive: Bool = false,
+        @ViewBuilder value: @escaping () -> Value
+    ) {
+        self.init(title: title, meta: meta, isLive: isLive, trailing: { EmptyView() }, value: value)
+    }
+}
+
+/// 速览行：顶对齐 + 等分宽。子卡须自带 `frame(maxWidth: .infinity)`。
+struct DashboardStripCardRow<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        HStack(alignment: .top, spacing: DashboardStripCardSpec.spacing) {
+            content()
+        }
+        .frame(height: DashboardStripCardSpec.height, alignment: .top)
+    }
+}
+
+// MARK: - Dashboard chrome / Sparkle 标准件
+
+/// 盯盘区动作图标规格：与 Seesaw 侧栏同色（textPrimary / 黑墨），统一尺寸。
+enum DashboardChromeIconSpec {
+    static let pointSize: CGFloat = 18
+    static let weight: Font.Weight = .semibold
+    static let hitSize: CGFloat = 28
+}
+
+enum DashboardChromeIconKind {
+    case sparkles
+    case plus
+
+    var systemName: String {
+        switch self {
+        case .sparkles: return "sparkles"
+        case .plus: return "plus.circle.fill"
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .sparkles: return "自然语言"
+        case .plus: return "列表追加"
+        }
+    }
+}
+
+struct DashboardChromeIcon: View {
+    @Environment(\.kssTheme) private var theme
+    let kind: DashboardChromeIconKind
+    var enabled: Bool = true
+
+    var body: some View {
+        Image(systemName: kind.systemName)
+            .font(.system(size: DashboardChromeIconSpec.pointSize, weight: DashboardChromeIconSpec.weight))
+            // 用 accent 提对比度，避免 xcom 深色卡上 textPrimary 与底色糊在一起「看不见」
+            .foregroundStyle(enabled ? theme.accent : theme.textSecondary.opacity(0.45))
+            .frame(width: DashboardChromeIconSpec.hitSize, height: DashboardChromeIconSpec.hitSize)
+            .contentShape(Rectangle())
+            .accessibilityLabel(kind.accessibilityLabel)
+            .accessibilityAddTraits(.isButton)
+    }
+}
+
+struct DashboardChromeIconButton: View {
+    let kind: DashboardChromeIconKind
+    var help: String
+    var disabled: Bool = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            DashboardChromeIcon(kind: kind, enabled: !disabled)
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .help(help)
+    }
+}
+
+/// Sparkle 标准能力：一个入口 = 自然语言 Tab + 列表兜底 Tab。
+/// 未来任何卡片挂此组件即同时获得 NL 绑定与列表兜底。
+/// `listContent` 接收 `dismiss` 闭包：列表选中后调用即可关 sheet。
+struct DashboardSparkleControl<ListContent: View>: View {
+    @Environment(\.kssTheme) private var theme
+
+    var help: String = "自然语言 / 列表"
+    var disabled: Bool = false
+    var sheetTitle: String
+
+    // NL
+    var region: String
+    var nlPlaceholder: String
+    var nlExamples: [String] = []
+    var bridge: BridgeClient?
+    var onOpenAI: (() -> Void)? = nil
+    var onDraft: (SurfaceBindDraft) -> Void
+
+    // List 兜底
+    var listTabTitle: String = "列表选择"
+    var onListTabAppear: (() -> Void)? = nil
+    @ViewBuilder var listContent: (_ dismiss: @escaping () -> Void) -> ListContent
+
+    @State private var showSheet = false
+    @State private var tab: SparkleTab = .natural
+    @State private var nlText = ""
+    @State private var nlBusy = false
+    @State private var nlError: String?
+    @FocusState private var nlFocused: Bool
+
+    private enum SparkleTab: String, CaseIterable, Identifiable, Hashable {
+        case natural
+        case list
+        var id: String { rawValue }
+
+        func label(listTitle: String) -> String {
+            switch self {
+            case .natural: return "自然语言"
+            case .list: return listTitle
+            }
+        }
+    }
+
+    private var tabOptions: [(key: SparkleTab, label: String)] {
+        SparkleTab.allCases.map { ($0, $0.label(listTitle: listTabTitle)) }
+    }
+
+    var body: some View {
+        // 始终可见；disabled 只挡点击（列表/NL 由 sheet 内自行处理 bridge 缺失）。
+        DashboardChromeIconButton(
+            kind: .sparkles,
+            help: help,
+            disabled: disabled
+        ) {
+            showSheet = true
+        }
+        .sheet(isPresented: $showSheet) {
+            sheetBody
+        }
+    }
+
+    private var sheetBody: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                DashboardChromeIcon(kind: .sparkles)
+                Text(sheetTitle)
+                    .font(KSSFont.themed(16, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                Spacer()
+            }
+            .padding(.horizontal, 22)
+            .padding(.top, 22)
+            .padding(.bottom, 12)
+
+            // 与资讯雷达 / 复盘页同一套：xcom 下划线 Tab，其它主题凹槽分段
+            Group {
+                if IntelXcomChrome.usesUnderlineTabs(theme.system) {
+                    XcomUnderlineTabBar(
+                        options: tabOptions,
+                        selection: $tab,
+                        stretch: true
+                    )
+                } else {
+                    KSSSegmentedControl(
+                        options: tabOptions,
+                        selection: $tab,
+                        stretch: true
+                    )
+                    .padding(.horizontal, 22)
+                    .padding(.bottom, 6)
+                }
+            }
+            .onChange(of: tab) { _, new in
+                if new == .list { onListTabAppear?() }
+            }
+
+            Group {
+                switch tab {
+                case .natural:
+                    naturalTab
+                        .padding(22)
+                case .list:
+                    listContent({ showSheet = false })
+                        .padding(22)
+                        .frame(maxWidth: .infinity, minHeight: 260, alignment: .topLeading)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .frame(width: 440)
+        .background(theme.canvas)
+        .onAppear {
+            nlFocused = tab == .natural
+            if tab == .list { onListTabAppear?() }
+        }
+    }
+
+    private var naturalTab: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("用自然语言描述要改的内容，解析后展示代码真值，确认才写入。")
+                .font(KSSFont.themed(12, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            TextField(nlPlaceholder, text: $nlText, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(KSSFont.themed(14, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+                .lineLimit(2...4)
+                .padding(12)
+                .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+                .focused($nlFocused)
+                .disabled(nlBusy || bridge == nil)
+                .onSubmit { interpret() }
+
+            if !nlExamples.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(nlExamples.prefix(4), id: \.self) { ex in
+                        Button(ex) {
+                            nlText = ex
+                            nlFocused = true
+                        }
+                        .buttonStyle(.plain)
+                        .font(KSSFont.themed(11, theme: theme))
+                        .foregroundStyle(theme.accent)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(theme.accent.opacity(0.12), in: Capsule())
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+
+            if let nlError {
+                Text(nlError)
+                    .font(KSSFont.themed(12, theme: theme))
+                    .foregroundStyle(.red.opacity(0.9))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 12) {
+                if let onOpenAI {
+                    Button("AI 辅助") {
+                        showSheet = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            onOpenAI()
+                        }
+                    }
+                    .disabled(nlBusy)
+                }
+                Spacer()
+                Button("取消") { showSheet = false }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(nlBusy)
+                Button(nlBusy ? "解析中…" : "解析") { interpret() }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(nlBusy || bridge == nil
+                              || nlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .opacity(nlBusy ? 0.85 : 1)
+    }
+
+    private func interpret() {
+        guard let bridge else { return }
+        let trimmed = nlText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        nlBusy = true
+        nlError = nil
+        Task {
+            do {
+                let resp = try await Task.detached {
+                    try bridge.surfaceNlInterpret(region: region, text: trimmed)
+                }.value
+                await MainActor.run {
+                    nlBusy = false
+                    let (draft, err) = SurfaceBindEncoding.draft(from: resp, region: region)
+                    if let draft {
+                        showSheet = false
+                        nlText = ""
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                            onDraft(draft)
+                        }
+                    } else {
+                        nlError = err ?? "无法解析"
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    nlBusy = false
+                    nlError = error.localizedDescription
+                }
+            }
+        }
+    }
+}
+
+/// 列表兜底：搜索 + 候选列表（Sparkle 列表 Tab / 独立复用）。
+struct DashboardCandidatePickerList: View {
+    @Environment(\.kssTheme) private var theme
+    var searchPlaceholder: String = "搜索代码或名称"
+    var candidates: [SurfaceCandidate]
+    var disabledCodes: Set<String> = []
+    var isLoading: Bool = false
+    @Binding var filter: String
+    var onSelect: (SurfaceCandidate) -> Void
+
+    private var filtered: [SurfaceCandidate] {
+        let base = candidates.filter { !disabledCodes.contains($0.code.uppercased()) }
+        let q = filter.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard !q.isEmpty else { return base }
+        return base.filter {
+            $0.code.uppercased().contains(q) || ($0.name ?? "").uppercased().contains(q)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            TextField(searchPlaceholder, text: $filter)
+                .textFieldStyle(.roundedBorder)
+            if isLoading {
+                HStack {
+                    Spacer()
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("加载候选…")
+                        .font(KSSFont.themed(12, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, minHeight: 200)
+            } else if filtered.isEmpty {
+                Text(candidates.isEmpty ? "暂无候选" : "无匹配项")
+                    .font(KSSFont.themed(12, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(maxWidth: .infinity, minHeight: 200, alignment: .center)
+            } else {
+                List {
+                    ForEach(filtered) { c in
+                        Button {
+                            onSelect(c)
+                        } label: {
+                            HStack {
+                                Text(c.code)
+                                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(theme.textPrimary)
+                                Text(c.name ?? "")
+                                    .foregroundStyle(theme.textSecondary)
+                                Spacer()
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(disabledCodes.contains(c.code.uppercased()))
+                    }
+                }
+                .frame(minHeight: 220)
+            }
+        }
+    }
+}
+
+/// 简单选项列表（如指标小卡白名单），用于 Sparkle 列表 Tab。
+struct DashboardSimpleChoiceList: View {
+    @Environment(\.kssTheme) private var theme
+    var choices: [(id: String, title: String)]
+    var selectedId: String? = nil
+    var onSelect: (String) -> Void
+
+    var body: some View {
+        List {
+            ForEach(choices, id: \.id) { choice in
+                Button {
+                    onSelect(choice.id)
+                } label: {
+                    HStack {
+                        Text(choice.title)
+                            .font(KSSFont.themed(14, theme: theme))
+                            .foregroundStyle(theme.textPrimary)
+                        Spacer()
+                        if selectedId == choice.id {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(theme.accent)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(minHeight: 220)
+    }
+}
+
 /// 可点击排序列头：点击切到该列（默认降序），已选中再点切换升/降。
 /// 与 SortControl 共享同一对 selection/ascending 绑定，下拉控件与列头状态一致。
 /// width=nil 时占满弹性宽度，否则固定宽度（对齐数据行列宽）。

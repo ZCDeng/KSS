@@ -210,13 +210,17 @@ struct SeesawMarkdownView: View {
     }
 
     var body: some View {
-        let blocks = SeesawMarkdown.parse(markdown)
-        LazyVStack(alignment: .leading, spacing: 9) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                blockView(block)
+        // 助手交付物与复盘/资讯同一 Kami 内容壳；错误态保留红色提示条。
+        VStack(alignment: .leading, spacing: 6) {
+            if errorTint != nil {
+                Text("生成异常")
+                    .font(KSSFont.themed(11, .semibold, theme: theme))
+                    .foregroundStyle(errorTint ?? theme.down)
             }
+            MarkdownWebView(text: markdown, fitsContent: true, minHeight: 64)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .opacity(errorTint == nil ? 1 : 0.92)
         }
-        .textSelection(.enabled)
     }
 
     @ViewBuilder

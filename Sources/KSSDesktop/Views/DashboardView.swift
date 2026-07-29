@@ -27,6 +27,8 @@ struct DashboardView: View {
     /// surface 配置变更后重载 snapshot（由 Store 注入）
     var onReloadSnapshot: () -> Void = {}
     var bridge: BridgeClient? = nil
+    /// 打开 Seesaw 并预填 surface region 上下文（U5 / R10）
+    var onOpenSurfaceAI: (String) -> Void = { _ in }
 
     // Material 3 响应式栅格：统一外边距 / 沟槽，内容封顶居中，断点决定主区列数。
     private let margin: CGFloat = 24
@@ -94,14 +96,15 @@ struct DashboardView: View {
                         }
                     }
 
-                    // 第一行：市场速览（A500ETF ×2 + 北向资金 + 可配指标小卡）
-                    if let strip = snapshot.marketStrip,
-                       (!strip.etfs.isEmpty || strip.northMoney != nil || strip.stripMetric != nil) {
+                    // 第一行：市场速览（ETF / 北向 / 指标小卡 + Sparkle）。
+                    // 只要有 marketStrip 就渲染（指标卡始终带 Sparkle），勿因 etf/北向暂空整行消失。
+                    if let strip = snapshot.marketStrip {
                         MarketStripRow(
                             strip: strip,
                             quotes: realtimeQuotes,
                             bridge: bridge,
-                            onReloadSnapshot: onReloadSnapshot
+                            onReloadSnapshot: onReloadSnapshot,
+                            onOpenAIWithRegion: onOpenSurfaceAI
                         )
                     }
 
@@ -130,7 +133,7 @@ struct DashboardView: View {
                         usMarketHeaderStatus: usMarketHeaderStatus,
                         usMarketQuotes: usMarketQuotes,
                         bridge: bridge,
-                        onOpenAI: { onOpenSection(.aiChat) },
+                        onOpenAI: { onOpenSurfaceAI("overnight_us") },
                         onReloadSnapshot: onReloadSnapshot
                     )
 
@@ -861,100 +864,195 @@ struct EditorialDateView: View {
     }
 }
 
-/// 总览第一行市场速览：A500ETF(563360/159361) 当日 + 北向资金净流入 + 可配指标小卡。
+/// 总览第一行市场速览：标准等高小卡（≤5）+ 指标 Sparkle（NL/列表双 Tab）。
 struct MarketStripRow: View {
     @Environment(\.kssTheme) private var theme
     var strip: MarketStrip
     var quotes: [String: LongbridgeQuote] = [:]
     var bridge: BridgeClient? = nil
     var onReloadSnapshot: () -> Void = {}
+    var onOpenAIWithRegion: ((String) -> Void)? = nil
     @State private var metricBusy = false
     @State private var metricError: String?
+    @State private var bindDraft: SurfaceBindDraft?
 
     private static let metricChoices: [(id: String, title: String)] = [
         ("limit_max_board", "最高连板"),
         ("limit_seal_rate", "封板率"),
+        ("limit_up_count", "涨停家数"),
+        ("limit_break_rate", "破板率"),
+        ("index_sse", "上证指数"),
+        ("index_szse", "深证成指"),
         ("index_kcb50", "科创50"),
         ("index_cyb", "创业板指"),
+        ("index_a50", "富时中国A50"),
     ]
 
+    /// 指标卡固定占 1 槽；北向若有占 1 槽；其余给 ETF（总 ≤ maxPerRow）。
+    private var etfSlots: Int {
+        var slots = DashboardStripCardSpec.maxPerRow - 1 // metric
+        if strip.northMoney != nil { slots -= 1 }
+        return max(0, slots)
+    }
+
     var body: some View {
-        HStack(spacing: 12) {
-            ForEach(strip.etfs) { etf in
-                let live = RealtimeMerge.applyLive(close: etf.close, pct: etf.pct, quote: quotes[etf.code.uppercased()])
-                card(title: etf.name,
-                     sub: etf.code,
-                     close: live.close,
-                     closeText: String(format: "%.3f", live.close),
-                     delta: live.pct,
-                     deltaText: String(format: "%+.2f%%", live.pct),
-                     isLive: live.isLive)
+        VStack(alignment: .leading, spacing: 6) {
+            DashboardStripCardRow {
+                ForEach(Array(strip.etfs.prefix(etfSlots))) { etf in
+                    let live = RealtimeMerge.applyLive(
+                        close: etf.close, pct: etf.pct, quote: quotes[etf.code.uppercased()]
+                    )
+                    priceCard(
+                        title: etf.name,
+                        meta: etf.code,
+                        close: live.close,
+                        closeText: String(format: "%.3f", live.close),
+                        delta: live.pct,
+                        deltaText: String(format: "%+.2f%%", live.pct),
+                        isLive: live.isLive
+                    )
+                }
+                if let nm = strip.northMoney {
+                    let yi = nm / 10000.0
+                    priceCard(
+                        title: "北向资金",
+                        meta: northSub,
+                        close: yi,
+                        closeText: String(format: "%+.1f", yi) + " 亿",
+                        delta: yi,
+                        deltaText: yi >= 0 ? "净流入" : "净流出",
+                        isLive: false
+                    )
+                }
+                metricCard
             }
-            if let nm = strip.northMoney {
-                let yi = nm / 10000.0
-                // 北向资金非 Longbridge 价，不做 live flash
-                card(title: "北向资金",
-                     sub: northSub,
-                     close: yi,
-                     closeText: String(format: "%+.1f", yi) + " 亿",
-                     delta: yi,
-                     deltaText: yi >= 0 ? "净流入" : "净流出",
-                     isLive: false)
+            if let metricError {
+                Text(metricError)
+                    .font(KSSFont.themed(11, theme: theme))
+                    .foregroundStyle(.red.opacity(0.85))
+                    .padding(.leading, 4)
             }
-            metricCard
+        }
+        .sheet(item: $bindDraft) { draft in
+            SurfaceBindConfirm(
+                draft: draft,
+                busy: metricBusy,
+                onCancel: { bindDraft = nil },
+                onConfirm: { confirmBind(draft) }
+            )
         }
     }
 
-    @ViewBuilder
     private var metricCard: some View {
         let props = strip.stripMetric
         let title = props?.title ?? "最高连板"
         let valueText = props?.valueText ?? "—"
         let deltaText = props?.deltaText ?? ""
-        let sub = props?.sub ?? "指标"
         let delta = props?.delta ?? 0
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Text(title)
-                    .font(KSSFont.themed(13.5, .bold, theme: theme))
-                    .foregroundStyle(theme.textPrimary)
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-                Menu {
-                    ForEach(Self.metricChoices, id: \.id) { choice in
-                        Button(choice.title) {
-                            setMetric(choice.id)
+        return DashboardStripCard(
+            title: title,
+            meta: nil,
+            isLive: false,
+            trailing: {
+                DashboardSparkleControl(
+                    help: "用中文或列表换指标",
+                    // 列表兜底不依赖 bridge；仅 NL 需要。勿因 bridge==nil 整钮消失。
+                    disabled: metricBusy,
+                    sheetTitle: "配置指标小卡",
+                    region: "strip_metric",
+                    nlPlaceholder: "例如：改成封板率、上证指数、富时A50",
+                    nlExamples: ["改成封板率", "上证指数", "富时A50"],
+                    bridge: bridge,
+                    onOpenAI: onOpenAIWithRegion.map { cb in { cb("strip_metric") } },
+                    onDraft: { draft in bindDraft = draft },
+                    listTabTitle: "列表选择",
+                    listContent: { dismiss in
+                        DashboardSimpleChoiceList(
+                            choices: Self.metricChoices,
+                            selectedId: props?.metricId
+                        ) { mid in
+                            setMetric(mid)
+                            dismiss()
                         }
                     }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(theme.textSecondary)
-                }
-                .menuStyle(.borderlessButton)
-                .disabled(metricBusy || bridge == nil)
-            }
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(valueText)
-                    .font(KSSFont.harmonyNumber(22))
-                    .foregroundStyle(props?.value == nil ? theme.textSecondary : theme.signColor(delta))
-                    .lineLimit(1)
-                if !deltaText.isEmpty {
-                    Text(deltaText)
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(theme.signColor(delta))
+                )
+            },
+            value: {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(valueText)
+                        .font(KSSFont.harmonyNumber(22))
+                        .foregroundStyle(props?.value == nil ? theme.textSecondary : theme.signColor(delta))
                         .lineLimit(1)
+                    if !deltaText.isEmpty, deltaText != title {
+                        Text(deltaText)
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(theme.signColor(delta))
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
                 }
+            }
+        )
+        .opacity(metricBusy ? 0.7 : 1)
+    }
+
+    private func priceCard(
+        title: String,
+        meta: String,
+        close: Double,
+        closeText: String,
+        delta: Double,
+        deltaText: String,
+        isLive: Bool
+    ) -> some View {
+        DashboardStripCard(title: title, meta: meta, isLive: isLive) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                LivePriceText(
+                    value: close,
+                    text: closeText,
+                    baseColor: theme.signColor(delta),
+                    isLive: isLive,
+                    font: KSSFont.harmonyNumber(22)
+                )
+                .lineLimit(1)
+                LivePriceText(
+                    value: delta,
+                    text: deltaText,
+                    baseColor: theme.signColor(delta),
+                    isLive: isLive,
+                    font: .system(size: 12, weight: .semibold, design: .monospaced)
+                )
+                .lineLimit(1)
                 Spacer(minLength: 0)
             }
-            Text(metricError ?? sub)
-                .font(.system(size: 10.5, design: .monospaced))
-                .foregroundStyle(theme.textSecondary)
-                .lineLimit(1)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .kssCard(padding: 14)
-        .opacity(metricBusy ? 0.7 : 1)
+    }
+
+    private func confirmBind(_ draft: SurfaceBindDraft) {
+        guard let bridge else { return }
+        metricBusy = true
+        metricError = nil
+        Task {
+            do {
+                let resp = try await Task.detached {
+                    try bridge.surfaceApply(opsJSON: draft.opsJSON)
+                }.value
+                await MainActor.run {
+                    metricBusy = false
+                    if resp.ok == false {
+                        metricError = resp.error ?? "应用失败"
+                    } else {
+                        bindDraft = nil
+                        onReloadSnapshot()
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    metricBusy = false
+                    metricError = error.localizedDescription
+                }
+            }
+        }
     }
 
     private func setMetric(_ metricId: String) {
@@ -987,52 +1085,6 @@ struct MarketStripRow: View {
     private var northSub: String {
         guard let d = strip.northDate, d.count == 8 else { return "沪深港通" }
         return "\(d.prefix(4))-\(d.dropFirst(4).prefix(2))-\(d.suffix(2))"
-    }
-
-    private func card(title: String, sub: String, close: Double, closeText: String, delta: Double, deltaText: String, isLive: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Text(title)
-                    .font(KSSFont.themed(13.5, .bold, theme: theme))
-                    .foregroundStyle(theme.textPrimary)
-                    .lineLimit(1)
-                // R6 R2：命中实时 quote 时的轻量标识（与堆叠卡「实时」chip 同规格）
-                if isLive {
-                    Text("实时")
-                        .font(KSSFont.themed(9, .bold, theme: theme))
-                        .foregroundStyle(theme.accent)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(theme.accent.opacity(0.12), in: Capsule())
-                }
-                Spacer(minLength: 4)
-                Text(sub)
-                    .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(theme.textSecondary)
-                    .lineLimit(1)
-            }
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                LivePriceText(
-                    value: close,
-                    text: closeText,
-                    baseColor: theme.signColor(delta),
-                    isLive: isLive,
-                    font: KSSFont.harmonyNumber(22)
-                )
-                .lineLimit(1)
-                LivePriceText(
-                    value: delta,
-                    text: deltaText,
-                    baseColor: theme.signColor(delta),
-                    isLive: isLive,
-                    font: .system(size: 12, weight: .semibold, design: .monospaced)
-                )
-                .lineLimit(1)
-                Spacer(minLength: 0)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .kssCard(padding: 14)
     }
 }
 
@@ -1217,7 +1269,7 @@ private struct MarqueeWidthKey: PreferenceKey {
     }
 }
 
-/// 隔夜美股分区：标题常驻（+ / AI 管理入口）+ 有报价时跑马灯。
+/// 隔夜美股分区：标题 + Sparkle（NL / 列表双 Tab）+ 跑马灯。
 struct OvernightUSSection: View {
     @Environment(\.kssTheme) private var theme
     var overnight: [IndexQuote]
@@ -1229,11 +1281,14 @@ struct OvernightUSSection: View {
     var onOpenAI: () -> Void
     var onReloadSnapshot: () -> Void
 
-    @State private var showAdd = false
     @State private var candidates: [SurfaceCandidate] = []
+    @State private var catalogItems: [SurfaceCatalogItem] = []
+    @State private var domainsOnline: [String] = []
     @State private var filter = ""
+    @State private var listLoading = false
     @State private var busy = false
     @State private var errorText: String?
+    @State private var bindDraft: SurfaceBindDraft?
 
     private var defaultCodes: Set<String> {
         Set(overnight.filter { !($0.isUserAppended ?? false) }.map { $0.code.uppercased() })
@@ -1242,7 +1297,6 @@ struct OvernightUSSection: View {
     private var displayOvernight: [IndexQuote] {
         var list = overnight
         let have = Set(list.map { $0.code.uppercased() })
-        // 配置里有、strip 尚无价的追加项 → pending chip
         for item in surfaceConfig?.overnightAppend ?? [] {
             let code = item.code.uppercased()
             if have.contains(code) { continue }
@@ -1276,29 +1330,36 @@ struct OvernightUSSection: View {
                 )
                 .lineLimit(1)
                 .padding(.top, 6)
-                Button {
-                    loadCandidatesAndShow()
-                } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 16, weight: .semibold))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(theme.accent)
-                .disabled(bridge == nil || busy)
-                .help("追加隔夜标的")
-                .popover(isPresented: $showAdd, arrowEdge: .bottom) {
-                    addPopover
-                }
-                Button {
-                    onOpenAI()
-                } label: {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 14, weight: .semibold))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(theme.accent)
-                .help("用 AI 追加/调整")
-                .padding(.top, 4)
+                DashboardSparkleControl(
+                    help: "用中文或列表调整隔夜",
+                    disabled: busy,
+                    sheetTitle: "调整隔夜美股",
+                    region: "overnight_us",
+                    nlPlaceholder: "例如：加上苹果和阿斯麦、去掉苹果、清空我的追加",
+                    nlExamples: ["加上苹果", "加上苹果和阿斯麦", "去掉苹果"],
+                    bridge: bridge,
+                    onOpenAI: onOpenAI,
+                    onDraft: { draft in bindDraft = draft },
+                    listTabTitle: "列表选择",
+                    onListTabAppear: { loadCatalogList() },
+                    listContent: { dismiss in
+                        VStack(alignment: .leading, spacing: 8) {
+                            if !domainsOnline.isEmpty {
+                                Text("已上线域：" + domainsOnline.joined(separator: " · "))
+                                    .font(KSSFont.themed(11, theme: theme))
+                                    .foregroundStyle(theme.textSecondary)
+                            }
+                            DashboardCandidatePickerList(
+                                candidates: catalogAsCandidates,
+                                disabledCodes: defaultCodes,
+                                isLoading: listLoading,
+                                filter: $filter
+                            ) { c in
+                                appendCandidate(c, dismiss: dismiss)
+                            }
+                        }
+                    }
+                )
             }
             if let errorText {
                 Text(errorText)
@@ -1312,74 +1373,130 @@ struct OvernightUSSection: View {
                     onRemoveUser: removeUser
                 )
             } else {
-                Text("暂无隔夜报价 · 可用 + 追加标的")
+                Text("暂无隔夜报价 · 点 ✦ 用中文或列表追加")
                     .font(KSSFont.themed(12, theme: theme))
                     .foregroundStyle(theme.textSecondary)
                     .padding(.leading, 4)
             }
         }
-    }
-
-    private var addPopover: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("追加隔夜标的")
-                .font(KSSFont.themed(14, .semibold, theme: theme))
-            TextField("搜索代码或名称", text: $filter)
-                .textFieldStyle(.roundedBorder)
-            List {
-                ForEach(filteredCandidates) { c in
-                    Button {
-                        appendCandidate(c)
-                    } label: {
-                        HStack {
-                            Text(c.code)
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            Text(c.name ?? "")
-                                .foregroundStyle(theme.textSecondary)
-                            Spacer()
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(defaultCodes.contains(c.code.uppercased()))
-                }
-            }
-            .frame(width: 280, height: 260)
-        }
-        .padding(12)
-    }
-
-    private var filteredCandidates: [SurfaceCandidate] {
-        let q = filter.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        let base = candidates.filter { !defaultCodes.contains($0.code.uppercased()) }
-        guard !q.isEmpty else { return base }
-        return base.filter {
-            $0.code.uppercased().contains(q)
-                || ($0.name ?? "").uppercased().contains(q)
+        .sheet(item: $bindDraft) { draft in
+            SurfaceBindConfirm(
+                draft: draft,
+                busy: busy,
+                onCancel: { bindDraft = nil },
+                onConfirm: { confirmBind(draft) }
+            )
         }
     }
 
-    private func loadCandidatesAndShow() {
+    private func confirmBind(_ draft: SurfaceBindDraft) {
         guard let bridge else { return }
         busy = true
         errorText = nil
         Task {
             do {
-                let resp = try await Task.detached { try bridge.surfaceGet() }.value
+                let resp = try await Task.detached {
+                    try bridge.surfaceApply(opsJSON: draft.opsJSON)
+                }.value
                 await MainActor.run {
-                    candidates = resp.candidates ?? []
-                    showAdd = true
                     busy = false
+                    if resp.ok == false {
+                        errorText = resp.error ?? "应用失败"
+                    } else {
+                        bindDraft = nil
+                        onReloadSnapshot()
+                        Task.detached {
+                            _ = try? bridge.runTask(.refreshMarketStrip)
+                        }
+                    }
                 }
             } catch {
                 await MainActor.run {
-                    errorText = error.localizedDescription
                     busy = false
+                    errorText = error.localizedDescription
                 }
             }
         }
     }
 
-    private func appendCandidate(_ c: SurfaceCandidate) {
+    private var catalogAsCandidates: [SurfaceCandidate] {
+        if !catalogItems.isEmpty {
+            return catalogItems.map {
+                SurfaceCandidate(
+                    code: $0.displayCode.isEmpty ? $0.id : $0.displayCode,
+                    name: $0.displayName,
+                    kind: $0.kind == "equity" || $0.kind == "etf" || $0.kind == "index"
+                        ? ($0.codes?["code"] != nil
+                            ? overnightKindHint(for: $0)
+                            : "yfinance")
+                        : overnightKindHint(for: $0)
+                )
+            }
+        }
+        return candidates
+    }
+
+    private func overnightKindHint(for item: SurfaceCatalogItem) -> String {
+        if item.market == "CN" { return "a_share" }
+        if item.market == "HK" { return "hk" }
+        if item.kind == "index" { return "index_global" }
+        return "yfinance"
+    }
+
+    private func loadCatalogList() {
+        guard let bridge else { return }
+        listLoading = true
+        errorText = nil
+        let q = filter
+        Task {
+            do {
+                let resp = try await Task.detached {
+                    try bridge.surfaceCatalog(slot: "overnight_marquee", q: q)
+                }.value
+                await MainActor.run {
+                    domainsOnline = resp.domainsOnline ?? []
+                    catalogItems = resp.items ?? []
+                    if catalogItems.isEmpty {
+                        // fallback surface-get 旧候选
+                        loadCandidatesFallback()
+                    } else {
+                        listLoading = false
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    loadCandidatesFallback()
+                    if candidates.isEmpty {
+                        errorText = error.localizedDescription
+                    }
+                    listLoading = false
+                }
+            }
+        }
+    }
+
+    private func loadCandidatesFallback() {
+        guard let bridge else {
+            listLoading = false
+            return
+        }
+        Task {
+            do {
+                let resp = try await Task.detached { try bridge.surfaceGet() }.value
+                await MainActor.run {
+                    candidates = resp.candidates ?? []
+                    listLoading = false
+                }
+            } catch {
+                await MainActor.run {
+                    errorText = error.localizedDescription
+                    listLoading = false
+                }
+            }
+        }
+    }
+
+    private func appendCandidate(_ c: SurfaceCandidate, dismiss: @escaping () -> Void) {
         guard let bridge else { return }
         busy = true
         errorText = nil
@@ -1395,12 +1512,11 @@ struct OvernightUSSection: View {
                 }.value
                 await MainActor.run {
                     busy = false
-                    showAdd = false
                     if resp.ok == false {
                         errorText = resp.error ?? "追加失败"
                     } else {
+                        dismiss()
                         onReloadSnapshot()
-                        // 尽力刷新隔夜行情
                         Task.detached {
                             _ = try? bridge.runTask(.refreshMarketStrip)
                         }
@@ -2058,6 +2174,172 @@ struct LabeledMetric: View {
                 .foregroundStyle(tint ?? theme.textPrimary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// MARK: - Surface NL（compose 弹层 + 确认真值，布局不撑高组件）
+
+enum SurfaceBindEncoding {
+    /// 将 interpret 返回的 ops 编成 surface-apply 所需 JSON 数组（snake_case 键）。
+    static func encodeOps(_ ops: [SurfaceNlOp]) -> String? {
+        var arr: [[String: Any]] = []
+        for op in ops {
+            guard let name = op.op else { continue }
+            var d: [String: Any] = ["op": name]
+            if let code = op.code { d["code"] = code }
+            if let n = op.name { d["name"] = n }
+            if let k = op.kind { d["kind"] = k }
+            if let ks = op.kindSource { d["kind_source"] = ks }
+            if let av = op.addedVia { d["added_via"] = av }
+            if let pc = op.probeClose { d["probe_close"] = pc }
+            if let mid = op.metricId { d["metric_id"] = mid }
+            arr.append(d)
+        }
+        guard !arr.isEmpty,
+              let data = try? JSONSerialization.data(withJSONObject: arr, options: []),
+              let s = String(data: data, encoding: .utf8) else { return nil }
+        return s
+    }
+
+    static func draft(
+        from resp: SurfaceNlInterpretResponse,
+        region: String
+    ) -> (SurfaceBindDraft?, String?) {
+        if resp.ok != true {
+            var msg = resp.errorZh ?? resp.error ?? "无法解析"
+            if let s = resp.suggestions, !s.isEmpty {
+                msg += " · 例：" + s.prefix(3).joined(separator: "、")
+            }
+            return (nil, msg)
+        }
+        guard let ops = resp.ops, !ops.isEmpty,
+              let opsJSON = encodeOps(ops) else {
+            return (nil, "无可用操作")
+        }
+        let summary: String
+        if resp.partial == true {
+            summary = "部分成功：将应用 \(ops.count) 项（另有失败项见下）"
+        } else if let first = resp.previews?.first?.label {
+            summary = (resp.previews?.count ?? 0) <= 1
+                ? first
+                : "将执行 \(resp.previews?.count ?? ops.count) 项变更"
+        } else {
+            summary = "确认应用 \(ops.count) 项变更"
+        }
+        let draft = SurfaceBindDraft(
+            region: region,
+            summary: summary,
+            opsJSON: opsJSON,
+            previews: resp.previews ?? [],
+            failed: resp.failed ?? resp.items?.filter { $0.status != "ok" } ?? [],
+            partial: resp.partial == true
+        )
+        return (draft, nil)
+    }
+}
+
+/// 组件旁 NL 确认 sheet：展示代码算出的真值行，确认后才 apply。
+struct SurfaceBindConfirm: View {
+    @Environment(\.kssTheme) private var theme
+    let draft: SurfaceBindDraft
+    var busy: Bool = false
+    let onCancel: () -> Void
+    let onConfirm: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Image(systemName: "text.badge.checkmark")
+                    .foregroundStyle(theme.accent)
+                Text("确认绑定")
+                    .font(KSSFont.themed(16, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                Spacer()
+            }
+            Text(draft.summary)
+                .font(KSSFont.themed(13, .semibold, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+
+            if !draft.previews.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(draft.previews) { row in
+                        previewRow(row)
+                    }
+                }
+            }
+
+            if !draft.failed.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(draft.partial ? "未纳入本次应用" : "失败项")
+                        .font(KSSFont.themed(11, .semibold, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                    ForEach(Array(draft.failed.enumerated()), id: \.offset) { _, item in
+                        Text(item.errorZh ?? item.error ?? item.token ?? "失败")
+                            .font(KSSFont.themed(11, theme: theme))
+                            .foregroundStyle(.red.opacity(0.85))
+                    }
+                }
+            }
+
+            Text("数字来自代码探针/配置，确认后写入 surface。")
+                .font(KSSFont.themed(11, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+
+            HStack {
+                Spacer()
+                Button("取消") { onCancel() }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(busy)
+                Button("确认应用") { onConfirm() }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(busy)
+            }
+        }
+        .padding(22)
+        .frame(width: 420)
+        .background(theme.canvas)
+        .opacity(busy ? 0.75 : 1)
+    }
+
+    @ViewBuilder
+    private func previewRow(_ row: SurfaceNlPreview) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(row.label ?? row.title ?? "\(row.op ?? "") \(row.code ?? row.metricId ?? "")")
+                .font(KSSFont.themed(13, .semibold, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+            HStack(spacing: 12) {
+                if let code = row.code {
+                    Text(code)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                if let close = row.close {
+                    Text(String(format: "%.2f", close))
+                        .font(KSSFont.harmonyNumber(14))
+                        .foregroundStyle(theme.textPrimary)
+                }
+                if let pct = row.pct {
+                    Text(String(format: "%+.2f%%", pct))
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(theme.signColor(pct))
+                }
+                if let vt = row.valueText {
+                    Text(vt)
+                        .font(KSSFont.harmonyNumber(14))
+                        .foregroundStyle(theme.textPrimary)
+                }
+                if let dt = row.deltaText, !dt.isEmpty {
+                    Text(dt)
+                        .font(KSSFont.themed(11, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
     }
 }
 

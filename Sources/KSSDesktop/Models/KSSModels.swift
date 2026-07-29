@@ -788,6 +788,151 @@ struct SurfaceApplyResponse: Codable, Hashable {
     var stripMetric: StripMetricProps?
 }
 
+/// surface-catalog 响应（Bind Catalog 只读）。
+struct SurfaceCatalogResponse: Codable, Hashable {
+    var ok: Bool?
+    var slot: String?
+    var q: String?
+    var domainsOnline: [String]?
+    var items: [SurfaceCatalogItem]?
+    var total: Int?
+    var error: String?
+    var errorZh: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, slot, q, items, total, error
+        case domainsOnline = "domains_online"
+        case errorZh = "error_zh"
+    }
+}
+
+struct SurfaceCatalogItem: Codable, Hashable, Identifiable {
+    var id: String
+    var kind: String?
+    var market: String?
+    var names: [String]?
+    var aliases: [String]?
+    var metricId: String?
+    var codes: [String: String]?
+    var allowedSlots: [String]?
+    var status: String?
+    var domains: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case id, kind, market, names, aliases, codes, status, domains
+        case metricId = "metric_id"
+        case allowedSlots = "allowed_slots"
+    }
+
+    var displayName: String {
+        if let n = names?.first, !n.isEmpty { return n }
+        if let mid = metricId, !mid.isEmpty { return mid }
+        if let c = codes?["primary"] ?? codes?["code"] { return c }
+        return id
+    }
+
+    var displayCode: String {
+        codes?["primary"] ?? codes?["code"] ?? metricId ?? ""
+    }
+}
+
+/// surface-nl-interpret 响应（不落盘 draft + 人话真值预览）。
+struct SurfaceNlInterpretResponse: Codable, Hashable {
+    var ok: Bool?
+    var region: String?
+    var action: String?
+    var metricId: String?
+    var error: String?
+    var errorZh: String?
+    var partial: Bool?
+    var suggestions: [String]?
+    var ops: [SurfaceNlOp]?
+    var previews: [SurfaceNlPreview]?
+    var items: [SurfaceNlItem]?
+    var failed: [SurfaceNlItem]?
+    var stripMetric: StripMetricProps?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, region, action, error, partial, suggestions, ops, previews, items, failed
+        case metricId = "metric_id"
+        case errorZh = "error_zh"
+        case stripMetric
+    }
+}
+
+struct SurfaceNlOp: Codable, Hashable {
+    var op: String?
+    var code: String?
+    var name: String?
+    var kind: String?
+    var kindSource: String?
+    var addedVia: String?
+    var probeClose: Double?
+    var metricId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case op, code, name, kind
+        case kindSource = "kind_source"
+        case addedVia = "added_via"
+        case probeClose = "probe_close"
+        case metricId = "metric_id"
+    }
+}
+
+struct SurfaceNlPreview: Codable, Hashable, Identifiable {
+    var id: String {
+        [op, code, metricId, label, title]
+            .compactMap { $0 }
+            .joined(separator: "|")
+    }
+    var op: String?
+    var code: String?
+    var name: String?
+    var close: Double?
+    var pct: Double?
+    var label: String?
+    var metricId: String?
+    var title: String?
+    var valueText: String?
+    var deltaText: String?
+    var sub: String?
+    var reason: String?
+
+    enum CodingKeys: String, CodingKey {
+        case op, code, name, close, pct, label, title, sub, reason
+        case metricId = "metric_id"
+        case valueText, deltaText
+    }
+}
+
+struct SurfaceNlItem: Codable, Hashable {
+    var status: String?
+    var token: String?
+    var code: String?
+    var name: String?
+    var kind: String?
+    var error: String?
+    var errorZh: String?
+    var close: Double?
+    var pct: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case status, token, code, name, kind, error, close, pct
+        case errorZh = "error_zh"
+    }
+}
+
+/// 组件旁 NL 确认草稿（人话真值 sheet）。
+struct SurfaceBindDraft: Identifiable, Hashable {
+    let id = UUID()
+    var region: String
+    var summary: String
+    var opsJSON: String
+    var previews: [SurfaceNlPreview]
+    var failed: [SurfaceNlItem]
+    var partial: Bool
+}
+
 /// 一列堆叠（main / growth / hk）
 struct IndexStackColumn: Codable, Hashable, Identifiable {
     var id: String
@@ -3602,6 +3747,8 @@ struct PendingWriteConfirm: Identifiable {
     let effect: String
     let argsText: String
     let contextLine: String      // loop 最近一句作上下文
+    /// 可选真值行（surface 预览 close/pct/valueText）；无则仍显示 effect。
+    var truthRows: [SurfaceNlPreview] = []
 }
 
 // MARK: - U2 资讯雷达模型（bridge news-digest U1 扩展多赛道字段）

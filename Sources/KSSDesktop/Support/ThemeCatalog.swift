@@ -156,11 +156,19 @@ struct ThemeTypography: Equatable {
     /// 避免正文/侧边栏这些非标题场景也被强制显示成粗体中文。
     var nativeCJKFamily: String? = nil
 
+    /// 暖纸 UI 壳仍可用系统/仓耳；**内容阅读皮**用 `contentPrint`。
     static let claySerif = ThemeTypography(
-        serif: "ui-serif, Georgia, \"Songti SC\", serif",
+        serif: "\"TsangerJinKai02\", Charter, Georgia, \"Songti SC\", serif",
         sans: "-apple-system, \"SF Pro Text\", \"PingFang SC\", sans-serif",
         mono: "ui-monospace, \"SF Mono\", Menlo, monospace",
         titleDesign: .serif
+    )
+    /// 报告/资讯/对话交付物：Chiron GoRound TC（Google Fonts 同款，离线 ttf）。
+    static let contentPrint = ThemeTypography(
+        serif: "\"Chiron GoRound TC\", \"PingFang SC\", sans-serif",
+        sans: "\"Chiron GoRound TC\", \"PingFang SC\", sans-serif",
+        mono: "ui-monospace, \"SF Mono\", Menlo, monospace",
+        titleDesign: .default
     )
     static let pureSans = ThemeTypography(
         serif: "system-ui, -apple-system, \"PingFang SC\", sans-serif",

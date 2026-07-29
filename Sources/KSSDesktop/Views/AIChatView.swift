@@ -153,9 +153,13 @@ struct AIChatView: View {
             .onAppear { Task { await store.loadAgentBootstrap() } }
             .onAppear { applySeesawDestination() }
             .onAppear { globalNavigationExpanded = false }
+            .onAppear { consumeComposerPrefill() }
             .onDisappear {
                 activeOverlay = nil
                 globalNavigationExpanded = false
+            }
+            .onChange(of: store.chatComposerPrefill) { _, _ in
+                consumeComposerPrefill()
             }
             .onChange(of: store.selectedAgentSessionId) { _, _ in
                 activeOverlay = nil
@@ -1098,6 +1102,16 @@ struct AIChatView: View {
         case .conversation?: seesawPage = .conversation
         case nil: break
         }
+    }
+
+    private func consumeComposerPrefill() {
+        guard let prefill = store.chatComposerPrefill?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !prefill.isEmpty else { return }
+        input = prefill
+        store.chatComposerPrefill = nil
+        isComposerFocused = true
+        seesawPage = .conversation
     }
 
     /// The input must have one stable identity while session hydration swaps the
@@ -2731,12 +2745,18 @@ struct AIChatView: View {
                             .foregroundStyle(theme.textSecondary)
                     }
                 } else if !message.text.isEmpty {
-                    markdownText(message.text)
-                        .font(KSSFont.themed(15, theme: theme))
-                        .foregroundStyle(message.isError ? Color.red : theme.textPrimary)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    // 助手长文走 Kami 内容壳；用户气泡仍用轻量 Text 避免 WebView 嵌套过重
+                    if isUser {
+                        markdownText(message.text)
+                            .font(KSSFont.themed(15, theme: theme))
+                            .foregroundStyle(message.isError ? Color.red : theme.textPrimary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        SeesawMarkdownView(markdown: message.text, errorTint: message.isError ? Color.red : nil)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
 
                 if !message.thinkingBlocks.isEmpty {
@@ -3721,11 +3741,7 @@ struct AIChatView: View {
                         HStack(spacing: 8) { ProgressView().controlSize(.small); Text("思考中…")
                             .font(KSSFont.themed(12, theme: theme)).foregroundStyle(theme.textSecondary) }
                     } else if !msg.text.isEmpty {
-                        markdownText(msg.text)
-                            .font(KSSFont.themed(13, theme: theme))
-                            .foregroundStyle(msg.isError ? theme.up : theme.textPrimary)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
+                        SeesawMarkdownView(markdown: msg.text, errorTint: msg.isError ? theme.up : nil)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     if !msg.thinkingBlocks.isEmpty {
@@ -4091,6 +4107,42 @@ struct WriteConfirmView: View {
             }
             Text(pending.effect)
                 .font(KSSFont.themed(14, .semibold, theme: theme)).foregroundStyle(theme.textPrimary)
+            if !pending.truthRows.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("真值预览").font(KSSFont.themed(11, theme: theme)).foregroundStyle(theme.textSecondary)
+                    ForEach(pending.truthRows) { row in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.label ?? row.title ?? "\(row.op ?? "") \(row.code ?? row.metricId ?? "")")
+                                .font(KSSFont.themed(13, .semibold, theme: theme))
+                                .foregroundStyle(theme.textPrimary)
+                            HStack(spacing: 10) {
+                                if let code = row.code {
+                                    Text(code).font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(theme.textSecondary)
+                                }
+                                if let close = row.close {
+                                    Text(String(format: "%.2f", close))
+                                        .font(KSSFont.harmonyNumber(13))
+                                        .foregroundStyle(theme.textPrimary)
+                                }
+                                if let pct = row.pct {
+                                    Text(String(format: "%+.2f%%", pct))
+                                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                        .foregroundStyle(theme.signColor(pct))
+                                }
+                                if let vt = row.valueText {
+                                    Text(vt).font(KSSFont.harmonyNumber(13))
+                                        .foregroundStyle(theme.textPrimary)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                        }
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeM))
+                    }
+                }
+            }
             if !pending.argsText.isEmpty && pending.argsText != "{}" {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("参数").font(KSSFont.themed(11, theme: theme)).foregroundStyle(theme.textSecondary)

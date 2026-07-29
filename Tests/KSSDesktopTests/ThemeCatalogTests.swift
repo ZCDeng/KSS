@@ -117,7 +117,7 @@ final class ThemeCatalogTests: XCTestCase {
     func testWebPayloadCoversAllConsumedCSSVars() {
         // 三处 HTML 消费的键全部存在（缺一会让网页落回 fallback 而非主题色）。
         let required = ["bg", "surface", "surface2", "ink", "body", "muted", "line", "lineSoft",
-                        "accent", "accentSoft", "onAccent", "code", "th", "zebra",
+                        "accent", "accentSoft", "onAccent", "code", "th", "zebra", "tag",
                         "olive", "oliveSoft", "gold", "blue", "blueSoft", "zone", "zoneLine",
                         "up", "down", "upFill", "downFill", "ma5", "ma20", "grid", "text",
                         "cross", "dif", "dea", "obv", "bbi", "boll", "chip", "chipText",
@@ -152,5 +152,14 @@ final class ThemeCatalogTests: XCTestCase {
                 XCTAssertTrue(ok, "非 CSS 安全颜色值：\(value)")
             }
         }
+    }
+
+    func testClaySerifUsesKamiTypographyStack() {
+        let light = ThemeCatalog.palette(for: .clayM3, appearance: .light)
+        XCTAssertTrue(light.typography.serif.contains("TsangerJinKai02"))
+        XCTAssertTrue(light.webPayload.typography.serif.contains("TsangerJinKai02"))
+        XCTAssertEqual(light.webPayload.colors["tag"], ThemeColor(0xE4ECF5).css)
+        let dark = ThemeCatalog.palette(for: .clayM3, appearance: .dark)
+        XCTAssertEqual(dark.webPayload.colors["tag"], ThemeColor(0x243247).css)
     }
 }
