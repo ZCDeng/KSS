@@ -480,12 +480,17 @@ struct BridgeClient {
         // 禁止在 .app/Resources 写 __pycache__（会破坏 codesign sealed resources → 无法打开）
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["PYTHONPYCACHEPREFIX"] = stateRoot.appending(path: ".cache/pycache").path
-        // 一次性 bridge 子进程：必须注入完整 LLM 密钥。
-        // intel-rewrite / panorama / digest 走 Python LLMClient（读 env），
-        // 不能只用 sidecarEnvironment（会剥掉 DEEPSEEK/OPENAI/PRIMARY key，导致改写全挂）。
-        // pi-ai 助手仍走 CredentialBroker；此处与 agent sidecar 密钥隔离策略分开。
-        for (key, value) in KeychainStore.injectedEnvironment(includeLLMSecrets: true) {
+        // 一次性 bridge：完整 LLM + provider 映射（见 KeychainStore.bridgeEnvironment）。
+        // intel-rewrite / panorama / digest 走 Python LLMClient，不能只用 sidecarEnvironment。
+        for (key, value) in KeychainStore.bridgeEnvironment() {
             env[key] = value
+        }
+        // 诊断：不落密钥，只记是否注入成功（便于排「改写仍无凭据」）
+        let hasLLM = env["KSS_LLM_PRIMARY_KEY"] != nil
+            || env["DEEPSEEK_API_KEY"] != nil
+            || env["OPENAI_API_KEY"] != nil
+        if !hasLLM {
+            NSLog("[KSS bridge] WARNING: no LLM key injected for subprocess cmd=%@", args.first ?? "?")
         }
         if let broker = CredentialBrokerRegistry.broker(for: stateRoot) {
             env["KSS_PI_AI_CREDENTIAL_SOCKET"] = broker.socketPath

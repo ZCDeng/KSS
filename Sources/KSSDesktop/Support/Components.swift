@@ -171,7 +171,7 @@ struct DashboardStripCard<Value: View, Trailing: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // 标题行固定高度，保证各卡主值基线一致
+            // 标题行固定高度；Sparkle/plus 直接进标题 HStack，避免 overlay 被裁切或点不中。
             HStack(spacing: 6) {
                 Text(title)
                     .font(KSSFont.themed(13.5, .bold, theme: theme))
@@ -192,10 +192,12 @@ struct DashboardStripCard<Value: View, Trailing: View>: View {
                         .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                 }
+                if hasTrailing {
+                    trailing()
+                        .layoutPriority(1)
+                }
             }
             .frame(height: DashboardStripCardSpec.titleRowHeight, alignment: .center)
-            // 有 trailing 时给右上角 icon 留位，避免与 meta 重叠
-            .padding(.trailing, hasTrailing ? DashboardChromeIconSpec.hitSize : 0)
 
             value()
                 .frame(
@@ -212,12 +214,6 @@ struct DashboardStripCard<Value: View, Trailing: View>: View {
             maxHeight: DashboardStripCardSpec.height,
             alignment: .topLeading
         )
-        // trailing 叠在内容区右上角；kssCard 的 padding 包在外，保证 icon 落在卡片内
-        .overlay(alignment: .topTrailing) {
-            if hasTrailing {
-                trailing()
-            }
-        }
         .kssCard(padding: DashboardStripCardSpec.padding)
         // 等分宽：父 HStack 里每张卡都拉满分配宽度
         .frame(maxWidth: .infinity, maxHeight: DashboardStripCardSpec.height, alignment: .top)
@@ -283,10 +279,12 @@ struct DashboardChromeIcon: View {
     var body: some View {
         Image(systemName: kind.systemName)
             .font(.system(size: DashboardChromeIconSpec.pointSize, weight: DashboardChromeIconSpec.weight))
-            .foregroundStyle(enabled ? theme.textPrimary : theme.textSecondary.opacity(0.45))
+            // 用 accent 提对比度，避免 xcom 深色卡上 textPrimary 与底色糊在一起「看不见」
+            .foregroundStyle(enabled ? theme.accent : theme.textSecondary.opacity(0.45))
             .frame(width: DashboardChromeIconSpec.hitSize, height: DashboardChromeIconSpec.hitSize)
             .contentShape(Rectangle())
             .accessibilityLabel(kind.accessibilityLabel)
+            .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -354,6 +352,7 @@ struct DashboardSparkleControl<ListContent: View>: View {
     }
 
     var body: some View {
+        // 始终可见；disabled 只挡点击（列表/NL 由 sheet 内自行处理 bridge 缺失）。
         DashboardChromeIconButton(
             kind: .sparkles,
             help: help,

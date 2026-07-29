@@ -67,7 +67,9 @@ struct MarkdownWebView: NSViewRepresentable {
         coord.applyIntrinsicHeightIfNeeded()
     }
 
-    /// fitsContent：禁用 WebView 内滚，交给外层 SwiftUI ScrollView，避免双滚/抢手势。
+    /// fitsContent：只关 **WKWebView 自身** 内滚，绝不动 `enclosingScrollView`——
+    /// 后者在 SwiftUI `ScrollView` 嵌套时会指向外层 NSScrollView，误关后整页无法滚动
+    /// （板块复盘/资讯详情回归根因）。
     private static func configureScrolling(_ webView: WKWebView, fitsContent: Bool) {
         func apply(to scroll: NSScrollView) {
             if fitsContent {
@@ -76,25 +78,18 @@ struct MarkdownWebView: NSViewRepresentable {
                 scroll.verticalScrollElasticity = .none
                 scroll.horizontalScrollElasticity = .none
                 scroll.scrollerStyle = .overlay
-                // 内层不接管滚轮，否则外层 ScrollView 卡顿
-                scroll.usesPredominantAxisScrolling = true
             } else {
                 scroll.hasVerticalScroller = true
                 scroll.verticalScrollElasticity = .allowed
             }
         }
-        if let scroll = webView.enclosingScrollView {
-            apply(to: scroll)
-        }
-        for sub in webView.subviews {
-            if let scroll = sub as? NSScrollView {
+        // 仅遍历 webView 子树里的 NSScrollView，不调用 enclosingScrollView。
+        var stack: [NSView] = webView.subviews
+        while let view = stack.popLast() {
+            if let scroll = view as? NSScrollView {
                 apply(to: scroll)
             }
-            for nested in sub.subviews {
-                if let scroll = nested as? NSScrollView {
-                    apply(to: scroll)
-                }
-            }
+            stack.append(contentsOf: view.subviews)
         }
     }
 

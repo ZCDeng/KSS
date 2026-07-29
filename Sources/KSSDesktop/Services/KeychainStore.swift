@@ -121,6 +121,30 @@ enum KeychainStore {
         injectedEnvironment(includeLLMSecrets: false)
     }
 
+    /// bridge 一次性子进程环境：完整 LLM 密钥 + Seesaw provider 作用域密钥映射。
+    /// 资讯改写 / 全景 / digest 读 `LLMClient` env，不走 pi-ai broker。
+    static func bridgeEnvironment() -> [String: String] {
+        var out = injectedEnvironment(includeLLMSecrets: true)
+        // Seesaw 页面写入的是 KSS_PROVIDER_API_KEY.<id>；旧链路读 DEEPSEEK/OPENAI/PRIMARY。
+        // 缺省时把 provider 作用域 key 映射过去，避免「Seesaw 已配好但雷达改写仍无凭据」。
+        func putIfAbsent(_ envKey: String, _ value: String?) {
+            guard out[envKey] == nil || out[envKey]?.isEmpty == true,
+                  let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else { return }
+            out[envKey] = value
+        }
+        putIfAbsent("KSS_LLM_PRIMARY_KEY", readProviderAPIKey("kss-primary"))
+        putIfAbsent("KSS_LLM_FALLBACK_KEY", readProviderAPIKey("kss-fallback"))
+        putIfAbsent("DEEPSEEK_API_KEY", readProviderAPIKey("deepseek") ?? read("DEEPSEEK_API_KEY"))
+        putIfAbsent("OPENAI_API_KEY", readProviderAPIKey("openai") ?? read("OPENAI_API_KEY"))
+        putIfAbsent("OPENROUTER_API_KEY", readProviderAPIKey("openrouter") ?? read("OPENROUTER_API_KEY"))
+        // primary 未写时，用 deepseek/openai 任一已有密钥顶上，保证 rewrite 至少有一个候选
+        if out["KSS_LLM_PRIMARY_KEY"] == nil || out["KSS_LLM_PRIMARY_KEY"]?.isEmpty == true {
+            putIfAbsent("KSS_LLM_PRIMARY_KEY", out["DEEPSEEK_API_KEY"] ?? out["OPENAI_API_KEY"])
+        }
+        return out
+    }
+
     static func hasLLMCredentials() -> Bool {
         llmSecretKeys.contains { read($0) != nil } || !providerCredentialIds().isEmpty
     }

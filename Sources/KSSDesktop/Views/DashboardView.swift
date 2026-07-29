@@ -96,9 +96,9 @@ struct DashboardView: View {
                         }
                     }
 
-                    // 第一行：市场速览（A500ETF ×2 + 北向资金 + 可配指标小卡）
-                    if let strip = snapshot.marketStrip,
-                       (!strip.etfs.isEmpty || strip.northMoney != nil || strip.stripMetric != nil) {
+                    // 第一行：市场速览（ETF / 北向 / 指标小卡 + Sparkle）。
+                    // 只要有 marketStrip 就渲染（指标卡始终带 Sparkle），勿因 etf/北向暂空整行消失。
+                    if let strip = snapshot.marketStrip {
                         MarketStripRow(
                             strip: strip,
                             quotes: realtimeQuotes,
@@ -956,7 +956,8 @@ struct MarketStripRow: View {
             trailing: {
                 DashboardSparkleControl(
                     help: "用中文或列表换指标",
-                    disabled: metricBusy || bridge == nil,
+                    // 列表兜底不依赖 bridge；仅 NL 需要。勿因 bridge==nil 整钮消失。
+                    disabled: metricBusy,
                     sheetTitle: "配置指标小卡",
                     region: "strip_metric",
                     nlPlaceholder: "例如：改成封板率、上证指数、富时A50",
@@ -1331,7 +1332,7 @@ struct OvernightUSSection: View {
                 .padding(.top, 6)
                 DashboardSparkleControl(
                     help: "用中文或列表调整隔夜",
-                    disabled: bridge == nil || busy,
+                    disabled: busy,
                     sheetTitle: "调整隔夜美股",
                     region: "overnight_us",
                     nlPlaceholder: "例如：加上苹果和阿斯麦、去掉苹果、清空我的追加",
