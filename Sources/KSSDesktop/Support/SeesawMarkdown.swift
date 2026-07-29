@@ -15,31 +15,21 @@ enum SeesawMarkdownBlock: Equatable {
 }
 
 enum SeesawMarkdownLayout {
-    /// Print-oriented body for hybrid assistant columns (DESIGN + shell polish).
-    static let bodyFontSize: CGFloat = 15
+    /// Print-oriented body for hybrid assistant columns (compact, not report-page).
+    static let bodyFontSize: CGFloat = 14.5
     static let tableFontSize: CGFloat = 12
     static let tableHorizontalPadding: CGFloat = 8
-    /// Beyond this, or when a table is present, prefer Kami WebView for fidelity.
-    static let kamiFallbackCharacterThreshold = 3_500
-
     static func headingSize(for level: Int) -> CGFloat {
         switch level {
-        case 1: return 21
-        case 2: return 18
-        case 3: return 16
-        default: return 15
+        case 1: return 19
+        case 2: return 16.5
+        case 3: return 15
+        default: return 14.5
         }
     }
 
-    /// When true, nested `MarkdownWebView` is used (tables / very long bodies).
-    static func prefersKamiFallback(_ markdown: String) -> Bool {
-        let text = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.count >= kamiFallbackCharacterThreshold { return true }
-        return SeesawMarkdown.parse(text).contains { block in
-            if case .table = block { return true }
-            return false
-        }
-    }
+    /// Transcript stays native-only so height tracks content (no nested WebView min-height bloat).
+    /// Long-form report pages keep using `MarkdownWebView` directly.
 
     static func tableColumnWidth(columnCount: Int) -> CGFloat {
         switch max(1, columnCount) {
@@ -223,29 +213,25 @@ struct SeesawMarkdownView: View {
     }
 
     var body: some View {
-        // Native-first print column for streaming transcript; Kami only for
-        // table-heavy / very long bodies (nested fitsContent WebView).
-        VStack(alignment: .leading, spacing: 8) {
+        // Always native in transcript: height == content (WebView fitsContent
+        // inflated short replies into tall empty frames).
+        VStack(alignment: .leading, spacing: 6) {
             if errorTint != nil {
                 Text("生成异常")
                     .font(KSSFont.themed(11, .semibold, theme: theme))
                     .foregroundStyle(errorTint ?? theme.down)
             }
-            if SeesawMarkdownLayout.prefersKamiFallback(markdown) {
-                MarkdownWebView(text: markdown, fitsContent: true, minHeight: 64)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .opacity(errorTint == nil ? 1 : 0.92)
-            } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(Array(SeesawMarkdown.parse(markdown).enumerated()), id: \.offset) { _, block in
-                        blockView(block)
-                    }
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(Array(SeesawMarkdown.parse(markdown).enumerated()), id: \.offset) { _, block in
+                    blockView(block)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .opacity(errorTint == nil ? 1 : 0.92)
-                .textSelection(.enabled)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .opacity(errorTint == nil ? 1 : 0.92)
+            .textSelection(.enabled)
         }
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
@@ -255,25 +241,25 @@ struct SeesawMarkdownView: View {
             inlineText(text)
                 .font(KSSFont.themed(SeesawMarkdownLayout.headingSize(for: level), .bold, theme: theme))
                 .foregroundStyle(level <= 2 ? theme.textPrimary : foreground)
-                .padding(.top, level <= 2 ? 10 : 4)
+                .padding(.top, level <= 2 ? 4 : 2)
         case let .paragraph(text):
             inlineText(text)
                 .font(KSSFont.themed(SeesawMarkdownLayout.bodyFontSize, theme: theme))
                 .foregroundStyle(foreground)
-                .lineSpacing(4)
+                .lineSpacing(2.5)
                 .fixedSize(horizontal: false, vertical: true)
         case let .list(ordered, items):
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(ordered ? "\(index + 1)." : "•")
-                            .font(KSSFont.themed(13, .semibold, theme: theme))
+                            .font(KSSFont.themed(12.5, .semibold, theme: theme))
                             .foregroundStyle(theme.accent.opacity(0.85))
-                            .frame(width: ordered ? 22 : 12, alignment: .trailing)
+                            .frame(width: ordered ? 20 : 12, alignment: .trailing)
                         inlineText(item)
                             .font(KSSFont.themed(SeesawMarkdownLayout.bodyFontSize, theme: theme))
                             .foregroundStyle(foreground)
-                            .lineSpacing(3)
+                            .lineSpacing(2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }

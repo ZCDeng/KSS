@@ -48,8 +48,8 @@ final class SeesawMarkdownTests: XCTestCase {
     }
 
     func testReadingTypographyStaysCompactAndFiveColumnTablesFitTheFeed() {
-        XCTAssertEqual(SeesawMarkdownLayout.bodyFontSize, 15)
-        XCTAssertLessThanOrEqual(SeesawMarkdownLayout.headingSize(for: 1), 22)
+        XCTAssertEqual(SeesawMarkdownLayout.bodyFontSize, 14.5)
+        XCTAssertLessThanOrEqual(SeesawMarkdownLayout.headingSize(for: 1), 20)
         XCTAssertLessThanOrEqual(
             SeesawMarkdownLayout.tableContentWidth(columnCount: 5),
             680
@@ -57,20 +57,19 @@ final class SeesawMarkdownTests: XCTestCase {
         XCTAssertLessThan(SeesawMarkdownLayout.tableFontSize, 13)
     }
 
-    func testKamiFallbackForTablesAndVeryLongBodiesOnly() {
-        XCTAssertFalse(SeesawMarkdownLayout.prefersKamiFallback("短句结论。"))
-        XCTAssertFalse(SeesawMarkdownLayout.prefersKamiFallback("""
-        ### 标题
-        - 一项
-        - 两项
-        """))
-        XCTAssertTrue(SeesawMarkdownLayout.prefersKamiFallback("""
+    func testTranscriptTablesStayNativeWithoutWebViewFallback() {
+        // Tables must parse natively so assistant height tracks content.
+        let blocks = SeesawMarkdown.parse("""
         | a | b |
         |---|---|
         | 1 | 2 |
-        """))
-        let long = String(repeating: "投研结论。", count: 800) // > 3500 chars
-        XCTAssertGreaterThanOrEqual(long.count, SeesawMarkdownLayout.kamiFallbackCharacterThreshold)
-        XCTAssertTrue(SeesawMarkdownLayout.prefersKamiFallback(long))
+        """)
+        XCTAssertEqual(blocks.count, 1)
+        if case .table(let headers, let rows) = blocks[0] {
+            XCTAssertEqual(headers, ["a", "b"])
+            XCTAssertEqual(rows, [["1", "2"]])
+        } else {
+            XCTFail("expected table block")
+        }
     }
 }

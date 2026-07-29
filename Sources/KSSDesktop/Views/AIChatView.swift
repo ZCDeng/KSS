@@ -1173,7 +1173,7 @@ struct AIChatView: View {
     private var focusMessageList: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 28) {
+                LazyVStack(spacing: 16) {
                     ForEach(store.chatMessages) { message in
                         focusMessageCell(message)
                             .id(message.id)
@@ -1241,20 +1241,14 @@ struct AIChatView: View {
             }
             .padding(.vertical, 4)
         } else {
-            // Hybrid C: print column with ink rule — not a chat bubble.
-            HStack(alignment: .top, spacing: 0) {
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(Color(red: 0x1B / 255, green: 0x36 / 255, blue: 0x5D / 255).opacity(0.85))
-                    .frame(width: 3)
-                    .padding(.top, 4)
-                    .padding(.bottom, 2)
+            // Hybrid C: compact print column — height tracks content only.
+            HStack(alignment: .top, spacing: 10) {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(Color(red: 0x1B / 255, green: 0x36 / 255, blue: 0x5D / 255).opacity(0.75))
+                    .frame(width: 2.5)
+                    .frame(minHeight: 18)
 
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Seesaw")
-                        .font(KSSFont.themed(11, .semibold, theme: theme))
-                        .foregroundStyle(Color(red: 0x1B / 255, green: 0x36 / 255, blue: 0x5D / 255))
-                        .tracking(0.4)
-
+                VStack(alignment: .leading, spacing: 6) {
                     if message.text.isEmpty && store.isChatStreaming {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
@@ -1262,10 +1256,10 @@ struct AIChatView: View {
                                 .font(KSSFont.themed(13, theme: theme))
                                 .foregroundStyle(theme.textSecondary)
                         }
-                        .padding(.vertical, 2)
                     } else if !message.text.isEmpty {
                         SeesawMarkdownView(markdown: message.text, errorTint: message.isError ? Color.red : nil)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     if !message.thinkingBlocks.isEmpty {
@@ -1282,7 +1276,6 @@ struct AIChatView: View {
 
                     if message.evidenceSummary.hasEvidence || message.evidenceSummary.provider != nil {
                         EvidenceDrawerView(summary: message.evidenceSummary, drawer: message.evidenceDrawer)
-                            .padding(.top, 2)
                     }
 
                     if let chart = message.chartAttachment, !chart.bars.isEmpty {
@@ -1292,10 +1285,11 @@ struct AIChatView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
                 }
-                .padding(.leading, 14)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.trailing, 12)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.trailing, 8)
             .contextMenu {
                 Button("复制内容", systemImage: "doc.on.doc") {
                     copyMessageText(message.text)
@@ -1304,7 +1298,7 @@ struct AIChatView: View {
                 Divider()
                 Button("记住这条消息") { store.proposeAgentMemory(message.text) }
             }
-            .padding(.vertical, 8)
+            .padding(.vertical, 2)
         }
     }
 
@@ -1331,46 +1325,70 @@ struct AIChatView: View {
         .accessibilityLabel("正在调用 \(tool)")
     }
 
+    /// FlowDown-inspired input: one continuous rounded shell; text + trailing
+    /// circular send on the same row (not a stacked control bar).
     private var focusComposer: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             composerInlineStatus
             queuedInputPanel
             pendingAttachmentStrip
             focusSessionSkillChips
 
-            TextField(
-                store.chatMessages.isEmpty ? "问问盘面、个股或一个研究问题…" : "继续追问…",
-                text: $input,
-                axis: .vertical
-            )
-            .textFieldStyle(.plain)
-            .font(KSSFont.themed(15.5, theme: theme))
-            .foregroundStyle(theme.textPrimary)
-            .focused($isComposerFocused)
-            .lineLimit(2...8)
-            .onKeyPress(.return, phases: .down, action: handleComposerReturn)
+            HStack(alignment: .bottom, spacing: 8) {
+                Button { toggleOverlay(.skills) } label: {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Skills")
 
-            composerControlBar
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .background(theme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(
-                    isComposerFocused
-                        ? theme.accent.opacity(0.55)
-                        : theme.hairline.opacity(0.95),
-                    lineWidth: isComposerFocused ? 1.5 : 1
+                attachmentPickerButton
+
+                TextField(
+                    store.chatMessages.isEmpty ? "问问盘面、个股或一个研究问题…" : "继续追问…",
+                    text: $input,
+                    axis: .vertical
                 )
+                .textFieldStyle(.plain)
+                .font(KSSFont.themed(15, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+                .focused($isComposerFocused)
+                .lineLimit(1...6)
+                .onKeyPress(.return, phases: .down, action: handleComposerReturn)
+                .frame(minHeight: 32, alignment: .center)
+                .padding(.vertical, 4)
+
+                composerModelMenu
+
+                if store.isChatStreaming {
+                    queueShortcutHint
+                    focusStopButton
+                }
+                focusSendButton
+            }
         }
-        .shadow(
-            color: isComposerFocused
-                ? theme.accent.opacity(0.18)
-                : .black.opacity(theme.appearance == .dark ? 0.18 : 0.07),
-            radius: isComposerFocused ? 16 : 14,
-            y: 5
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            theme.appearance == .dark
+                ? theme.surfaceContainer.opacity(0.55)
+                : Color.white.opacity(0.92),
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
         )
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(theme.hairline.opacity(isComposerFocused ? 0 : 0.9), lineWidth: 1)
+        }
+        .overlay {
+            if isComposerFocused {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(theme.accent.opacity(0.35), lineWidth: 1)
+            }
+        }
+        .shadow(color: .black.opacity(theme.appearance == .dark ? 0.22 : 0.08), radius: 10, y: 4)
         .accessibilityElement(children: .contain)
     }
 
@@ -1404,34 +1422,6 @@ struct AIChatView: View {
         }
     }
 
-    private var composerControlBar: some View {
-        HStack(spacing: 9) {
-            attachmentPickerButton
-
-            Button { toggleOverlay(.skills) } label: {
-                Label("Skills", systemImage: "slider.horizontal.3")
-                    .font(KSSFont.themed(11.5, .medium, theme: theme))
-                    .foregroundStyle(theme.textSecondary)
-                    .padding(.horizontal, 8)
-                    .frame(height: 28)
-                    .background(theme.surfaceContainer, in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .help("浏览和管理 Skills")
-
-            Spacer(minLength: 4)
-            composerModelMenu
-
-            if store.isChatStreaming {
-                queueShortcutHint
-                focusStopButton
-            }
-
-            focusSendButton
-        }
-        .frame(minHeight: 32)
-    }
-
     private var composerModelMenu: some View {
         Menu {
             let visible = visibleProviderModels
@@ -1448,14 +1438,15 @@ struct AIChatView: View {
                 Button("管理模型…") { seesawPage = .models }
             }
         } label: {
-            Label(providerComposerLabel, systemImage: "cpu")
-                .font(KSSFont.themed(11, theme: theme))
+            Image(systemName: "cpu")
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(theme.textSecondary)
-                .lineLimit(1)
+                .frame(width: 28, height: 28)
+                .contentShape(Circle())
         }
         .menuStyle(.borderlessButton)
         .disabled(store.isChatStreaming)
-        .help("本会话模型；管理可见模型与 Provider")
+        .help(providerComposerLabel)
     }
 
     @ViewBuilder
