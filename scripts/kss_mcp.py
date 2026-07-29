@@ -62,6 +62,33 @@ def get_sector_rotation_history(limit: int = 30) -> dict:
 
 
 @mcp.tool
+def get_signal_cards(
+    symbol: str = "",
+    date: str = "",
+    days: str = "",
+    card_type: str = "",
+) -> dict:
+    """确定性信号卡中间层（ETF 申赎/板块异动/主题龙头/放量/估值/回测裁决）。
+
+    空 date 返回最新有卡交易日；无卡返回空列表。优先用本工具做交叉分析，
+    需要 ETF 原始份额流时再调 get_etf_radar。
+    """
+    return _call("signal-cards", [symbol, date, days, card_type])
+
+
+@mcp.tool
+def get_etf_radar(date: str = "") -> dict:
+    """ETF 申赎雷达原始快照；date 为 YYYYMMDD，空则最新。"""
+    return _call("etf-radar", [date] if date else [])
+
+
+@mcp.tool
+def get_daily_review_archive(symbol: str = "", limit: int = 20) -> dict:
+    """个股复盘归档索引；symbol 可选，limit 默认 20。"""
+    return _call("daily-review-archive", [symbol, str(limit)])
+
+
+@mcp.tool
 def get_theme_leaders() -> dict:
     """主题龙头梯队。"""
     return _call("theme-leaders")

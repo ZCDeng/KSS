@@ -34,22 +34,23 @@ def test_load_corrupt_json_degrades(state_root: Path) -> None:
 
 
 def test_append_max_and_duplicate(state_root: Path) -> None:
+    max_n = cfg_mod.MAX_APPEND
     ops = [
         {"op": "overnight_append", "code": f"T{i:03d}", "kind": "yfinance", "name": f"T{i}"}
-        for i in range(8)
+        for i in range(max_n)
     ]
     r = cfg_mod.apply_patch(ops)
     assert r["ok"] is True
-    assert len(r["config"]["overnight_us"]["append"]) == 8
+    assert len(r["config"]["overnight_us"]["append"]) == max_n
 
     r2 = cfg_mod.apply_patch([{"op": "overnight_append", "code": "T999", "kind": "yfinance"}])
     assert r2["ok"] is False
-    assert "max" in (r2.get("error") or "").lower() or "8" in (r2.get("error") or "")
+    assert "max" in (r2.get("error") or "").lower() or str(max_n) in (r2.get("error") or "")
 
     # 幂等：重复已有 code
     r3 = cfg_mod.apply_patch([{"op": "overnight_append", "code": "T000", "kind": "yfinance"}])
     assert r3["ok"] is True
-    assert len(r3["config"]["overnight_us"]["append"]) == 8
+    assert len(r3["config"]["overnight_us"]["append"]) == max_n
 
 
 def test_cannot_append_or_remove_default(state_root: Path) -> None:

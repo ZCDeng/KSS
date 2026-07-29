@@ -109,6 +109,43 @@ TOOL_SPECS: list[dict[str, Any]] = [
           {"date": _STR}, ["date"]),
     _spec("get_sector_rotation_history", "sector-rotation-history", "板块轮动历史近 limit 条",
           {"limit": {"type": "string", "description": "条数,如 30"}}, ["limit"]),
+    _spec(
+        "get_signal_cards",
+        "signal-cards",
+        "确定性信号卡中间层(ETF申赎/板块异动/主题龙头/放量/估值/回测裁决)。"
+        "symbol/date/days/card_type 均可选;空 date 返回最新有卡交易日;无卡返回空列表",
+        {
+            "symbol": _STR,
+            "date": _STR,
+            "days": {"type": "string", "description": "回看交易日数,如 7"},
+            "card_type": {
+                "type": "string",
+                "description": "etf_flow|sector_move|theme_leader|volume_spike|valuation|backtest_verdict",
+            },
+        },
+        ["symbol", "date", "days", "card_type"],
+        execution_mode="parallel",
+    ),
+    _spec(
+        "get_etf_radar",
+        "etf-radar",
+        "ETF 申赎雷达原始快照(份额加权 flow_1d/flow_5d 等)。date 为 YYYYMMDD 空则最新。"
+        "优先用 get_signal_cards 看已聚合档位/胜率;需要原始数值时再调本工具",
+        {"date": _STR},
+        ["date"],
+        execution_mode="parallel",
+    ),
+    _spec(
+        "get_daily_review_archive",
+        "daily-review-archive",
+        "个股复盘归档索引。symbol 可选;limit 默认 20。返回 review_date/ts_code/file_path",
+        {
+            "symbol": _STR,
+            "limit": {"type": "string", "description": "条数,默认 20"},
+        },
+        ["symbol", "limit"],
+        execution_mode="parallel",
+    ),
     _spec("get_theme_leaders", "theme-leaders", "主题龙头梯队"),
     _spec("get_discovery_candidates", "get-discovery-candidates", "潜力股发现候选合并"),
     _spec("get_paper_summary", "paper-summary", "模拟盘推荐跟踪汇总"),

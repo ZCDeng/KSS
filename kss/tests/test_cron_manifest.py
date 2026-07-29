@@ -53,9 +53,9 @@ def _doc(jobs: list[dict], order: list[str] | None = None) -> dict:
 # --------------------------------------------------------------------------- #
 def test_real_manifest_loads_30_jobs() -> None:
     m = load_manifest()  # 默认读 kss/config/cron_jobs.yaml
-    assert len(m.jobs) == 30
+    assert len(m.jobs) == 31  # + signal_cards_daily (plan 2026-07-28-002)
     suffixes = {j.suffix for j in m.jobs}
-    assert len(suffixes) == 30  # 全唯一
+    assert len(suffixes) == 31  # 全唯一
     # yupi 产品化：KeepAlive 常驻
     yupi = next(j for j in m.jobs if j.suffix == "yupi_server")
     assert yupi.keepalive is True

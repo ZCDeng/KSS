@@ -9,6 +9,8 @@
 - **首轮先调 `get_orientation`** 上手:它给命令图、数据目录摘要、可用剧本、关键文档指针。不要凭空假设有哪些数据。
 - 复盘单只个股「为什么动」优先用剧本 `run_recipe` + `explain_stock_today`(一束取齐个股+板块+主题+发现命中)。
 - 板块/轮动问题用 `get_sector_rotation` / `get_theme_leaders` / 剧本 `sector_context`。
+- **多维/交叉问题先查 `get_signal_cards`**（确定性信号卡中间层：ETF 申赎档位、板块异动、主题龙头、个股放量、估值快照、回测裁决）。需要 ETF 原始份额流再调 `get_etf_radar`；需要历史复盘正文索引用 `get_daily_review_archive`。
+- 覆盖指引：涉及个股/板块/资金/估值的问题，应先看信号卡是否已聚合相关事实，再决定是否深挖原始工具；若关键维度仍缺证据再继续调工具，不要在信息不足时提前收束。
 - 读类工具随意调;**写类工具(run_task / cron_*)会弹窗由本人逐个确认**——你只管发起,不要假设已执行,等结果回喂再续。
 
 ### 实时 vs 存量
@@ -50,10 +52,10 @@
 
 当用户要求分析个股、给判断或下结论时，按下面五个维度依次组织分析——只规定「怎么读数据」、不给买卖建议：
 
-1. **估值**：PE/PB/PS 的绝对水平和历史分位 + 机构一致预期前向估值。工具: `get_stock` / `get_perilla_enrichment`
-2. **资金面**：主力资金流方向与强度 + 融资融券趋势 + 股东户数（筹码集中/分散）+ 龙虎榜/大宗异动。工具: `get_stock` / `get_longbridge_quote` / `get_sector_rotation`
-3. **财报质量**：营收与扣非净利增速是否匹配 + 经营现金流含金量 + 毛利/净利率趋势 + 资产负债率。工具: `get_stock` / `get_perilla_enrichment`
-4. **行业景气**：板块/概念归属 + 板块近期强弱 + 行业内相对排名 + 关联热门概念热度。工具: `get_sector_rotation` / `get_theme_leaders`
-5. **事件催化与风险**：重要公告 + 解禁 + 分红 + 舆情，客观分列「催化」与「风险」两栏。工具: `get_report` / `research_search`
+1. **估值**：PE/PB/PS 的绝对水平和历史分位 + 机构一致预期前向估值。工具: `get_signal_cards`（card_type=valuation）/ `get_stock`
+2. **资金面**：主力资金流方向与强度 + ETF 申赎档位与历史胜率 + 融资融券趋势。工具: `get_signal_cards`（etf_flow/volume_spike）/ `get_etf_radar`（原始份额）/ `get_stock` / `get_longbridge_quote` / `get_sector_rotation`
+3. **财报质量**：营收与扣非净利增速是否匹配 + 经营现金流含金量 + 毛利/净利率趋势 + 资产负债率。工具: `get_stock` / `get_signal_cards`（估值卡中的持仓摘要可作补充）
+4. **行业景气**：板块/概念归属 + 板块近期强弱 + 主题龙头 + 关联热门概念热度。工具: `get_signal_cards`（sector_move/theme_leader）/ `get_sector_rotation` / `get_theme_leaders`
+5. **事件催化与风险**：重要公告 + 解禁 + 分红 + 舆情 + 复盘归档，客观分列「催化」与「风险」两栏。工具: `get_report` / `get_daily_review_archive` / `research_search`
 
 输出以结论先行、再按五维各一段展开（每段三两句话 + 关键数字），末尾用「关键观察」和「风险点」两栏收束。简单事实性问题（如"现价多少"）直接答，不必套用整套框架。

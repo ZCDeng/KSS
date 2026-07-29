@@ -119,6 +119,17 @@ jobs:
     catchup: true
     enabled: true
 
+  # 信号卡日终（plan 2026-07-28-002 / U6）：链式挂在 hotspot 之后；
+  # schedule 为晚间兜底（链断裂时仍能跑）。
+  - suffix: signal_cards_daily
+    wrapper: scripts/run_signal_cards_daily.sh
+    schedule: {hour: 18, minute: 20, weekdays: [1, 2, 3, 4, 5]}
+    title: 信号卡日终构建
+    category: 板块复盘
+    catchup: true
+    enabled: true
+    triggered_by: hotspot_rotation_daily
+
   # 事件驱动链（plan 2026-07-14-001 / KTD1/KTD4）：EOD(update_data_daily_eod) 成功后
   # 依次 kickstart picks→mi→indicator→review。以下 schedule 是深夜兜底档（链断裂时的
   # 安全网），正常日子链在 EOD 后即完成、兜底档被三态 gate no-op。

@@ -747,6 +747,26 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             ON research_formula_runs(goal_id, created_at);
         """,
     ),
+    (
+        7,
+        """
+        -- ---------------------------------------------------------------
+        -- Signal card layer (plan 2026-07-28-002): deterministic daily cards
+        -- ---------------------------------------------------------------
+        CREATE TABLE IF NOT EXISTS signal_cards (
+            trade_date    TEXT NOT NULL,
+            card_type     TEXT NOT NULL,
+            card_id       TEXT PRIMARY KEY,
+            subject       TEXT,
+            payload_json  TEXT NOT NULL,
+            created_at    TEXT
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS idx_signal_cards_date_type
+            ON signal_cards(trade_date, card_type);
+        CREATE INDEX IF NOT EXISTS idx_signal_cards_subject
+            ON signal_cards(subject, trade_date);
+        """,
+    ),
 )
 
 

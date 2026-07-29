@@ -44,4 +44,13 @@ cd "$PROJECT_ROOT"
 # refresh 脚本 --date 默认 latest；额外参数（如手动 --date 20260618）经 "$@" 透传。
 "$PYTHON" scripts/refresh_hotspot_rotation.py --enable-leaders "$@"
 
+# 链式触发信号卡日终（plan 2026-07-28-002 / U6）：hotspot 成功后 kick signal_cards_daily。
+# 显式传参（回填/定向）时不 kick，避免干扰手动跑。
+if [ "$#" -eq 0 ]; then
+  : "${KSS_STATE_ROOT:=$PROJECT_ROOT}"
+  # shellcheck source=/dev/null
+  source "$PROJECT_ROOT/scripts/lib_cron_chain.sh"
+  kss_kick_next signal_cards_daily
+fi
+
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') hotspot_rotation_daily 完成 ====="

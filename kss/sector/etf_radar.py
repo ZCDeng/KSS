@@ -45,6 +45,8 @@ _WINDOW_CALENDAR_DAYS = 20
 
 # 单日主题加权申赎超过该阈值视为「加速」(验证期日常波动 ±1% 内).
 _ACCEL_THRESHOLD_PCT = 1.5
+# 公开导出名（信号卡层引用；数值不变）。
+ACCEL_THRESHOLD_PCT = _ACCEL_THRESHOLD_PCT
 
 # flow_5d 档位语义 (一年回测剂量曲线, 非重叠抽样, 见
 # docs/solutions/etf_flow_signal_lessons.md):
@@ -52,11 +54,13 @@ _ACCEL_THRESHOLD_PCT = 1.5
 #   -2~0  → 中性偏多 (+1.05%, 71%)
 #   >0    → 偏弱 (~+0%, 49-50%; 动量期恶化至 -1~-2.6%, 28-41%)
 _GRADE_CONFIRM_TH = -2.0
+GRADE_CONFIRM_TH = _GRADE_CONFIRM_TH
 
 # 见顶预警: 过去 5 日主题收益 ≥ +3% (强动量三分位边界 +3.4% 取整) 且
 # flow_5d 转正. 固定阈值匹配人群 (一年 n=106): 后5日均值 -0.59%, 上涨
 # 胜率 38%; 双重排序强动量格子 (n=20) 为 -2.0%/35% — 播报用前者, 不夸大.
 _DIVERGENCE_RET_TH = 3.0
+DIVERGENCE_RET_TH = _DIVERGENCE_RET_TH
 
 
 @dataclass

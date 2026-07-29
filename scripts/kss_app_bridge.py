@@ -2780,6 +2780,78 @@ def _sector_rotation_history(limit: int = 30) -> list[dict[str, Any]]:
     return out
 
 
+def _signal_cards(
+    symbol: str = "",
+    date: str = "",
+    days: str = "",
+    card_type: str = "",
+) -> dict[str, Any]:
+    """确定性信号卡查询；无卡返回空列表（非 error）。"""
+    from kss.storage.signal_cards import query_cards
+
+    days_i: int | None = None
+    if days and str(days).strip().isdigit():
+        days_i = int(str(days).strip())
+    cards = query_cards(
+        symbol=symbol.strip() or None,
+        trade_date=date.strip() or None,
+        days=days_i,
+        card_type=card_type.strip() or None,
+        db_path=STATE_ROOT / "storage" / "kss.db",
+    )
+    return {
+        "cards": cards,
+        "count": len(cards),
+        "filters": {
+            "symbol": symbol.strip() or None,
+            "date": date.strip() or None,
+            "days": days_i,
+            "card_type": card_type.strip() or None,
+        },
+    }
+
+
+def _etf_radar(date: str = "") -> dict[str, Any]:
+    """ETF 申赎雷达原始快照；空 date → 最新。"""
+    from kss.storage import etf_radar as etf_store
+
+    db = STATE_ROOT / "storage" / "kss.db"
+    if date and date.strip():
+        snap = etf_store.read_by_date(date.strip(), db_path=db)
+        if snap is None:
+            return {"trade_date": date.strip(), "themes": {}, "missing": True}
+        return snap
+    hist = etf_store.read_history(1, db_path=db)
+    if not hist:
+        return {"themes": {}, "missing": True}
+    return hist[0]
+
+
+def _daily_review_archive(symbol: str = "", limit: str = "20") -> dict[str, Any]:
+    """个股复盘归档索引。"""
+    from kss.storage.daily_review import list_all_reviews, list_symbol_reviews
+
+    db = STATE_ROOT / "storage" / "kss.db"
+    lim = int(limit) if str(limit).strip().isdigit() else 20
+    if symbol and symbol.strip():
+        entries = list_symbol_reviews(symbol.strip(), db_path=db)
+        # list_symbol 升序；取最近 lim 条
+        entries = list(reversed(entries))[:lim]
+    else:
+        entries = list_all_reviews(db_path=db)[:lim]
+    return {
+        "reviews": [
+            {
+                "review_date": e.review_date,
+                "ts_code": e.ts_code,
+                "file_path": e.file_path,
+            }
+            for e in entries
+        ],
+        "count": len(entries),
+    }
+
+
 def _latest_sector_rotation(limit_boards: int = 6, limit_leaders: int = 5) -> dict[str, Any] | None:
     """最新一份板块热点轮动的摘要卡片数据。
 
@@ -5225,6 +5297,15 @@ COMMANDS = {
     "python-env": {"desc": "python 环境状态", "args": []},
     "sector-rotation": {"desc": "板块热点轮动快照", "args": ["[YYYYMMDD]"]},
     "sector-rotation-history": {"desc": "板块轮动历史", "args": ["[LIMIT]"]},
+    "signal-cards": {
+        "desc": "确定性信号卡(ETF/板块/龙头/放量/估值/回测裁决)",
+        "args": ["[SYMBOL]", "[DATE]", "[DAYS]", "[CARD_TYPE]"],
+    },
+    "etf-radar": {"desc": "ETF 申赎雷达原始快照", "args": ["[YYYYMMDD]"]},
+    "daily-review-archive": {
+        "desc": "个股复盘归档索引",
+        "args": ["[SYMBOL]", "[LIMIT]"],
+    },
     "run": {"desc": "执行数据任务(白名单)", "args": ["TASK", "..."]},
     "theme-leaders": {"desc": "主题龙头梯队", "args": []},
     "get-discovery-candidates": {"desc": "潜力股发现候选", "args": []},
@@ -6297,6 +6378,20 @@ def dispatch(command: str, args: list[str]) -> Any:
     if command == "sector-rotation-history":
         limit = int(args[0]) if args and args[0].isdigit() else 30
         return _sector_rotation_history(limit=limit)
+    if command == "signal-cards":
+        return _signal_cards(
+            args[0] if len(args) > 0 else "",
+            args[1] if len(args) > 1 else "",
+            args[2] if len(args) > 2 else "",
+            args[3] if len(args) > 3 else "",
+        )
+    if command == "etf-radar":
+        return _etf_radar(args[0] if args else "")
+    if command == "daily-review-archive":
+        return _daily_review_archive(
+            args[0] if len(args) > 0 else "",
+            args[1] if len(args) > 1 else "20",
+        )
     if command == "run":
         if not args:
             raise ValueError("run command requires TASK")
