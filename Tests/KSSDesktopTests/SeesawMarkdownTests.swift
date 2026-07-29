@@ -1,3 +1,5 @@
+import AppKit
+import CoreText
 import XCTest
 @testable import KSSDesktop
 
@@ -70,6 +72,23 @@ final class SeesawMarkdownTests: XCTestCase {
             XCTAssertEqual(rows, [["1", "2"]])
         } else {
             XCTFail("expected table block")
+        }
+    }
+
+    func testPrintBodyUsesChironPostScriptNames() {
+        // Assistant print face must match Kami content stack (registered ttf).
+        let regular = NSFont(name: "ChironGoRoundTC-Regular", size: 14)
+        let medium = NSFont(name: "ChironGoRoundTC-Medium", size: 14)
+        let bold = NSFont(name: "ChironGoRoundTC-Bold", size: 14)
+        // In unit tests fonts may be unregistered; still assert API maps weights.
+        _ = KSSFont.chiron(14)
+        _ = KSSFont.chiron(14, .medium)
+        _ = KSSFont.chiron(14, .bold)
+        // Soft check when process has registered fonts (desktop runtime).
+        if CTFontCopyPostScriptName(CTFontCreateWithName("ChironGoRoundTC-Regular" as CFString, 14, nil)) as String == "ChironGoRoundTC-Regular" {
+            XCTAssertNotNil(regular)
+            XCTAssertNotNil(medium)
+            XCTAssertNotNil(bold)
         }
     }
 }

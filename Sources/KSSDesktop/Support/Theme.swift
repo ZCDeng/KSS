@@ -39,6 +39,21 @@ enum KSSFont {
         .custom("HarmonyOS_Sans_SC_Bold", size: size)
     }
 
+    /// 内容印刷体（Seesaw 助手 / 与 Kami 内容皮一致）：Chiron GoRound TC 离线 ttf。
+    /// PostScript：`ChironGoRoundTC-{Regular|Medium|Bold}`（AppDelegate 已注册）。
+    static func chiron(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
+        let ps: String
+        switch weight {
+        case .bold, .semibold, .heavy, .black:
+            ps = "ChironGoRoundTC-Bold"
+        case .medium:
+            ps = "ChironGoRoundTC-Medium"
+        default:
+            ps = "ChironGoRoundTC-Regular"
+        }
+        return .custom(ps, size: size)
+    }
+
     /// 主题感知正文/标题字体。8 套经典主题 `nativeFontFamily` 为 nil，行为与 `.system(size:weight:design:)`
     /// 完全一致（零回归）；xcom 模式下按 weight 分桶取 "<family>-<Weight>" PostScript 名，并给中文字形
     /// 挂一个级联到 `nativeCJKFamily` 对应粗细档的 `CTFontDescriptor`（跟随同一个 weight 分桶，而不是
