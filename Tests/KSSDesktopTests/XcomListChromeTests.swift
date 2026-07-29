@@ -36,7 +36,7 @@ final class XcomListChromeTests: XCTestCase {
 
     func testSeesawFocusGeometryCentersConversationWithoutThreeColumnBudget() {
         XCTAssertEqual(SeesawXcomChrome.feedColumnWidth, 760)
-        XCTAssertEqual(SeesawXcomChrome.headerHeight, 53)
+        XCTAssertEqual(SeesawXcomChrome.headerHeight, 52)
         XCTAssertEqual(SeesawXcomChrome.compactContentWidth, 820)
         XCTAssertEqual(SeesawXcomChrome.overlayWidth, 380)
     }

@@ -407,9 +407,9 @@ struct AIChatView: View {
         }
         .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
         .frame(height: SeesawXcomChrome.headerHeight)
-        .background(theme.surface.opacity(0.94))
+        .background(theme.surface.opacity(0.97))
         .overlay(alignment: .bottom) {
-            Rectangle().fill(theme.hairline).frame(height: 1)
+            Rectangle().fill(theme.hairline.opacity(0.85)).frame(height: 1)
         }
     }
 
@@ -1173,7 +1173,7 @@ struct AIChatView: View {
     private var focusMessageList: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 18) {
+                LazyVStack(spacing: 22) {
                     ForEach(store.chatMessages) { message in
                         focusMessageCell(message)
                             .id(message.id)
@@ -1201,23 +1201,33 @@ struct AIChatView: View {
         let isUser = message.role == .user
 
         if isUser {
-            HStack(alignment: .bottom) {
-                Spacer(minLength: 52)
-                VStack(alignment: .leading, spacing: 8) {
+            // Hybrid C: chat-style user bubble (right-biased).
+            HStack(alignment: .bottom, spacing: 0) {
+                Spacer(minLength: 72)
+                VStack(alignment: .trailing, spacing: 6) {
                     if !message.text.isEmpty {
                         markdownText(message.text)
-                            .font(KSSFont.themed(14, theme: theme))
+                            .font(KSSFont.themed(14.5, theme: theme))
                             .foregroundStyle(theme.textPrimary)
                             .textSelection(.enabled)
-                            .lineSpacing(2)
+                            .lineSpacing(3)
                             .fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(.leading)
                     }
                     messageAttachmentStrip(message.attachments)
                 }
-                .padding(.horizontal, 13)
-                .padding(.vertical, 10)
-                .frame(maxWidth: SeesawXcomChrome.feedColumnWidth * 0.78, alignment: .leading)
-                .background(theme.accentSoft, in: RoundedRectangle(cornerRadius: 18))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
+                .frame(maxWidth: SeesawXcomChrome.feedColumnWidth * 0.72, alignment: .trailing)
+                .background(
+                    theme.accent.opacity(theme.appearance == .dark ? 0.22 : 0.12),
+                    in: UnevenRoundedRectangle(
+                        topLeadingRadius: 16,
+                        bottomLeadingRadius: 16,
+                        bottomTrailingRadius: 6,
+                        topTrailingRadius: 16
+                    )
+                )
                 .contextMenu {
                     Button("复制内容", systemImage: "doc.on.doc") {
                         copyMessageText(message.text)
@@ -1227,8 +1237,10 @@ struct AIChatView: View {
                     Button("记住这条消息") { store.proposeAgentMemory(message.text) }
                 }
             }
+            .padding(.vertical, 2)
         } else {
-            VStack(alignment: .leading, spacing: 9) {
+            // Hybrid C: print-style assistant column (no heavy chat bubble).
+            VStack(alignment: .leading, spacing: 10) {
                 if message.text.isEmpty && store.isChatStreaming {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
@@ -1236,6 +1248,7 @@ struct AIChatView: View {
                             .font(KSSFont.themed(13, theme: theme))
                             .foregroundStyle(theme.textSecondary)
                     }
+                    .padding(.vertical, 2)
                 } else if !message.text.isEmpty {
                     SeesawMarkdownView(markdown: message.text, errorTint: message.isError ? Color.red : nil)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1266,6 +1279,7 @@ struct AIChatView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.trailing, 8)
             .contextMenu {
                 Button("复制内容", systemImage: "doc.on.doc") {
                     copyMessageText(message.text)
@@ -1274,6 +1288,7 @@ struct AIChatView: View {
                 Divider()
                 Button("记住这条消息") { store.proposeAgentMemory(message.text) }
             }
+            .padding(.vertical, 4)
         }
     }
 
@@ -1285,20 +1300,23 @@ struct AIChatView: View {
     }
 
     private func focusToolRow(_ tool: String) -> some View {
-        HStack(spacing: 8) {
-            ProgressView().controlSize(.small)
-            Text("正在调用 \(tool)…")
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+        HStack(spacing: 6) {
+            ProgressView().controlSize(.mini)
+            Text(tool)
+                .font(.system(size: 11.5, weight: .medium, design: .monospaced))
                 .foregroundStyle(theme.textSecondary)
-            Spacer()
+                .lineLimit(1)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: 10))
+        .padding(.vertical, 5)
+        .background(theme.surfaceContainer.opacity(0.9), in: Capsule())
+        .overlay { Capsule().stroke(theme.hairline.opacity(0.8)) }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityLabel("正在调用 \(tool)")
     }
 
     private var focusComposer: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: 10) {
             composerInlineStatus
             queuedInputPanel
             pendingAttachmentStrip
@@ -1310,21 +1328,22 @@ struct AIChatView: View {
                 axis: .vertical
             )
             .textFieldStyle(.plain)
-            .font(KSSFont.themed(15, theme: theme))
+            .font(KSSFont.themed(15.5, theme: theme))
             .foregroundStyle(theme.textPrimary)
             .focused($isComposerFocused)
-            .lineLimit(2...6)
+            .lineLimit(2...8)
             .onKeyPress(.return, phases: .down, action: handleComposerReturn)
 
             composerControlBar
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .background(theme.surface, in: RoundedRectangle(cornerRadius: 20))
+        .padding(.vertical, 13)
+        .background(theme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 20).stroke(theme.hairline)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(theme.hairline.opacity(0.95))
         }
-        .shadow(color: .black.opacity(theme.appearance == .dark ? 0.16 : 0.08), radius: 18, y: 7)
+        .shadow(color: .black.opacity(theme.appearance == .dark ? 0.18 : 0.06), radius: 14, y: 5)
         .accessibilityElement(children: .contain)
     }
 

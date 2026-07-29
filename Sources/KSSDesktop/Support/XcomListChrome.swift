@@ -50,9 +50,9 @@ enum SeesawXcomChrome {
     // live `AIChatView` rendering path only uses the Focus Layout metrics below.
     static let sessionRailWidth: CGFloat = 320
     static let utilityPanelWidth: CGFloat = 400
-    static let headerHeight: CGFloat = 53
+    static let headerHeight: CGFloat = 52
     static let avatarSize: CGFloat = 40
-    static let rowHorizontalPadding: CGFloat = 16
+    static let rowHorizontalPadding: CGFloat = 18
     static let rowVerticalPadding: CGFloat = 12
     static let compactContentWidth: CGFloat = 820
     static let overlayWidth: CGFloat = 380

@@ -48,12 +48,29 @@ final class SeesawMarkdownTests: XCTestCase {
     }
 
     func testReadingTypographyStaysCompactAndFiveColumnTablesFitTheFeed() {
-        XCTAssertEqual(SeesawMarkdownLayout.bodyFontSize, 14)
-        XCTAssertLessThanOrEqual(SeesawMarkdownLayout.headingSize(for: 1), 20)
+        XCTAssertEqual(SeesawMarkdownLayout.bodyFontSize, 15)
+        XCTAssertLessThanOrEqual(SeesawMarkdownLayout.headingSize(for: 1), 22)
         XCTAssertLessThanOrEqual(
             SeesawMarkdownLayout.tableContentWidth(columnCount: 5),
             680
         )
         XCTAssertLessThan(SeesawMarkdownLayout.tableFontSize, 13)
+    }
+
+    func testKamiFallbackForTablesAndVeryLongBodiesOnly() {
+        XCTAssertFalse(SeesawMarkdownLayout.prefersKamiFallback("短句结论。"))
+        XCTAssertFalse(SeesawMarkdownLayout.prefersKamiFallback("""
+        ### 标题
+        - 一项
+        - 两项
+        """))
+        XCTAssertTrue(SeesawMarkdownLayout.prefersKamiFallback("""
+        | a | b |
+        |---|---|
+        | 1 | 2 |
+        """))
+        let long = String(repeating: "投研结论。", count: 800) // > 3500 chars
+        XCTAssertGreaterThanOrEqual(long.count, SeesawMarkdownLayout.kamiFallbackCharacterThreshold)
+        XCTAssertTrue(SeesawMarkdownLayout.prefersKamiFallback(long))
     }
 }
