@@ -18,7 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "HarmonyOS_Sans_SC_Regular", "HarmonyOS_Sans_SC_Medium", "HarmonyOS_Sans_SC_Bold", "HarmonyOS_Sans_SC_Black",
             "chirp-regular-web", "chirp-medium-web", "chirp-bold-web", "chirp-heavy-web",
             "TsangerJinKai02-W02",
-            "LXGWWenKaiMonoTC-Regular", "LXGWWenKaiMonoTC-Medium",
+            "ChironGoRoundTC-Regular", "ChironGoRoundTC-Medium", "ChironGoRoundTC-Bold",
         ] {
             guard let url = KSSResources.bundle.url(forResource: name, withExtension: "ttf") else {
                 NSLog("[KSS] 字体缺失，未注册: \(name).ttf")

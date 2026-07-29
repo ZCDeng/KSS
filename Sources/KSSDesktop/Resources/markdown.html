@@ -14,17 +14,23 @@
   @font-face { font-family: "HarmonyOS Sans SC"; src: url("HarmonyOS_Sans_SC_Bold.ttf") format("truetype"); font-weight: 700; font-style: normal; }
   @font-face { font-family: "HarmonyOS Sans SC"; src: url("HarmonyOS_Sans_SC_Black.ttf") format("truetype"); font-weight: 900; font-style: normal; }
   @font-face { font-family: "TsangerJinKai02"; src: url("TsangerJinKai02-W02.ttf") format("truetype"); font-weight: 400 500; font-style: normal; }
-  /* LXGW WenKai Mono TC — Google Fonts 同款字形，离线打包（OFL，lxgw/LxgwWenkaiTC v1.522） */
+  /* Chiron GoRound TC — Google Fonts 同款，离线 ttf（400/500/700） */
   @font-face {
-    font-family: "LXGW WenKai Mono TC";
-    src: url("LXGWWenKaiMonoTC-Regular.ttf") format("truetype");
-    font-weight: 300 400;
+    font-family: "Chiron GoRound TC";
+    src: url("ChironGoRoundTC-Regular.ttf") format("truetype");
+    font-weight: 400;
     font-style: normal;
   }
   @font-face {
-    font-family: "LXGW WenKai Mono TC";
-    src: url("LXGWWenKaiMonoTC-Medium.ttf") format("truetype");
-    font-weight: 500 700;
+    font-family: "Chiron GoRound TC";
+    src: url("ChironGoRoundTC-Medium.ttf") format("truetype");
+    font-weight: 500;
+    font-style: normal;
+  }
+  @font-face {
+    font-family: "Chiron GoRound TC";
+    src: url("ChironGoRoundTC-Bold.ttf") format("truetype");
+    font-weight: 600 700;
     font-style: normal;
   }
 
@@ -33,9 +39,9 @@
     --line: #D1CFC5; --line-soft: #E5E3D8; --clay: #D97757; --code: #F0EEE6;
     --th: #F0EEE6; --zebra: rgba(20,20,19,0.025); --surface: #FFFFFF;
     --tag: #E4ECF5;
-    --serif: "LXGW WenKai Mono TC", "TsangerJinKai02", ui-serif, "Songti SC", serif;
-    --sans: "LXGW WenKai Mono TC", -apple-system, "PingFang SC", sans-serif;
-    --mono: "LXGW WenKai Mono TC", ui-monospace, "SF Mono", Menlo, monospace;
+    --serif: "Chiron GoRound TC", "PingFang SC", "Songti SC", sans-serif;
+    --sans: "Chiron GoRound TC", "PingFang SC", -apple-system, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
   }
   html, body { margin: 0; padding: 0; background: transparent; }
   body {
@@ -80,22 +86,16 @@
   #empty { color: var(--muted); padding: 24px 0; }
 
   /* ========== Kami print reader (data-reader=kami) ==========
-     对照 demo-kami-print（白底打印版 one-pager）：
-     - 不强制羊皮纸底：bg 透明，由宿主 underPageBackgroundColor / 主题 canvas 承接（xcom 不跳色）
-     - 正文字体：LXGW WenKai Mono TC（Google Fonts 同款，离线 ttf）
-     - 字重 400 正文 / 500 标题与 strong；强调色固定墨蓝 #1B365D
-     - 页底透明，宿主 canvas 承接（不强制暖纸）
-     源：demo-kami-print + LXGW WenKai Mono TC (OFL, offline ttf) */
+     demo-kami-print 节奏 + Chiron GoRound TC 圆体；底色透明跟 chrome；强调 #1B365D */
   html[data-reader="kami"] {
     --brand: #1B365D;
   }
   html[data-reader="kami"] body {
     color: var(--body);
-    font-family: var(--serif);
-    /* Medium(500) 作默认正文字重：Regular 相对系统 UI 偏细；Mono 仅 Light/Regular/Medium */
+    font-family: var(--sans);
     font-size: 15.5px;
-    font-weight: 500;
-    line-height: 1.68;
+    font-weight: 400;
+    line-height: 1.7;
     letter-spacing: 0;
     padding: 6px 22px 32px;
     background: transparent;
@@ -110,31 +110,29 @@
   html[data-reader="kami"] h3,
   html[data-reader="kami"] h4 {
     color: var(--ink);
-    font-family: var(--serif);
-    font-weight: 500;
-    letter-spacing: 0.01em;
+    font-family: var(--sans);
+    letter-spacing: 0;
     border-bottom: none;
     border-left: none;
     padding: 0;
     background: none;
   }
-  /* 屏幕字阶 ≈ 打印 pt × 1.33（demo h1 25pt → ~28px；h2 16pt → ~19px） */
   html[data-reader="kami"] h1 {
     font-size: 24px;
-    font-weight: 500;
+    font-weight: 700;
     line-height: 1.28;
     margin: 16px 0 10px;
   }
   html[data-reader="kami"] h1.doc-title-dup { display: none; }
   html[data-reader="kami"] h2 {
     font-size: 18px;
-    font-weight: 500;
+    font-weight: 600;
     line-height: 1.32;
     margin: 24px 0 8px;
   }
   html[data-reader="kami"] h3 {
     font-size: 16px;
-    font-weight: 500;
+    font-weight: 600;
     line-height: 1.36;
     margin: 18px 0 6px;
     color: var(--ink);
@@ -148,8 +146,8 @@
   html[data-reader="kami"] p {
     margin: 0 0 10px;
     color: var(--body);
-    font-weight: 500;
-    line-height: 1.68;
+    font-weight: 400;
+    line-height: 1.7;
   }
   html[data-reader="kami"] a {
     color: var(--brand);
@@ -157,10 +155,9 @@
     border-bottom: 1px solid color-mix(in srgb, var(--brand) 28%, transparent);
   }
   html[data-reader="kami"] a:hover { border-bottom-color: var(--brand); }
-  /* Mono TC 最高档为 Medium(500)；strong 同档 + ink 色区分 */
   html[data-reader="kami"] strong {
     color: var(--ink);
-    font-weight: 500;
+    font-weight: 700;
   }
   html[data-reader="kami"] em { font-style: normal; color: var(--brand); font-weight: 500; }
   html[data-reader="kami"] ul,
@@ -170,8 +167,8 @@
   }
   html[data-reader="kami"] li {
     margin: 0 0 7px;
-    line-height: 1.65;
-    font-weight: 500;
+    line-height: 1.7;
+    font-weight: 400;
   }
   html[data-reader="kami"] li::marker { color: var(--brand); }
   html[data-reader="kami"] hr {

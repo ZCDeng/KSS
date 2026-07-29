@@ -148,7 +148,7 @@ struct KSSWebThemePayload: Codable, Equatable {
         return str
     }
 
-    /// 报告/资讯/对话交付物：Kami print 节奏 + LXGW WenKai Mono TC，配色跟 chrome。
+    /// 报告/资讯/对话交付物：Kami print 节奏 + Chiron GoRound TC，配色跟 chrome。
     func asEditorialContentTheme() -> KSSWebThemePayload {
         let face = ThemeTypography.contentPrint
         return KSSWebThemePayload(

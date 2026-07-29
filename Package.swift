@@ -43,8 +43,9 @@ let package = Package(
                 .copy("Resources/chirp-bold-web.woff"),
                 .copy("Resources/chirp-heavy-web.woff"),
                 .copy("Resources/TsangerJinKai02-W02.ttf"),
-                .copy("Resources/LXGWWenKaiMonoTC-Regular.ttf"),
-                .copy("Resources/LXGWWenKaiMonoTC-Medium.ttf")
+                .copy("Resources/ChironGoRoundTC-Regular.ttf"),
+                .copy("Resources/ChironGoRoundTC-Medium.ttf"),
+                .copy("Resources/ChironGoRoundTC-Bold.ttf")
             ]
         ),
         .executableTarget(

@@ -163,12 +163,12 @@ struct ThemeTypography: Equatable {
         mono: "ui-monospace, \"SF Mono\", Menlo, monospace",
         titleDesign: .serif
     )
-    /// 报告/资讯/对话交付物：LXGW WenKai Mono TC（Google Fonts 同款，离线 ttf）。
+    /// 报告/资讯/对话交付物：Chiron GoRound TC（Google Fonts 同款，离线 ttf）。
     static let contentPrint = ThemeTypography(
-        serif: "\"LXGW WenKai Mono TC\", \"Songti SC\", serif",
-        sans: "\"LXGW WenKai Mono TC\", \"PingFang SC\", sans-serif",
-        mono: "\"LXGW WenKai Mono TC\", ui-monospace, monospace",
-        titleDesign: .serif
+        serif: "\"Chiron GoRound TC\", \"PingFang SC\", sans-serif",
+        sans: "\"Chiron GoRound TC\", \"PingFang SC\", sans-serif",
+        mono: "ui-monospace, \"SF Mono\", Menlo, monospace",
+        titleDesign: .default
     )
     static let pureSans = ThemeTypography(
         serif: "system-ui, -apple-system, \"PingFang SC\", sans-serif",
