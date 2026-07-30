@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Unified status chip: SF Symbol icon + Chinese label + tint. Every status in
@@ -277,14 +278,37 @@ struct DashboardChromeIcon: View {
     var enabled: Bool = true
 
     var body: some View {
-        Image(systemName: kind.systemName)
-            .font(.system(size: DashboardChromeIconSpec.pointSize, weight: DashboardChromeIconSpec.weight))
-            // 用 accent 提对比度，避免 xcom 深色卡上 textPrimary 与底色糊在一起「看不见」
-            .foregroundStyle(enabled ? theme.accent : theme.textSecondary.opacity(0.45))
-            .frame(width: DashboardChromeIconSpec.hitSize, height: DashboardChromeIconSpec.hitSize)
-            .contentShape(Rectangle())
-            .accessibilityLabel(kind.accessibilityLabel)
-            .accessibilityAddTraits(.isButton)
+        Group {
+            if kind == .sparkles,
+               let url = KSSResources.bundle.url(
+                   forResource: "DashboardSparkleIcon", withExtension: "png"
+               ),
+               let img = NSImage(contentsOf: url) {
+                Image(nsImage: img)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(
+                        width: DashboardChromeIconSpec.pointSize + 2,
+                        height: DashboardChromeIconSpec.pointSize + 2
+                    )
+                    .opacity(enabled ? 1 : 0.45)
+            } else {
+                Image(systemName: kind.systemName)
+                    .font(.system(
+                        size: DashboardChromeIconSpec.pointSize,
+                        weight: DashboardChromeIconSpec.weight
+                    ))
+                    // 用 accent 提对比度，避免 xcom 深色卡上 textPrimary 与底色糊在一起
+                    .foregroundStyle(
+                        enabled ? theme.accent : theme.textSecondary.opacity(0.45)
+                    )
+            }
+        }
+        .frame(width: DashboardChromeIconSpec.hitSize, height: DashboardChromeIconSpec.hitSize)
+        .contentShape(Rectangle())
+        .accessibilityLabel(kind.accessibilityLabel)
+        .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -307,6 +331,7 @@ struct DashboardChromeIconButton: View {
 /// Sparkle 标准能力：一个入口 = 自然语言 Tab + 列表兜底 Tab。
 /// 未来任何卡片挂此组件即同时获得 NL 绑定与列表兜底。
 /// `listContent` 接收 `dismiss` 闭包：列表选中后调用即可关 sheet。
+/// `selectedSlotId`：四槽 strip 共享选中槽；NL 解析时自动带给 bridge。
 struct DashboardSparkleControl<ListContent: View>: View {
     @Environment(\.kssTheme) private var theme
 
@@ -321,6 +346,11 @@ struct DashboardSparkleControl<ListContent: View>: View {
     var bridge: BridgeClient?
     var onOpenAI: (() -> Void)? = nil
     var onDraft: (SurfaceBindDraft) -> Void
+    /// 可选：strip 四槽当前选中 `strip_0`…`strip_3`（Binding 与列表芯片共享）。
+    var selectedSlotId: Binding<String>? = nil
+    /// 槽芯片标签（仅 selectedSlotId 非空时展示）。
+    var slotChipLabels: [String] = ["槽1", "槽2", "槽3", "槽4"]
+    var slotChipIds: [String] = ["strip_0", "strip_1", "strip_2", "strip_3"]
 
     // List 兜底
     var listTabTitle: String = "列表选择"
@@ -373,10 +403,21 @@ struct DashboardSparkleControl<ListContent: View>: View {
                     .font(KSSFont.themed(16, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
                 Spacer()
+                Button("取消") { showSheet = false }
+                    .buttonStyle(.plain)
+                    .font(KSSFont.themed(13, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                    .keyboardShortcut(.cancelAction)
             }
             .padding(.horizontal, 22)
             .padding(.top, 22)
             .padding(.bottom, 12)
+
+            if let slotBinding = selectedSlotId {
+                slotChipBar(selection: slotBinding)
+                    .padding(.horizontal, 22)
+                    .padding(.bottom, 10)
+            }
 
             // 与资讯雷达 / 复盘页同一套：xcom 下划线 Tab，其它主题凹槽分段
             Group {
@@ -421,9 +462,48 @@ struct DashboardSparkleControl<ListContent: View>: View {
         }
     }
 
+    @ViewBuilder
+    private func slotChipBar(selection: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("当前槽：\(slotOrdinalLabel(selection.wrappedValue))（NL 与列表共用）")
+                .font(KSSFont.themed(11, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+            HStack(spacing: 6) {
+                ForEach(Array(zip(slotChipIds, slotChipLabels)), id: \.0) { sid, label in
+                    Button(label) { selection.wrappedValue = sid }
+                        .buttonStyle(.plain)
+                        .font(KSSFont.themed(12, .semibold, theme: theme))
+                        .foregroundStyle(
+                            selection.wrappedValue == sid ? theme.accent : theme.textSecondary
+                        )
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            (selection.wrappedValue == sid
+                             ? theme.accent.opacity(0.14)
+                             : theme.surfaceRaised),
+                            in: Capsule()
+                        )
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private func slotOrdinalLabel(_ slotId: String) -> String {
+        if let i = slotChipIds.firstIndex(of: slotId) {
+            return "第 \(i + 1) 张"
+        }
+        return slotId
+    }
+
     private var naturalTab: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("用自然语言描述要改的内容，解析后展示代码真值，确认才写入。")
+            Text(
+                selectedSlotId != nil
+                ? "描述要改的指标即可；已选槽会自动带上，解析后展示代码真值，确认才写入。"
+                : "用自然语言描述要改的内容，解析后展示代码真值，确认才写入。"
+            )
                 .font(KSSFont.themed(12, theme: theme))
                 .foregroundStyle(theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -492,12 +572,17 @@ struct DashboardSparkleControl<ListContent: View>: View {
         guard let bridge else { return }
         let trimmed = nlText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        let slot = selectedSlotId?.wrappedValue
         nlBusy = true
         nlError = nil
         Task {
             do {
                 let resp = try await Task.detached {
-                    try bridge.surfaceNlInterpret(region: region, text: trimmed)
+                    try bridge.surfaceNlInterpret(
+                        region: region,
+                        text: trimmed,
+                        slotId: slot
+                    )
                 }.value
                 await MainActor.run {
                     nlBusy = false

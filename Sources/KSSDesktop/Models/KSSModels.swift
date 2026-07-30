@@ -682,14 +682,17 @@ struct MarketStrip: Codable, Hashable {
     var overnightUS: [IndexQuote]?
     /// 第二行三列指数堆叠（含 sparkline）
     var indexStacks: [IndexStackColumn]?
-    /// 指标小卡 resolved props（bridge 读时注入）
+    /// 指标小卡 resolved props（bridge 读时注入；兼容旧单卡）
     var stripMetric: StripMetricProps? = nil
+    /// 四槽 resolved props
+    var stripSlots: [StripMetricProps]? = nil
     /// L3 surface 配置摘要
     var surfaceConfig: SurfaceConfigSnapshot? = nil
 }
 
 /// 盯盘指标小卡 props（代码 resolve，非 LLM）。
 struct StripMetricProps: Codable, Hashable {
+    var slotId: String?
     var metricId: String?
     var title: String?
     var value: Double?
@@ -701,6 +704,7 @@ struct StripMetricProps: Codable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case title, value, delta, sub, reason
+        case slotId = "slot_id"
         case metricId = "metric_id"
         case valueText = "valueText"
         case deltaText = "deltaText"
@@ -711,11 +715,13 @@ struct StripMetricProps: Codable, Hashable {
 struct SurfaceConfigSnapshot: Codable, Hashable {
     var overnightAppend: [SurfaceAppendItem]?
     var stripMetricId: String?
+    var stripSlots: [SurfaceStripSlotBody]?
+    var indexBoard: SurfaceIndexBoardBody?
     var degraded: Bool?
     var error: String?
 
     enum CodingKeys: String, CodingKey {
-        case overnightAppend, stripMetricId, degraded, error
+        case overnightAppend, stripMetricId, stripSlots, indexBoard, degraded, error
     }
 }
 
@@ -741,17 +747,36 @@ struct SurfaceGetResponse: Codable, Hashable {
     var candidates: [SurfaceCandidate]?
     var metrics: [SurfaceMetricInfo]?
     var stripMetric: StripMetricProps?
+    var stripSlots: [StripMetricProps]?
+    var indexBoard: [IndexQuote]?
     var error: String?
 }
 
 struct SurfaceConfigBody: Codable, Hashable {
     var overnightUs: SurfaceOvernightBody?
     var stripMetric: SurfaceStripMetricBody?
+    var stripSlots: [SurfaceStripSlotBody]?
+    var indexBoard: SurfaceIndexBoardBody?
 
     enum CodingKeys: String, CodingKey {
         case overnightUs = "overnight_us"
         case stripMetric = "strip_metric"
+        case stripSlots = "strip_slots"
+        case indexBoard = "index_board"
     }
+}
+
+struct SurfaceStripSlotBody: Codable, Hashable {
+    var slotId: String?
+    var metricId: String?
+    enum CodingKeys: String, CodingKey {
+        case slotId = "slot_id"
+        case metricId = "metric_id"
+    }
+}
+
+struct SurfaceIndexBoardBody: Codable, Hashable {
+    var codes: [String]?
 }
 
 struct SurfaceOvernightBody: Codable, Hashable {

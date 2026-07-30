@@ -75,4 +75,4 @@ def test_metric_index_from_board() -> None:
 
 def test_catalog_has_default() -> None:
     assert "limit_max_board" in METRIC_CATALOG
-    assert "north_money" not in METRIC_CATALOG
+    assert "north_money" in METRIC_CATALOG  # 四槽模型允许北向作 strip 指标

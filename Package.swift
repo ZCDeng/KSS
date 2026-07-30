@@ -27,6 +27,7 @@ let package = Package(
                 .copy("Resources/Launch"),
                 .copy("Resources/logo.png"),
                 .copy("Resources/kmark.png"),
+                .copy("Resources/DashboardSparkleIcon.png"),
                 .copy("Resources/wordmark.png"),
                 .copy("Resources/octocat.png"),
                 .copy("Resources/Icons"),

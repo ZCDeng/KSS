@@ -147,44 +147,60 @@ def test_clear_mine() -> None:
     assert r["ops"] == [{"op": "reset_overnight_append"}]
 
 
-def test_set_metric_seal_rate() -> None:
+def test_set_metric_seal_rate_needs_slot() -> None:
     strip = {
         "limitBoard": {"maxBoard": 6, "sealRate": 0.55, "total": 61},
     }
     r = interpret_strip_metric("改成封板率", market_strip=strip)
+    assert r["ok"] is False
+    assert r["error"] == "slot_required"
+    assert r["metric_id"] == "limit_seal_rate"
+
+
+def test_set_metric_seal_rate_with_slot_phrase() -> None:
+    strip = {
+        "limitBoard": {"maxBoard": 6, "sealRate": 0.55, "total": 61},
+    }
+    r = interpret_strip_metric("第二张改成封板率", market_strip=strip)
     assert r["ok"] is True
     assert r["metric_id"] == "limit_seal_rate"
-    assert r["ops"] == [{"op": "set_strip_metric", "metric_id": "limit_seal_rate"}]
+    assert r["ops"] == [{
+        "op": "set_strip_slot",
+        "slot_id": "strip_1",
+        "metric_id": "limit_seal_rate",
+    }]
     assert r["previews"][0].get("title")
 
 
-def test_set_metric_a50() -> None:
+def test_set_metric_a50_with_slot_arg() -> None:
     strip = {
         "overnightUS": [{"code": "XIN9", "name": "A50", "close": 12000.0, "pct": 0.5}],
     }
-    r = interpret_strip_metric("改为富时中国A50指数", market_strip=strip)
+    r = interpret_strip_metric(
+        "改为富时中国A50指数", market_strip=strip, slot_id="strip_2",
+    )
     assert r["ok"] is True
     assert r["metric_id"] == "index_a50"
+    assert r["ops"][0]["slot_id"] == "strip_2"
     assert r["previews"][0].get("valueText")
 
 
-def test_metric_without_verb() -> None:
+def test_metric_without_verb_needs_slot() -> None:
     r = interpret("strip_metric", "最高连板", market_strip={})
-    assert r["ok"] is True
-    assert r["metric_id"] == "limit_max_board"
-
-
-def test_north_forbidden() -> None:
-    r = interpret_strip_metric("小卡显示北向", market_strip={})
     assert r["ok"] is False
-    assert r["error"] == "north_forbidden"
-    assert r["suggestions"]
+    assert r["error"] == "slot_required"
+
+
+def test_north_allowed_with_slot() -> None:
+    r = interpret_strip_metric("小卡显示北向", market_strip={}, slot_id="strip_0")
+    assert r["ok"] is True
+    assert r["metric_id"] == "north_money"
+    assert r["ops"][0]["op"] == "set_strip_slot"
 
 
 def test_north_five_day() -> None:
-    r = interpret("strip_metric", "北向五日均", market_strip={})
+    r = interpret("strip_metric", "北向五日均", market_strip={}, slot_id="strip_0")
     assert r["ok"] is False
-    assert "北向" in (r.get("error_zh") or "")
 
 
 def test_unknown_metric_fails_loud() -> None:
