@@ -87,6 +87,7 @@ struct RecommendationsView: View {
 
     // MARK: - 当日推荐 (aligned table)
 
+    /// 不用 macOS List：List 会占满剩余高度，少量行时表头与内容被大块空白拉开。
     private var currentTab: some View {
         VStack(spacing: 0) {
             HStack {
@@ -103,71 +104,104 @@ struct RecommendationsView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
 
-            // column header
-            HStack(spacing: 12) {
-                SortHeaderCell(title: "#", key: RecSort.rank, selection: $sort, ascending: $ascending,
-                               alignment: .leading, width: 44)
-                Text("名称 / 代码").frame(width: 140, alignment: .leading)
-                Text("入选理由").frame(maxWidth: .infinity, alignment: .leading)
-                Text("状态").frame(width: 80, alignment: .center)
-                Text("现价").frame(width: 72, alignment: .trailing)
-                Text("涨跌").frame(width: 64, alignment: .trailing)
-                Text("log_mv").frame(width: 72, alignment: .trailing)
-                SortHeaderCell(title: "跟踪", key: RecSort.tracking, selection: $sort, ascending: $ascending,
-                               alignment: .trailing, width: 72)
-                Color.clear.frame(width: 28)
-            }
-            .font(KSSFont.themed(11, .semibold, theme: theme))
-            .foregroundStyle(theme.textSecondary)
-            .padding(.horizontal, 16)
-            .padding(.bottom, 6)
-
-            List(sortedRecs) { item in
-                HStack(spacing: 12) {
-                    Button { onSelectSymbol(item.symbol) } label: {
-                        HStack(spacing: 12) {
-                            Text("#\(item.rank)")
-                                .font(.system(size: 16, weight: .heavy, design: .monospaced))
-                                .foregroundStyle(theme.accent)
-                                .frame(width: 44, alignment: .leading)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(item.name.isEmpty ? item.symbol : item.name)
-                                    .font(KSSFont.themed(15.5, .bold, theme: theme))
-                                    .foregroundStyle(theme.textPrimary)
-                                Text("\(item.symbol) · \(item.industry)")
-                                    .font(.system(size: 11.5, design: .monospaced))
-                                    .foregroundStyle(theme.textSecondary)
+            VStack(spacing: 0) {
+                recTableHeader
+                Divider().overlay(theme.hairline)
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        let rows = sortedRecs
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in
+                            recTableRow(item)
+                            if index < rows.count - 1 {
+                                Divider().overlay(theme.hairline)
                             }
-                            .frame(width: 140, alignment: .leading)
-                            Text(item.selectionReason?.isEmpty == false ? (item.selectionReason ?? "—") : "—")
-                                .font(KSSFont.themed(12.5, theme: theme))
-                                .foregroundStyle(theme.textBody)
-                                .lineLimit(2)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            StatusBadge.tracking(item.status).frame(width: 80, alignment: .center)
-                            recPriceCells(item)
-                            Text(KSSFormat.number(item.factorValue, digits: 3))
-                                .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(theme.textPrimary)
-                                .frame(width: 72, alignment: .trailing)
-                            Text(KSSFormat.percent(item.trackingReturn))
-                                .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(theme.signColor(item.trackingReturn))
-                                .frame(width: 72, alignment: .trailing)
                         }
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
-                    WatchlistStarButton(
-                        isWatched: watchlist.contains(item.symbol)
-                    ) { onToggleWatchlist(item.symbol) }
                 }
-                .padding(.vertical, 3)
-                .listRowBackground(theme.surfaceContainer)
             }
-            .scrollContentBackground(.hidden)
-            .background(theme.canvas)
+            .background(theme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
+            .overlay(
+                RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline)
+            )
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
         }
+    }
+
+    private var recTableHeader: some View {
+        HStack(spacing: 12) {
+            SortHeaderCell(title: "#", key: RecSort.rank, selection: $sort, ascending: $ascending,
+                           alignment: .leading, width: 44)
+            Text("名称 / 代码").frame(width: 140, alignment: .leading)
+            Text("入选理由").frame(maxWidth: .infinity, alignment: .leading)
+            Text("状态").frame(width: 80, alignment: .center)
+            Text("现价").frame(width: 72, alignment: .trailing)
+            Text("涨跌").frame(width: 64, alignment: .trailing)
+            Text("log_mv").frame(width: 72, alignment: .trailing)
+            SortHeaderCell(title: "跟踪", key: RecSort.tracking, selection: $sort, ascending: $ascending,
+                           alignment: .trailing, width: 72)
+            Color.clear.frame(width: 28)
+        }
+        .font(KSSFont.themed(11, .semibold, theme: theme))
+        .foregroundStyle(theme.textSecondary)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+    }
+
+    private func recTableRow(_ item: Recommendation) -> some View {
+        HStack(spacing: 0) {
+            Button { onSelectSymbol(item.symbol) } label: {
+                HStack(spacing: 12) {
+                    Text("#\(item.rank)")
+                        .font(.system(size: 16, weight: .heavy, design: .monospaced))
+                        .foregroundStyle(theme.accent)
+                        .frame(width: 44, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.name.isEmpty ? item.symbol : item.name)
+                            .font(KSSFont.themed(15.5, .bold, theme: theme))
+                            .foregroundStyle(theme.textPrimary)
+                            .lineLimit(1)
+                        Text("\(item.symbol) · \(item.industry)")
+                            .font(.system(size: 11.5, design: .monospaced))
+                            .foregroundStyle(theme.textSecondary)
+                            .lineLimit(1)
+                    }
+                    .frame(width: 140, alignment: .leading)
+                    Text(recReasonText(item))
+                        .font(KSSFont.themed(12.5, theme: theme))
+                        .foregroundStyle(theme.textBody)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    StatusBadge.tracking(item.status).frame(width: 80, alignment: .center)
+                    recPriceCells(item)
+                    Text(KSSFormat.number(item.factorValue, digits: 3))
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(theme.textPrimary)
+                        .frame(width: 72, alignment: .trailing)
+                    Text(KSSFormat.percent(item.trackingReturn))
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(theme.signColor(item.trackingReturn))
+                        .frame(width: 72, alignment: .trailing)
+                }
+                .contentShape(Rectangle())
+                .padding(.leading, 14)
+                .padding(.vertical, 10)
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            WatchlistStarButton(
+                isWatched: watchlist.contains(item.symbol)
+            ) { onToggleWatchlist(item.symbol) }
+            .padding(.trailing, 10)
+        }
+        .background(theme.surfaceContainer)
+    }
+
+    private func recReasonText(_ item: Recommendation) -> String {
+        let r = item.selectionReason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return r.isEmpty ? "—" : r
     }
 
     /// 现价 / 日内涨跌：live quote 优先，否则 latestClose 快照，皆无则 —。
