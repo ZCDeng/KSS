@@ -295,12 +295,16 @@ struct ContentView: View {
                     onOpenSurfaceAI: { region in
                         store.seedSurfaceAIPrefill(region: region)
                         store.selectedSection = .aiChat
-                    }
+                    },
+                    watchlist: watchlist,
+                    onToggleWatchlist: toggleWatchlist
                 )
             case .recommendations:
                 RecommendationsView(
                     snapshot: snapshot,
                     onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } },
+                    watchlist: watchlist,
+                    onToggleWatchlist: toggleWatchlist,
                     realtimeQuotes: store.realtimeQuotesBySymbol,
                     realtimeReceivedAtBySymbol: store.realtimeReceivedAtBySymbol,
                     tradingHours: store.tradingHours,

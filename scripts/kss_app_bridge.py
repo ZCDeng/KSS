@@ -319,20 +319,59 @@ def _recommendations(
             status = "positive"
         else:
             status = "negative"
+        rank = int(pick.get("rank_position", len(items) + 1))
+        industry = meta.get("industry", "") or ""
         items.append({
             "date": date or "",
             "symbol": symbol,
             "name": meta.get("name", ""),
-            "industry": meta.get("industry", ""),
-            "rank": int(pick.get("rank_position", len(items) + 1)),
+            "industry": industry,
+            "rank": rank,
             "weight": _safe_float(pick.get("planned_weight")) or 0,
             "factorValue": _safe_float(pick.get("factor_value")),
             "latestOpen": stock.get("open"),
             "latestClose": stock.get("close"),
             "trackingReturn": ret,
             "status": status,
+            "selectionReason": _selection_reason(
+                pick,
+                rank=rank,
+                industry=industry,
+            ),
         })
     return date, execution_date, items
+
+
+def _selection_reason(
+    pick: dict[str, Any] | None,
+    *,
+    rank: int | None = None,
+    industry: str | None = None,
+) -> str:
+    """确定性入选理由（不经 LLM）。
+
+    模板：``{strategy} 截面排名 #{rank} · {industry}``；
+    缺 rank → ``—``；缺 industry 省略「 · 行业」。
+    """
+    p = pick or {}
+    r = rank if rank is not None else p.get("rank_position")
+    try:
+        r_int = int(r) if r is not None else None
+    except (TypeError, ValueError):
+        r_int = None
+    if r_int is None or r_int <= 0:
+        return "—"
+    strat = str(p.get("strategy") or "log_mv").strip() or "log_mv"
+    # 常见因子名展示
+    if strat in ("log_mv", "logmv", "cs_log_mv"):
+        strat_label = "log_mv"
+    else:
+        strat_label = strat
+    ind = (industry if industry is not None else p.get("industry") or "").strip()
+    base = f"{strat_label} 截面排名 #{r_int}"
+    if ind:
+        return f"{base} · {ind}"
+    return base
 
 
 # U3: 按股归档文件名 {date}_{tscode}.md (新) vs {date}.md (旧, 兼容)。

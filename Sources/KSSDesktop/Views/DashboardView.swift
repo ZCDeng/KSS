@@ -29,6 +29,9 @@ struct DashboardView: View {
     var bridge: BridgeClient? = nil
     /// 打开 Seesaw 并预填 surface region 上下文（U5 / R10）
     var onOpenSurfaceAI: (String) -> Void = { _ in }
+    /// 自选星标（真源 ContentView AppStorage）
+    var watchlist: [String] = []
+    var onToggleWatchlist: (String) -> Void = { _ in }
 
     // Material 3 响应式栅格：统一外边距 / 沟槽，内容封顶居中，断点决定主区列数。
     private let margin: CGFloat = 24
@@ -145,12 +148,22 @@ struct DashboardView: View {
 
                     if let picks = snapshot.perillaPicks, !picks.isEmpty {
                         SectionHeader("紫苏叶选股", caption: "🌿 供应链护城河 · 核心(全球≤2家) / 国产替代主线(三家寡头) 分层 · 点击看个股")
-                        PerillaPicksTable(items: picks, onSelect: onSelectSymbol)
+                        PerillaPicksTable(
+                            items: picks,
+                            watchlist: watchlist,
+                            onSelect: onSelectSymbol,
+                            onToggleWatchlist: onToggleWatchlist
+                        )
                     }
 
                     if let scan = snapshot.bjScan {
                         SectionHeader("北证 50 扫描", caption: "扫描表评分 Top 标的 · 点击看个股")
-                        BJScanSection(scan: scan, onSelect: onSelectSymbol)
+                        BJScanSection(
+                            scan: scan,
+                            watchlist: watchlist,
+                            onSelect: onSelectSymbol,
+                            onToggleWatchlist: onToggleWatchlist
+                        )
                     }
 
                     // 底部：指数一览（区块级 Sparkle 可增删改）
@@ -201,9 +214,13 @@ struct DashboardView: View {
             SectionHeader("今日推荐",
                           caption: snapshot.recommendationSubtitle.map { "\($0) · log_mv 反向低市值 Top 5" }
                               ?? "log_mv 反向选出的低市值 Top 5 · 买入 T+1 开盘")
-            TodayPicksList(items: Array(snapshot.recommendations.prefix(5)),
-                           quotes: realtimeQuotes,
-                           onSelect: onSelectSymbol)
+            TodayPicksList(
+                items: Array(snapshot.recommendations.prefix(5)),
+                quotes: realtimeQuotes,
+                watchlist: watchlist,
+                onSelect: onSelectSymbol,
+                onToggleWatchlist: onToggleWatchlist
+            )
         }
     }
 
@@ -234,7 +251,9 @@ struct TodayPicksList: View {
     @Environment(\.kssTheme) private var theme
     var items: [Recommendation]
     var quotes: [String: LongbridgeQuote] = [:]
+    var watchlist: [String] = []
     var onSelect: (String) -> Void
+    var onToggleWatchlist: (String) -> Void = { _ in }
 
     @State private var sortKey: TodayPickSort = .rank
     @State private var ascending = false
@@ -316,8 +335,15 @@ struct TodayPicksList: View {
             Divider().overlay(theme.hairline)
             let rows = sortedItems
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in
-                Button { onSelect(item.symbol) } label: { row(item) }
-                    .buttonStyle(.plain)
+                HStack(spacing: 0) {
+                    Button { onSelect(item.symbol) } label: { row(item) }
+                        .buttonStyle(.plain)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    WatchlistStarButton(
+                        isWatched: watchlist.contains(item.symbol)
+                    ) { onToggleWatchlist(item.symbol) }
+                    .padding(.trailing, rowPadH)
+                }
                 if index < rows.count - 1 {
                     Divider().overlay(theme.hairline)
                 }
@@ -345,6 +371,7 @@ struct TodayPicksList: View {
                            alignment: .trailing, width: wClose)
             SortHeaderCell(title: "现价", key: TodayPickSort.price, selection: $sortKey, ascending: $ascending,
                            alignment: .trailing, width: wWeight)
+            Color.clear.frame(width: 28)
         }
         .font(KSSFont.themed(10.5, .medium, theme: theme))
         .tracking(0.5)
@@ -390,7 +417,7 @@ struct TodayPicksList: View {
                 .frame(width: wWeight, alignment: .trailing)
         }
         .contentShape(Rectangle())
-        .padding(.horizontal, rowPadH)
+        .padding(.leading, rowPadH)
         .padding(.vertical, 11)
     }
 
@@ -427,7 +454,9 @@ enum PerillaTier: String, CaseIterable, Identifiable {
 struct PerillaPicksTable: View {
     @Environment(\.kssTheme) private var theme
     var items: [PerillaPick]
+    var watchlist: [String] = []
     var onSelect: (String) -> Void
+    var onToggleWatchlist: (String) -> Void = { _ in }
 
     // 默认 .none = 保持 bridge 返回的原始顺序（不打乱当前视觉）
     @State private var sortKey: PerillaSort = .none
@@ -505,8 +534,15 @@ struct PerillaPicksTable: View {
             Divider().overlay(theme.hairline)
             let rows = sortedItems
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in
-                Button { onSelect(item.symbol) } label: { row(item) }
-                    .buttonStyle(.plain)
+                HStack(spacing: 0) {
+                    Button { onSelect(item.symbol) } label: { row(item) }
+                        .buttonStyle(.plain)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    WatchlistStarButton(
+                        isWatched: watchlist.contains(item.symbol)
+                    ) { onToggleWatchlist(item.symbol) }
+                    .padding(.trailing, rowPadH)
+                }
                 if index < rows.count - 1 {
                     Divider().overlay(theme.hairline)
                 }
@@ -539,6 +575,7 @@ struct PerillaPicksTable: View {
                            alignment: .trailing, width: wRet)
             SortHeaderCell(title: "年", key: PerillaSort.retYear, selection: $sortKey, ascending: $ascending,
                            alignment: .trailing, width: wRet)
+            Color.clear.frame(width: 28)
         }
         .font(KSSFont.themed(10.5, .medium, theme: theme))
         .tracking(0.3)
@@ -2241,7 +2278,9 @@ struct RecommendationCard: View {
 struct BJScanSection: View {
     @Environment(\.kssTheme) private var theme
     var scan: BJScan
+    var watchlist: [String] = []
     var onSelect: (String) -> Void
+    var onToggleWatchlist: (String) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -2258,10 +2297,13 @@ struct BJScanSection: View {
                                 .font(KSSFont.themed(14.5, .bold, theme: theme))
                                 .foregroundStyle(theme.textPrimary)
                                 .lineLimit(1)
-                            Spacer()
+                            Spacer(minLength: 4)
                             Text(KSSFormat.number(item.score, digits: 2))
                                 .font(.system(size: 13, weight: .heavy, design: .monospaced))
                                 .foregroundStyle(theme.accent)
+                            WatchlistStarButton(
+                                isWatched: watchlist.contains(item.symbol)
+                            ) { onToggleWatchlist(item.symbol) }
                         }
                         Text("\(item.symbol) · \(item.industry)")
                             .font(.system(size: 11, design: .monospaced))
@@ -2280,6 +2322,7 @@ struct BJScanSection: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .kssCard(padding: 12)
+                    .contentShape(Rectangle())
                     .onTapGesture { onSelect(item.symbol) }
                 }
             }

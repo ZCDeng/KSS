@@ -2,7 +2,6 @@ import SwiftUI
 
 enum RecSort: String, CaseIterable, Identifiable {
     case rank = "排名"
-    case weight = "权重"
     case tracking = "跟踪收益"
     var id: String { rawValue }
 }
@@ -17,6 +16,8 @@ struct RecommendationsView: View {
     @Environment(\.kssTheme) private var theme
     var snapshot: AppSnapshot
     var onSelectSymbol: (String) -> Void
+    var watchlist: [String] = []
+    var onToggleWatchlist: (String) -> Void = { _ in }
     var realtimeQuotes: [String: LongbridgeQuote] = [:]
     var realtimeReceivedAtBySymbol: [String: Date] = [:]
     var tradingHours: TradingHours? = nil
@@ -33,7 +34,6 @@ struct RecommendationsView: View {
         snapshot.recommendations.sorted { a, b in
             switch sort {
             case .rank: return ascending ? a.rank < b.rank : a.rank > b.rank
-            case .weight: return ascending ? a.weight < b.weight : a.weight > b.weight
             case .tracking: return ascending ? (a.trackingReturn ?? 0) < (b.trackingReturn ?? 0) : (a.trackingReturn ?? 0) > (b.trackingReturn ?? 0)
             }
         }
@@ -107,15 +107,15 @@ struct RecommendationsView: View {
             HStack(spacing: 12) {
                 SortHeaderCell(title: "#", key: RecSort.rank, selection: $sort, ascending: $ascending,
                                alignment: .leading, width: 44)
-                Text("名称 / 代码").frame(maxWidth: .infinity, alignment: .leading)
+                Text("名称 / 代码").frame(width: 140, alignment: .leading)
+                Text("入选理由").frame(maxWidth: .infinity, alignment: .leading)
                 Text("状态").frame(width: 80, alignment: .center)
                 Text("现价").frame(width: 72, alignment: .trailing)
                 Text("涨跌").frame(width: 64, alignment: .trailing)
                 Text("log_mv").frame(width: 72, alignment: .trailing)
-                SortHeaderCell(title: "权重", key: RecSort.weight, selection: $sort, ascending: $ascending,
-                               alignment: .trailing, width: 56)
                 SortHeaderCell(title: "跟踪", key: RecSort.tracking, selection: $sort, ascending: $ascending,
                                alignment: .trailing, width: 72)
+                Color.clear.frame(width: 28)
             }
             .font(KSSFont.themed(11, .semibold, theme: theme))
             .foregroundStyle(theme.textSecondary)
@@ -123,40 +123,46 @@ struct RecommendationsView: View {
             .padding(.bottom, 6)
 
             List(sortedRecs) { item in
-                Button { onSelectSymbol(item.symbol) } label: {
-                    HStack(spacing: 12) {
-                        Text("#\(item.rank)")
-                            .font(.system(size: 16, weight: .heavy, design: .monospaced))
-                            .foregroundStyle(theme.accent)
-                            .frame(width: 44, alignment: .leading)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(item.name.isEmpty ? item.symbol : item.name)
-                                .font(KSSFont.themed(15.5, .bold, theme: theme))
+                HStack(spacing: 12) {
+                    Button { onSelectSymbol(item.symbol) } label: {
+                        HStack(spacing: 12) {
+                            Text("#\(item.rank)")
+                                .font(.system(size: 16, weight: .heavy, design: .monospaced))
+                                .foregroundStyle(theme.accent)
+                                .frame(width: 44, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.name.isEmpty ? item.symbol : item.name)
+                                    .font(KSSFont.themed(15.5, .bold, theme: theme))
+                                    .foregroundStyle(theme.textPrimary)
+                                Text("\(item.symbol) · \(item.industry)")
+                                    .font(.system(size: 11.5, design: .monospaced))
+                                    .foregroundStyle(theme.textSecondary)
+                            }
+                            .frame(width: 140, alignment: .leading)
+                            Text(item.selectionReason?.isEmpty == false ? (item.selectionReason ?? "—") : "—")
+                                .font(KSSFont.themed(12.5, theme: theme))
+                                .foregroundStyle(theme.textBody)
+                                .lineLimit(2)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            StatusBadge.tracking(item.status).frame(width: 80, alignment: .center)
+                            recPriceCells(item)
+                            Text(KSSFormat.number(item.factorValue, digits: 3))
+                                .font(.system(size: 13, weight: .semibold, design: .monospaced))
                                 .foregroundStyle(theme.textPrimary)
-                            Text("\(item.symbol) · \(item.industry)")
-                                .font(.system(size: 11.5, design: .monospaced))
-                                .foregroundStyle(theme.textSecondary)
+                                .frame(width: 72, alignment: .trailing)
+                            Text(KSSFormat.percent(item.trackingReturn))
+                                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(theme.signColor(item.trackingReturn))
+                                .frame(width: 72, alignment: .trailing)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        StatusBadge.tracking(item.status).frame(width: 80, alignment: .center)
-                        recPriceCells(item)
-                        Text(KSSFormat.number(item.factorValue, digits: 3))
-                            .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(theme.textPrimary)
-                            .frame(width: 72, alignment: .trailing)
-                        Text(KSSFormat.percent(item.weight))
-                            .font(.system(size: 13, design: .monospaced))
-                            .foregroundStyle(theme.textPrimary)
-                            .frame(width: 56, alignment: .trailing)
-                        Text(KSSFormat.percent(item.trackingReturn))
-                            .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(theme.signColor(item.trackingReturn))
-                            .frame(width: 72, alignment: .trailing)
+                        .contentShape(Rectangle())
                     }
-                    .contentShape(Rectangle())
-                    .padding(.vertical, 3)
+                    .buttonStyle(.plain)
+                    WatchlistStarButton(
+                        isWatched: watchlist.contains(item.symbol)
+                    ) { onToggleWatchlist(item.symbol) }
                 }
-                .buttonStyle(.plain)
+                .padding(.vertical, 3)
                 .listRowBackground(theme.surfaceContainer)
             }
             .scrollContentBackground(.hidden)
@@ -240,7 +246,12 @@ struct RecommendationsView: View {
                         .padding(.horizontal, 14)
 
                         ForEach(days) { day in
-                            TrackingDayCard(day: day, onSelectSymbol: onSelectSymbol)
+                            TrackingDayCard(
+                                day: day,
+                                watchlist: watchlist,
+                                onSelectSymbol: onSelectSymbol,
+                                onToggleWatchlist: onToggleWatchlist
+                            )
                         }
                     }
                     .padding(16)
@@ -256,7 +267,9 @@ struct RecommendationsView: View {
 struct TrackingDayCard: View {
     @Environment(\.kssTheme) private var theme
     var day: RecTrackingDay
+    var watchlist: [String] = []
     var onSelectSymbol: (String) -> Void
+    var onToggleWatchlist: (String) -> Void = { _ in }
     @State private var expanded = false
 
     var body: some View {
@@ -287,24 +300,28 @@ struct TrackingDayCard: View {
                 Divider().overlay(theme.hairline).padding(.vertical, 6)
                 VStack(spacing: 6) {
                     ForEach(day.picks) { pick in
-                        Button { onSelectSymbol(pick.symbol) } label: {
-                            HStack(spacing: 12) {
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(pick.name.isEmpty ? pick.symbol : pick.name)
-                                        .font(KSSFont.themed(13, .semibold, theme: theme)).foregroundStyle(theme.textPrimary)
-                                    Text(pick.symbol)
-                                        .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(theme.textSecondary)
+                        HStack(spacing: 8) {
+                            Button { onSelectSymbol(pick.symbol) } label: {
+                                HStack(spacing: 12) {
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(pick.name.isEmpty ? pick.symbol : pick.name)
+                                            .font(KSSFont.themed(13, .semibold, theme: theme)).foregroundStyle(theme.textPrimary)
+                                        Text(pick.symbol)
+                                            .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(theme.textSecondary)
+                                    }
+                                    .frame(width: 150, alignment: .leading)
+                                    Color.clear.frame(width: 50)
+                                    horizonCell(pick.ret1d, bold: false)
+                                    horizonCell(pick.ret5d, bold: false)
+                                    horizonCell(pick.ret20d, bold: false)
                                 }
-                                .frame(width: 150, alignment: .leading)
-                                Color.clear.frame(width: 50)   // 对齐表头的「数量」列，保持三个收益列与摘要行同位
-                                horizonCell(pick.ret1d, bold: false)
-                                horizonCell(pick.ret5d, bold: false)
-                                horizonCell(pick.ret20d, bold: false)
-                                Spacer().frame(width: 20)
+                                .contentShape(Rectangle())
                             }
-                            .contentShape(Rectangle())
+                            .buttonStyle(.plain)
+                            WatchlistStarButton(
+                                isWatched: watchlist.contains(pick.symbol)
+                            ) { onToggleWatchlist(pick.symbol) }
                         }
-                        .buttonStyle(.plain)
                     }
                 }
             }
