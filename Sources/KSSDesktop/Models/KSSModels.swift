@@ -1353,6 +1353,8 @@ struct Recommendation: Codable, Identifiable, Hashable {
     var latestClose: Double?
     var trackingReturn: Double?
     var status: String
+    /// 确定性入选理由（bridge 合成；旧快照可缺）。
+    var selectionReason: String?
 }
 
 struct DailyReview: Codable, Identifiable, Hashable {
