@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 CATALOG_VERSION = 1
 SLOT_OVERNIGHT = "overnight_marquee"
 SLOT_STRIP = "strip_metric"
+SLOT_INDEX_BOARD = "index_board"
 DEFAULT_SEARCH_LIMIT = 50
 
 # A/H 代码常见形态
@@ -107,6 +108,32 @@ HOT_METRICS: dict[str, dict[str, Any]] = {
         "market": "GLOBAL",
         "domain": "metric_hot",
         "index_code": "XIN9",
+    },
+    "north_money": {
+        "title": "北向资金",
+        "description": "沪深港通北向净流入",
+        "aliases": ["北向资金", "北向", "north", "north_money", "hsgt"],
+        "kind": "breadth_metric",
+        "market": "CN",
+        "domain": "metric_hot",
+    },
+    "etf_a500_563360": {
+        "title": "A500ETF",
+        "description": "A500ETF 563360.SH",
+        "aliases": ["A500ETF", "A500", "563360", "etf_a500_563360"],
+        "kind": "etf",
+        "market": "CN",
+        "domain": "metric_hot",
+        "etf_code": "563360.SH",
+    },
+    "etf_a500_159361": {
+        "title": "A500ETF",
+        "description": "A500ETF 159361.SZ",
+        "aliases": ["159361", "etf_a500_159361"],
+        "kind": "etf",
+        "market": "CN",
+        "domain": "metric_hot",
+        "etf_code": "159361.SZ",
     },
 }
 
@@ -505,13 +532,18 @@ def search(
     # 兼容旧 region 名
     if slot_n in ("overnight_us", "overnight", "overnight_us_marquee"):
         slot_n = SLOT_OVERNIGHT
-    if slot_n in ("strip_metric_slot", "metric"):
+    if slot_n in ("strip_metric_slot", "metric", "strip_slots", "strip"):
         slot_n = SLOT_STRIP
-    if slot_n not in (SLOT_OVERNIGHT, SLOT_STRIP):
+    if slot_n in ("index_board", "indices", "indexBoard"):
+        slot_n = SLOT_INDEX_BOARD
+    if slot_n not in (SLOT_OVERNIGHT, SLOT_STRIP, SLOT_INDEX_BOARD):
         return {
             "ok": False,
             "error": "bad_slot",
-            "error_zh": f"未知 slot：{slot}（可用 overnight_marquee / strip_metric）",
+            "error_zh": (
+                f"未知 slot：{slot}"
+                "（可用 overnight_marquee / strip_metric / index_board）"
+            ),
             "domains_online": cat.get("domains_online") or [],
             "items": [],
             "total": 0,

@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from kss.ui_surface.config import DEFAULT_STRIP_METRIC, load_config
+from kss.ui_surface.config import (
+    DEFAULT_STRIP_METRIC,
+    DEFAULT_STRIP_SLOTS,
+    STRIP_SLOT_IDS,
+    default_strip_slots,
+    effective_index_board_codes,
+    load_config,
+)
 
 
 def _overnight_defaults() -> list[dict[str, Any]]:
@@ -123,6 +130,26 @@ METRIC_CATALOG: dict[str, dict[str, Any]] = {
         "description": "富时中国A50（XIN9）",
         "unit": "",
         "index_code": "XIN9",
+    },
+    "north_money": {
+        "metric_id": "north_money",
+        "title": "北向资金",
+        "description": "沪深港通北向净流入（亿元）",
+        "unit": "亿",
+    },
+    "etf_a500_563360": {
+        "metric_id": "etf_a500_563360",
+        "title": "A500ETF",
+        "description": "A500ETF 563360.SH",
+        "unit": "",
+        "etf_code": "563360.SH",
+    },
+    "etf_a500_159361": {
+        "metric_id": "etf_a500_159361",
+        "title": "A500ETF",
+        "description": "A500ETF 159361.SZ",
+        "unit": "",
+        "etf_code": "159361.SZ",
     },
 }
 
@@ -453,6 +480,41 @@ def resolve_metric_props(
             "reason": None,
         }
 
+    if mid == "north_money":
+        nm = strip.get("northMoney")
+        if nm is None:
+            return _empty_metric(mid, title, "no_north_money")
+        yi = float(nm) / 10000.0  # 万元 → 亿
+        return {
+            "metric_id": mid,
+            "title": title,
+            "value": yi,
+            "valueText": f"{yi:+.1f} 亿",
+            "delta": yi,
+            "deltaText": "净流入" if yi >= 0 else "净流出",
+            "sub": "沪深港通",
+            "reason": None,
+        }
+
+    etf_code = meta.get("etf_code")
+    if etf_code:
+        found = _find_etf_quote(strip, etf_code)
+        if found:
+            close, pct = found
+            return {
+                "metric_id": mid,
+                "title": title,
+                "value": float(close),
+                "valueText": f"{float(close):.3f}",
+                "delta": float(pct) if pct is not None else None,
+                "deltaText": (
+                    f"{float(pct):+.2f}%" if pct is not None else ""
+                ),
+                "sub": etf_code,
+                "reason": None,
+            }
+        return _empty_metric(mid, title, "etf_not_in_strip")
+
     index_code = meta.get("index_code")
     if index_code:
         found = _find_index_quote(strip, index_code)
@@ -492,6 +554,74 @@ def resolve_metric_props(
         return _empty_metric(mid, title, "index_not_in_board")
 
     return _empty_metric(mid, title, "unresolved")
+
+
+def resolve_strip_slots(
+    market_strip: dict[str, Any] | None,
+    config: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """四槽 props；每槽独立 resolve。"""
+    cfg = config if config is not None else load_config()
+    slots = cfg.get("strip_slots") or default_strip_slots()
+    out: list[dict[str, Any]] = []
+    for i, sid in enumerate(STRIP_SLOT_IDS):
+        mid = DEFAULT_STRIP_SLOTS[i] if i >= len(DEFAULT_STRIP_SLOTS) else DEFAULT_STRIP_SLOTS[i]
+        if i < len(slots) and isinstance(slots[i], dict):
+            mid = str(slots[i].get("metric_id") or mid)
+        props = resolve_metric_props(market_strip, mid)
+        props["slot_id"] = sid
+        out.append(props)
+    return out
+
+
+def effective_index_board_quotes(
+    market_strip: dict[str, Any] | None,
+    config: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """按 effective codes 从 strip 取指数板展示行；缺价仍保留 code/name 骨架。"""
+    codes = effective_index_board_codes(config)
+    strip = market_strip or {}
+    by_code: dict[str, dict[str, Any]] = {}
+    for board_key in ("indexBoard", "indices"):
+        for idx in strip.get(board_key) or []:
+            c = str(idx.get("code", "")).upper()
+            if c:
+                by_code[c] = idx
+    out: list[dict[str, Any]] = []
+    for code in codes:
+        row = by_code.get(code.upper())
+        if row:
+            out.append({
+                "code": code,
+                "name": row.get("name") or code,
+                "close": row.get("close"),
+                "pct": row.get("pct"),
+                "date": row.get("date"),
+            })
+        else:
+            out.append({
+                "code": code,
+                "name": code,
+                "close": None,
+                "pct": None,
+                "date": None,
+            })
+    return out
+
+
+def _find_etf_quote(
+    strip: dict[str, Any], etf_code: str
+) -> tuple[float, float | None] | None:
+    code_u = etf_code.upper()
+    for etf in strip.get("etfs") or []:
+        if str(etf.get("code", "")).upper() == code_u:
+            close = etf.get("close")
+            if close is None:
+                return None
+            return float(close), (
+                float(etf["pct"]) if etf.get("pct") is not None else None
+            )
+    return None
 
 
 def _find_index_quote(

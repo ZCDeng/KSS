@@ -18,7 +18,24 @@ logger = logging.getLogger(__name__)
 
 VERSION = 1
 MAX_APPEND = 24  # 档 B：用户追加上限（KTD4）
+MAX_INDEX_BOARD = 48
 DEFAULT_STRIP_METRIC = "limit_max_board"
+STRIP_SLOT_IDS = ("strip_0", "strip_1", "strip_2", "strip_3")
+# 贴近现网：双 A500ETF + 北向 + 最高连板（保序语义，KTD3）
+DEFAULT_STRIP_SLOTS: tuple[str, ...] = (
+    "etf_a500_563360",
+    "etf_a500_159361",
+    "north_money",
+    "limit_max_board",
+)
+# 脚本 INDEX_BOARD 默认 13 码（与 scripts/refresh_market_strip.py 对齐）
+DEFAULT_INDEX_BOARD_CODES: tuple[str, ...] = (
+    "000001.SH", "399001.SZ", "399006.SZ",
+    "000688.SH", "000698.SH", "000680.SH",
+    "000300.SH", "000016.SH", "000905.SH",
+    "000852.SH", "000510.SH", "932000.CSI",
+    "899050.BJ",
+)
 ALLOWED_KINDS = frozenset({"yfinance", "index_global", "a_share", "hk"})
 # 美股 ticker；A 股 600519.SH；港股 00700.HK
 CODE_RE = re.compile(r"^[A-Z0-9.^-]{1,16}$")
@@ -30,10 +47,15 @@ ALLOWED_OPS = frozenset({
     "set_strip_metric",
     "reset_overnight_append",
     "reset_strip_metric",
+    "set_strip_slot",
+    "reset_strip_slots",
+    "index_board_set",
+    "index_board_append",
+    "index_board_remove",
+    "reset_index_board",
 })
-# 北向已在第一行固定展示；不得作小卡 metric
+# 历史别名；四槽模型下 north_money 允许进 strip（KTD2）
 NORTH_METRICS = frozenset({"north_money", "north", "hsgt_north"})
-
 
 def is_valid_overnight_code(code: str, kind: str | None = None) -> bool:
     """分 kind 校验 code 形态。"""
@@ -66,16 +88,91 @@ def default_codes() -> frozenset[str]:
     return frozenset(str(r["code"]).upper() for r in OVERNIGHT_US_UNIVERSE)
 
 
+def default_strip_slots() -> list[dict[str, str]]:
+    return [
+        {"slot_id": sid, "metric_id": mid}
+        for sid, mid in zip(STRIP_SLOT_IDS, DEFAULT_STRIP_SLOTS, strict=True)
+    ]
+
+
 def empty_config() -> dict[str, Any]:
+    slots = default_strip_slots()
     return {
         "version": VERSION,
         "updated_at": None,
         "overnight_us": {"append": []},
-        "strip_metric": {"slot_id": "strip_extra_1", "metric_id": DEFAULT_STRIP_METRIC},
+        "strip_slots": slots,
+        # 兼容旧消费者：镜像最后一槽
+        "strip_metric": {
+            "slot_id": slots[-1]["slot_id"],
+            "metric_id": slots[-1]["metric_id"],
+        },
+        "index_board": None,  # None = 使用默认 13 码
         "degraded": False,
         "error": None,
     }
 
+
+def _normalize_strip_slots(raw_slots: Any, legacy_metric: str | None) -> list[dict[str, str]]:
+    """规范化 4 槽；缺省或旧单 metric 时迁移。catalog 合法性在 apply 时再拦。"""
+    defaults = default_strip_slots()
+    if isinstance(raw_slots, list) and len(raw_slots) == 4:
+        out: list[dict[str, str]] = []
+        for i, item in enumerate(raw_slots):
+            if not isinstance(item, dict):
+                raise ValueError("strip_slots items must be objects")
+            sid = str(item.get("slot_id") or STRIP_SLOT_IDS[i]).strip()
+            if sid not in STRIP_SLOT_IDS:
+                raise ValueError(f"invalid slot_id: {sid}")
+            mid = str(item.get("metric_id") or defaults[i]["metric_id"]).strip()
+            if not mid:
+                mid = defaults[i]["metric_id"]
+            out.append({"slot_id": STRIP_SLOT_IDS[i], "metric_id": mid})
+        return out
+
+    # 迁移：旧 strip_metric → 默认前 3 + 用户 metric 占 strip_3
+    out = default_strip_slots()
+    if legacy_metric:
+        mid = str(legacy_metric).strip()
+        if mid:
+            out[-1] = {"slot_id": STRIP_SLOT_IDS[-1], "metric_id": mid}
+    return out
+
+def _normalize_index_board(raw: Any) -> dict[str, Any] | None:
+    """None = 默认板；否则 {codes: [...]} 全量覆盖，至少 1 项。"""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("index_board must be an object or null")
+    codes_raw = raw.get("codes")
+    if codes_raw is None:
+        return None
+    if not isinstance(codes_raw, list):
+        raise ValueError("index_board.codes must be a list")
+    codes: list[str] = []
+    seen: set[str] = set()
+    for c in codes_raw:
+        code = str(c or "").strip().upper()
+        if not code or not CODE_RE.match(code):
+            raise ValueError(f"invalid index_board code: {c!r}")
+        if code in seen:
+            continue
+        seen.add(code)
+        codes.append(code)
+    if not codes:
+        raise ValueError("index_board.codes must have at least 1 item")
+    if len(codes) > MAX_INDEX_BOARD:
+        raise ValueError(f"index_board exceeds max {MAX_INDEX_BOARD}")
+    return {"codes": codes}
+
+
+def effective_index_board_codes(cfg: dict[str, Any] | None = None) -> list[str]:
+    """用户全量名单或默认 13 码。"""
+    body = cfg if cfg is not None else load_config()
+    board = body.get("index_board")
+    if isinstance(board, dict) and board.get("codes"):
+        return [str(c).upper() for c in board["codes"]]
+    return list(DEFAULT_INDEX_BOARD_CODES)
 
 def _normalize_code(raw: Any, kind: str | None = None) -> str:
     if not isinstance(raw, str):
@@ -148,21 +245,22 @@ def validate_config_body(raw: dict[str, Any]) -> dict[str, Any]:
     strip = raw.get("strip_metric") or {}
     if not isinstance(strip, dict):
         raise ValueError("strip_metric must be an object")
-    metric_id = str(strip.get("metric_id") or DEFAULT_STRIP_METRIC).strip()
-    if not metric_id:
-        metric_id = DEFAULT_STRIP_METRIC
-    if metric_id in NORTH_METRICS:
-        raise ValueError("第一行已固定展示北向资金")
+    legacy_mid = str(strip.get("metric_id") or "").strip() or None
+    slots = _normalize_strip_slots(raw.get("strip_slots"), legacy_mid)
+    last = slots[-1]
+    index_board = _normalize_index_board(raw.get("index_board"))
 
     return {
         "version": int(raw.get("version") or VERSION),
         "updated_at": raw.get("updated_at"),
         "overnight_us": {"append": append},
+        "strip_slots": slots,
         "strip_metric": {
-            "slot_id": str(strip.get("slot_id") or "strip_extra_1"),
-            "metric_id": metric_id,
+            "slot_id": last["slot_id"],
+            "metric_id": last["metric_id"],
             "label_override": strip.get("label_override"),
         },
+        "index_board": index_board,
         "degraded": False,
         "error": None,
     }
@@ -203,7 +301,9 @@ def save_config(body: dict[str, Any]) -> dict[str, Any]:
         "version": cleaned["version"],
         "updated_at": cleaned["updated_at"],
         "overnight_us": cleaned["overnight_us"],
+        "strip_slots": cleaned["strip_slots"],
         "strip_metric": cleaned["strip_metric"],
+        "index_board": cleaned.get("index_board"),
     }
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(
@@ -232,8 +332,24 @@ def apply_patch(ops: list[dict[str, Any]] | None) -> dict[str, Any]:
         working = deepcopy(cfg)
 
     append: list[dict[str, Any]] = list(working["overnight_us"]["append"])
-    metric_id = working["strip_metric"]["metric_id"]
+    slots: list[dict[str, str]] = list(
+        working.get("strip_slots") or default_strip_slots()
+    )
+    if len(slots) != 4:
+        slots = default_strip_slots()
+    index_board = working.get("index_board")
     defaults = default_codes()
+    from kss.ui_surface.resolve import METRIC_CATALOG
+
+    def _set_slot(slot_id: str, mid: str) -> None:
+        nonlocal slots
+        if slot_id not in STRIP_SLOT_IDS:
+            raise ValueError(f"invalid slot_id: {slot_id}")
+        if mid not in METRIC_CATALOG:
+            raise ValueError(f"unknown metric_id: {mid}")
+        idx = STRIP_SLOT_IDS.index(slot_id)
+        slots = list(slots)
+        slots[idx] = {"slot_id": slot_id, "metric_id": mid}
 
     try:
         for op in ops:
@@ -272,31 +388,75 @@ def apply_patch(ops: list[dict[str, Any]] | None) -> dict[str, Any]:
                 append = [a for a in append if a["code"] != code]
 
             elif name == "set_strip_metric":
+                # 兼容：写最后一槽
                 mid = str(op.get("metric_id") or "").strip()
                 if not mid:
                     raise ValueError("metric_id required")
-                if mid in NORTH_METRICS:
-                    raise ValueError("第一行已固定展示北向资金")
-                # catalog 校验在 apply 调用方或 resolve 层；此处拦 north
-                from kss.ui_surface.resolve import METRIC_CATALOG
+                _set_slot(STRIP_SLOT_IDS[-1], mid)
 
-                if mid not in METRIC_CATALOG:
-                    raise ValueError(f"unknown metric_id: {mid}")
-                metric_id = mid
+            elif name == "set_strip_slot":
+                sid = str(op.get("slot_id") or "").strip()
+                mid = str(op.get("metric_id") or "").strip()
+                if not sid:
+                    raise ValueError("slot_id required")
+                if not mid:
+                    raise ValueError("metric_id required")
+                _set_slot(sid, mid)
 
             elif name == "reset_overnight_append":
                 append = []
 
             elif name == "reset_strip_metric":
-                metric_id = DEFAULT_STRIP_METRIC
+                _set_slot(STRIP_SLOT_IDS[-1], DEFAULT_STRIP_METRIC)
+
+            elif name == "reset_strip_slots":
+                slots = default_strip_slots()
+
+            elif name == "index_board_set":
+                codes = op.get("codes")
+                index_board = _normalize_index_board({"codes": codes})
+
+            elif name == "index_board_append":
+                code = str(op.get("code") or "").strip().upper()
+                if not code or not CODE_RE.match(code):
+                    raise ValueError(f"invalid code: {op.get('code')!r}")
+                cur = list(
+                    (index_board or {}).get("codes")
+                    or DEFAULT_INDEX_BOARD_CODES
+                )
+                cur = [str(c).upper() for c in cur]
+                if code in cur:
+                    continue  # 幂等
+                if len(cur) >= MAX_INDEX_BOARD:
+                    raise ValueError(f"index_board exceeds max {MAX_INDEX_BOARD}")
+                cur.append(code)
+                index_board = {"codes": cur}
+
+            elif name == "index_board_remove":
+                code = str(op.get("code") or "").strip().upper()
+                if not code:
+                    raise ValueError("code required")
+                cur = list(
+                    (index_board or {}).get("codes")
+                    or DEFAULT_INDEX_BOARD_CODES
+                )
+                cur = [str(c).upper() for c in cur if str(c).upper() != code]
+                if not cur:
+                    raise ValueError("index_board.codes must have at least 1 item")
+                index_board = {"codes": cur}
+
+            elif name == "reset_index_board":
+                index_board = None
 
         body = {
             "version": VERSION,
             "overnight_us": {"append": append},
+            "strip_slots": slots,
             "strip_metric": {
-                "slot_id": "strip_extra_1",
-                "metric_id": metric_id,
+                "slot_id": slots[-1]["slot_id"],
+                "metric_id": slots[-1]["metric_id"],
             },
+            "index_board": index_board,
         }
         saved = save_config(body)
         return {"ok": True, "config": saved}

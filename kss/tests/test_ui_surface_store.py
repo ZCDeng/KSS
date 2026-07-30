@@ -89,16 +89,76 @@ def test_unknown_op_rejected(state_root: Path) -> None:
     assert "unknown" in (r.get("error") or "").lower()
 
 
-def test_north_metric_rejected(state_root: Path) -> None:
-    r = cfg_mod.apply_patch([{"op": "set_strip_metric", "metric_id": "north_money"}])
-    assert r["ok"] is False
-    assert "北向" in (r.get("error") or "")
+def test_north_metric_allowed_on_strip_slot(state_root: Path) -> None:
+    r = cfg_mod.apply_patch([
+        {"op": "set_strip_slot", "slot_id": "strip_0", "metric_id": "north_money"},
+    ])
+    assert r["ok"] is True
+    assert r["config"]["strip_slots"][0]["metric_id"] == "north_money"
 
 
 def test_set_metric_and_reset(state_root: Path) -> None:
     r = cfg_mod.apply_patch([{"op": "set_strip_metric", "metric_id": "limit_seal_rate"}])
     assert r["ok"] is True
     assert r["config"]["strip_metric"]["metric_id"] == "limit_seal_rate"
+    assert r["config"]["strip_slots"][-1]["metric_id"] == "limit_seal_rate"
     r2 = cfg_mod.apply_patch([{"op": "reset_strip_metric"}])
     assert r2["ok"] is True
     assert r2["config"]["strip_metric"]["metric_id"] == cfg_mod.DEFAULT_STRIP_METRIC
+
+
+def test_migrate_legacy_strip_metric(state_root: Path) -> None:
+    path = cfg_mod._config_path()
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps({
+            "version": 1,
+            "overnight_us": {"append": []},
+            "strip_metric": {"slot_id": "strip_extra_1", "metric_id": "limit_seal_rate"},
+        }),
+        encoding="utf-8",
+    )
+    c = cfg_mod.load_config()
+    assert len(c["strip_slots"]) == 4
+    assert c["strip_slots"][-1]["metric_id"] == "limit_seal_rate"
+    assert c["strip_slots"][0]["metric_id"] == cfg_mod.DEFAULT_STRIP_SLOTS[0]
+
+
+def test_set_strip_slot_independent(state_root: Path) -> None:
+    r = cfg_mod.apply_patch([
+        {"op": "set_strip_slot", "slot_id": "strip_1", "metric_id": "limit_seal_rate"},
+    ])
+    assert r["ok"] is True
+    assert r["config"]["strip_slots"][1]["metric_id"] == "limit_seal_rate"
+    assert r["config"]["strip_slots"][0]["metric_id"] == cfg_mod.DEFAULT_STRIP_SLOTS[0]
+
+
+def test_index_board_append_remove_reset(state_root: Path) -> None:
+    # 用默认板之外的 code，触发「从默认物化 + 追加」
+    extra = "399005.SZ"
+    assert extra not in cfg_mod.DEFAULT_INDEX_BOARD_CODES
+    r = cfg_mod.apply_patch([
+        {"op": "index_board_append", "code": extra},
+    ])
+    assert r["ok"] is True, r.get("error")
+    codes = r["config"]["index_board"]["codes"]
+    assert extra in codes
+    assert len(codes) == len(cfg_mod.DEFAULT_INDEX_BOARD_CODES) + 1
+
+    r2 = cfg_mod.apply_patch([{"op": "index_board_remove", "code": "899050.BJ"}])
+    assert r2["ok"] is True
+    assert "899050.BJ" not in r2["config"]["index_board"]["codes"]
+
+    r3 = cfg_mod.apply_patch([{"op": "reset_index_board"}])
+    assert r3["ok"] is True
+    assert r3["config"]["index_board"] is None
+    assert cfg_mod.effective_index_board_codes(r3["config"]) == list(
+        cfg_mod.DEFAULT_INDEX_BOARD_CODES
+    )
+
+
+def test_index_board_cannot_go_empty(state_root: Path) -> None:
+    r = cfg_mod.apply_patch([{"op": "index_board_set", "codes": ["000001.SH"]}])
+    assert r["ok"] is True
+    r2 = cfg_mod.apply_patch([{"op": "index_board_remove", "code": "000001.SH"}])
+    assert r2["ok"] is False
