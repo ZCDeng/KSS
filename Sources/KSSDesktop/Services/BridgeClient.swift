@@ -414,8 +414,17 @@ struct BridgeClient {
     }
 
     /// 档 A/B 自然语言解析 surface draft（不落盘；可能探针外网）。
-    func surfaceNlInterpret(region: String, text: String) throws -> SurfaceNlInterpretResponse {
-        try run(["surface-nl-interpret", region, text], as: SurfaceNlInterpretResponse.self)
+    /// `slotId` 可选：strip 四槽已选槽时传入，NL 不必再写「第 N 张」。
+    func surfaceNlInterpret(
+        region: String,
+        text: String,
+        slotId: String? = nil
+    ) throws -> SurfaceNlInterpretResponse {
+        var args = ["surface-nl-interpret", region, text]
+        if let slotId, !slotId.isEmpty {
+            args.append(slotId)
+        }
+        return try run(args, as: SurfaceNlInterpretResponse.self)
     }
 
     /// Bind Catalog 只读搜索（slot + 可选 q）。

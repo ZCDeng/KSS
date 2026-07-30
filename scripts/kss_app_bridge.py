@@ -2156,18 +2156,27 @@ def _surface_apply(ops_json: str) -> dict[str, Any]:
     }
 
 
-def _surface_nl_interpret(region: str, text: str) -> dict[str, Any]:
-    """档 A/B 确定性 NL → draft ops + 真值预览（不落盘）。"""
+def _surface_nl_interpret(
+    region: str,
+    text: str,
+    slot_id: str | None = None,
+) -> dict[str, Any]:
+    """档 A/B 确定性 NL → draft ops + 真值预览（不落盘）。
+
+    可选 slot_id（strip_0..strip_3）：列表已选槽时 NL 不必再写「第 N 张」。
+    """
     from kss.ui_surface.config import load_config
     from kss.ui_surface.nl_interpret import interpret
 
     cfg = load_config()
     strip = _market_strip() or {}
+    sid = (slot_id or "").strip() or None
     return interpret(
         region,
         text,
         config=cfg,
         market_strip=strip,
+        slot_id=sid,
     )
 
 
@@ -6571,8 +6580,14 @@ def dispatch(command: str, args: list[str]) -> Any:
         return _surface_apply(args[0] if args else "")
     if command == "surface-nl-interpret":
         if len(args) < 2:
-            raise ValueError("surface-nl-interpret requires REGION TEXT")
-        return _surface_nl_interpret(args[0], args[1])
+            raise ValueError(
+                "surface-nl-interpret requires REGION TEXT [SLOT_ID]"
+            )
+        return _surface_nl_interpret(
+            args[0],
+            args[1],
+            args[2] if len(args) > 2 else None,
+        )
     if command == "surface-catalog":
         if not args:
             raise ValueError("surface-catalog requires SLOT")

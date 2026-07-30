@@ -945,37 +945,18 @@ struct MarketStripRow: View {
                     disabled: metricBusy,
                     sheetTitle: "配置市场速览",
                     region: "strip_metric",
-                    nlPlaceholder: "例如：第二张改成封板率",
-                    nlExamples: ["第二张改成封板率", "第一张改成北向资金", "第四张改成上证指数"],
+                    nlPlaceholder: "例如：改成封板率（已选槽会自动带上）",
+                    nlExamples: ["改成封板率", "改成北向资金", "改成上证指数", "改成最高连板"],
                     bridge: bridge,
                     onOpenAI: onOpenAIWithRegion.map { cb in { cb("strip_metric") } },
                     onDraft: { draft in bindDraft = draft },
+                    selectedSlotId: $selectedSlotId,
                     listTabTitle: "列表选择",
                     listContent: { _ in
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("先选槽位，再选指标；确认后写入。")
+                            Text("上方选槽后点指标；确认后写入。NL 会自动带当前槽。")
                                 .font(KSSFont.themed(11, theme: theme))
                                 .foregroundStyle(theme.textSecondary)
-                            HStack(spacing: 6) {
-                                ForEach(Array(Self.slotIds.enumerated()), id: \.offset) { i, sid in
-                                    let label = "槽\(i + 1)"
-                                    Button(label) { selectedSlotId = sid }
-                                        .buttonStyle(.plain)
-                                        .font(KSSFont.themed(12, .semibold, theme: theme))
-                                        .foregroundStyle(
-                                            selectedSlotId == sid ? theme.accent : theme.textSecondary
-                                        )
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 5)
-                                        .background(
-                                            (selectedSlotId == sid
-                                             ? theme.accent.opacity(0.14)
-                                             : theme.surfaceRaised),
-                                            in: Capsule()
-                                        )
-                                }
-                                Spacer(minLength: 0)
-                            }
                             DashboardSimpleChoiceList(
                                 choices: Self.metricChoices,
                                 selectedId: displaySlots.first(where: {

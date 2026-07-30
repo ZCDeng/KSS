@@ -137,6 +137,17 @@ def test_surface_nl_interpret_metric(state_root: Path) -> None:
     assert result["ops"][0]["slot_id"] == "strip_1"
 
 
+def test_surface_nl_interpret_metric_slot_arg(state_root: Path) -> None:
+    """列表已选槽时，NL 不必写「第 N 张」，第三参 SLOT_ID 注入。"""
+    result = bridge.dispatch(
+        "surface-nl-interpret",
+        ["strip_metric", "改成封板率", "strip_2"],
+    )
+    assert result.get("ok") is True
+    assert result.get("metric_id") == "limit_seal_rate"
+    assert result["ops"][0]["slot_id"] == "strip_2"
+
+
 def test_surface_nl_interpret_bad_region(state_root: Path) -> None:
     result = bridge.dispatch("surface-nl-interpret", ["nope", "加上苹果"])
     assert result.get("ok") is False
