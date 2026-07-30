@@ -21,6 +21,8 @@ struct MarkdownWebView: View {
     var minHeight: CGFloat = 120
 
     @State private var contentHeight: CGFloat = 0
+    /// 上次驱动高度重置的内容指纹，避免同文反复把高度打回 minHeight。
+    @State private var heightFingerprint = ""
 
     var body: some View {
         Representable(
@@ -37,6 +39,20 @@ struct MarkdownWebView: View {
         )
         // 嵌套模式：SwiftUI 用明确高度驱动外层 ScrollView 内容尺寸
         .frame(height: fitsContent ? max(minHeight, contentHeight) : nil, alignment: .top)
+        .onChange(of: text) { _, newText in
+            // 换文时先回落 minHeight，防止旧文过大高度撑出大片空白
+            guard fitsContent else { return }
+            let next = "\(kind == .htmlFragment ? "html" : "md")\u{1e}\(newText)"
+            guard next != heightFingerprint else { return }
+            heightFingerprint = next
+            contentHeight = minHeight
+        }
+        .onAppear {
+            heightFingerprint = "\(kind == .htmlFragment ? "html" : "md")\u{1e}\(text)"
+            if fitsContent, contentHeight < minHeight {
+                contentHeight = minHeight
+            }
+        }
     }
 }
 

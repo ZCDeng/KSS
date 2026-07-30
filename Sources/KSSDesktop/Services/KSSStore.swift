@@ -1414,15 +1414,23 @@ final class KSSStore: ObservableObject {
     }
 
     func openAgentSession(_ sessionId: String) {
+        // 切换前把当前会话消息写回缓存，避免切走丢未同步的本地态
+        if let previous = selectedAgentSessionId, previous != sessionId {
+            chatMessagesByAgentSession[previous] = chatMessages
+        }
         selectedAgentSessionId = sessionId
         persistLastAgentSession(sessionId)
+
         if let session = agentSessions.first(where: { $0.sessionId == sessionId }) {
-            if let hydrated = session.messages {
+            if let hydrated = session.messages, !hydrated.isEmpty {
                 chatMessages = hydrateChatMessages(from: hydrated)
-            } else if let cached = chatMessagesByAgentSession[sessionId] {
+            } else if let cached = chatMessagesByAgentSession[sessionId], !cached.isEmpty {
                 chatMessages = cached
+            } else if let hydrated = session.messages {
+                // messages == []：明确空会话
+                chatMessages = hydrateChatMessages(from: hydrated)
             } else {
-                chatMessages = []
+                chatMessages = chatMessagesByAgentSession[sessionId] ?? []
             }
             chatMessagesByAgentSession[sessionId] = chatMessages
             agentContextUsage = session.contextUsage
@@ -1430,9 +1438,41 @@ final class KSSStore: ObservableObject {
             pendingAgentAttachments.removeAll()
             agentAttachmentError = nil
             hydrateAgentQueue(session.queuedInputs)
+            // list 未带 messages 时 bridge open 补全
+            if session.messages == nil {
+                requestSessionOpenHydration(sessionId: sessionId)
+            }
         } else if let cached = chatMessagesByAgentSession[sessionId] {
             chatMessages = cached
             hydrateAgentQueue(nil)
+            requestSessionOpenHydration(sessionId: sessionId)
+        } else {
+            chatMessages = []
+            hydrateAgentQueue(nil)
+            requestSessionOpenHydration(sessionId: sessionId)
+        }
+    }
+
+    /// 打开会话时从 bridge 拉完整消息（list 未 hydrate / 冷缓存 miss）。
+    private func requestSessionOpenHydration(sessionId: String) {
+        guard let bridge else { return }
+        Task { [weak self] in
+            do {
+                let response = try await Task.detached {
+                    try bridge.agentSessions(action: "open", sessionId: sessionId)
+                }.value
+                guard let self, self.selectedAgentSessionId == sessionId else { return }
+                _ = self.applyAgentSessionHydration(
+                    response,
+                    sessionId: sessionId,
+                    triggeringRunId: nil
+                )
+            } catch {
+                guard let self, self.selectedAgentSessionId == sessionId else { return }
+                if self.chatMessages.isEmpty {
+                    self.errorMessage = "打开会话失败：\(error.localizedDescription)"
+                }
+            }
         }
     }
 

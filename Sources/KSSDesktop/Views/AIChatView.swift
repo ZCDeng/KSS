@@ -1624,39 +1624,7 @@ struct AIChatView: View {
             ScrollView {
                 LazyVStack(spacing: 4) {
                     ForEach(filteredSessions) { session in
-                        let selected = session.sessionId == store.selectedAgentSessionId
-                        HStack(spacing: 8) {
-                            Button {
-                                store.openAgentSession(session.sessionId)
-                                activeOverlay = nil
-                                isComposerFocused = true
-                            } label: {
-                                Image(systemName: selected ? "bubble.left.and.bubble.right.fill" : "bubble.left")
-                                    .foregroundStyle(selected ? theme.accent : theme.textSecondary)
-                                    .frame(width: 28, height: 28)
-                            }
-                            .buttonStyle(.plain)
-
-                            TextField("会话名", text: Binding(
-                                get: { store.agentSessions.first(where: { $0.sessionId == session.sessionId })?.title ?? session.title },
-                                set: { store.renameAgentSession(session.sessionId, title: $0) }
-                            ))
-                            .textFieldStyle(.plain)
-                            .font(KSSFont.themed(13.5, selected ? .semibold : .regular, theme: theme))
-                            .foregroundStyle(theme.textPrimary)
-                            .lineLimit(1)
-
-                            Button { store.archiveAgentSession(session.sessionId) } label: {
-                                Label("归档 \(session.title)", systemImage: "archivebox")
-                                    .labelStyle(.iconOnly)
-                                    .frame(width: 28, height: 28)
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(theme.textSecondary)
-                        }
-                        .padding(.horizontal, 12)
-                        .frame(minHeight: 42)
-                        .background(selected ? theme.accentSoft : Color.clear, in: RoundedRectangle(cornerRadius: 10))
+                        focusSessionRow(session)
                     }
 
                     if filteredSessions.isEmpty {
@@ -1680,6 +1648,72 @@ struct AIChatView: View {
             }
         }
         .background(theme.surface)
+    }
+
+    /// 会话行：整行点击切换；标题默认可点打开（不再用常驻 TextField 吞手势）；重命名走上下文菜单。
+    private func focusSessionRow(_ session: AgentSession) -> some View {
+        let selected = session.sessionId == store.selectedAgentSessionId
+        return HStack(spacing: 8) {
+            Image(systemName: selected ? "bubble.left.and.bubble.right.fill" : "bubble.left")
+                .foregroundStyle(selected ? theme.accent : theme.textSecondary)
+                .frame(width: 28, height: 28)
+
+            Text(store.agentSessions.first(where: { $0.sessionId == session.sessionId })?.title ?? session.title)
+                .font(KSSFont.themed(13.5, selected ? .semibold : .regular, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button {
+                store.archiveAgentSession(session.sessionId)
+            } label: {
+                Label("归档 \(session.title)", systemImage: "archivebox")
+                    .labelStyle(.iconOnly)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(theme.textSecondary)
+        }
+        .padding(.horizontal, 12)
+        .frame(minHeight: 42)
+        .background(selected ? theme.accentSoft : Color.clear, in: RoundedRectangle(cornerRadius: 10))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            store.openAgentSession(session.sessionId)
+            activeOverlay = nil
+            isComposerFocused = true
+        }
+        .contextMenu {
+            Button("打开会话") {
+                store.openAgentSession(session.sessionId)
+                activeOverlay = nil
+                isComposerFocused = true
+            }
+            Button("重命名…") {
+                promptRenameSession(session)
+            }
+            Divider()
+            Button("归档", role: .destructive) {
+                store.archiveAgentSession(session.sessionId)
+            }
+        }
+    }
+
+    private func promptRenameSession(_ session: AgentSession) {
+        let current = store.agentSessions.first(where: { $0.sessionId == session.sessionId })?.title ?? session.title
+        let alert = NSAlert()
+        alert.messageText = "重命名会话"
+        alert.informativeText = "为会话指定新标题"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "确定")
+        alert.addButton(withTitle: "取消")
+        let field = NSTextField(string: current)
+        field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn else { return }
+        store.renameAgentSession(session.sessionId, title: field.stringValue)
     }
 
     private var focusSkillPalette: some View {
@@ -2376,23 +2410,16 @@ struct AIChatView: View {
         let hoverKey = "session:\(session.sessionId)"
 
         return HStack(spacing: 12) {
-            Button { store.openAgentSession(session.sessionId) } label: {
-                Image(systemName: selected ? "bubble.left.and.bubble.right.fill" : "bubble.left")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(selected ? theme.accent : theme.textSecondary)
-                    .frame(width: 32, height: 32)
-            }
-            .buttonStyle(.plain)
-            .help("打开会话")
+            Image(systemName: selected ? "bubble.left.and.bubble.right.fill" : "bubble.left")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(selected ? theme.accent : theme.textSecondary)
+                .frame(width: 32, height: 32)
 
-            TextField("会话名", text: Binding(
-                get: { store.agentSessions.first(where: { $0.sessionId == session.sessionId })?.title ?? session.title },
-                set: { store.renameAgentSession(session.sessionId, title: $0) }
-            ))
-            .textFieldStyle(.plain)
-            .font(KSSFont.themed(15, selected ? .semibold : .regular, theme: theme))
-            .foregroundStyle(theme.textPrimary)
-            .lineLimit(1)
+            Text(store.agentSessions.first(where: { $0.sessionId == session.sessionId })?.title ?? session.title)
+                .font(KSSFont.themed(15, selected ? .semibold : .regular, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             Button { store.archiveAgentSession(session.sessionId) } label: {
                 Image(systemName: "archivebox")
@@ -2416,6 +2443,12 @@ struct AIChatView: View {
         .onTapGesture { store.openAgentSession(session.sessionId) }
         .onHover { isHovered in
             hovered = isHovered ? hoverKey : (hovered == hoverKey ? nil : hovered)
+        }
+        .contextMenu {
+            Button("打开会话") { store.openAgentSession(session.sessionId) }
+            Button("重命名…") { promptRenameSession(session) }
+            Divider()
+            Button("归档", role: .destructive) { store.archiveAgentSession(session.sessionId) }
         }
     }
 
@@ -3237,19 +3270,15 @@ struct AIChatView: View {
     }
 
     private func agentSessionRow(_ session: AgentSession) -> some View {
-        HStack(spacing: 8) {
-            Button { store.openAgentSession(session.sessionId) } label: {
-                Image(systemName: store.selectedAgentSessionId == session.sessionId ? "bubble.left.and.bubble.right.fill" : "bubble.left")
-                    .foregroundStyle(store.selectedAgentSessionId == session.sessionId ? theme.accent : theme.textSecondary)
-            }
-            .buttonStyle(.plain)
-            TextField("会话名", text: Binding(
-                get: { store.agentSessions.first(where: { $0.sessionId == session.sessionId })?.title ?? session.title },
-                set: { store.renameAgentSession(session.sessionId, title: $0) }
-            ))
-            .textFieldStyle(.plain)
-            .font(KSSFont.themed(12.5, .semibold, theme: theme))
-            .foregroundStyle(theme.textPrimary)
+        let selected = store.selectedAgentSessionId == session.sessionId
+        return HStack(spacing: 8) {
+            Image(systemName: selected ? "bubble.left.and.bubble.right.fill" : "bubble.left")
+                .foregroundStyle(selected ? theme.accent : theme.textSecondary)
+            Text(store.agentSessions.first(where: { $0.sessionId == session.sessionId })?.title ?? session.title)
+                .font(KSSFont.themed(12.5, .semibold, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
             Button { store.archiveAgentSession(session.sessionId) } label: {
                 Image(systemName: "archivebox")
                     .foregroundStyle(theme.textSecondary)
@@ -3260,10 +3289,18 @@ struct AIChatView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(
-            store.selectedAgentSessionId == session.sessionId ? theme.accentSoft : theme.surface,
+            selected ? theme.accentSoft : theme.surface,
             in: RoundedRectangle(cornerRadius: KSSTheme.shapeS)
         )
         .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeS).stroke(theme.hairline))
+        .contentShape(Rectangle())
+        .onTapGesture { store.openAgentSession(session.sessionId) }
+        .contextMenu {
+            Button("打开会话") { store.openAgentSession(session.sessionId) }
+            Button("重命名…") { promptRenameSession(session) }
+            Divider()
+            Button("归档", role: .destructive) { store.archiveAgentSession(session.sessionId) }
+        }
     }
 
     private var agentUtilityButtons: some View {

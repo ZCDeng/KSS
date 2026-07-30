@@ -51,12 +51,13 @@ struct IntelView: View {
                     emptyState
                 } else if let cur = currentTrack {
                     VStack(spacing: 0) {
-                        // 全宽今日要点（当前赛道）
+                        // 全宽今日要点：展开高度封顶，绝不挤掉下方 list|detail（否则「改写后查看」只剩要点、无法回列表）
                         if !(cur.items ?? []).isEmpty {
                             digestCardView(track: cur, items: cur.items ?? [])
                                 .padding(.horizontal, isXcom ? 0 : 16)
                                 .padding(.top, isXcom ? 0 : 12)
                                 .padding(.bottom, isXcom ? 0 : 8)
+                                .layoutPriority(0)
                         }
                         Divider().overlay(theme.hairline)
                         HStack(spacing: 0) {
@@ -67,6 +68,7 @@ struct IntelView: View {
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .layoutPriority(1)
                     }
                 }
             }
@@ -671,16 +673,32 @@ struct IntelView: View {
             VStack(alignment: .leading, spacing: 0) {
                 // header sticky-ish top
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(item.title)
-                        .font(KSSFont.themed(
-                            IntelXcomChrome.detailTitlePointSize(theme.system),
-                            .bold,
-                            theme: theme
-                        ))
-                        .foregroundStyle(theme.textPrimary)
-                        .lineSpacing(4)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.bottom, 10)
+                    HStack(alignment: .top, spacing: 10) {
+                        Button {
+                            store.selectIntelItem(nil, trackKey: track.key, trackName: track.name)
+                        } label: {
+                            Label("返回列表", systemImage: "chevron.left")
+                                .labelStyle(.iconOnly)
+                                .font(KSSFont.themed(14, .semibold, theme: theme))
+                                .foregroundStyle(theme.accent)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("返回列表（取消选中）")
+
+                        Text(item.title)
+                            .font(KSSFont.themed(
+                                IntelXcomChrome.detailTitlePointSize(theme.system),
+                                .bold,
+                                theme: theme
+                            ))
+                            .foregroundStyle(theme.textPrimary)
+                            .lineSpacing(4)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.bottom, 10)
 
                     HStack(spacing: 10) {
                         sourceFavicon(item: item, size: 16)
@@ -1428,7 +1446,7 @@ struct IntelView: View {
                 }
             }
 
-            // 展开后正文区（操作已上移，不再在底部占行）
+            // 展开后正文区：高度封顶 + 内部滚动，避免 fitsContent WebView 把 list|detail 挤到 0 高
             if digestExpanded {
                 if let err = state?.error, bodyText.isEmpty, !isLoading {
                     Text("提炼失败：\(err)")
@@ -1436,25 +1454,32 @@ struct IntelView: View {
                         .foregroundStyle(theme.down)
                         .lineLimit(3)
                 } else if hasBody {
-                    digestMarkdownView(bodyText)
-                    if let model = state?.model, !model.isEmpty {
-                        HStack(spacing: 8) {
-                            Text(model)
-                                .font(.system(size: 10.5, design: .monospaced))
-                                .foregroundStyle(theme.textSecondary)
-                            if let at = state?.generatedAt, !at.isEmpty {
-                                Text(at)
-                                    .font(.system(size: 10.5, design: .monospaced))
-                                    .foregroundStyle(theme.textSecondary.opacity(0.7))
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 8) {
+                            digestMarkdownView(bodyText)
+                            if let model = state?.model, !model.isEmpty {
+                                HStack(spacing: 8) {
+                                    Text(model)
+                                        .font(.system(size: 10.5, design: .monospaced))
+                                        .foregroundStyle(theme.textSecondary)
+                                    if let at = state?.generatedAt, !at.isEmpty {
+                                        Text(at)
+                                            .font(.system(size: 10.5, design: .monospaced))
+                                            .foregroundStyle(theme.textSecondary.opacity(0.7))
+                                    }
+                                }
+                            }
+                            if let err = state?.error {
+                                Text("最近一次重提失败：\(err)")
+                                    .font(KSSFont.themed(11, theme: theme))
+                                    .foregroundStyle(theme.down)
+                                    .lineLimit(2)
                             }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    if let err = state?.error {
-                        Text("最近一次重提失败：\(err)")
-                            .font(KSSFont.themed(11, theme: theme))
-                            .foregroundStyle(theme.down)
-                            .lineLimit(2)
-                    }
+                    // 硬封顶：长改写池要点可内滚，绝不与下方 list|detail 抢垂直空间
+                    .frame(minHeight: 0, maxHeight: 280, alignment: .top)
                 } else if isLoading {
                     Text("AI 正在读 \(min(items.count, 25)) 条资讯…")
                         .font(KSSFont.themed(12.5, theme: theme))

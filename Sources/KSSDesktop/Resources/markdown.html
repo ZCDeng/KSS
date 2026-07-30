@@ -394,14 +394,17 @@
     function postHeight() {
       try {
         if (!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.kssMarkdown)) return;
-        const body = document.body;
-        const root = document.documentElement;
+        // 只量 #md：body/html.scrollHeight 在 WKWebView 固定大 frame 下会等于视口，
+        // 造成 fitsContent 高度膨胀 → 详情页大片空白、外层布局被撑坏。
         const host = document.getElementById("md");
+        if (!host) return;
+        const rect = host.getBoundingClientRect();
         const h = Math.ceil(Math.max(
-          host ? host.scrollHeight : 0,
-          body ? body.scrollHeight : 0,
-          root ? root.scrollHeight : 0
+          host.scrollHeight || 0,
+          host.offsetHeight || 0,
+          rect.height || 0
         ));
+        if (!(h > 0)) return;
         window.webkit.messageHandlers.kssMarkdown.postMessage({ type: "height", value: h });
       } catch (e) { /* height report is best-effort */ }
     }
