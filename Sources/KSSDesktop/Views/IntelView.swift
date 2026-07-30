@@ -1454,32 +1454,34 @@ struct IntelView: View {
                         .foregroundStyle(theme.down)
                         .lineLimit(3)
                 } else if hasBody {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 8) {
-                            digestMarkdownView(bodyText)
-                            if let model = state?.model, !model.isEmpty {
-                                HStack(spacing: 8) {
-                                    Text(model)
+                    // 固定高度视口（不可 minHeight:0）：list|detail layoutPriority 更高时，
+                    // 柔性 maxHeight 会被压成 0 →「折叠一行可见、展开反而空白」。
+                    // WebView 自滚（fitsContent:false），不嵌套外层 ScrollView + 高度回传。
+                    VStack(alignment: .leading, spacing: 8) {
+                        MarkdownWebView(text: bodyText, fitsContent: false, minHeight: 160)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 240)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        if let model = state?.model, !model.isEmpty {
+                            HStack(spacing: 8) {
+                                Text(model)
+                                    .font(.system(size: 10.5, design: .monospaced))
+                                    .foregroundStyle(theme.textSecondary)
+                                if let at = state?.generatedAt, !at.isEmpty {
+                                    Text(at)
                                         .font(.system(size: 10.5, design: .monospaced))
-                                        .foregroundStyle(theme.textSecondary)
-                                    if let at = state?.generatedAt, !at.isEmpty {
-                                        Text(at)
-                                            .font(.system(size: 10.5, design: .monospaced))
-                                            .foregroundStyle(theme.textSecondary.opacity(0.7))
-                                    }
+                                        .foregroundStyle(theme.textSecondary.opacity(0.7))
                                 }
                             }
-                            if let err = state?.error {
-                                Text("最近一次重提失败：\(err)")
-                                    .font(KSSFont.themed(11, theme: theme))
-                                    .foregroundStyle(theme.down)
-                                    .lineLimit(2)
-                            }
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        if let err = state?.error {
+                            Text("最近一次重提失败：\(err)")
+                                .font(KSSFont.themed(11, theme: theme))
+                                .foregroundStyle(theme.down)
+                                .lineLimit(2)
+                        }
                     }
-                    // 硬封顶：长改写池要点可内滚，绝不与下方 list|detail 抢垂直空间
-                    .frame(minHeight: 0, maxHeight: 280, alignment: .top)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 } else if isLoading {
                     Text("AI 正在读 \(min(items.count, 25)) 条资讯…")
                         .font(KSSFont.themed(12.5, theme: theme))
