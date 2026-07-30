@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Unified status chip: SF Symbol icon + Chinese label + tint. Every status in
@@ -277,14 +278,37 @@ struct DashboardChromeIcon: View {
     var enabled: Bool = true
 
     var body: some View {
-        Image(systemName: kind.systemName)
-            .font(.system(size: DashboardChromeIconSpec.pointSize, weight: DashboardChromeIconSpec.weight))
-            // 用 accent 提对比度，避免 xcom 深色卡上 textPrimary 与底色糊在一起「看不见」
-            .foregroundStyle(enabled ? theme.accent : theme.textSecondary.opacity(0.45))
-            .frame(width: DashboardChromeIconSpec.hitSize, height: DashboardChromeIconSpec.hitSize)
-            .contentShape(Rectangle())
-            .accessibilityLabel(kind.accessibilityLabel)
-            .accessibilityAddTraits(.isButton)
+        Group {
+            if kind == .sparkles,
+               let url = KSSResources.bundle.url(
+                   forResource: "DashboardSparkleIcon", withExtension: "png"
+               ),
+               let img = NSImage(contentsOf: url) {
+                Image(nsImage: img)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(
+                        width: DashboardChromeIconSpec.pointSize + 2,
+                        height: DashboardChromeIconSpec.pointSize + 2
+                    )
+                    .opacity(enabled ? 1 : 0.45)
+            } else {
+                Image(systemName: kind.systemName)
+                    .font(.system(
+                        size: DashboardChromeIconSpec.pointSize,
+                        weight: DashboardChromeIconSpec.weight
+                    ))
+                    // 用 accent 提对比度，避免 xcom 深色卡上 textPrimary 与底色糊在一起
+                    .foregroundStyle(
+                        enabled ? theme.accent : theme.textSecondary.opacity(0.45)
+                    )
+            }
+        }
+        .frame(width: DashboardChromeIconSpec.hitSize, height: DashboardChromeIconSpec.hitSize)
+        .contentShape(Rectangle())
+        .accessibilityLabel(kind.accessibilityLabel)
+        .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -373,6 +397,11 @@ struct DashboardSparkleControl<ListContent: View>: View {
                     .font(KSSFont.themed(16, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
                 Spacer()
+                Button("取消") { showSheet = false }
+                    .buttonStyle(.plain)
+                    .font(KSSFont.themed(13, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                    .keyboardShortcut(.cancelAction)
             }
             .padding(.horizontal, 22)
             .padding(.top, 22)

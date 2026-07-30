@@ -71,13 +71,16 @@ def test_surface_apply_append_and_get(state_root: Path) -> None:
     assert "AAPL" in codes
 
 
-def test_surface_apply_rejects_north_metric(state_root: Path) -> None:
+def test_surface_apply_allows_north_on_strip_slot(state_root: Path) -> None:
     result = bridge.dispatch(
         "surface-apply",
-        [json.dumps([{"op": "set_strip_metric", "metric_id": "north_money"}])],
+        [json.dumps([
+            {"op": "set_strip_slot", "slot_id": "strip_0", "metric_id": "north_money"},
+        ])],
     )
-    assert result.get("ok") is False
-    assert "北向" in (result.get("error") or "")
+    assert result.get("ok") is True
+    slots = result["config"]["strip_slots"]
+    assert slots[0]["metric_id"] == "north_money"
 
 
 def test_surface_apply_rejects_unknown_op(state_root: Path) -> None:
@@ -125,10 +128,13 @@ def test_surface_nl_interpret_append_preview(state_root: Path) -> None:
 
 
 def test_surface_nl_interpret_metric(state_root: Path) -> None:
-    result = bridge.dispatch("surface-nl-interpret", ["strip_metric", "改成封板率"])
+    result = bridge.dispatch(
+        "surface-nl-interpret", ["strip_metric", "第二张改成封板率"],
+    )
     assert result.get("ok") is True
     assert result.get("metric_id") == "limit_seal_rate"
-    assert result["ops"][0]["op"] == "set_strip_metric"
+    assert result["ops"][0]["op"] == "set_strip_slot"
+    assert result["ops"][0]["slot_id"] == "strip_1"
 
 
 def test_surface_nl_interpret_bad_region(state_root: Path) -> None:

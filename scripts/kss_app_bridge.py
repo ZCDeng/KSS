@@ -1944,14 +1944,23 @@ def _market_strip() -> dict[str, Any] | None:
                             row["probeClose"] = meta.get("probe_close")
                     kept.append(row)
             data["overnightUS"] = kept
-        # 附加 resolved 指标小卡 props（不写回磁盘）
-        from kss.ui_surface.resolve import resolve_metric_props
+        # 附加 resolved 四槽 props（不写回磁盘）
+        from kss.ui_surface.resolve import (
+            effective_index_board_quotes,
+            resolve_metric_props,
+            resolve_strip_slots,
+        )
 
         mid = (cfg.get("strip_metric") or {}).get("metric_id")
-        data["stripMetric"] = resolve_metric_props(data, mid)
+        slots_props = resolve_strip_slots(data, cfg)
+        data["stripMetric"] = resolve_metric_props(data, mid)  # 兼容
+        data["stripSlots"] = slots_props
+        data["indexBoard"] = effective_index_board_quotes(data, cfg)
         data["surfaceConfig"] = {
             "overnightAppend": (cfg.get("overnight_us") or {}).get("append") or [],
             "stripMetricId": mid,
+            "stripSlots": cfg.get("strip_slots"),
+            "indexBoard": cfg.get("index_board"),
             "degraded": bool(cfg.get("degraded")),
             "error": cfg.get("error"),
         }
@@ -1966,9 +1975,11 @@ def _surface_get() -> dict[str, Any]:
     from kss.ui_surface.config import load_config
     from kss.ui_surface.resolve import (
         candidate_overnight,
+        effective_index_board_quotes,
         list_metrics_public,
         resolve_metric_props,
         resolve_overnight_preview,
+        resolve_strip_slots,
     )
 
     cfg = load_config()
@@ -1980,6 +1991,8 @@ def _surface_get() -> dict[str, Any]:
         "config": cfg,
         "overnightPreview": resolve_overnight_preview(strip, cfg),
         "stripMetric": resolve_metric_props(strip, mid),
+        "stripSlots": resolve_strip_slots(strip, cfg),
+        "indexBoard": effective_index_board_quotes(strip, cfg),
         "candidates": candidate_overnight(),
         "metrics": list_metrics_public(),
     }
@@ -5385,7 +5398,7 @@ COMMANDS = {
         "args": ["OPS_JSON"],
     },
     "surface-nl-interpret": {
-        "desc": "档A/B自然语言解析为 surface draft(不落盘)。REGION=overnight_us|strip_metric",
+        "desc": "档A/B自然语言解析为 surface draft(不落盘)。REGION=overnight_us|strip_metric|index_board",
         "args": ["REGION", "TEXT"],
     },
     "surface-catalog": {

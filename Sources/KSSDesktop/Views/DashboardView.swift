@@ -153,10 +153,15 @@ struct DashboardView: View {
                         BJScanSection(scan: scan, onSelect: onSelectSymbol)
                     }
 
-                    // 底部：指数一览
+                    // 底部：指数一览（区块级 Sparkle 可增删改）
                     if let board = snapshot.marketStrip?.indexBoard, !board.isEmpty {
-                        SectionHeader("指数一览", caption: "常用宽基 / 主题指数当日表现")
-                        IndexBoardGrid(indices: board, quotes: realtimeQuotes)
+                        IndexBoardSection(
+                            indices: board,
+                            quotes: realtimeQuotes,
+                            bridge: bridge,
+                            onReloadSnapshot: onReloadSnapshot,
+                            onOpenAI: { onOpenSurfaceAI("index_board") }
+                        )
                     }
                 }
                 .frame(width: contentW, alignment: .leading)
@@ -864,7 +869,7 @@ struct EditorialDateView: View {
     }
 }
 
-/// 总览第一行市场速览：标准等高小卡（≤5）+ 指标 Sparkle（NL/列表双 Tab）。
+/// 总览第一行市场速览：固定 4 槽可配指标；区块级 Sparkle（标题行右侧）。
 struct MarketStripRow: View {
     @Environment(\.kssTheme) private var theme
     var strip: MarketStrip
@@ -875,8 +880,13 @@ struct MarketStripRow: View {
     @State private var metricBusy = false
     @State private var metricError: String?
     @State private var bindDraft: SurfaceBindDraft?
+    @State private var selectedSlotId: String = "strip_0"
 
+    private static let slotIds = ["strip_0", "strip_1", "strip_2", "strip_3"]
     private static let metricChoices: [(id: String, title: String)] = [
+        ("etf_a500_563360", "A500ETF(563360)"),
+        ("etf_a500_159361", "A500ETF(159361)"),
+        ("north_money", "北向资金"),
         ("limit_max_board", "最高连板"),
         ("limit_seal_rate", "封板率"),
         ("limit_up_count", "涨停家数"),
@@ -888,43 +898,100 @@ struct MarketStripRow: View {
         ("index_a50", "富时中国A50"),
     ]
 
-    /// 指标卡固定占 1 槽；北向若有占 1 槽；其余给 ETF（总 ≤ maxPerRow）。
-    private var etfSlots: Int {
-        var slots = DashboardStripCardSpec.maxPerRow - 1 // metric
-        if strip.northMoney != nil { slots -= 1 }
-        return max(0, slots)
+    /// 优先 bridge 注入的四槽；缺则回退混排/单卡兼容。
+    private var displaySlots: [StripMetricProps] {
+        if let slots = strip.stripSlots, slots.count == 4 {
+            return slots
+        }
+        // 兼容：etfs + north + stripMetric 保序取前 4
+        var built: [StripMetricProps] = []
+        for etf in strip.etfs.prefix(2) {
+            built.append(StripMetricProps(
+                slotId: nil, metricId: etf.code, title: etf.name,
+                value: etf.close, valueText: String(format: "%.3f", etf.close),
+                delta: etf.pct, deltaText: String(format: "%+.2f%%", etf.pct),
+                sub: etf.code, reason: nil
+            ))
+        }
+        if let nm = strip.northMoney {
+            let yi = nm / 10000.0
+            built.append(StripMetricProps(
+                slotId: nil, metricId: "north_money", title: "北向资金",
+                value: yi, valueText: String(format: "%+.1f 亿", yi),
+                delta: yi, deltaText: yi >= 0 ? "净流入" : "净流出",
+                sub: "沪深港通", reason: nil
+            ))
+        }
+        if let m = strip.stripMetric {
+            built.append(m)
+        }
+        while built.count < 4 {
+            built.append(StripMetricProps(
+                slotId: nil, metricId: nil, title: "—",
+                value: nil, valueText: "—", delta: nil, deltaText: "",
+                sub: nil, reason: "empty"
+            ))
+        }
+        return Array(built.prefix(4))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 10) {
+                SectionHeader("市场速览", caption: "四槽可配指标")
+                Spacer(minLength: 8)
+                DashboardSparkleControl(
+                    help: "用中文或列表配置四槽指标",
+                    disabled: metricBusy,
+                    sheetTitle: "配置市场速览",
+                    region: "strip_metric",
+                    nlPlaceholder: "例如：第二张改成封板率",
+                    nlExamples: ["第二张改成封板率", "第一张改成北向资金", "第四张改成上证指数"],
+                    bridge: bridge,
+                    onOpenAI: onOpenAIWithRegion.map { cb in { cb("strip_metric") } },
+                    onDraft: { draft in bindDraft = draft },
+                    listTabTitle: "列表选择",
+                    listContent: { _ in
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("先选槽位，再选指标；确认后写入。")
+                                .font(KSSFont.themed(11, theme: theme))
+                                .foregroundStyle(theme.textSecondary)
+                            HStack(spacing: 6) {
+                                ForEach(Array(Self.slotIds.enumerated()), id: \.offset) { i, sid in
+                                    let label = "槽\(i + 1)"
+                                    Button(label) { selectedSlotId = sid }
+                                        .buttonStyle(.plain)
+                                        .font(KSSFont.themed(12, .semibold, theme: theme))
+                                        .foregroundStyle(
+                                            selectedSlotId == sid ? theme.accent : theme.textSecondary
+                                        )
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 5)
+                                        .background(
+                                            (selectedSlotId == sid
+                                             ? theme.accent.opacity(0.14)
+                                             : theme.surfaceRaised),
+                                            in: Capsule()
+                                        )
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            DashboardSimpleChoiceList(
+                                choices: Self.metricChoices,
+                                selectedId: displaySlots.first(where: {
+                                    $0.slotId == selectedSlotId
+                                })?.metricId
+                            ) { mid in
+                                selectMetricForSlot(mid, slotId: selectedSlotId)
+                            }
+                        }
+                    }
+                )
+            }
             DashboardStripCardRow {
-                ForEach(Array(strip.etfs.prefix(etfSlots))) { etf in
-                    let live = RealtimeMerge.applyLive(
-                        close: etf.close, pct: etf.pct, quote: quotes[etf.code.uppercased()]
-                    )
-                    priceCard(
-                        title: etf.name,
-                        meta: etf.code,
-                        close: live.close,
-                        closeText: String(format: "%.3f", live.close),
-                        delta: live.pct,
-                        deltaText: String(format: "%+.2f%%", live.pct),
-                        isLive: live.isLive
-                    )
+                ForEach(Array(displaySlots.enumerated()), id: \.offset) { _, props in
+                    slotCard(props)
                 }
-                if let nm = strip.northMoney {
-                    let yi = nm / 10000.0
-                    priceCard(
-                        title: "北向资金",
-                        meta: northSub,
-                        close: yi,
-                        closeText: String(format: "%+.1f", yi) + " 亿",
-                        delta: yi,
-                        deltaText: yi >= 0 ? "净流入" : "净流出",
-                        isLive: false
-                    )
-                }
-                metricCard
             }
             if let metricError {
                 Text(metricError)
@@ -943,89 +1010,63 @@ struct MarketStripRow: View {
         }
     }
 
-    private var metricCard: some View {
-        let props = strip.stripMetric
-        let title = props?.title ?? "最高连板"
-        let valueText = props?.valueText ?? "—"
-        let deltaText = props?.deltaText ?? ""
-        let delta = props?.delta ?? 0
+    private func slotCard(_ props: StripMetricProps) -> some View {
+        let title = props.title ?? "—"
+        let valueText = props.valueText ?? "—"
+        let deltaText = props.deltaText ?? ""
+        let delta = props.delta ?? 0
         return DashboardStripCard(
             title: title,
-            meta: nil,
-            isLive: false,
-            trailing: {
-                DashboardSparkleControl(
-                    help: "用中文或列表换指标",
-                    // 列表兜底不依赖 bridge；仅 NL 需要。勿因 bridge==nil 整钮消失。
-                    disabled: metricBusy,
-                    sheetTitle: "配置指标小卡",
-                    region: "strip_metric",
-                    nlPlaceholder: "例如：改成封板率、上证指数、富时A50",
-                    nlExamples: ["改成封板率", "上证指数", "富时A50"],
-                    bridge: bridge,
-                    onOpenAI: onOpenAIWithRegion.map { cb in { cb("strip_metric") } },
-                    onDraft: { draft in bindDraft = draft },
-                    listTabTitle: "列表选择",
-                    listContent: { dismiss in
-                        DashboardSimpleChoiceList(
-                            choices: Self.metricChoices,
-                            selectedId: props?.metricId
-                        ) { mid in
-                            setMetric(mid)
-                            dismiss()
-                        }
-                    }
-                )
-            },
-            value: {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(valueText)
-                        .font(KSSFont.harmonyNumber(22))
-                        .foregroundStyle(props?.value == nil ? theme.textSecondary : theme.signColor(delta))
-                        .lineLimit(1)
-                    if !deltaText.isEmpty, deltaText != title {
-                        Text(deltaText)
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(theme.signColor(delta))
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 0)
-                }
-            }
-        )
-        .opacity(metricBusy ? 0.7 : 1)
-    }
-
-    private func priceCard(
-        title: String,
-        meta: String,
-        close: Double,
-        closeText: String,
-        delta: Double,
-        deltaText: String,
-        isLive: Bool
-    ) -> some View {
-        DashboardStripCard(title: title, meta: meta, isLive: isLive) {
+            meta: props.sub,
+            isLive: false
+        ) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                LivePriceText(
-                    value: close,
-                    text: closeText,
-                    baseColor: theme.signColor(delta),
-                    isLive: isLive,
-                    font: KSSFont.harmonyNumber(22)
-                )
-                .lineLimit(1)
-                LivePriceText(
-                    value: delta,
-                    text: deltaText,
-                    baseColor: theme.signColor(delta),
-                    isLive: isLive,
-                    font: .system(size: 12, weight: .semibold, design: .monospaced)
-                )
-                .lineLimit(1)
+                Text(valueText)
+                    .font(KSSFont.harmonyNumber(22))
+                    .foregroundStyle(
+                        props.value == nil ? theme.textSecondary : theme.signColor(delta)
+                    )
+                    .lineLimit(1)
+                if !deltaText.isEmpty, deltaText != title {
+                    Text(deltaText)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(theme.signColor(delta))
+                        .lineLimit(1)
+                }
                 Spacer(minLength: 0)
             }
         }
+        .opacity(metricBusy ? 0.7 : 1)
+    }
+
+    /// 列表选中 → draft（不直写 apply）。
+    private func selectMetricForSlot(_ metricId: String, slotId: String) {
+        let title = Self.metricChoices.first(where: { $0.id == metricId })?.title ?? metricId
+        let ops = """
+        [{"op":"set_strip_slot","slot_id":"\(slotId)","metric_id":"\(metricId)"}]
+        """
+        let preview = SurfaceNlPreview(
+            op: "set_strip_slot",
+            code: nil,
+            name: nil,
+            close: nil,
+            pct: nil,
+            label: "\(slotId) → \(title)",
+            metricId: metricId,
+            title: title,
+            valueText: nil,
+            deltaText: nil,
+            sub: slotId,
+            reason: nil
+        )
+        bindDraft = SurfaceBindDraft(
+            region: "strip_metric",
+            summary: "将 \(slotId) 切换为 \(title)",
+            opsJSON: ops,
+            previews: [preview],
+            failed: [],
+            partial: false
+        )
     }
 
     private func confirmBind(_ draft: SurfaceBindDraft) {
@@ -1054,41 +1095,161 @@ struct MarketStripRow: View {
             }
         }
     }
+}
 
-    private func setMetric(_ metricId: String) {
+/// 指数一览区块：标题行右侧 Sparkle + 自适应网格。
+struct IndexBoardSection: View {
+    @Environment(\.kssTheme) private var theme
+    var indices: [IndexQuote]
+    var quotes: [String: LongbridgeQuote] = [:]
+    var bridge: BridgeClient? = nil
+    var onReloadSnapshot: () -> Void = {}
+    var onOpenAI: (() -> Void)? = nil
+    @State private var busy = false
+    @State private var errorText: String?
+    @State private var bindDraft: SurfaceBindDraft?
+    @State private var filter = ""
+    @State private var listLoading = false
+    @State private var catalogItems: [SurfaceCatalogItem] = []
+
+    private static let defaultChoices: [(id: String, title: String)] = [
+        ("000001.SH", "上证指数"), ("399001.SZ", "深证成指"), ("399006.SZ", "创业板指"),
+        ("000688.SH", "科创50"), ("000698.SH", "科创100"), ("000680.SH", "科创综指"),
+        ("000300.SH", "沪深300"), ("000016.SH", "上证50"), ("000905.SH", "中证500"),
+        ("000852.SH", "中证1000"), ("000510.SH", "中证A500"), ("932000.CSI", "中证2000"),
+        ("899050.BJ", "北证50"), ("399005.SZ", "中小板指"),
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
+                SectionHeader("指数一览", caption: "常用宽基 / 主题指数当日表现")
+                Spacer(minLength: 8)
+                DashboardSparkleControl(
+                    help: "用中文或列表调整指数一览",
+                    disabled: busy,
+                    sheetTitle: "调整指数一览",
+                    region: "index_board",
+                    nlPlaceholder: "例如：加上中证1000、去掉北证50、恢复默认",
+                    nlExamples: ["加上中证1000", "去掉北证50", "恢复默认"],
+                    bridge: bridge,
+                    onOpenAI: onOpenAI,
+                    onDraft: { draft in bindDraft = draft },
+                    listTabTitle: "列表选择",
+                    onListTabAppear: { loadCatalog() },
+                    listContent: { _ in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("选择后进入真值确认；不会直接写入。")
+                                .font(KSSFont.themed(11, theme: theme))
+                                .foregroundStyle(theme.textSecondary)
+                            DashboardSimpleChoiceList(
+                                choices: Self.defaultChoices,
+                                selectedId: nil
+                            ) { code in
+                                draftAppend(code: code)
+                            }
+                        }
+                    }
+                )
+            }
+            if let errorText {
+                Text(errorText)
+                    .font(KSSFont.themed(11, theme: theme))
+                    .foregroundStyle(.red.opacity(0.85))
+            }
+            IndexBoardGrid(indices: indices, quotes: quotes)
+        }
+        .sheet(item: $bindDraft) { draft in
+            SurfaceBindConfirm(
+                draft: draft,
+                busy: busy,
+                onCancel: { bindDraft = nil },
+                onConfirm: { confirm(draft) }
+            )
+        }
+    }
+
+    private func draftAppend(code: String) {
+        let title = Self.defaultChoices.first(where: { $0.id == code })?.title ?? code
+        // 全量覆盖：当前 codes + 新 code
+        var codes = indices.map { $0.code.uppercased() }
+        if !codes.contains(code.uppercased()) {
+            codes.append(code.uppercased())
+        }
+        let codesJSON = codes.map { "\"\($0)\"" }.joined(separator: ",")
+        let ops = "[{\"op\":\"index_board_set\",\"codes\":[\(codesJSON)]}]"
+        bindDraft = SurfaceBindDraft(
+            region: "index_board",
+            summary: "追加 \(title)（\(code)）到指数一览",
+            opsJSON: ops,
+            previews: [
+                SurfaceNlPreview(
+                    op: "index_board_append",
+                    code: code,
+                    name: title,
+                    close: nil,
+                    pct: nil,
+                    label: "追加 \(title)",
+                    metricId: nil,
+                    title: title,
+                    valueText: nil,
+                    deltaText: nil,
+                    sub: code,
+                    reason: nil
+                ),
+            ],
+            failed: [],
+            partial: false
+        )
+    }
+
+    private func loadCatalog() {
         guard let bridge else { return }
-        metricBusy = true
-        metricError = nil
+        listLoading = true
         Task {
             do {
-                let ops = "[{\"op\":\"set_strip_metric\",\"metric_id\":\"\(metricId)\"}]"
                 let resp = try await Task.detached {
-                    try bridge.surfaceApply(opsJSON: ops)
+                    try bridge.surfaceCatalog(slot: "index_board", q: "")
                 }.value
                 await MainActor.run {
-                    metricBusy = false
+                    listLoading = false
+                    catalogItems = resp.items ?? []
+                }
+            } catch {
+                await MainActor.run { listLoading = false }
+            }
+        }
+    }
+
+    private func confirm(_ draft: SurfaceBindDraft) {
+        guard let bridge else { return }
+        busy = true
+        errorText = nil
+        Task {
+            do {
+                let resp = try await Task.detached {
+                    try bridge.surfaceApply(opsJSON: draft.opsJSON)
+                }.value
+                await MainActor.run {
+                    busy = false
                     if resp.ok == false {
-                        metricError = resp.error ?? "切换失败"
+                        errorText = resp.error ?? "应用失败"
                     } else {
+                        bindDraft = nil
                         onReloadSnapshot()
                     }
                 }
             } catch {
                 await MainActor.run {
-                    metricBusy = false
-                    metricError = error.localizedDescription
+                    busy = false
+                    errorText = error.localizedDescription
                 }
             }
         }
     }
-
-    private var northSub: String {
-        guard let d = strip.northDate, d.count == 8 else { return "沪深港通" }
-        return "\(d.prefix(4))-\(d.dropFirst(4).prefix(2))-\(d.suffix(2))"
-    }
 }
 
-/// 指数一览：13 个常用指数自适应网格（名称 / 收盘 / 涨跌%，红涨绿跌）。
+/// 指数一览：自适应网格（名称 / 收盘 / 涨跌%，红涨绿跌）。
 struct IndexBoardGrid: View {
     @Environment(\.kssTheme) private var theme
     var indices: [IndexQuote]
@@ -1355,7 +1516,7 @@ struct OvernightUSSection: View {
                                 isLoading: listLoading,
                                 filter: $filter
                             ) { c in
-                                appendCandidate(c, dismiss: dismiss)
+                                draftAppendCandidate(c, dismiss: dismiss)
                             }
                         }
                     }
@@ -1496,39 +1657,37 @@ struct OvernightUSSection: View {
         }
     }
 
-    private func appendCandidate(_ c: SurfaceCandidate, dismiss: @escaping () -> Void) {
-        guard let bridge else { return }
-        busy = true
-        errorText = nil
+    /// 列表选中 → draft → SurfaceBindConfirm（不直写 apply）。
+    private func draftAppendCandidate(_ c: SurfaceCandidate, dismiss: @escaping () -> Void) {
         let name = (c.name ?? c.code).replacingOccurrences(of: "\"", with: "")
         let kind = c.kind ?? "yfinance"
         let ops = """
         [{"op":"overnight_append","code":"\(c.code)","name":"\(name)","kind":"\(kind)","kind_source":"candidate_table","added_via":"plus"}]
         """
-        Task {
-            do {
-                let resp = try await Task.detached {
-                    try bridge.surfaceApply(opsJSON: ops)
-                }.value
-                await MainActor.run {
-                    busy = false
-                    if resp.ok == false {
-                        errorText = resp.error ?? "追加失败"
-                    } else {
-                        dismiss()
-                        onReloadSnapshot()
-                        Task.detached {
-                            _ = try? bridge.runTask(.refreshMarketStrip)
-                        }
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    busy = false
-                    errorText = error.localizedDescription
-                }
-            }
-        }
+        dismiss()
+        bindDraft = SurfaceBindDraft(
+            region: "overnight_us",
+            summary: "追加 \(name)（\(c.code)）到隔夜美股",
+            opsJSON: ops,
+            previews: [
+                SurfaceNlPreview(
+                    op: "overnight_append",
+                    code: c.code,
+                    name: name,
+                    close: nil,
+                    pct: nil,
+                    label: "追加 \(name)",
+                    metricId: nil,
+                    title: name,
+                    valueText: nil,
+                    deltaText: nil,
+                    sub: c.code,
+                    reason: nil
+                ),
+            ],
+            failed: [],
+            partial: false
+        )
     }
 
     private func removeUser(_ code: String) {
