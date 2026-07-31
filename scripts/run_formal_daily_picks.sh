@@ -48,8 +48,26 @@ fi
 TUSHARE_TOKEN=$(grep -E '^TUSHARE_TOKEN=' "$PROJECT_ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')
 export KSS_STATE_ROOT TUSHARE_TOKEN
 # KTD3 超时护栏：选股撞网络断连期不再无限挂死（07-14 悬空事故）。
+# formal 失败不挡风格对照（KTD4）；用 +e 暂时放开 set -e
+set +e
 kss_run_with_timeout 1800 \
   "$PYTHON" "$PROJECT_ROOT/scripts/kss_app_bridge.py" run formal-daily-picks --force "$@" 2>&1
+FORMAL_RC=$?
+set -e
+
+# 风格对照：与 formal 隔离；对照失败不拖垮 formal 退出码语义
+set +e
+kss_run_with_timeout 1800 \
+  "$PYTHON" "$PROJECT_ROOT/scripts/style_contrast_daily.py" "$@" 2>&1
+STYLE_RC=$?
+set -e
+if [ "$STYLE_RC" -ne 0 ]; then
+  echo "[formal_daily_picks] WARN: style_contrast_daily exit=$STYLE_RC（不阻断 formal）" >&2
+fi
+if [ "$FORMAL_RC" -ne 0 ]; then
+  echo "[formal_daily_picks] formal-daily-picks exit=$FORMAL_RC" >&2
+  exit "$FORMAL_RC"
+fi
 
 # 二次校验：本次运行的产物必须落库。prediction_date 语义 = 数据日（panel 最新交易日），
 # 参照系用 gate 的目标数据日——不能用日历今天（跨零点运行时 now() 比数据日快一天而误报，

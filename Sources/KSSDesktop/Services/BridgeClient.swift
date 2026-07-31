@@ -187,6 +187,15 @@ struct BridgeClient {
         try run(["run", "daily-review-symbol", "--symbols", symbol], as: TaskRunResult.self)
     }
 
+    /// 风格对照整池写入影子纸交易轨（不写 formal）。
+    func runStyleContrastShadowWrite(styleId: String, date: String? = nil) throws -> TaskRunResult {
+        var args = ["run", "style-contrast-shadow-write", "--style-id", styleId]
+        if let date, !date.isEmpty {
+            args += ["--date", date]
+        }
+        return try run(args, as: TaskRunResult.self)
+    }
+
     // MARK: U2 资讯雷达（IntelView 复用既有 news-digest bridge 命令）
 
     func resolveStocks(_ text: String) throws -> [ResolvedStock] {

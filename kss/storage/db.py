@@ -767,6 +767,46 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             ON signal_cards(subject, trade_date);
         """,
     ),
+    (
+        8,
+        """
+        -- ---------------------------------------------------------------
+        -- Recommendation style contrast + shadow paper trade
+        -- (plan 2026-07-31-003 U2/U4): formal paper_trade_picks PK cannot
+        -- hold multi-strategy same day; shadow and contrast are separate.
+        -- ---------------------------------------------------------------
+        CREATE TABLE IF NOT EXISTS style_contrast_snapshots (
+            prediction_date  TEXT NOT NULL,
+            style_id         TEXT NOT NULL,
+            status           TEXT NOT NULL,
+            gate_label       TEXT,
+            error            TEXT,
+            source_tags_json TEXT,
+            name             TEXT,
+            payload_json     TEXT NOT NULL,
+            generated_at     TEXT,
+            PRIMARY KEY (prediction_date, style_id)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS idx_style_contrast_date
+            ON style_contrast_snapshots(prediction_date);
+
+        CREATE TABLE IF NOT EXISTS paper_trade_shadow_picks (
+            prediction_date  TEXT NOT NULL,
+            strategy_id      TEXT NOT NULL,
+            symbol           TEXT NOT NULL,
+            generated_at     TEXT,
+            top_n            INTEGER,
+            factor_value     REAL,
+            rank_pct         REAL,
+            rank_position    INTEGER,
+            planned_weight   REAL,
+            selection_reason TEXT,
+            PRIMARY KEY (prediction_date, strategy_id, symbol)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS idx_shadow_picks_date_strategy
+            ON paper_trade_shadow_picks(prediction_date, strategy_id);
+        """,
+    ),
 )
 
 
