@@ -342,6 +342,83 @@ def _recommendations(
     return date, execution_date, items
 
 
+def _style_contrasts(
+    names: dict[str, dict[str, str]] | None = None,
+) -> tuple[str | None, list[dict[str, Any]]]:
+    """推荐页风格对照四槽；旧库无表时返回空四槽 missing，不炸 snapshot。"""
+    names = names or {}
+    try:
+        from kss.storage.style_contrast import read_day, read_latest_day
+        from kss.strategies.styles import STYLE_ORDER
+    except Exception as exc:  # noqa: BLE001
+        return None, [
+            {
+                "styleId": sid,
+                "name": sid,
+                "status": "missing",
+                "gateLabel": None,
+                "error": f"style_contrast_unavailable: {exc}",
+                "sourceTags": [],
+                "picks": [],
+            }
+            for sid in (
+                "style_low_vol",
+                "style_value",
+                "style_short_reversal",
+                "style_sector_rotation",
+            )
+        ]
+
+    date, slots = read_latest_day(STATE_ROOT / "storage" / "kss.db")
+    if date is None:
+        # 仍返回固定四槽 missing，UI 可占位
+        return None, [
+            {
+                "styleId": s["style_id"],
+                "name": s.get("name") or s["style_id"],
+                "status": s.get("status") or "missing",
+                "gateLabel": s.get("gate_label"),
+                "error": s.get("error"),
+                "sourceTags": s.get("source_tags") or [],
+                "picks": [],
+            }
+            for s in slots
+        ]
+
+    out: list[dict[str, Any]] = []
+    for s in slots:
+        picks_out: list[dict[str, Any]] = []
+        for i, p in enumerate(s.get("picks") or []):
+            symbol = str(p.get("symbol") or "")
+            meta = names.get(symbol, {})
+            picks_out.append(
+                {
+                    "symbol": symbol,
+                    "name": meta.get("name", ""),
+                    "industry": meta.get("industry", "") or "",
+                    "rank": int(p.get("rank_position") or i + 1),
+                    "weight": _safe_float(p.get("planned_weight")) or 0,
+                    "factorValue": _safe_float(p.get("factor_value")),
+                    "selectionReason": p.get("selection_reason") or "",
+                }
+            )
+        out.append(
+            {
+                "styleId": s["style_id"],
+                "name": s.get("name") or s["style_id"],
+                "status": s.get("status") or "missing",
+                "gateLabel": s.get("gate_label"),
+                "error": s.get("error"),
+                "sourceTags": s.get("source_tags") or [],
+                "picks": picks_out,
+            }
+        )
+    # 保证顺序
+    by_id = {x["styleId"]: x for x in out}
+    ordered = [by_id[sid] for sid in STYLE_ORDER if sid in by_id]
+    return date, ordered
+
+
 def _selection_reason(
     pick: dict[str, Any] | None,
     *,
@@ -1369,6 +1446,105 @@ def _run_formal_paper_summary() -> dict[str, Any]:
     )
 
 
+def _run_style_contrast_daily(args: dict[str, str | bool]) -> dict[str, Any]:
+    started = _now_iso()
+    python = _full_python()
+    if python is None:
+        return _missing_full_env_result("style-contrast-daily", "Style Contrast Daily", started)
+    command = [str(python), "scripts/style_contrast_daily.py", "--no-gate"]
+    date_arg = args.get("date")
+    if isinstance(date_arg, str) and date_arg.strip():
+        command += ["--date", date_arg.strip()[:10]]
+    return _run_process_task(
+        "style-contrast-daily",
+        "Style Contrast Daily",
+        command,
+        started,
+        timeout=600,
+    )
+
+
+def _run_style_contrast_shadow_write(args: dict[str, str | bool]) -> dict[str, Any]:
+    """把对照快照中某风格整池写入影子纸交易轨（不写 formal paper_trade_picks）."""
+    started = _now_iso()
+    style_id = str(args.get("style_id") or args.get("style") or "").strip()
+    date_arg = args.get("date")
+    prediction_date = str(date_arg).strip()[:10] if isinstance(date_arg, str) and date_arg.strip() else None
+    if not style_id:
+        return _task_result(
+            "style-contrast-shadow-write",
+            "Style Contrast Shadow Write",
+            "failed",
+            "缺少 style_id",
+            started,
+            exit_code=2,
+        )
+    try:
+        from kss.storage.paper_trade_shadow import write_style_day
+        from kss.storage.style_contrast import read_day, read_latest_day
+    except Exception as exc:  # noqa: BLE001
+        return _task_result(
+            "style-contrast-shadow-write",
+            "Style Contrast Shadow Write",
+            "failed",
+            f"模块不可用: {exc}",
+            started,
+            exit_code=1,
+        )
+
+    db = STATE_ROOT / "storage" / "kss.db"
+    if prediction_date is None:
+        prediction_date, slots = read_latest_day(db)
+    else:
+        slots = read_day(prediction_date, db_path=db)
+    if not prediction_date:
+        return _task_result(
+            "style-contrast-shadow-write",
+            "Style Contrast Shadow Write",
+            "failed",
+            "无风格对照快照日期",
+            started,
+            exit_code=2,
+        )
+    slot = next((s for s in slots if s.get("style_id") == style_id), None)
+    if not slot or slot.get("status") != "ok":
+        return _task_result(
+            "style-contrast-shadow-write",
+            "Style Contrast Shadow Write",
+            "failed",
+            f"风格 {style_id} 当日不可用（status={slot.get('status') if slot else 'missing'}）",
+            started,
+            exit_code=2,
+        )
+    picks = slot.get("picks") or []
+    if not picks:
+        return _task_result(
+            "style-contrast-shadow-write",
+            "Style Contrast Shadow Write",
+            "failed",
+            f"风格 {style_id} 无 picks",
+            started,
+            exit_code=2,
+        )
+    write_style_day(
+        {
+            "prediction_date": prediction_date,
+            "strategy_id": style_id,
+            "top_n": len(picks),
+            "picks": picks,
+        },
+        db_path=db,
+    )
+    return _task_result(
+        "style-contrast-shadow-write",
+        "Style Contrast Shadow Write",
+        "success",
+        f"影子轨已写 {style_id} @ {prediction_date} n={len(picks)}",
+        started,
+        artifacts=["storage/kss.db"],
+    )
+
+
 def _run_formal_daily_review(args: dict[str, str | bool]) -> dict[str, Any]:
     started = _now_iso()
     python = _full_python()
@@ -1690,6 +1866,10 @@ def run_task(task_id: str, argv: list[str]) -> dict[str, Any]:
         )
     if task_id == "formal-daily-picks":
         return _run_formal_daily_picks(args)
+    if task_id == "style-contrast-daily":
+        return _run_style_contrast_daily(args)
+    if task_id == "style-contrast-shadow-write":
+        return _run_style_contrast_shadow_write(args)
     if task_id == "formal-paper-summary":
         return _run_formal_paper_summary()
     if task_id == "formal-daily-review":
@@ -3428,6 +3608,7 @@ def snapshot() -> dict[str, Any]:
     stocks = _load_stock_summaries(names)
     stock_by_symbol = {item["symbol"]: item for item in stocks}
     recommendation_date, recommendation_exec_date, recs = _recommendations(names, stock_by_symbol)
+    style_date, style_contrasts = _style_contrasts(names)
     latest_dates = [item["latestDate"] for item in stocks if item.get("latestDate")]
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
@@ -3438,6 +3619,8 @@ def snapshot() -> dict[str, Any]:
         "recommendationExecutionDate": recommendation_exec_date,
         "stocks": stocks,
         "recommendations": recs,
+        "styleContrastDate": style_date,
+        "styleContrasts": style_contrasts,
         "reviews": _reviews(),
         "backtests": _backtest_reports(),
         "tracking": _paper_summary(),
@@ -5479,7 +5662,8 @@ COMMANDS = {
 # （test_bridge_orientation 断言相等）。
 RUN_TASKS = (
     "daily-review-symbol", "mi-signal-pack", "indicator-signal-pack", "daily-picks", "daily-picks-preview", "logmv-backtest",
-    "radar-archive-analysis", "paper-summary", "formal-daily-picks", "formal-paper-summary",
+    "radar-archive-analysis", "paper-summary", "formal-daily-picks", "style-contrast-daily",
+    "style-contrast-shadow-write", "formal-paper-summary",
     "formal-daily-review", "formal-sector-review", "formal-etf-radar-backtest",
     "refresh-bj-daily", "refresh-daily-basic", "refresh-market-strip",
     "refresh-sector-rotation", "update-cs-data",

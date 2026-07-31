@@ -314,6 +314,9 @@ struct ContentView: View {
                     onLoadRealtime: {
                         let syms = RealtimeMerge.symbolsFromRecommendations(snapshot.recommendations)
                         Task { await store.refreshRealtimeQuotes(symbols: syms) }
+                    },
+                    onWriteShadow: { styleId in
+                        Task { await store.writeStyleContrastShadow(styleId: styleId) }
                     }
                 )
             case .watchlist:

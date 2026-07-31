@@ -25,6 +25,8 @@ struct RecommendationsView: View {
     var realtimeUpdatedAt: Date? = nil
     var onRetryRealtime: () -> Void = {}
     var onLoadRealtime: () -> Void = {}
+    /// 对照整池写入影子纸交易；参数为 styleId。
+    var onWriteShadow: (String) -> Void = { _ in }
 
     @State private var tab: RecTab = .current
     @State private var sort: RecSort = .rank
@@ -121,7 +123,138 @@ struct RecommendationsView: View {
                 RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline)
             )
             .padding(.horizontal, 16)
+
+            styleContrastSection
+                .padding(.top, 18)
+                .padding(.horizontal, 16)
         }
+    }
+
+    // MARK: - 风格对照栏
+
+    private var styleSlots: [StyleContrastSlot] {
+        snapshot.styleContrasts ?? []
+    }
+
+    @ViewBuilder
+    private var styleContrastSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("风格对照")
+                    .font(KSSFont.themed(16, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                if let d = snapshot.styleContrastDate, !d.isEmpty {
+                    Text(d)
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                Spacer()
+                Text("主推荐仍为 log_mv · 对照不混入正式纸交易")
+                    .font(KSSFont.themed(11, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+            }
+
+            if styleSlots.isEmpty {
+                Text("尚无风格对照快照。日更 formal-daily-picks 后会跑四风格；也可任务页触发 style-contrast-daily。")
+                    .font(KSSFont.themed(12.5, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(theme.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
+            } else {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 240), spacing: 12)],
+                    spacing: 12
+                ) {
+                    ForEach(styleSlots) { slot in
+                        styleContrastCard(slot)
+                    }
+                }
+            }
+        }
+    }
+
+    private func styleContrastCard(_ slot: StyleContrastSlot) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(slot.name)
+                    .font(KSSFont.themed(14, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                styleGateBadge(slot.gateLabel)
+                Spacer(minLength: 4)
+                Text(slot.status)
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(slot.status == "ok" ? theme.textSecondary : theme.ma5)
+            }
+
+            if let tags = slot.sourceTags, !tags.isEmpty {
+                Text(tags.prefix(2).joined(separator: " · "))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary)
+                    .lineLimit(1)
+            }
+
+            if slot.status == "ok" {
+                ForEach(slot.picks.prefix(5)) { pick in
+                    Button { onSelectSymbol(pick.symbol) } label: {
+                        HStack(spacing: 6) {
+                            Text("#\(pick.rank)")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .foregroundStyle(theme.accent)
+                                .frame(width: 28, alignment: .leading)
+                            Text((pick.name?.isEmpty == false ? pick.name! : pick.symbol))
+                                .font(KSSFont.themed(12.5, .semibold, theme: theme))
+                                .foregroundStyle(theme.textPrimary)
+                                .lineLimit(1)
+                            Spacer(minLength: 4)
+                            Text(pick.symbol)
+                                .font(.system(size: 10.5, design: .monospaced))
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+                if !slot.picks.isEmpty {
+                    Button {
+                        onWriteShadow(slot.styleId)
+                    } label: {
+                        Text("写入影子纸交易")
+                            .font(KSSFont.themed(11.5, .semibold, theme: theme))
+                            .foregroundStyle(theme.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 2)
+                }
+            } else {
+                Text(slot.error?.isEmpty == false ? slot.error! : "不可用 · 占位")
+                    .font(KSSFont.themed(12, theme: theme))
+                    .foregroundStyle(theme.ma5)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline)
+        )
+    }
+
+    @ViewBuilder
+    private func styleGateBadge(_ label: String?) -> some View {
+        let isPassed = label == "passed"
+        let text = isPassed ? "已过门禁" : "研究·未过门禁"
+        Text(text)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(isPassed ? theme.accent : theme.ma5)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill((isPassed ? theme.accent : theme.ma5).opacity(0.12))
+            )
     }
 
     private var recTableHeader: some View {

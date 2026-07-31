@@ -10,6 +10,10 @@ struct AppSnapshot: Codable {
     var recommendationExecutionDate: String?
     var stocks: [StockSummary]
     var recommendations: [Recommendation]
+    /// 风格对照快照日期（可与主推荐数据日不同）。
+    var styleContrastDate: String?
+    /// 四风格对照栏；旧快照缺字段时为 nil，UI 按空处理。
+    var styleContrasts: [StyleContrastSlot]?
     var reviews: [DailyReview]
     var backtests: [BacktestReport]
     var tracking: TrackingSummary
@@ -1357,6 +1361,29 @@ struct Recommendation: Codable, Identifiable, Hashable {
     var selectionReason: String?
 }
 
+/// 推荐页风格对照单槽（plan 2026-07-31-003）。
+struct StyleContrastSlot: Codable, Identifiable, Hashable {
+    var id: String { styleId }
+    var styleId: String
+    var name: String
+    var status: String
+    var gateLabel: String?
+    var error: String?
+    var sourceTags: [String]?
+    var picks: [StyleContrastPick]
+}
+
+struct StyleContrastPick: Codable, Identifiable, Hashable {
+    var id: String { "\(symbol)-\(rank)" }
+    var symbol: String
+    var name: String?
+    var industry: String?
+    var rank: Int
+    var weight: Double?
+    var factorValue: Double?
+    var selectionReason: String?
+}
+
 struct DailyReview: Codable, Identifiable, Hashable {
     var id: String { path }
     var date: String
@@ -1665,6 +1692,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
     case logmvBacktest = "logmv-backtest"
     case radarArchiveAnalysis = "radar-archive-analysis"
     case formalDailyPicks = "formal-daily-picks"
+    case styleContrastDaily = "style-contrast-daily"
     case formalPaperSummary = "formal-paper-summary"
     case formalDailyReview = "formal-daily-review"
     case formalSectorReview = "formal-sector-review"
@@ -1685,6 +1713,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
         case .logmvBacktest: return "log_mv 轻量回测"
         case .radarArchiveAnalysis: return "雷达归档分析"
         case .formalDailyPicks: return "正式每日选股"
+        case .styleContrastDaily: return "风格对照日更"
         case .formalPaperSummary: return "正式纸交易汇总"
         case .formalDailyReview: return "正式每日复盘"
         case .formalSectorReview: return "正式板块复盘"
@@ -1705,6 +1734,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
         case .logmvBacktest: return "function"
         case .radarArchiveAnalysis: return "chart.bar.xaxis"
         case .formalDailyPicks: return "checkmark.seal"
+        case .styleContrastDaily: return "square.grid.2x2"
         case .formalPaperSummary: return "doc.text.magnifyingglass"
         case .formalDailyReview: return "text.page.badge.magnifyingglass"
         case .formalSectorReview: return "chart.bar.xaxis"
@@ -1721,7 +1751,7 @@ enum KSSTask: String, CaseIterable, Identifiable {
         switch self {
         case .previewPicks, .generatePicks, .paperSummary, .logmvBacktest, .radarArchiveAnalysis:
             return "轻量"
-        case .formalDailyPicks, .formalPaperSummary, .formalDailyReview, .formalSectorReview, .formalEtfRadarBacktest, .refreshBjDaily, .refreshDailyBasic, .refreshMarketStrip, .refreshSectorRotation, .updateCsData:
+        case .formalDailyPicks, .styleContrastDaily, .formalPaperSummary, .formalDailyReview, .formalSectorReview, .formalEtfRadarBacktest, .refreshBjDaily, .refreshDailyBasic, .refreshMarketStrip, .refreshSectorRotation, .updateCsData:
             return "正式"
         }
     }

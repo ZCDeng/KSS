@@ -3137,6 +3137,34 @@ final class KSSStore: ObservableObject {
         }
     }
 
+    /// 风格对照整池写入影子纸交易轨。
+    func writeStyleContrastShadow(styleId: String) async {
+        guard let bridge else {
+            errorMessage = "Cannot locate KSS project root"
+            return
+        }
+        runningTasks += 1
+        errorMessage = nil
+        defer { runningTasks -= 1 }
+        let date = snapshot?.styleContrastDate
+        do {
+            let result = try await Task.detached {
+                try bridge.runStyleContrastShadowWrite(styleId: styleId, date: date)
+            }.value
+            taskResults.insert(result, at: 0)
+            if result.status == "failed" {
+                let summary = result.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+                errorMessage = summary.isEmpty
+                    ? "影子纸交易写入失败：\(styleId)"
+                    : "影子纸交易写入失败：\(summary)"
+            } else {
+                await loadSnapshot()
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     /// U5: 加自选即时生成该股复盘，完成后刷新 snapshot 使个股复盘列表即时纳入。
     /// 失败仅置横幅、不抛——watchlist 已由 ContentView 持久化，复盘缺失不影响自选。
     func generateReview(for symbol: String) async {
