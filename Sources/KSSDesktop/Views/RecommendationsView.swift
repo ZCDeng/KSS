@@ -48,9 +48,9 @@ struct RecommendationsView: View {
     }
 
     var body: some View {
-        // M3：内容封顶 1080 居中，统一外边距（与总览一致）。
-        GeometryReader { geo in
-            let w = min(geo.size.width - 48, 1080)
+        // 整页 ScrollView + 顶对齐：避免 GeometryReader/List/内层 ScrollView 把表体撑到页面底部，
+        // 造成「表头与第一行之间大块空白」。
+        ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .top) {
                     PageTitle("推荐", subtitle: snapshot.recommendationSubtitle)
@@ -77,9 +77,9 @@ struct RecommendationsView: View {
                     historyTab
                 }
             }
-            .frame(width: w)
+            .frame(maxWidth: 1080)
             .frame(maxWidth: .infinity, alignment: .center)
-            .background(theme.canvas)
+            .padding(.bottom, 24)
         }
         .background(theme.canvas)
         .onAppear { onLoadRealtime() }
@@ -87,9 +87,9 @@ struct RecommendationsView: View {
 
     // MARK: - 当日推荐 (aligned table)
 
-    /// 不用 macOS List：List 会占满剩余高度，少量行时表头与内容被大块空白拉开。
+    /// 与盯盘 TodayPicksList 相同：表头 + ForEach 紧贴，无嵌套可伸缩 List/ScrollView。
     private var currentTab: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack {
                 SortControl(
                     options: RecSort.allCases.map { ($0, $0.rawValue) },
@@ -107,15 +107,11 @@ struct RecommendationsView: View {
             VStack(spacing: 0) {
                 recTableHeader
                 Divider().overlay(theme.hairline)
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        let rows = sortedRecs
-                        ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in
-                            recTableRow(item)
-                            if index < rows.count - 1 {
-                                Divider().overlay(theme.hairline)
-                            }
-                        }
+                let rows = sortedRecs
+                ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in
+                    recTableRow(item)
+                    if index < rows.count - 1 {
+                        Divider().overlay(theme.hairline)
                     }
                 }
             }
@@ -125,7 +121,6 @@ struct RecommendationsView: View {
                 RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline)
             )
             .padding(.horizontal, 16)
-            .padding(.bottom, 16)
         }
     }
 
@@ -263,35 +258,32 @@ struct RecommendationsView: View {
                 Text("暂无往期推荐记录")
                     .font(KSSFont.themed(13, theme: theme))
                     .foregroundStyle(theme.textSecondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    VStack(spacing: 8) {
-                        HStack(spacing: 12) {
-                            Text("预测日").frame(width: 150, alignment: .leading)
-                            Text("选股").frame(width: 50, alignment: .trailing)
-                            Text("日 (1d)").frame(maxWidth: .infinity, alignment: .trailing)
-                            Text("周 (5d)").frame(maxWidth: .infinity, alignment: .trailing)
-                            Text("月 (20d)").frame(maxWidth: .infinity, alignment: .trailing)
-                            Spacer().frame(width: 20)
-                        }
-                        .font(KSSFont.themed(11, .semibold, theme: theme))
-                        .foregroundStyle(theme.textSecondary)
-                        .padding(.horizontal, 14)
-
-                        ForEach(days) { day in
-                            TrackingDayCard(
-                                day: day,
-                                watchlist: watchlist,
-                                onSelectSymbol: onSelectSymbol,
-                                onToggleWatchlist: onToggleWatchlist
-                            )
-                        }
-                    }
                     .padding(16)
+            } else {
+                // 外层 body 已 ScrollView，这里不再嵌套，避免可伸缩空白。
+                VStack(spacing: 8) {
+                    HStack(spacing: 12) {
+                        Text("预测日").frame(width: 150, alignment: .leading)
+                        Text("选股").frame(width: 50, alignment: .trailing)
+                        Text("日 (1d)").frame(maxWidth: .infinity, alignment: .trailing)
+                        Text("周 (5d)").frame(maxWidth: .infinity, alignment: .trailing)
+                        Text("月 (20d)").frame(maxWidth: .infinity, alignment: .trailing)
+                        Spacer().frame(width: 20)
+                    }
+                    .font(KSSFont.themed(11, .semibold, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                    .padding(.horizontal, 14)
+
+                    ForEach(days) { day in
+                        TrackingDayCard(
+                            day: day,
+                            watchlist: watchlist,
+                            onSelectSymbol: onSelectSymbol,
+                            onToggleWatchlist: onToggleWatchlist
+                        )
+                    }
                 }
-                .scrollContentBackground(.hidden)
-                .background(theme.canvas)
+                .padding(16)
             }
         }
     }
