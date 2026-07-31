@@ -131,6 +131,8 @@ struct RecommendationsView: View {
     }
 
     // MARK: - 风格对照栏
+    // 约定：通用术语（研究·未过门禁 / missing 等）在栏头右侧用 icon+短文案图例；
+    // 卡片内只保留 icon+状态，保证尺寸与对齐一致。
 
     private var styleSlots: [StyleContrastSlot] {
         snapshot.styleContrasts ?? []
@@ -139,20 +141,24 @@ struct RecommendationsView: View {
     @ViewBuilder
     private var styleContrastSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("风格对照")
-                    .font(KSSFont.themed(16, .bold, theme: theme))
-                    .foregroundStyle(theme.textPrimary)
-                if let d = snapshot.styleContrastDate, !d.isEmpty {
-                    Text(d)
-                        .font(.system(size: 11.5, design: .monospaced))
-                        .foregroundStyle(theme.textSecondary)
+            HStack(alignment: .center, spacing: 12) {
+                HStack(spacing: 8) {
+                    Text("风格对照")
+                        .font(KSSFont.themed(16, .bold, theme: theme))
+                        .foregroundStyle(theme.textPrimary)
+                    if let d = snapshot.styleContrastDate, !d.isEmpty {
+                        Text(d)
+                            .font(.system(size: 11.5, design: .monospaced))
+                            .foregroundStyle(theme.textSecondary)
+                    }
                 }
-                Spacer()
-                Text("主推荐仍为 log_mv · 对照不混入正式纸交易")
-                    .font(KSSFont.themed(11, theme: theme))
-                    .foregroundStyle(theme.textSecondary)
+                Spacer(minLength: 8)
+                styleContrastLegend
             }
+
+            Text("主推荐仍为 log_mv · 对照不混入正式纸交易")
+                .font(KSSFont.themed(11, theme: theme))
+                .foregroundStyle(theme.textSecondary)
 
             if styleSlots.isEmpty {
                 Text("尚无风格对照快照。日更 formal-daily-picks 后会跑四风格；也可任务页触发 style-contrast-daily。")
@@ -164,7 +170,7 @@ struct RecommendationsView: View {
                     .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
             } else {
                 LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 240), spacing: 12)],
+                    columns: [GridItem(.adaptive(minimum: 200), spacing: 12)],
                     spacing: 12
                 ) {
                     ForEach(styleSlots) { slot in
@@ -175,24 +181,53 @@ struct RecommendationsView: View {
         }
     }
 
+    /// 栏头图例：icon + 短文案，释义只在这里出现一次。
+    private var styleContrastLegend: some View {
+        HStack(spacing: 12) {
+            styleLegendItem(icon: "flask", color: theme.ma5, text: "研究·未过门禁")
+            styleLegendItem(icon: "circle.dashed", color: theme.textSecondary, text: "无数据")
+            styleLegendItem(icon: "xmark.circle", color: theme.ma5, text: "失败")
+            styleLegendItem(icon: "checkmark.circle", color: theme.accent, text: "可用")
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("图例：研究未过门禁、无数据、失败、可用")
+    }
+
+    private func styleLegendItem(icon: String, color: Color, text: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(color)
+                .frame(width: 14, height: 14)
+            Text(text)
+                .font(KSSFont.themed(11, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+                .lineLimit(1)
+        }
+    }
+
     private func styleContrastCard(_ slot: StyleContrastSlot) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let visual = styleSlotVisual(slot)
+        return VStack(alignment: .leading, spacing: 8) {
+            // 卡头：风格名 | icon + 状态（无长徽章）
             HStack(spacing: 8) {
                 Text(slot.name)
                     .font(KSSFont.themed(14, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
-                styleGateBadge(slot.gateLabel)
-                Spacer(minLength: 4)
-                Text(slot.status)
-                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(slot.status == "ok" ? theme.textSecondary : theme.ma5)
-            }
-
-            if let tags = slot.sourceTags, !tags.isEmpty {
-                Text(tags.prefix(2).joined(separator: " · "))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(theme.textSecondary)
                     .lineLimit(1)
+                Spacer(minLength: 4)
+                HStack(spacing: 4) {
+                    Image(systemName: visual.icon)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(visual.color)
+                        .frame(width: 14, height: 14)
+                    Text(visual.statusLabel)
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(visual.color)
+                        .lineLimit(1)
+                }
+                .fixedSize()
+                .help(visual.help)
             }
 
             if slot.status == "ok" {
@@ -227,34 +262,66 @@ struct RecommendationsView: View {
                     .padding(.top, 2)
                 }
             } else {
-                Text(slot.error?.isEmpty == false ? slot.error! : "不可用 · 占位")
+                // 失败/无数据：正文不重复长规则文案；细节放 help / 单行错误摘要
+                Text(visual.bodyHint)
                     .font(KSSFont.themed(12, theme: theme))
-                    .foregroundStyle(theme.ma5)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .foregroundStyle(theme.textSecondary)
+                    .lineLimit(2)
+                    .frame(minHeight: 36, alignment: .topLeading)
             }
         }
         .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 96, alignment: .topLeading)
         .background(theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
         .overlay(
             RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline)
         )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(slot.name)，\(visual.help)")
     }
 
-    @ViewBuilder
-    private func styleGateBadge(_ label: String?) -> some View {
-        let isPassed = label == "passed"
-        let text = isPassed ? "已过门禁" : "研究·未过门禁"
-        Text(text)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(isPassed ? theme.accent : theme.ma5)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill((isPassed ? theme.accent : theme.ma5).opacity(0.12))
+    /// 卡片状态视觉：只编码 icon + 短 statusLabel。
+    private func styleSlotVisual(_ slot: StyleContrastSlot) -> (
+        icon: String, color: Color, statusLabel: String, help: String, bodyHint: String
+    ) {
+        let gatePassed = slot.gateLabel == "passed"
+        switch slot.status {
+        case "ok":
+            if gatePassed {
+                return (
+                    "checkmark.circle",
+                    theme.accent,
+                    "ok",
+                    "可用，已过上线门禁",
+                    ""
+                )
+            }
+            return (
+                "flask",
+                theme.ma5,
+                "研究",
+                "研究态：未过上线门禁，不可作正式主推荐",
+                ""
             )
+        case "failed":
+            let err = slot.error?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return (
+                "xmark.circle",
+                theme.ma5,
+                "失败",
+                err.isEmpty ? "当日计算失败" : err,
+                err.isEmpty ? "当日未算出" : err
+            )
+        default: // missing 等
+            return (
+                "circle.dashed",
+                theme.textSecondary,
+                "—",
+                "无数据：当日无对照快照",
+                "当日无快照"
+            )
+        }
     }
 
     private var recTableHeader: some View {
