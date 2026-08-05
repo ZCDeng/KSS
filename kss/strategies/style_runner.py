@@ -93,7 +93,12 @@ def attach_sector_momentum(
     prediction_date: str,
     db_path: str | Path | None = None,
 ) -> pd.DataFrame:
-    """从 sector_rotation 快照给龙头/相关票打 sector_momentum_score.
+    """从 sector_rotation 快照给面板股打 sector_momentum_score.
+
+    打分逻辑（2026-08-06 重构）：
+    不再依赖"板块 leader 股 → 匹配面板 symbol"（个股 leader 与科创板面板不交集），
+    改为"板块名 → 匹配面板股的 industry → 板块 heatScore 直接作为成分股分数"。
+    即：每只股票所属行业若在热点快照里，该股获得该行业的 heatScore 作为动量分。
 
     无快照时列保持全 NaN，sector 风格将失败占位。
     """
@@ -110,50 +115,59 @@ def attach_sector_momentum(
     if not snap:
         return out
 
-    # 兼容多种 payload 形状：themes / boards / industries / leaders
-    scores: dict[str, float] = {}
-    raw_lists: list[Any] = []
-    for key in ("themes", "boards", "industries", "hotBoards", "items"):
+    # ---- 阶段 1：板块 heatScore 映射 ----
+    # 从快照 industries/concepts 提取 name→heatScore，作为行业动量分源。
+    industry_heat: dict[str, float] = {}
+    for key in ("industries", "concepts", "boards", "themes", "hotBoards", "items"):
         val = snap.get(key)
-        if isinstance(val, list):
-            raw_lists.append(val)
-        elif isinstance(val, dict):
-            raw_lists.append(list(val.values()))
-    leaders = snap.get("leaders") or snap.get("leaderStocks") or []
-    if isinstance(leaders, list):
-        raw_lists.append(leaders)
-
-    rank = 0
-    for group in raw_lists:
-        for item in group:
+        if not isinstance(val, list):
+            continue
+        for item in val:
             if not isinstance(item, dict):
                 continue
-            rank += 1
-            score = float(item.get("score") or item.get("momentum") or (1000 - rank))
-            for sk in ("symbol", "ts_code", "code", "leader", "stock"):
-                sym = item.get(sk)
-                if isinstance(sym, str) and sym:
-                    scores[sym] = max(scores.get(sym, float("-inf")), score)
-            # nested leaders
-            nested = item.get("leaders") or item.get("stocks") or []
-            if isinstance(nested, list):
-                for j, nest in enumerate(nested):
-                    if isinstance(nest, str):
-                        scores[nest] = max(scores.get(nest, float("-inf")), score - j * 0.01)
-                    elif isinstance(nest, dict):
-                        for sk in ("symbol", "ts_code", "code"):
-                            sym = nest.get(sk)
-                            if isinstance(sym, str) and sym:
-                                scores[sym] = max(
-                                    scores.get(sym, float("-inf")),
-                                    float(nest.get("score") or score - j * 0.01),
-                                )
-
-    if not scores:
+            name = str(item.get("name", ""))
+            heat = item.get("heatScore")
+            if name and heat is not None:
+                industry_heat[name] = max(
+                    industry_heat.get(name, float("-inf")), float(heat)
+                )
+    if not industry_heat:
+        logger.warning("sector_rotation 快照无有效 heatScore，跳过")
         return out
-    mapped = out["symbol"].map(scores)
-    # 快照有分则覆盖；否则保留面板预计算分
-    out["sector_momentum_score"] = mapped.where(mapped.notna(), out["sector_momentum_score"])
+
+    # ---- 阶段 2：加载行业映射，给每只面板股打行业动量分 ----
+    # 股票所属行业若在热点快照里，该股获得该行业的 heatScore。
+    # 这替代了原来的"个股 leader 匹配"（面板全是科创板，与主板 leader 不交集）。
+    from kss.macro.rotation import load_industry_map
+
+    ind_map = load_industry_map()
+    if not ind_map:
+        logger.warning("industry_map 为空，sector_momentum_score 全 NaN")
+        return out
+
+    # 面板股 → 行业 → heatScore
+    sym_to_heat: dict[str, float] = {}
+    for sym, industry in ind_map.items():
+        heat = industry_heat.get(industry)
+        if heat is not None:
+            sym_to_heat[sym] = heat
+
+    if not sym_to_heat:
+        logger.warning(
+            "industry_map 与 sector_rotation 无交集（%d 个行业，%d 只股），全 NaN",
+            len(industry_heat), len(ind_map),
+        )
+        return out
+
+    mapped = out["symbol"].map(sym_to_heat)
+    out["sector_momentum_score"] = mapped.where(
+        mapped.notna(), out["sector_momentum_score"]
+    )
+    hit = int(mapped.notna().sum())
+    logger.info(
+        "sector_momentum 行业映射: %d/%d 只股打分, 覆盖 %d 个热点行业",
+        hit, len(out), len(sym_to_heat),
+    )
     return out
 
 

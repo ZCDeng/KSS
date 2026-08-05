@@ -40,9 +40,12 @@ kss_load_credential TUSHARE_TOKEN "$KSS_ENV" || true
 cd "$PROJECT_ROOT"
 
 # --enable-leaders：累积板块龙头 persistence（喂「概念主题龙头」页与妖王榜）。
-# 不开 --enable-kaipan：KAIPAN 外部源不稳定，缺它仍能产出基础快照，避免整任务失败。
+# --enable-kaipan：2026-08-05 排查实测，duanxianxia 的 getLongByPlate 只支持 kaipan
+#   代码段（80xxxx），ths 代码段（88xxxx）全部返回"当日无领涨"。不开 kaipan 则
+#   name_to_code 只有 ths 代码 → leaderStocks 全 None → leaderCoverage=0 →
+#   style_sector_rotation 因子缺失。kaipan 外部源实测稳定，必须开。
 # refresh 脚本 --date 默认 latest；额外参数（如手动 --date 20260618）经 "$@" 透传。
-"$PYTHON" scripts/refresh_hotspot_rotation.py --enable-leaders "$@"
+"$PYTHON" scripts/refresh_hotspot_rotation.py --enable-kaipan --enable-leaders "$@"
 
 # 链式触发信号卡日终（plan 2026-07-28-002 / U6）：hotspot 成功后 kick signal_cards_daily。
 # 显式传参（回填/定向）时不 kick，避免干扰手动跑。

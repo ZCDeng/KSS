@@ -37,6 +37,13 @@ fi
 
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') collect_intraday 开始 ====="
 
+# 代理兜底：cron 时刻 Clash（127.0.0.1:7890）可能抖断，Tushare trade_cal 走
+# HTTP 明文会被代理拦截导致 calendar_unknown 失败。显式把 tushare 域名加进
+# no_proxy，确保即使系统代理开着也直连。TushareClient._bypass_system_proxy()
+# 也会在 Python 侧做同样的事，但 launchd 注入的环境变量在 shell 层更可靠。
+export no_proxy="api.tushare.pro,api.waditu.com,${no_proxy:-}"
+export NO_PROXY="$no_proxy"
+
 # auto 路由优先 longbridge：cron 无 App 注入 env，须从 Keychain 装凭据（否则永远 auth_failed → 东财）。
 # 东财为 fallback；Tushare 仅 trade_cal。不 echo 任何密钥。
 # shellcheck source=scripts/lib_cron_credentials.sh

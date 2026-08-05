@@ -49,6 +49,11 @@ fi
 mkdir -p "$LOG_DIR"
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') update_data_daily-wrapper 开始 | mode=${RUN_MODE} ====="
 
+# 代理兜底：cron 时刻 Clash 可能抖断，Tushare 走 HTTP 明文会被代理拦截。
+# 显式把 tushare 域名加进 no_proxy，确保即使系统代理开着也直连。
+export no_proxy="api.tushare.pro,api.waditu.com,${no_proxy:-}"
+export NO_PROXY="$no_proxy"
+
 # Tushare token：Keychain 优先，dev 回落项目 .env，再回落 $HOME/.tushare/token。
 source "$PROJECT_ROOT/scripts/lib_cron_credentials.sh"
 if kss_load_credential TUSHARE_TOKEN "$KSS_ENV"; then
