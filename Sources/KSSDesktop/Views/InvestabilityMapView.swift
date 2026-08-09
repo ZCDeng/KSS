@@ -219,7 +219,7 @@ struct InvestabilityMapView: View {
                 HStack(spacing: 0) {
                     ForEach(ExposureFilter.paletteOrder, id: \.self) { key in
                         Rectangle()
-                            .fill(theme.exposureColor(forKey: key) ?? theme.textSecondary)
+                            .fill(theme.exposureColorOrUnknown(key))
                             .frame(height: 10)
                             .frame(maxWidth: .infinity)
                     }
@@ -431,7 +431,7 @@ struct InvestabilityNodeTile: View {
     private static let radius: CGFloat = 6
 
     private var color: Color {
-        theme.exposureColor(forKey: node.primaryColor) ?? theme.exposurePending
+        theme.exposureColorOrUnknown(node.primaryColor)
     }
 
     private var colorLabel: String {

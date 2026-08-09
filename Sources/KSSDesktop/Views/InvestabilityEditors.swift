@@ -137,7 +137,7 @@ struct ExposureNodePickerView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(isPrimary ? theme.accent : theme.textSecondary)
                     RoundedRectangle(cornerRadius: 2.5, style: .continuous)
-                        .fill(theme.exposureColor(forKey: node.primaryColor) ?? theme.exposurePending)
+                        .fill(theme.exposureColorOrUnknown(node.primaryColor))
                         .frame(width: 9, height: 9)
                     Text(node.name)
                         .font(KSSFont.themed(12.5, isPrimary ? .bold : .regular, theme: theme))
@@ -238,7 +238,7 @@ struct ExposurePathCard: View {
             }
 
             if let node = exposure?.primaryNode {
-                row("主节点", pathText(node), tint: theme.exposureColor(forKey: node.primaryColor))
+                row("主节点", pathText(node), tint: theme.exposureColorOrUnknown(node.primaryColor))
                 if !node.reading.isEmpty {
                     Text(node.reading)
                         .font(KSSFont.themed(12, theme: theme))
@@ -268,7 +268,7 @@ struct ExposurePathCard: View {
                         ForEach(seconds) { node in
                             HStack(spacing: 4) {
                                 Circle()
-                                    .fill(theme.exposureColor(forKey: node.primaryColor) ?? theme.exposurePending)
+                                    .fill(theme.exposureColorOrUnknown(node.primaryColor))
                                     .frame(width: 6, height: 6)
                                 Text(node.name)
                                     .font(KSSFont.themed(11.5, theme: theme))

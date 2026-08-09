@@ -356,7 +356,9 @@ enum ThemeCatalog {
     /// 直接借 `up`（#F23645 / #F6465D）做填充时白字只有 3.6:1，不够。
     private enum ExposureRed {
         static func forAppearance(_ a: KSSAppearance) -> ThemeColor {
-            a == .light ? ThemeColor(0xB3261E) : ThemeColor(0xC0392B)
+            // 偏洋红而不是偏橙：#B3261E 这类暗红对暴露橙 #B8470E 的 ΔE76 只有 17.3，
+            // 低于行业色两两 25 的门，红区标签会被读成橙色节点。推到洋红后是 43。
+            a == .light ? ThemeColor(0xA01441) : ThemeColor(0xC41E4E)
         }
     }
 

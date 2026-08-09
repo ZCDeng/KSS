@@ -65,6 +65,15 @@ struct KSSThemeTokens: Equatable {
         return value > 0 ? up : down
     }
 
+    /// 查不到色键时的统一回落。
+    ///
+    /// 回落到 `textSecondary` 会长成「未上图」，回落到 `exposurePending` 会长成「待定色」——
+    /// 两者都是 R8 里有明确语义的合法状态，把数据错误伪装成业务状态，用户会当真去解读。
+    /// 统一落到中性描边色：它不是任何一个合法状态的色，看着不对劲正是本意。
+    func exposureColorOrUnknown(_ key: String) -> Color {
+        exposureColor(forKey: key) ?? outlineVariant
+    }
+
     /// 桥接返回的行业色机器键 → 当前主题取值（与 `KSSPalette.exposureColor` 同一张表）。
     /// 未知键返回 nil；红不是行业色，永远查不到（plan R2）。
     func exposureColor(forKey key: String) -> Color? {

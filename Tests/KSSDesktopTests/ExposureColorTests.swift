@@ -142,6 +142,24 @@ final class ExposureColorTests: XCTestCase {
         }
     }
 
+    /// 红区红要离行业色足够远，尤其是橙——两者同为暖红族，撞上了红区标签会被读成橙色节点。
+    /// 门槛与行业色两两可辨用同一个（ΔE76 ≥ 25）：#B3261E 这类暗红对暴露橙只有 17.3，
+    /// 正是这条测试写出来要拦的东西。
+    func testExposureRedIsFarEnoughFromEveryIndustryColor() {
+        for system in KSSDesignSystem.allCases {
+            for appearance in KSSAppearance.allCases {
+                let p = ThemeCatalog.palette(for: system, appearance: appearance)
+                for (key, color) in p.exposureIndustryColors {
+                    let d = Self.deltaE(p.exposureRed, color)
+                    XCTAssertGreaterThanOrEqual(
+                        d, minDeltaE,
+                        "\(system).\(appearance) 红区红对 \(key) 色差 \(d) 过近")
+                }
+                XCTAssertGreaterThanOrEqual(Self.deltaE(p.exposureRed, p.exposurePending), minDeltaE)
+            }
+        }
+    }
+
     /// 红区红与涨跌的红分开：同屏出现「涨」和「红区」两种红会互相冒充。
     func testExposureRedDiffersFromMarketUp() {
         for appearance in KSSAppearance.allCases {

@@ -68,7 +68,7 @@ struct InvestabilityNodePanel: View {
             // 主色是这张面板的主角：用整条色轨承载，与泳道瓦片同一套视觉语言。
             HStack(spacing: 0) {
                 Rectangle()
-                    .fill(theme.exposureColor(forKey: node.primaryColor) ?? theme.exposurePending)
+                    .fill(theme.exposureColorOrUnknown(node.primaryColor))
                     .frame(width: 4)
                 Text(Self.primaryText(node: node, palette: palette))
                     .font(KSSFont.themed(13, .semibold, theme: theme))
@@ -79,7 +79,7 @@ struct InvestabilityNodePanel: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .background(
-                (theme.exposureColor(forKey: node.primaryColor) ?? theme.exposurePending)
+                (theme.exposureColorOrUnknown(node.primaryColor))
                     .opacity(0.10)
             )
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))

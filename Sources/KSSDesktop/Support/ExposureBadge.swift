@@ -21,7 +21,7 @@ struct ExposureBadge: View {
     /// 「未上图」文案两种情形都留在这里显示（R8 要求色与文本成对出现）。
     var showsDotWhenUnlabelled: Bool = true
 
-    private var dotSize: CGFloat { compact ? 8 : 10 }
+    private var dotSize: CGFloat { compact ? 9 : 11 }
     private var fontSize: CGFloat { compact ? 10.5 : 12.5 }
 
     var body: some View {
@@ -72,7 +72,7 @@ struct ExposureBadge: View {
         switch exposure.state {
         case .unlabelled:   return theme.textSecondary
         case .pendingColor: return theme.exposurePending
-        case .labelled:     return theme.exposureColor(forKey: exposure.colorKey) ?? theme.textBody
+        case .labelled:     return theme.exposureColorOrUnknown(exposure.colorKey)
         }
     }
 
@@ -114,7 +114,7 @@ struct ExposureDot: View {
                 .frame(width: size, height: size)
         case .labelled:
             RoundedRectangle(cornerRadius: 2.5, style: .continuous)
-                .fill(theme.exposureColor(forKey: exposure?.colorKey ?? "") ?? theme.textSecondary)
+                .fill(theme.exposureColorOrUnknown(exposure?.colorKey ?? ""))
                 .frame(width: size, height: size)
         }
     }

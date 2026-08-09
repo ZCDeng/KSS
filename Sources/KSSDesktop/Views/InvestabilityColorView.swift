@@ -76,7 +76,7 @@ struct InvestabilityColorView: View {
     private func blockView(_ block: ExposureMasonry.Block) -> some View {
         switch block.kind {
         case .color(let key):
-            card(tint: theme.exposureColor(forKey: key) ?? theme.textSecondary,
+            card(tint: theme.exposureColorOrUnknown(key),
                  title: block.title, caption: block.caption,
                  count: "\(block.rows) 节点") {
                 ForEach(map.nodes.filter { $0.primaryColor == key }) { node in nodeRow(node) }
@@ -106,7 +106,7 @@ struct InvestabilityColorView: View {
                 ForEach(symbols, id: \.self) { symbol in
                     Button { onSelectSymbol(symbol) } label: {
                         HStack(spacing: 7) {
-                            ExposureDot(exposure: exposureByCode?[symbol], size: 8)
+                            ExposureDot(exposure: exposureByCode?[symbol], size: 9)
                             Text(symbol)
                                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
                                 .foregroundStyle(theme.textPrimary)
@@ -319,7 +319,7 @@ struct InvestabilityQuotaBar: View {
     private func cells(_ quota: ExposureQuota) -> some View {
         HStack(spacing: 0) {
             ForEach(Array(ExposureFilter.paletteOrder.enumerated()), id: \.element) { index, key in
-                cell(tint: theme.exposureColor(forKey: key) ?? theme.textSecondary,
+                cell(tint: theme.exposureColorOrUnknown(key),
                      value: quota.sampleInsufficient
                         ? "\(quota.counts[key] ?? 0)"
                         : KSSFormat.number(quota.ratios[key] ?? 0, digits: 1) + "%",
@@ -375,29 +375,39 @@ struct InvestabilityQuotaBar: View {
     }
 
     /// 主轨条：五色按占比连成一条，配上限参考线。样本不足时不画（没有百分比可画）。
+    ///
+    /// 两处刻意的做法：段间留 1pt canvas 缝——深绿与浅绿共边且色差本来就小，没有缝时
+    /// 边界读不出来；参考线画成上下各出头 4pt 的立柱而不是段内竖线——线画在色段上时
+    /// 明度未知（画在紫段上实测只有 2.39 对比），而「已越上限」恰恰是最该被看见的信号。
     private func mainTrack(_ quota: ExposureQuota) -> some View {
         GeometryReader { geo in
             let width = geo.size.width
             ZStack(alignment: .leading) {
-                HStack(spacing: 0) {
+                HStack(spacing: 1) {
                     ForEach(ExposureFilter.paletteOrder, id: \.self) { key in
+                        let ratio = quota.ratios[key] ?? 0
+                        // 占比极小的档位不能塌成亚像素细缝，给 2pt 保底。
                         Rectangle()
-                            .fill(theme.exposureColor(forKey: key) ?? theme.textSecondary)
-                            .frame(width: max(0, width * (quota.ratios[key] ?? 0) / 100))
+                            .fill(theme.exposureColorOrUnknown(key))
+                            .frame(width: ratio <= 0 ? 0 : max(2, width * ratio / 100))
                     }
+                    Spacer(minLength: 0)
                 }
+                .frame(height: 8)
+                .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+
                 if let cap = quota.cap, cap >= 0, cap <= 100 {
-                    // 参考线画在「橙+紫这条尾巴恰好等于上限」的位置：右侧余量即上限。
+                    // 参考线在「橙+紫这条尾巴恰好等于上限」的位置：右侧余量即上限。
                     Rectangle()
                         .fill(theme.textPrimary)
-                        .frame(width: 1.5)
-                        .offset(x: max(0, width * (100 - cap) / 100))
+                        .frame(width: 2, height: 16)
+                        .offset(x: max(0, width * (100 - cap) / 100) - 1)
                         .help("橙+紫上限 \(KSSFormat.number(cap, digits: 1))%")
                 }
             }
+            .frame(height: 16)
         }
-        .frame(height: 8)
-        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+        .frame(height: 16)
     }
 
     private func footnote(_ quota: ExposureQuota) -> some View {
