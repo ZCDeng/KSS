@@ -152,3 +152,41 @@ def test_tool_docstrings_flag_labels_as_human_prior() -> None:
     """工具说明写明标签是人工先验不是核实事实, 避免 agent 据此下合规结论."""
     for anchor in ("人工先验", "不得据此给买卖或合规结论"):
         assert anchor in _MCP_SRC
+
+
+# --------------------------------------------------------------------------- #
+# 应用内 AI 面板(2026-08-09 裁决: 与 MCP 对称)
+# --------------------------------------------------------------------------- #
+
+
+def _panel_tool_names() -> set[str]:
+    """面板侧(kss_chat_loop.TOOL_SPECS)注册的工具名."""
+    import kss_chat_loop as chat  # noqa: PLC0415
+
+    return {str(spec["name"]) for spec in chat.TOOL_SPECS}
+
+
+def test_panel_gets_the_same_three_read_tools() -> None:
+    """裁决: 面板与 MCP 对称拿这三个只读工具.
+
+    紫苏叶富化的先例是给 MCP 不给面板(见 test_chat_system_prompt 那条断言),
+    这层不照抄: 标注是用户自己维护的判断,「这只票我标了吗」天然会问面板.
+    """
+    assert {
+        "get_investability_map",
+        "get_investability_exposure",
+        "get_investability_quota",
+    } <= _panel_tool_names()
+
+
+def test_panel_has_no_map_write_tool() -> None:
+    """对称的只是读面. 写面在面板侧同样缺席(plan KTD8/R25)."""
+    import kss_chat_loop as chat  # noqa: PLC0415
+
+    write_commands = {
+        "investability-label",
+        "investability-answer",
+        "investability-node-coverage",
+    }
+    for spec in chat.TOOL_SPECS:
+        assert str(spec.get("command")) not in write_commands, spec["name"]

@@ -5774,6 +5774,98 @@ def _investability_export() -> dict[str, Any]:
     return export_all(db_path=_investability_db())
 
 
+#: 8 问原文（源 PDF 5.7，Appendix A5）。草拟提示词按题号逐条喂给模型。
+_INV_QUESTIONS = (
+    "收入，美 + 盟伴、政府军方占比？",
+    "BOM，美系设备 / EDA / IP 是否不可替换？",
+    "股权，是否穿透连坐？",
+    "上市融资，中概 / 美元债 / 美资股东？",
+    "客户集中，前五是否高风险？",
+    "政策角色，是否握许可物项或六张网 / 十五五订单？",
+    "合规史，点名 / 拒许可 / 被罚？",
+    "出境，技术数据人员是否触发新规？",
+)
+
+_INV_DRAFT_SYSTEM = """\
+你在给一只 A 股个股的规则风险尽调 8 问出**草稿**。草稿不入库，人工逐题确认才写。
+
+硬约束：
+1. 拿不准就答 unknown。这里的 unknown 不是失分，编一个 yes/no 才是。
+2. 只答你确有公开依据的题；依据写一句话，注明是哪类来源（年报口径 / 公开新闻 / 行业常识）。
+3. 不给买卖建议，不下合规结论。
+4. 只输出 JSON，形如 {"1": {"value": "yes|no|unknown", "why": "一句话依据"}, ...}，键为 1 到 8 的字符串。
+"""
+
+
+def _investability_answer_draft(ts_code: str) -> dict[str, Any]:
+    """给 8 问出草稿（2026-08-09 裁决：给助手草拟路径，草稿人工确认后入库）。
+
+    这是**读命令**：它不碰任何表。草稿经界面逐题人工确认才走 investability-answer 落库，
+    所以 KTD8「agent 不写」不被绕开——写的仍然是人。仅应用内可用，不注册 agent 工具。
+    """
+    from kss.llm.openai_client import LLMClient, LLMUnavailable  # noqa: PLC0415
+
+    ts_code = (ts_code or "").strip()
+    if not ts_code:
+        raise ValueError("investability-answer-draft requires SYMBOL")
+
+    meta = _load_names().get(ts_code, {})
+    chains = _load_supply_chain_names().get(ts_code, {}).get("concept", "")
+    profile = "\n".join([
+        f"代码: {ts_code}",
+        f"名称: {meta.get('name', '') or '未知'}",
+        f"行业: {meta.get('industry', '') or '未知'}",
+        f"概念/产业链: {meta.get('concept', '') or chains or '未知'}",
+    ])
+    questions = "\n".join(f"{i}. {q}" for i, q in enumerate(_INV_QUESTIONS, start=1))
+
+    try:
+        client = LLMClient()
+        raw = client.complete(
+            system=_INV_DRAFT_SYSTEM,
+            user=f"标的：\n{profile}\n\n逐题给草稿：\n{questions}",
+        )
+    except LLMUnavailable as exc:
+        return {"tsCode": ts_code, "status": "llm_unavailable", "hint": str(exc), "drafts": {}}
+    except Exception as exc:  # noqa: BLE001
+        return {"tsCode": ts_code, "status": "failed", "hint": str(exc)[:200], "drafts": {}}
+
+    drafts = _parse_draft_json(raw)
+    return {
+        "tsCode": ts_code,
+        "status": "ok" if drafts else "unparsable",
+        "hint": "" if drafts else raw[:200],
+        "drafts": drafts,
+    }
+
+
+def _parse_draft_json(raw: str) -> dict[str, Any]:
+    """把模型返回解析成逐题草稿；任何解析不了的题一律落 unknown，不猜。"""
+    import json as _json  # noqa: PLC0415
+
+    text = (raw or "").strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        return {}
+    try:
+        parsed = _json.loads(text[start : end + 1])
+    except ValueError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+
+    out: dict[str, Any] = {}
+    for index in range(1, _INV_TOTAL_QUESTIONS + 1):
+        body = parsed.get(str(index))
+        body = body if isinstance(body, dict) else {}
+        value = str(body.get("value", "")).strip().lower()
+        out[str(index)] = {
+            "value": value if value in {"yes", "no", "unknown"} else "unknown",
+            "why": str(body.get("why", "") or "")[:300],
+        }
+    return out
+
+
 def _investability_set_label(
     ts_code: str, primary: str, secondaries_csv: str = ""
 ) -> dict[str, Any]:
@@ -5890,6 +5982,10 @@ COMMANDS = {
         "args": ["CODES", "[CAP_PCT]"],
     },
     "investability-export": {"desc": "地图标注与 8 问答案全量导出(留档用)", "args": []},
+    "investability-answer-draft": {
+        "desc": "给 8 问出草稿(只读,不落库;草稿经界面逐题人工确认才写)。仅应用内可用,未注册 agent 工具",
+        "args": ["SYMBOL"],
+    },
     "investability-label": {
         "desc": "写个股节点标注(整体替换)",
         "args": ["SYMBOL", "PRIMARY_NODE", "[SECONDARY_NODES]"],
@@ -7030,6 +7126,10 @@ def dispatch(command: str, args: list[str]) -> Any:
         )
     if command == "investability-export":
         return _investability_export()
+    if command == "investability-answer-draft":
+        if not args:
+            raise ValueError("investability-answer-draft requires SYMBOL")
+        return _investability_answer_draft(args[0])
     if command == "investability-label":
         if not args:
             raise ValueError("investability-label requires SYMBOL PRIMARY_NODE")

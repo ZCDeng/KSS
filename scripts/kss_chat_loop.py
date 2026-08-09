@@ -290,6 +290,40 @@ TOOL_SPECS: list[dict[str, Any]] = [
         ["skill_id", "path"],
         execution_mode="parallel",
     ),
+    # 可投资地图三个只读工具（plan 2026-08-09-001 U8 + 2026-08-09 裁决）。
+    # 与 MCP 对称：这层数据是用户自己维护的判断，「这只票我标了吗」天然会问面板，
+    # 性质与紫苏叶富化（给 MCP 不给面板）不同。写面在两侧都缺席（KTD8）。
+    _spec(
+        "get_investability_map",
+        "investability-map",
+        "可投资地图节点树:103 个子行业节点的五色暴露分类、所属主轴与组、读法与源文依据。"
+        "五色是人工先验判断不是核实事实,不得据此给买卖或合规结论;源文未给到节点级色标处主色为 pending。"
+        "symbols 可选逗号分隔,给了就把这些票挂到节点上并给出节点三态"
+        "(has_stocks/confirmed_empty 已确认无标的/unreviewed 未核);未核不等于无暴露",
+        {"symbols": _STR},
+        ["symbols"],
+        execution_mode="parallel",
+    ),
+    _spec(
+        "get_investability_exposure",
+        "investability-stocks",
+        "个股暴露信息:行业色、主副节点路径、8 问暴露区位、标注更新时间。symbols 必填逗号分隔。"
+        "区位串已由 Python 算完(如「红区 · 已定 6/8」),照抄不要重算;"
+        "行业色与暴露区位是并列两维,区位不改写行业色。标注覆盖面有限,查不到不代表该股无风险",
+        {"symbols": _STR},
+        ["symbols"],
+        execution_mode="parallel",
+    ),
+    _spec(
+        "get_investability_quota",
+        "investability-summary",
+        "组合暴露配额:五色主轨占比 + 红区副轨占比,两轨不相加。symbols 必填且须显式给出"
+        "(自选真源在桌面端,库里那张表是会静默漂移的镜像)。已标注不足 10 只时不出百分比,"
+        "只给只数并置 sampleInsufficient。cap_pct 可选,橙加紫合计上限",
+        {"symbols": _STR, "cap_pct": _STR},
+        ["symbols", "cap_pct"],
+        execution_mode="parallel",
+    ),
     _spec("propose_memory", "agent-propose-memory",
           "提出一条待用户批准的记忆。**需要用户批准后才会进入记忆库**",
           {
