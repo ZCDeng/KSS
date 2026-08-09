@@ -111,6 +111,48 @@ def get_perilla_enrichment(symbol: str) -> dict:
 
 
 @mcp.tool
+def get_investability_map(symbols: str = "") -> dict:
+    """可投资地图节点树：103 个子行业节点的五色暴露分类、所属主轴与组、读法与源文依据。
+
+    五色是**人工先验判断**不是核实事实：深绿=底座/低暴露、浅绿=替代/政策主航道、
+    黄=外需/全球定价、橙=许可/点名博弈、紫=反制筹码。转述时须注明这是判断层，
+    不得据此给买卖或合规结论。源文未给到节点级色标处主色为 pending。
+
+    symbols 可选，逗号分隔；给了就把这些票按主副节点挂到各节点上，并给出节点三态
+    （has_stocks / confirmed_empty 已人工确认无标的 / unreviewed 未核）。
+    未核不等于无暴露，不要把 unreviewed 讲成「该方向没有暴露」。
+    """
+    return _call("investability-map", [symbols])
+
+
+@mcp.tool
+def get_investability_exposure(symbols: str) -> dict:
+    """个股暴露信息：行业色、主副节点路径、8 问暴露区位、标注更新时间。
+
+    symbols 必填，逗号分隔。区位串由 Python 侧算完直接返回（红区 · 已定 6/8 这种），
+    不要自己重算或改写。个股三态：unlabelled 未上图、pending_color 已上图但该节点
+    主色待定、labelled 已标注。行业色与暴露区位是两个并列维度，区位不改写行业色。
+
+    标注是用户手工录入的判断，覆盖面有限；查不到不代表该股无风险。
+    """
+    return _call("investability-stocks", [symbols])
+
+
+@mcp.tool
+def get_investability_quota(symbols: str, cap_pct: str = "") -> dict:
+    """组合暴露配额：五色主轨占比 + 红区副轨占比，两轨不相加。
+
+    symbols 必填且须由调用方显式给出——自选列表的真源在桌面端，库里那张表是同步
+    失败会被静默吞掉的镜像，从镜像算配额会漂移。返回值的 denominatorSource 标明
+    分母口径。分母只含已标注且主色非待定的票；已标注不足 10 只时不出百分比，
+    只给只数并置 sampleInsufficient。
+
+    cap_pct 可选，橙加紫合计上限；给了才返回 overCap 判定。
+    """
+    return _call("investability-summary", [symbols, cap_pct])
+
+
+@mcp.tool
 def get_paper_summary() -> dict:
     """模拟盘推荐跟踪汇总。"""
     return _call("paper-summary")
