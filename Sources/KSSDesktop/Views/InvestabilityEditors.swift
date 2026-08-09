@@ -136,9 +136,9 @@ struct ExposureNodePickerView: View {
                     Image(systemName: isPrimary ? "largecircle.fill.circle" : "circle")
                         .font(.system(size: 12))
                         .foregroundStyle(isPrimary ? theme.accent : theme.textSecondary)
-                    Circle()
+                    RoundedRectangle(cornerRadius: 2.5, style: .continuous)
                         .fill(theme.exposureColor(forKey: node.primaryColor) ?? theme.exposurePending)
-                        .frame(width: 8, height: 8)
+                        .frame(width: 9, height: 9)
                     Text(node.name)
                         .font(KSSFont.themed(12.5, isPrimary ? .bold : .regular, theme: theme))
                         .foregroundStyle(theme.textPrimary)
@@ -152,20 +152,27 @@ struct ExposureNodePickerView: View {
             }
             .buttonStyle(.plain)
 
+            // 副节点是可多选的勾选项，不是开关胶囊：用方框勾选，与左侧主节点的单选圆钮
+            // 形成「单选 vs 多选」的常规对照。
             Button {
                 if isSecondary { secondaries.remove(node.nodeId) } else {
                     secondaries.insert(node.nodeId)
                     if isPrimary { primary = "" }
                 }
             } label: {
-                Text(isSecondary ? "副 ✓" : "设为副")
-                    .font(KSSFont.themed(10.5, .semibold, theme: theme))
-                    .foregroundStyle(isSecondary ? theme.onAccent : theme.textSecondary)
-                    .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(isSecondary ? theme.accent : theme.surfaceRaised, in: Capsule())
-                    .contentShape(Capsule())
+                HStack(spacing: 4) {
+                    Image(systemName: isSecondary ? "checkmark.square.fill" : "square")
+                        .font(.system(size: 11))
+                        .foregroundStyle(isSecondary ? theme.accent : theme.textSecondary)
+                    Text("副")
+                        .font(KSSFont.themed(10.5, isSecondary ? .semibold : .regular, theme: theme))
+                        .foregroundStyle(isSecondary ? theme.accent : theme.textSecondary)
+                }
+                .frame(width: 40, alignment: .leading)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .help(isSecondary ? "取消副节点" : "设为副节点")
         }
         .padding(.vertical, 3)
     }
@@ -255,6 +262,8 @@ struct ExposurePathCard: View {
                     Text("副节点")
                         .font(KSSFont.themed(10.5, .semibold, theme: theme))
                         .foregroundStyle(theme.textSecondary)
+                    // 这是全模块唯一保留胶囊的地方：可移除的标签正是胶囊在设计语言里的本义。
+                    // 节点瓦片、计数、区位标、答题控件都已换成方角，胶囊因此变成一个有意义的信号。
                     FlowLayout(spacing: 6, lineSpacing: 6) {
                         ForEach(seconds) { node in
                             HStack(spacing: 4) {
@@ -425,10 +434,13 @@ struct ExposureQuestionsCard: View {
     private func draftRow(number: Int, item: ExposureAnswerDraft) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Text("草稿")
-                .font(KSSFont.themed(10, .semibold, theme: theme))
-                .foregroundStyle(theme.onAccent)
-                .padding(.horizontal, 5).padding(.vertical, 1)
-                .background(theme.textSecondary, in: Capsule())
+                .font(KSSFont.themed(9.5, .semibold, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+                .padding(.horizontal, 4).padding(.vertical, 0.5)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .stroke(theme.outlineVariant, lineWidth: 1)
+                )
             Text("\(draftValueLabel(item.value))\(item.why.isEmpty ? "" : " · \(item.why)")")
                 .font(KSSFont.themed(11, theme: theme))
                 .foregroundStyle(theme.textSecondary)
@@ -468,17 +480,31 @@ struct ExposureQuestionsCard: View {
                 .foregroundStyle(theme.textBody)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            HStack(spacing: 4) {
-                answerButton(number: number, title: "是", value: "yes", isOn: current == true)
-                answerButton(number: number, title: "否", value: "no", isOn: current == false)
-                answerButton(number: number, title: "未知", value: "unknown", isOn: current == nil)
+            // 三态是互斥选择，不是三个独立开关：做成一体的分段控件，
+            // 三个各自独立的胶囊按钮看不出互斥关系。
+            HStack(spacing: 0) {
+                answerSegment(number: number, title: "是", value: "yes", isOn: current == true)
+                Rectangle().fill(theme.hairline).frame(width: 1, height: 18)
+                answerSegment(number: number, title: "否", value: "no", isOn: current == false)
+                Rectangle().fill(theme.hairline).frame(width: 1, height: 18)
+                answerSegment(number: number, title: "未知", value: "unknown", isOn: current == nil)
             }
+            .background(theme.surfaceContainer)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(theme.hairline)
+            )
             .opacity(busyQuestion == number ? 0.5 : 1)
+            .fixedSize()
         }
     }
 
-    private func answerButton(number: Int, title: String, value: String, isOn: Bool) -> some View {
-        Button {
+    /// 「是 / 否」是已定，用 accent 实填；「未知」是未定，用中性填充。
+    /// 三个都染成 accent 会让「一题没答」看起来像「已经答过未知」——而已定题数正是
+    /// 区位判定的分母，这个误读会一路传到「已定 N/8」。
+    private func answerSegment(number: Int, title: String, value: String, isOn: Bool) -> some View {
+        let decided = value != "unknown"
+        return Button {
             busyQuestion = number
             Task {
                 await onAnswer(number, value)
@@ -486,11 +512,13 @@ struct ExposureQuestionsCard: View {
             }
         } label: {
             Text(title)
-                .font(KSSFont.themed(11.5, .semibold, theme: theme))
-                .foregroundStyle(isOn ? theme.onAccent : theme.textSecondary)
-                .padding(.horizontal, 8).padding(.vertical, 3)
-                .background(isOn ? theme.accent : theme.surfaceRaised, in: Capsule())
-                .contentShape(Capsule())
+                .font(KSSFont.themed(11.5, isOn ? .bold : .regular, theme: theme))
+                .foregroundStyle(isOn
+                                 ? (decided ? theme.onAccent : theme.textPrimary)
+                                 : theme.textSecondary)
+                .frame(width: 34, height: 22)
+                .background(isOn ? (decided ? theme.accent : theme.surfaceContainerHighest) : Color.clear)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(!loaded || busyQuestion != nil)

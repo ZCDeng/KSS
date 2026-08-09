@@ -43,8 +43,10 @@ struct InvestabilityMapView: View {
                     }
                 )
                 .frame(width: 320)
+                .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
+        .animation(KSSTheme.motionStandard, value: selectedNodeId)
         .background(theme.canvas)
         .task {
             capDraft = capPct
@@ -143,33 +145,38 @@ struct InvestabilityMapView: View {
     // MARK: - 正常态
 
     private func content(_ map: ExposureMap) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                header(map)
-                if view == .lanes {
-                    lanesView(map)
-                } else {
-                    InvestabilityColorView(
-                        map: map,
-                        quota: store.exposureQuota,
-                        exposureByCode: store.exposureByCode,
-                        selectedNodeId: $selectedNodeId,
-                        capDraft: $capDraft,
-                        onApplyCap: { value in
-                            capPct = value
-                            Task { await store.reloadInvestabilityQuota(capPct: value) }
-                        },
-                        onSelectSymbol: onSelectSymbol
-                    )
+        // 色聚合的分栏数要按实际可用宽度定（展开区打开时会少 320pt），
+        // 所以宽度在这里量一次往下传，而不是让子视图各量各的。
+        GeometryReader { proxy in
+            let contentW = min(max(proxy.size.width - 32, 280), 1080)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    header(map)
+                    if view == .lanes {
+                        lanesView(map)
+                    } else {
+                        InvestabilityColorView(
+                            map: map,
+                            quota: store.exposureQuota,
+                            exposureByCode: store.exposureByCode,
+                            availableWidth: contentW,
+                            selectedNodeId: $selectedNodeId,
+                            capDraft: $capDraft,
+                            onApplyCap: { value in
+                                capPct = value
+                                Task { await store.reloadInvestabilityQuota(capPct: value) }
+                            },
+                            onSelectSymbol: onSelectSymbol
+                        )
+                    }
                 }
+                .frame(width: contentW, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 18)
             }
-            .frame(maxWidth: 1080, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 18)
+            .scrollContentBackground(.hidden)
+            .background(theme.canvas)
         }
-        .scrollContentBackground(.hidden)
-        .background(theme.canvas)
     }
 
     /// 页头常驻源版本与全表最旧复核日期（R23）；陈旧节点数一并给出，否则「最旧」是个孤零零的日期。
@@ -203,31 +210,70 @@ struct InvestabilityMapView: View {
         }
     }
 
-    /// 分段图例：行业五色 / 个股红区 / 未定色 / 未上图灰点 / 节点两态。
+    /// 图例。五个行业色是一条**有序的暴露刻度**（底座 → 反制筹码），所以画成一条连续色带
+    /// 而不是五个孤立的点：色带把相邻两色摆在一起，深绿与浅绿的差别才看得出来，
+    /// 而一排 8pt 圆点做不到这件事。非行业色的几个标记单独一行，避免混进刻度。
     private func legend(_ map: ExposureMap) -> some View {
-        FlowLayout(spacing: 12, lineSpacing: 6) {
-            ForEach(ExposureFilter.paletteOrder, id: \.self) { key in
-                if let color = map.palette[key] {
-                    legendItem(dot: theme.exposureColor(forKey: key), text: color.label, help: color.meaning)
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 0) {
+                    ForEach(ExposureFilter.paletteOrder, id: \.self) { key in
+                        Rectangle()
+                            .fill(theme.exposureColor(forKey: key) ?? theme.textSecondary)
+                            .frame(height: 10)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                HStack(spacing: 0) {
+                    ForEach(ExposureFilter.paletteOrder, id: \.self) { key in
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(map.palette[key]?.label ?? ExposureFilter.fallbackLabel(key))
+                                .font(KSSFont.themed(11.5, .bold, theme: theme))
+                                .foregroundStyle(theme.textPrimary)
+                            Text(map.palette[key]?.meaning ?? "")
+                                .font(KSSFont.themed(9.5, theme: theme))
+                                .foregroundStyle(theme.textSecondary)
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
-            legendItem(dot: theme.exposurePending, text: "待定色", help: "源文未给到节点级色标，或两处标注冲突")
-            legendItem(dot: theme.textSecondary.opacity(0.55), text: "未上图", help: "个股尚未挂到任何节点")
-            legendItem(dot: theme.up, text: "红区（个股）", help: "8 问答「是」达 5 项，是个股区位不是行业色")
-            legendItem(dot: nil, text: "未核 / 已确认无标的", help: "虚线描边=未核；空心描边=人工确认过无标的")
+            .frame(maxWidth: 560, alignment: .leading)
+
+            FlowLayout(spacing: 16, lineSpacing: 6) {
+                legendMark(
+                    swatch: { AnyView(ExposureSwatch(color: theme.exposurePending)) },
+                    text: "待定色", help: "源文未给到节点级色标，或两处标注冲突")
+                legendMark(
+                    swatch: { AnyView(Circle().fill(theme.textSecondary)
+                        .frame(width: 9, height: 9)) },
+                    text: "未上图（个股）", help: "个股尚未挂到任何节点；圆形与已上图的方块区分")
+                legendMark(
+                    swatch: { AnyView(ExposureSwatch(color: theme.exposureRed)) },
+                    text: "红区（个股区位，非行业色）", help: "8 问答「是」达 5 项")
+                legendMark(
+                    swatch: { AnyView(RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .strokeBorder(theme.outlineVariant, lineWidth: 1)
+                        .frame(width: 13, height: 13)) },
+                    text: "无标记 = 未核", help: "还没人工确认过这个方向有没有标的，不计入无暴露结论")
+                legendMark(
+                    swatch: { AnyView(RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .strokeBorder(theme.outlineVariant,
+                                      style: StrokeStyle(lineWidth: 1, dash: [2.5, 2]))
+                        .frame(width: 13, height: 13)) },
+                    text: "虚线 = 已确认无标的", help: "人工确认过没有可投标的，计入无暴露结论")
+            }
         }
-        .padding(.vertical, 4)
+        .padding(.top, 2)
     }
 
-    private func legendItem(dot: Color?, text: String, help: String) -> some View {
-        HStack(spacing: 5) {
-            if let dot {
-                Circle().fill(dot).frame(width: 8, height: 8)
-            } else {
-                Circle()
-                    .strokeBorder(theme.outlineVariant, style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
-                    .frame(width: 8, height: 8)
-            }
+    private func legendMark(
+        swatch: () -> AnyView, text: String, help: String
+    ) -> some View {
+        HStack(spacing: 6) {
+            swatch()
             Text(text)
                 .font(KSSFont.themed(11, theme: theme))
                 .foregroundStyle(theme.textSecondary)
@@ -237,38 +283,49 @@ struct InvestabilityMapView: View {
 
     // MARK: - 泳道视图（R16）
 
+    /// 泳道。15 条泳道各自套一张卡会把页面切成 15 个盒子，节点反而退到背景里；
+    /// 改成表格式的分隔线，卡的边框省下来的对比度留给节点色轨。
     private func lanesView(_ map: ExposureMap) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 22) {
             ForEach(InvestabilityLaneBuilder.sections(map: map)) { section in
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 10) {
                         Text(section.title)
-                            .font(KSSFont.themed(15, .bold, theme: theme))
+                            .font(KSSFont.themed(15.5, .bold, theme: theme))
                             .foregroundStyle(theme.textPrimary)
                         Text("\(section.lanes.reduce(0) { $0 + $1.nodes.count }) 节点")
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundStyle(theme.textSecondary)
-                        Spacer()
+                        Rectangle()
+                            .fill(theme.hairline)
+                            .frame(height: 1)
                     }
-                    ForEach(section.lanes) { lane in
-                        laneRow(lane)
+                    .padding(.bottom, 4)
+                    ForEach(Array(section.lanes.enumerated()), id: \.element.id) { index, lane in
+                        if index > 0 {
+                            Rectangle().fill(theme.hairline).frame(height: 1)
+                        }
+                        laneRow(lane, palette: map.palette)
                     }
                 }
             }
         }
     }
 
-    private func laneRow(_ lane: InvestabilityLaneBuilder.Lane) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+    private func laneRow(
+        _ lane: InvestabilityLaneBuilder.Lane, palette: [String: ExposurePaletteColor]
+    ) -> some View {
+        HStack(alignment: .top, spacing: 14) {
             Text(lane.title)
-                .font(KSSFont.themed(12.5, .semibold, theme: theme))
+                .font(KSSFont.themed(12, .semibold, theme: theme))
                 .foregroundStyle(theme.textBody)
-                .frame(width: 108, alignment: .leading)
-                .padding(.top, 4)
+                .frame(width: 96, alignment: .leading)
+                .padding(.top, 6)
             FlowLayout(spacing: 6, lineSpacing: 6) {
                 ForEach(lane.nodes) { node in
-                    InvestabilityNodeChip(
+                    InvestabilityNodeTile(
                         node: node,
+                        palette: palette,
                         isSelected: node.nodeId == selectedNodeId,
                         onTap: { toggle(node) }
                     )
@@ -276,11 +333,7 @@ struct InvestabilityMapView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 12)
-        .background(theme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
-        .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(theme.hairline))
+        .padding(.vertical, 9)
     }
 
     private func toggle(_ node: ExposureNode) {
@@ -354,94 +407,132 @@ enum InvestabilityLaneBuilder {
     }
 }
 
-// MARK: - 节点 chip
+// MARK: - 节点瓦片
 
-/// 节点 chip。三种覆盖态用描边区分（R9）：实线=有票、空心细描边=已确认无标的、
-/// 虚线=未核。色永远同时给点与名字，不靠单一色载信息（R2）。
-struct InvestabilityNodeChip: View {
+/// 节点瓦片。三处设计决定，每处都有实测理由：
+///
+/// 1. **左侧色轨代替色点。** 4pt × 全高的竖条比 7pt 圆点多出约三倍色面积，且相邻瓦片的
+///    色轨在同一条基线上，眼睛是在比较而不是在辨认——深绿与浅绿只有在挨着时才分得开。
+/// 2. **色名以文字同时出现。** 泳道里原先只有色点没有色的文字标签，那是 R2 的硬性违反：
+///    色不得作为唯一信息载体。
+/// 3. **未核不画标记。** 103 个节点开局全是未核，逐个写「未核」等于在页面上重复 103 遍
+///    同一个字。改成安静的默认态，把标记留给两个真正有信息量的状态：挂了票（给只数）
+///    与已确认无标的（虚线 + 「无标的」）。三态仍互相可区分（R9 / AE1）。
+///
+/// 形状用 6pt 圆角矩形而不是胶囊：胶囊的全圆角会把左侧色轨切成月牙，色面积白丢一半；
+/// 而且胶囊在这套界面里的语义是可切换/可移除的标签，节点是只读分类格子。
+struct InvestabilityNodeTile: View {
     @Environment(\.kssTheme) private var theme
     var node: ExposureNode
+    var palette: [String: ExposurePaletteColor]
     var isSelected: Bool
     var onTap: () -> Void
+
+    private static let radius: CGFloat = 6
 
     private var color: Color {
         theme.exposureColor(forKey: node.primaryColor) ?? theme.exposurePending
     }
 
+    private var colorLabel: String {
+        node.isPending
+            ? "待定色"
+            : (palette[node.primaryColor]?.label ?? ExposureFilter.fallbackLabel(node.primaryColor))
+    }
+
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 5) {
-                Circle().fill(color).frame(width: 7, height: 7)
-                Text(node.name)
-                    .font(KSSFont.themed(12, .semibold, theme: theme))
-                    .foregroundStyle(theme.textPrimary)
-                    .lineLimit(1)
-                if let tier = node.tierBadge {
-                    Text(tier)
-                        .font(KSSFont.themed(9.5, .semibold, theme: theme))
-                        .foregroundStyle(theme.textSecondary)
-                        .padding(.horizontal, 3)
-                        .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 3))
+            HStack(spacing: 0) {
+                Rectangle()
+                    .fill(color.opacity(node.state == .confirmedEmpty ? 0.45 : 1))
+                    .frame(width: 4)
+                HStack(spacing: 6) {
+                    Text(node.name)
+                        .font(KSSFont.themed(12.5, .semibold, theme: theme))
+                        .foregroundStyle(node.state == .confirmedEmpty
+                                         ? theme.textSecondary : theme.textPrimary)
+                        .lineLimit(1)
+                    if let tier = node.tierBadge {
+                        Text(tier)
+                            .font(KSSFont.themed(9.5, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                            .padding(.horizontal, 3)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                    .stroke(theme.hairline, lineWidth: 1)
+                            )
+                    }
+                    Text(colorLabel)
+                        .font(KSSFont.themed(10, .semibold, theme: theme))
+                        .foregroundStyle(color)
+                    if node.stale {
+                        Image(systemName: "clock.badge.exclamationmark")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(theme.ma5)
+                    }
+                    stateMark
                 }
-                if node.stale {
-                    Image(systemName: "clock.badge.exclamationmark")
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .foregroundStyle(theme.ma5)
-                }
-                if !node.attachedStocks.isEmpty {
-                    Text("\(node.attachedStocks.count)")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundStyle(theme.onAccent)
-                        .padding(.horizontal, 4).padding(.vertical, 0.5)
-                        .background(theme.accent, in: Capsule())
-                } else if node.state == .confirmedEmpty {
-                    Text("无标的")
-                        .font(KSSFont.themed(9.5, theme: theme))
-                        .foregroundStyle(theme.textSecondary)
-                } else {
-                    Text("未核")
-                        .font(KSSFont.themed(9.5, theme: theme))
-                        .foregroundStyle(theme.textSecondary)
-                }
+                .padding(.leading, 8)
+                .padding(.trailing, 9)
+                // 定死行高：带层级角标/只数的瓦片本来会比纯文字的高 1-2pt，
+                // 一行里高低不齐，左侧色轨就对不成一条可比较的基线。
+                .frame(height: 26)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
             .background(background)
+            .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
             .overlay(border)
-            .contentShape(Capsule())
+            .contentShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
         }
         .buttonStyle(.plain)
         .help(helpText)
         .accessibilityLabel(helpText)
     }
 
+    /// 只有两个信息量高的状态才出标记；未核是安静的默认态。
+    @ViewBuilder
+    private var stateMark: some View {
+        switch node.state {
+        case .hasStocks:
+            Text("\(node.attachedStocks.count)")
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .foregroundStyle(theme.accent)
+        case .confirmedEmpty:
+            Text("无标的")
+                .font(KSSFont.themed(9.5, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+        case .unreviewed:
+            EmptyView()
+        }
+    }
+
     @ViewBuilder
     private var background: some View {
         switch node.state {
-        case .hasStocks:      Capsule().fill(color.opacity(0.14))
-        case .confirmedEmpty: Capsule().fill(Color.clear)
-        case .unreviewed:     Capsule().fill(theme.surfaceRaised.opacity(0.5))
+        case .hasStocks:      color.opacity(0.10)
+        case .confirmedEmpty: Color.clear
+        case .unreviewed:     theme.surfaceContainer
         }
     }
 
     @ViewBuilder
     private var border: some View {
-        switch node.state {
-        case .hasStocks:
-            Capsule().stroke(isSelected ? theme.accent : color.opacity(0.5),
-                             lineWidth: isSelected ? 1.6 : 1)
-        case .confirmedEmpty:
-            Capsule().stroke(isSelected ? theme.accent : theme.outlineVariant,
-                             lineWidth: isSelected ? 1.6 : 1)
-        case .unreviewed:
-            Capsule().stroke(isSelected ? theme.accent : theme.outlineVariant,
-                             style: StrokeStyle(lineWidth: isSelected ? 1.6 : 1, dash: [3, 2]))
+        let shape = RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
+        if isSelected {
+            shape.stroke(theme.accent, lineWidth: 1.6)
+        } else {
+            switch node.state {
+            case .hasStocks:
+                shape.stroke(color.opacity(0.34), lineWidth: 1)
+            case .confirmedEmpty:
+                shape.stroke(theme.outlineVariant, style: StrokeStyle(lineWidth: 1, dash: [2.5, 2]))
+            case .unreviewed:
+                shape.stroke(theme.hairline, lineWidth: 1)
+            }
         }
     }
 
     private var helpText: String {
-        var parts = [node.name]
-        parts.append(node.isPending ? "待定色" : node.primaryColor)
+        var parts = [node.name, colorLabel]
         switch node.state {
         case .hasStocks:      parts.append("挂 \(node.attachedStocks.count) 只")
         case .confirmedEmpty: parts.append("已人工确认无标的")

@@ -255,6 +255,10 @@ struct KSSPalette: Equatable {
     let exposureOrange: ThemeColor
     let exposurePurple: ThemeColor
     let exposurePending: ThemeColor
+    /// 个股红区专用红（plan A1：红是个股区位，不是行业色）。
+    /// 与涨跌的 `up` 分开：同屏出现「涨」和「红区」两种红会互相冒充。跨设计系统共享、
+    /// 只按外观分，语义与 `MarketColors` 同级——它是警示色，不是品牌色。
+    let exposureRed: ThemeColor
     // 几何
     let cardRadius: CGFloat
     let chipRadius: CGFloat
@@ -315,6 +319,7 @@ enum ThemeCatalog {
             exposureDeepGreen: exposure.deepGreen, exposureLightGreen: exposure.lightGreen,
             exposureYellow: exposure.yellow, exposureOrange: exposure.orange,
             exposurePurple: exposure.purple, exposurePending: exposure.pending,
+            exposureRed: ExposureRed.forAppearance(appearance),
             cardRadius: seed.cardRadius, chipRadius: seed.chipRadius,
             typography: seed.typography, elevation: seed.elevation
         )
@@ -346,6 +351,15 @@ enum ThemeCatalog {
     // - 同一 palette 内任意两个行业色 CIE76 色差 ≥ 25，堵住深绿对浅绿、黄对橙糊在一起
     // - 每个色对该 palette 的 surface 对比度 ≥ 3:1
     // - 未定色与 muted 色差 ≥ 15，避免「待定色」被看成「未上图」
+    /// 个股红区红。跨设计系统共享、只按外观分，同 `MarketColors` 的处理。
+    /// 取值按「白字铺在它上面要过 4.5:1，且它自己对 surface 要过 3:1」选，
+    /// 直接借 `up`（#F23645 / #F6465D）做填充时白字只有 3.6:1，不够。
+    private enum ExposureRed {
+        static func forAppearance(_ a: KSSAppearance) -> ThemeColor {
+            a == .light ? ThemeColor(0xB3261E) : ThemeColor(0xC0392B)
+        }
+    }
+
     private struct ExposureColors {
         let deepGreen, lightGreen, yellow, orange, purple, pending: ThemeColor
 

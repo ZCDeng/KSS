@@ -43,6 +43,8 @@ struct KSSThemeTokens: Equatable {
     let exposureOrange: Color
     let exposurePurple: Color
     let exposurePending: Color
+    /// 个股红区专用红（plan A1）。与涨跌的 up 分开：同屏两种红会互相冒充。
+    let exposureRed: Color
     // 几何 / 字体 / 阴影
     let cardRadius: CGFloat
     let chipRadius: CGFloat
@@ -110,6 +112,7 @@ extension KSSPalette {
             exposureOrange: exposureOrange.color,
             exposurePurple: exposurePurple.color,
             exposurePending: exposurePending.color,
+            exposureRed: exposureRed.color,
             cardRadius: cardRadius,
             chipRadius: chipRadius,
             titleDesign: typography.titleDesign,

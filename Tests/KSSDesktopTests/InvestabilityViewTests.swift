@@ -239,3 +239,69 @@ final class InvestabilityViewTests: XCTestCase {
         XCTAssertTrue(ExposureAnswers.questions[7].hasPrefix("出境"))
     }
 }
+
+/// 色聚合分栏的机检门（UI 重设计）。
+///
+/// 原实现用 `LazyVGrid`，行内垂直对齐默认 center，37 行的浅绿块会把同一行里 13 行的
+/// 深绿、黄两块顶到中间去——真机截图上就是三个块顶边不齐加一大片空白。masonry 没有
+/// 「行」这个概念，也就没有这个问题；这组测试钉住它的两条性质：顺序不乱、列高均衡。
+final class ExposureMasonryTests: XCTestCase {
+
+    private func blocks(_ rows: [Int]) -> [ExposureMasonry.Block] {
+        rows.enumerated().map { index, count in
+            .init(id: "b\(index)", kind: .color("k\(index)"),
+                  title: "t\(index)", caption: "", rows: count)
+        }
+    }
+
+    /// 真实分布：深绿 13 / 浅绿 37 / 黄 13 / 橙 20 / 紫 3 / 红区 1 / 未定色 17。
+    private var realWorld: [ExposureMasonry.Block] { blocks([13, 37, 13, 20, 3, 1, 17]) }
+
+    func testColumnCountFollowsWidth() {
+        XCTAssertEqual(ExposureMasonry.columnCount(forWidth: 1080), 3)
+        XCTAssertEqual(ExposureMasonry.columnCount(forWidth: 760), 2)
+        XCTAssertEqual(ExposureMasonry.columnCount(forWidth: 420), 1,
+                       "展开区打开后主区会窄到只能单列，此时不该硬塞两列")
+    }
+
+    func testEveryBlockLandsExactlyOnce() {
+        for columns in 1...3 {
+            let placed = ExposureMasonry.distribute(realWorld, columns: columns).flatMap { $0 }
+            XCTAssertEqual(placed.count, realWorld.count, "列数 \(columns) 下有块丢了或重了")
+            XCTAssertEqual(Set(placed.map(\.id)), Set(realWorld.map(\.id)))
+        }
+    }
+
+    /// 语义顺序（五色刻度 → 红区 → 未定色）不能被打乱：读者要按暴露程度扫下来。
+    func testOrderIsPreservedWithinEachColumn() {
+        let columns = ExposureMasonry.distribute(realWorld, columns: 3)
+        let index = Dictionary(uniqueKeysWithValues: realWorld.enumerated().map { ($1.id, $0) })
+        for column in columns {
+            let positions = column.map { index[$0.id]! }
+            XCTAssertEqual(positions, positions.sorted(), "列内块序被打乱了")
+        }
+    }
+
+    /// 均衡到什么程度：最高列不该超过最矮列的两倍——这是「不再有半页空白」的可测版本。
+    func testColumnsAreBalancedEnough() {
+        let columns = ExposureMasonry.distribute(realWorld, columns: 3)
+        let heights = columns.map { $0.reduce(0) { $0 + $1.weight } }
+        guard let tallest = heights.max(), let shortest = heights.min(), shortest > 0 else {
+            return XCTFail("列高算不出来：\(heights)")
+        }
+        XCTAssertLessThanOrEqual(Double(tallest) / Double(shortest), 2.0,
+                                 "列高 \(heights) 失衡，页面会空掉一大块")
+    }
+
+    func testSingleColumnKeepsGlobalOrder() {
+        let columns = ExposureMasonry.distribute(realWorld, columns: 1)
+        XCTAssertEqual(columns.count, 1)
+        XCTAssertEqual(columns[0].map(\.id), realWorld.map(\.id))
+    }
+
+    /// 列数传 0 或负数不该崩——GeometryReader 首帧宽度可能是 0。
+    func testDegenerateColumnCountFallsBackToOne() {
+        XCTAssertEqual(ExposureMasonry.distribute(realWorld, columns: 0).count, 1)
+        XCTAssertEqual(ExposureMasonry.columnCount(forWidth: 0), 1)
+    }
+}

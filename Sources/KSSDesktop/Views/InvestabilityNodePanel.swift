@@ -65,14 +65,24 @@ struct InvestabilityNodePanel: View {
     private var nodeInfo: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionLabel("节点信息")
-            HStack(spacing: 6) {
-                Circle()
+            // 主色是这张面板的主角：用整条色轨承载，与泳道瓦片同一套视觉语言。
+            HStack(spacing: 0) {
+                Rectangle()
                     .fill(theme.exposureColor(forKey: node.primaryColor) ?? theme.exposurePending)
-                    .frame(width: 10, height: 10)
+                    .frame(width: 4)
                 Text(Self.primaryText(node: node, palette: palette))
                     .font(KSSFont.themed(13, .semibold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
+                    .padding(.leading, 9)
+                    .padding(.trailing, 10)
+                    .padding(.vertical, 7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .background(
+                (theme.exposureColor(forKey: node.primaryColor) ?? theme.exposurePending)
+                    .opacity(0.10)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             if let secondary = Self.secondaryText(node: node, palette: palette) {
                 infoRow("次色与限定", secondary)
             }

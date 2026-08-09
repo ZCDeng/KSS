@@ -88,32 +88,51 @@ struct ExposureBadge: View {
     }
 }
 
-/// 色点本体。未上图实心灰、待定色用未定色槽加环、五色实心。
+/// 色块本体。
+///
+/// 形状本身也是一路信息，不只是色：**未上图是圆点，已上图是方块**。深绿与浅绿在 8pt
+/// 圆点上分不开是实测过的（xcom 亮色下 #0D4627 与 #2A8452 都是暗绿），所以已上图改用
+/// 圆角方块——同样的边长下色面积多约三成，且方/圆的差别在缩略尺寸下先于色被看见。
 struct ExposureDot: View {
     @Environment(\.kssTheme) private var theme
     var exposure: ExposureStock?
-    var size: CGFloat = 8
+    var size: CGFloat = 9
 
     var body: some View {
         switch exposure?.state ?? .unlabelled {
         case .unlabelled:
             Circle()
-                .fill(theme.textSecondary.opacity(0.55))
-                .frame(width: size, height: size)
+                .fill(theme.textSecondary)
+                .frame(width: size - 1, height: size - 1)
         case .pendingColor:
-            Circle()
+            RoundedRectangle(cornerRadius: 2.5, style: .continuous)
                 .fill(theme.exposurePending)
-                .overlay(Circle().strokeBorder(theme.textPrimary.opacity(0.35), lineWidth: 1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+                        .strokeBorder(theme.textPrimary.opacity(0.28), lineWidth: 1)
+                )
                 .frame(width: size, height: size)
         case .labelled:
-            Circle()
+            RoundedRectangle(cornerRadius: 2.5, style: .continuous)
                 .fill(theme.exposureColor(forKey: exposure?.colorKey ?? "") ?? theme.textSecondary)
                 .frame(width: size, height: size)
         }
     }
 }
 
-/// 区位标。红区做成填充胶囊，视觉权重不低于色点（R22）；其余为次级文本。
+/// 图例与区块头用的纯色样本。比色点大一圈，因为图例是学这套色的地方。
+struct ExposureSwatch: View {
+    var color: Color
+    var size: CGFloat = 13
+    var body: some View {
+        RoundedRectangle(cornerRadius: 3, style: .continuous)
+            .fill(color)
+            .frame(width: size, height: size)
+    }
+}
+
+/// 区位标。红区做成实心方角标签，视觉权重不低于色块（R22）；其余为次级文本。
+/// 用圆角矩形而不是胶囊：胶囊在这套界面里表示可切换/可移除，区位是只读判定结果。
 /// 文案是 Python 算好的成品串（KTD2），这里不拼、不改口径。
 struct ExposureZoneLabel: View {
     @Environment(\.kssTheme) private var theme
@@ -124,10 +143,17 @@ struct ExposureZoneLabel: View {
         if zone.isRed {
             Text(zone.display)
                 .font(KSSFont.themed(fontSize, .bold, theme: theme))
-                .foregroundStyle(theme.onAccent)
-                .padding(.horizontal, 6)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 5)
                 .padding(.vertical, 1.5)
-                .background(theme.up, in: Capsule())
+                .background(theme.exposureRed, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                // 描边负责边界，填充负责白字。两者不能由同一个色兼顾：
+                // 白字要 4.5:1 就把红压到 L ≤ 0.183，而偏亮的暗色 surface 要 3:1 又要求
+                // L ≥ 0.199——这两个区间不相交，所以边界交给描边。
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .stroke(theme.textPrimary.opacity(0.22), lineWidth: 1)
+                )
                 .lineLimit(1)
         } else {
             Text(zone.display)
@@ -155,7 +181,7 @@ struct ExposureMarkButton: View {
             if isUnlabelled {
                 Button(action: action) {
                     Circle()
-                        .fill(theme.textSecondary.opacity(0.55))
+                        .fill(theme.textSecondary)
                         .frame(width: 9, height: 9)
                         .frame(width: 24, height: 24)
                         .contentShape(Rectangle())

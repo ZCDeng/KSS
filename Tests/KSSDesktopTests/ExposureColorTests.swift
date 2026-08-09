@@ -110,6 +110,46 @@ final class ExposureColorTests: XCTestCase {
         }
     }
 
+    // MARK: - 个股红区红（UI 重设计新增槽）
+
+    /// 红区标是白字铺在实填上。直接借 `up` 做填充时白字只有 3.6:1，够不着 4.5:1，
+    /// 所以红区有自己的槽；这条把那个理由钉死。
+    func testExposureRedCarriesWhiteTextAndSeparatesFromSurface() {
+        let white = ThemeColor(0xFFFFFF)
+        for system in KSSDesignSystem.allCases {
+            for appearance in KSSAppearance.allCases {
+                let p = ThemeCatalog.palette(for: system, appearance: appearance)
+                XCTAssertGreaterThanOrEqual(
+                    white.contrastRatio(against: p.exposureRed), 4.5,
+                    "\(system).\(appearance) 红区标的白字对比度不足")
+                // 不检查填充对 surface 的 3:1：白字要 4.5:1 就把红压到 L ≤ 0.183，
+                // 而偏亮的暗色 surface 要 3:1 又要求 L ≥ 0.199，两个区间不相交。
+                // 边界因此由 ExposureZoneLabel 的 1pt 描边承担，不由填充承担。
+            }
+        }
+    }
+
+    /// 红仍然不是行业色（plan R2）：查表查不到，且与五色都不相等。
+    func testExposureRedIsNotAnIndustryColor() {
+        for system in KSSDesignSystem.allCases {
+            for appearance in KSSAppearance.allCases {
+                let p = ThemeCatalog.palette(for: system, appearance: appearance)
+                XCTAssertNil(p.exposureColor(forKey: "red"))
+                for (key, color) in p.exposureIndustryColors {
+                    XCTAssertNotEqual(p.exposureRed, color, "红区红撞上了行业色 \(key)")
+                }
+            }
+        }
+    }
+
+    /// 红区红与涨跌的红分开：同屏出现「涨」和「红区」两种红会互相冒充。
+    func testExposureRedDiffersFromMarketUp() {
+        for appearance in KSSAppearance.allCases {
+            let p = ThemeCatalog.palette(for: .xcom, appearance: appearance)
+            XCTAssertNotEqual(p.exposureRed, p.up)
+        }
+    }
+
     func testMarketColorsUnaffected() {
         // 暴露色是新增槽位，不该动既有的涨跌语义色。
         let a = ThemeCatalog.palette(for: .clayM3, appearance: .dark)
