@@ -319,6 +319,56 @@ struct StockBrowserView: View {
     }
 }
 
+/// 个股档案区的四段：复盘结论 / 紫苏叶富化 / 可投资地图 / 8 问尽调。
+/// 原来是四张卡竖着摞，且不是每只票都齐——摞出来行情图被推到一屏之外，缺的那几段
+/// 还留着空位。收进一个 block 用 Tab 手动切：没内容的段不出 Tab，录入面永远在。
+enum StockDossierSection: String, CaseIterable, Hashable {
+    case review
+    case perilla
+    case exposure
+    case questions
+
+    var label: String {
+        switch self {
+        case .review: return "复盘结论"
+        case .perilla: return "紫苏叶富化"
+        case .exposure: return "可投资地图"
+        case .questions: return "8 问尽调"
+        }
+    }
+
+    /// 可见分段（纯函数，可单测）。复盘与富化按有无内容决定；地图与 8 问是录入面，
+    /// 空着也得能进去补标注/答题，所以恒在——「没数据」和「不能录」是两回事。
+    static func available(hasReview: Bool, hasEnrichment: Bool) -> [StockDossierSection] {
+        var out: [StockDossierSection] = []
+        if hasReview { out.append(.review) }
+        if hasEnrichment { out.append(.perilla) }
+        out.append(.exposure)
+        out.append(.questions)
+        return out
+    }
+
+    /// 选中项落位：换股后原选中段可能不存在（上只票有复盘、这只没有），
+    /// 回落到第一个可见段，不把用户留在空段上。存在则保持——扫自选时 Tab 是粘的。
+    static func resolve(selected: StockDossierSection,
+                        available: [StockDossierSection]) -> StockDossierSection {
+        available.contains(selected) ? selected : (available.first ?? .exposure)
+    }
+
+    /// Tab 上的待办点：未上图、8 问没答满，不用逐个点进去看。
+    /// 标注字典没加载完不点——那时候 nil 只代表「还不知道」。
+    static func pending(hasPrimaryNode: Bool,
+                        exposureLoaded: Bool,
+                        decided: Int,
+                        total: Int) -> Set<StockDossierSection> {
+        guard exposureLoaded else { return [] }
+        var out: Set<StockDossierSection> = []
+        if !hasPrimaryNode { out.insert(.exposure) }
+        if decided < total { out.insert(.questions) }
+        return out
+    }
+}
+
 struct StockDetailView: View {
     @Environment(\.kssTheme) private var theme
     var detail: StockDetail
@@ -344,6 +394,8 @@ struct StockDetailView: View {
     @State private var intradayBars: IntradayBars? = nil
     @State private var intradayLoading = false
     @State private var intradayError: String? = nil
+    /// 档案区选中段。View 不随换股重建（只有图表 VStack 带 .id），所以这份选择跨标的保留。
+    @State private var dossierSection: StockDossierSection = .review
 
     private var analysis: StockAnalysis {
         StockAnalysis(points: detail.history, latest: detail.latest)
@@ -442,6 +494,78 @@ struct StockDetailView: View {
         )
     }
 
+    private var dossierSections: [StockDossierSection] {
+        StockDossierSection.available(
+            hasReview: detail.reviewConclusion != nil
+                || detail.miSignal != nil
+                || !(detail.indicatorSignals ?? []).isEmpty,
+            hasEnrichment: enrichment != nil
+        )
+    }
+
+    /// 档案区：四段收进一个 block，Tab 手动切。段内各卡不再自带外框与标题
+    /// （Tab 已经报了名），只留自己的徽标/操作，避免框套框。
+    @ViewBuilder
+    private var dossierBlock: some View {
+        let sections = dossierSections
+        let active = StockDossierSection.resolve(selected: dossierSection, available: sections)
+        let stock = exposure.stock(detail.symbol)
+        VStack(alignment: .leading, spacing: 12) {
+            KSSSegmentedControl(
+                options: sections.map { (key: $0, label: $0.label) },
+                selection: Binding(get: { active }, set: { dossierSection = $0 }),
+                badgedKeys: StockDossierSection.pending(
+                    hasPrimaryNode: stock?.primaryNode != nil,
+                    exposureLoaded: exposure.loaded,
+                    decided: stock?.zone.decided ?? 0,
+                    total: ExposureAnswers.questionCount
+                )
+            )
+            switch active {
+            case .review:
+                StockReviewSection(
+                    review: detail.reviewConclusion,
+                    miSignal: detail.miSignal,
+                    indicatorSignals: detail.indicatorSignals
+                )
+            case .perilla:
+                if let enrichment {
+                    PerillaEnrichmentSection(data: enrichment)
+                }
+            case .exposure:
+                ExposurePathSection(
+                    symbol: detail.symbol,
+                    exposure: stock,
+                    loaded: exposure.loaded,
+                    axes: exposure.axes,
+                    palette: exposure.palette,
+                    onEdit: { exposure.onMark(detail.symbol) },
+                    onRemoveSecondary: { nodeId in
+                        let primary = stock?.primaryNode?.nodeId ?? ""
+                        let seconds = (stock?.secondaryNodes ?? [])
+                            .map(\.nodeId).filter { $0 != nodeId }
+                        exposure.onSetLabel(detail.symbol, primary, seconds)
+                    },
+                    onDeletePrimary: { exposure.onSetLabel(detail.symbol, "", []) }
+                )
+            case .questions:
+                ExposureQuestionsSection(
+                    symbol: detail.symbol,
+                    exposure: stock,
+                    loaded: exposure.loaded,
+                    onAnswer: { question, value in
+                        await exposure.onSetAnswer(detail.symbol, question, value)
+                    },
+                    draft: exposure.drafts[detail.symbol],
+                    isDrafting: exposure.draftingSymbol == detail.symbol,
+                    onRequestDraft: { exposure.onDraftAnswers(detail.symbol) }
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .kssCard(padding: 16)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
@@ -496,42 +620,7 @@ struct StockDetailView: View {
                     }
                 }
 
-                if detail.reviewConclusion != nil || detail.miSignal != nil || !(detail.indicatorSignals ?? []).isEmpty {
-                    StockReviewCard(review: detail.reviewConclusion, miSignal: detail.miSignal, indicatorSignals: detail.indicatorSignals)
-                }
-
-                if let enrichment {
-                    PerillaEnrichmentCard(data: enrichment)
-                }
-
-                // 可投资地图：节点路径 + 8 问，与复盘卡、紫苏叶富化卡并列（R21）。
-                ExposurePathCard(
-                    symbol: detail.symbol,
-                    exposure: exposure.stock(detail.symbol),
-                    loaded: exposure.loaded,
-                    axes: exposure.axes,
-                    palette: exposure.palette,
-                    onEdit: { exposure.onMark(detail.symbol) },
-                    onRemoveSecondary: { nodeId in
-                        let current = exposure.stock(detail.symbol)
-                        let primary = current?.primaryNode?.nodeId ?? ""
-                        let seconds = (current?.secondaryNodes ?? [])
-                            .map(\.nodeId).filter { $0 != nodeId }
-                        exposure.onSetLabel(detail.symbol, primary, seconds)
-                    },
-                    onDeletePrimary: { exposure.onSetLabel(detail.symbol, "", []) }
-                )
-                ExposureQuestionsCard(
-                    symbol: detail.symbol,
-                    exposure: exposure.stock(detail.symbol),
-                    loaded: exposure.loaded,
-                    onAnswer: { question, value in
-                        await exposure.onSetAnswer(detail.symbol, question, value)
-                    },
-                    draft: exposure.drafts[detail.symbol],
-                    isDrafting: exposure.draftingSymbol == detail.symbol,
-                    onRequestDraft: { exposure.onDraftAnswers(detail.symbol) }
-                )
+                dossierBlock
 
                 SectionHeader("分析指标")
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 10)], spacing: 10) {
@@ -646,7 +735,8 @@ struct StockDetailView: View {
 /// Large interactive K-line view. Mouse-wheel zoom and drag-pan work here
 /// without the surrounding ScrollView intercepting the wheel.
 /// 个股复盘结论卡：每日复盘标题/预期/建议 + MI 滚动信号（同源 Signal Pack）。
-struct StockReviewCard: View {
+/// 复盘结论段（档案区 Tab 之一）。标题由 Tab 承担，这里只留 headline 与日期徽标。
+struct StockReviewSection: View {
     @Environment(\.kssTheme) private var theme
     var review: StockReview?
     var miSignal: MISignal? = nil
@@ -656,27 +746,23 @@ struct StockReviewCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "doc.text.magnifyingglass")
-                    .font(KSSFont.themed(13, .semibold, theme: theme))
-                    .foregroundStyle(theme.accent)
-                Text("复盘结论")
-                    .font(KSSFont.themed(15, .bold, theme: theme))
-                    .foregroundStyle(theme.textPrimary)
-                if let review, !review.headline.isEmpty {
-                    Text(review.headline)
-                        .font(KSSFont.themed(11.5, .semibold, theme: theme))
-                        .foregroundStyle(theme.onAccent)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(theme.accent, in: Capsule())
-                        .lineLimit(1)
-                }
-                Spacer()
-                if let review {
-                    StatusBadge(icon: "calendar", text: review.date, tint: theme.accent)
-                } else if let asof = miSignal?.asof {
-                    StatusBadge(icon: "calendar", text: asof, tint: theme.accent)
+            if hasMetaRow {
+                HStack(spacing: 8) {
+                    if let review, !review.headline.isEmpty {
+                        Text(review.headline)
+                            .font(KSSFont.themed(11.5, .semibold, theme: theme))
+                            .foregroundStyle(theme.onAccent)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(theme.accent, in: Capsule())
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    if let review {
+                        StatusBadge(icon: "calendar", text: review.date, tint: theme.accent)
+                    } else if let asof = miSignal?.asof {
+                        StatusBadge(icon: "calendar", text: asof, tint: theme.accent)
+                    }
                 }
             }
 
@@ -723,7 +809,12 @@ struct StockReviewCard: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .kssCard(padding: 16)
+    }
+
+    /// headline 与日期都没有就不画这一行，免得留一道空白。
+    private var hasMetaRow: Bool {
+        if let review { return !review.headline.isEmpty || !review.date.isEmpty }
+        return miSignal?.asof != nil
     }
 
     private var genericSignals: [IndicatorSignal] {
@@ -813,25 +904,22 @@ struct StockReviewCard: View {
     }
 }
 
-/// 紫苏叶个股富化卡：机构持仓动态 / PE 分位 / 美股对标。缺失项显示「暂不可用」。
-struct PerillaEnrichmentCard: View {
+/// 紫苏叶个股富化段：机构持仓动态 / PE 分位 / 美股对标。缺失项显示「暂不可用」。
+struct PerillaEnrichmentSection: View {
     @Environment(\.kssTheme) private var theme
     var data: PerillaEnrichment
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text("🌿 紫苏叶富化")
-                    .font(KSSFont.themed(15, .bold, theme: theme))
-                    .foregroundStyle(theme.textPrimary)
-                if let tier = data.tier {
+            if let tier = data.tier {
+                HStack(spacing: 8) {
                     Text(tier == "core" ? "核心" : "国产替代主线")
                         .font(KSSFont.themed(11.5, .semibold, theme: theme))
                         .foregroundStyle(theme.onAccent)
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(theme.accent, in: Capsule())
+                    Spacer()
                 }
-                Spacer()
             }
 
             row("机构持仓动态", institutionalText)
@@ -839,7 +927,6 @@ struct PerillaEnrichmentCard: View {
             row("美股对标", usPeerText)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .kssCard(padding: 16)
     }
 
     private func row(_ label: String, _ value: String) -> some View {

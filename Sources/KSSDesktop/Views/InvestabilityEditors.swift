@@ -207,7 +207,8 @@ struct ExposureNodePickerView: View {
 // MARK: - 个股详情：节点路径卡（R21）
 
 /// 行业色 + 主副节点路径 + 增改删入口 + 标注最后更新时间。
-struct ExposurePathCard: View {
+/// 档案区 Tab 之一：标题由 Tab 承担，这里只留色/区徽标与改标注入口。
+struct ExposurePathSection: View {
     @Environment(\.kssTheme) private var theme
     var symbol: String
     var exposure: ExposureStock?
@@ -223,9 +224,6 @@ struct ExposurePathCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Text("可投资地图")
-                    .font(KSSFont.themed(15, .bold, theme: theme))
-                    .foregroundStyle(theme.textPrimary)
                 ExposureBadge(exposure: exposure, loaded: loaded, compact: false)
                 Spacer()
                 Button(action: onEdit) {
@@ -304,7 +302,6 @@ struct ExposurePathCard: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .kssCard(padding: 16)
         .confirmationDialog("删除主节点", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("删除并回到未上图", role: .destructive) { onDeletePrimary() }
             Button("取消", role: .cancel) {}
@@ -340,7 +337,8 @@ struct ExposurePathCard: View {
 // MARK: - 个股详情：8 问录入（R12/R13，F3）
 
 /// 逐题三态录入。每次保存后区位串由桥接重算返回，桌面端不自行计算（KTD2）。
-struct ExposureQuestionsCard: View {
+/// 档案区 Tab 之一：切到这一段就是要答题，不再套一层折叠。
+struct ExposureQuestionsSection: View {
     @Environment(\.kssTheme) private var theme
     var symbol: String
     var exposure: ExposureStock?
@@ -351,43 +349,32 @@ struct ExposureQuestionsCard: View {
     var isDrafting: Bool = false
     var onRequestDraft: () -> Void = {}
 
-    @State private var expanded = false
     @State private var busyQuestion: Int?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Button { withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() } } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(theme.textSecondary)
-                    Text("8 问尽调")
-                        .font(KSSFont.themed(15, .bold, theme: theme))
-                        .foregroundStyle(theme.textPrimary)
-                    if let zone = exposure?.zone {
-                        ExposureZoneLabel(zone: zone, fontSize: 11.5)
-                    }
-                    Spacer()
-                    Text("已定 \(exposure?.zone.decided ?? 0)/\(ExposureAnswers.questionCount)")
+            HStack(spacing: 8) {
+                // 区位标自带「已定 n/8」，两处都写就成了同一句话说两遍；
+                // 没有区位标（标注未加载）时才补一个纯计数。
+                if let zone = exposure?.zone {
+                    ExposureZoneLabel(zone: zone, fontSize: 11.5)
+                } else {
+                    Text("已定 0/\(ExposureAnswers.questionCount)")
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(theme.textSecondary)
                 }
-                .contentShape(Rectangle())
+                Spacer()
             }
-            .buttonStyle(.plain)
 
-            if expanded {
-                Text("区位与行业色是并列的两个维度，答案不改写行业色。「未知」不计入已定题数。")
-                    .font(KSSFont.themed(11, theme: theme))
-                    .foregroundStyle(theme.textSecondary)
-                draftBar
-                ForEach(Array(ExposureAnswers.questions.enumerated()), id: \.offset) { index, text in
-                    questionRow(number: index + 1, text: text)
-                }
+            Text("区位与行业色是并列的两个维度，答案不改写行业色。「未知」不计入已定题数。")
+                .font(KSSFont.themed(11, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+            draftBar
+            ForEach(Array(ExposureAnswers.questions.enumerated()), id: \.offset) { index, text in
+                questionRow(number: index + 1, text: text)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .kssCard(padding: 16)
     }
 
     /// 助手草拟入口与状态。草稿是**草稿**：不入库，也不预选任何选项，
