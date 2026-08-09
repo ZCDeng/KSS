@@ -180,7 +180,7 @@ struct InvestabilityColorView: View {
                 if node.stale {
                     Image(systemName: "clock.badge.exclamationmark")
                         .font(.system(size: 9.5, weight: .semibold))
-                        .foregroundStyle(theme.ma5)
+                        .foregroundStyle(theme.textSecondary)
                 }
                 Spacer(minLength: 8)
                 Text(map.axes[node.axis]?.groups[node.group] ?? node.group)

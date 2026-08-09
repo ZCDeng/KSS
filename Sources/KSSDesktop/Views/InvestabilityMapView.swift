@@ -462,13 +462,18 @@ struct InvestabilityNodeTile: View {
                                     .stroke(theme.hairline, lineWidth: 1)
                             )
                     }
+                    // 色名用中性色，不跟着上色：色由左缘色轨承担，文字只负责可读。
+                    // 把文字也染成暴露色是重复编码，代价是对比度——实测 xcom 亮色下
+                    // 浅绿 4.24:1、待定色 2.77:1，两个都够不着正文 4.5:1。
                     Text(colorLabel)
                         .font(KSSFont.themed(10, .semibold, theme: theme))
-                        .foregroundStyle(color)
+                        .foregroundStyle(theme.textSecondary)
                     if node.stale {
+                        // 陈旧标记不再用 ma5：那是 5 日均线的图表槽，对暴露黄的 ΔE00 只有
+                        // 25.9，同屏三套暖色会互撞。形状（时钟）加 tooltip 已经够认。
                         Image(systemName: "clock.badge.exclamationmark")
                             .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundStyle(theme.ma5)
+                            .foregroundStyle(theme.textSecondary)
                     }
                     stateMark
                 }

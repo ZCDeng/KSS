@@ -44,12 +44,12 @@ struct ExposureBadge: View {
                 }
                 Text(stateText)
                     .font(KSSFont.themed(fontSize, .semibold, theme: theme))
-                    .foregroundStyle(stateTint)
+                    .foregroundStyle(theme.textSecondary)
                     .lineLimit(1)
                 if let stale = exposure?.isStale, stale {
                     Image(systemName: "clock.badge.exclamationmark")
                         .font(.system(size: fontSize - 0.5, weight: .semibold))
-                        .foregroundStyle(theme.ma5)
+                        .foregroundStyle(theme.textSecondary)
                         .help("主节点复核日期已超 120 天")
                 }
                 if let zone = exposure?.zone, exposure?.state != .unlabelled {
@@ -65,15 +65,6 @@ struct ExposureBadge: View {
     private var stateText: String {
         guard let exposure else { return "未上图" }
         return exposure.stateLabel.isEmpty ? "未上图" : exposure.stateLabel
-    }
-
-    private var stateTint: Color {
-        guard let exposure else { return theme.textSecondary }
-        switch exposure.state {
-        case .unlabelled:   return theme.textSecondary
-        case .pendingColor: return theme.exposurePending
-        case .labelled:     return theme.exposureColorOrUnknown(exposure.colorKey)
-        }
     }
 
     private var helpText: String {
