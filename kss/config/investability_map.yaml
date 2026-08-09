@@ -1,0 +1,1007 @@
+# 可投资地图 —— 子行业节点树与五色暴露分类
+#
+# 用途：
+# - 给个股一个「踩在什么规则风险上」的维度，与资金流、动量、产业链深度并列。
+# - 桥接层单点读本文件，桌面端与 MCP 共用同一份解析结果（plan KTD1）。
+#
+# 内容权威：
+#   ~/Documents/2025nJ/myResearch/Keynes Analysis to this world.pdf
+#   V1.1 扩地图版 · 2026-08-09 · 第 5 章「可投资地图」
+#   节点、色与读法照录该章，未给到节点级色标处记 pending，不由实现方补判断（plan R4）。
+#
+# 落点纪律（plan KTD1）：
+#   本文件随签名包分发，位于 kss/config/ 而非仓库顶层 storage/ ——
+#   打包脚本 rsync 整个 kss/ 进应用资源，同时删掉顶层 storage/。
+#   本文件在打包版内只读；个股标注与 8 问答案走 kss.db（plan KTD8 / R11）。
+#
+# 色板（plan R2）：行业色只有五种，红不是行业色。
+#   红保留给个股级红区（8 问答出 5 项以上高暴露），见 plan R14。
+#
+# 维护（plan R23）：
+#   按季度人工复核，改完先跑校验门再提交，随下一次应用重签打包发布生效。
+#   每次复核更新该节点的 last_reviewed。
+
+version: 1
+source_version: 'V1.1'
+source_doc: 'Keynes Analysis to this world.pdf'
+updated: '2026-08-09'
+
+# 五色定义。key 是稳定机器键，桌面端与 agent 都按 key 取色与文案。
+palette:
+  deep_green:
+    label: 深绿
+    meaning: 底座 / 低暴露
+  light_green:
+    label: 浅绿
+    meaning: 替代 / 政策主航道
+  yellow:
+    label: 黄
+    meaning: 外需 / 全球定价
+  orange:
+    label: 橙
+    meaning: 许可 / 点名博弈
+  purple:
+    label: 紫
+    meaning: 反制筹码
+
+# 主轴与所属组。axis 三取一，group 决定泳道（plan R16）。
+axes:
+  six_networks:
+    label: 六张网
+    source_ref: '5.2'
+    groups:
+      water: 水网
+      grid: 新型电网
+      compute: 算力网
+      telecom: 新一代通信网
+      underground: 城市地下管网
+      logistics: 物流网
+  strategic_industries:
+    label: 十五五战略性新兴产业
+    source_ref: '5.3'
+    groups:
+      infotech: 新一代信息技术
+      newenergy: 新能源
+      materials: 新材料
+      autos: 智能网联汽车
+      robotics: 机器人
+      biomed: 生物医药
+      equipment: 高端装备
+      aerospace: 航空航天
+  future_industries:
+    label: 十五五未来产业
+    source_ref: '5.4'
+    groups:
+      quantum: 量子科技
+      biomfg: 生物制造
+      hydrogen: 氢能与核聚变
+      bci: 脑机接口
+      embodied: 具身智能
+      sixg: 第六代移动通信
+
+# 节点。primary_color 为 pending 表示源文未给到节点级色标或给出互相冲突的两处标注。
+# tier 仅新一代信息技术在源表中给出，其余留空且不参与排布（plan R5）。
+# qualifier 承载源文的限定说明，次色不取红时红色限定改写进这里（plan R3）。
+nodes:
+
+  # ---------- 六张网 · 水网 ----------
+  - node_id: water.01
+    name: 水利工程/设计
+    axis: six_networks
+    group: water
+    primary_color: deep_green
+    reading: 联通江河湖库与城乡供排水
+    source_ref: '5.2 水网；5.6 深绿条「水网/地下管网市政」'
+    last_reviewed: '2026-08-09'
+  - node_id: water.02
+    name: 泵阀管材
+    axis: six_networks
+    group: water
+    primary_color: deep_green
+    reading: 水资源调配与水安全的硬件底座
+    source_ref: '5.2 水网；5.6 深绿条'
+    last_reviewed: '2026-08-09'
+  - node_id: water.03
+    name: 水务运营
+    axis: six_networks
+    group: water
+    primary_color: deep_green
+    reading: 公用属性，现金流稳定
+    source_ref: '5.2 水网；5.6 深绿条'
+    last_reviewed: '2026-08-09'
+  - node_id: water.04
+    name: 节水智慧灌区
+    axis: six_networks
+    group: water
+    primary_color: pending
+    reading: ''
+    source_ref: '5.2 水网标「深绿为主」，该节点偏技术替代，源文未点名'
+    last_reviewed: '2026-08-09'
+  - node_id: water.05
+    name: 水质监测治理
+    axis: six_networks
+    group: water
+    primary_color: pending
+    reading: ''
+    source_ref: '5.2 水网标「深绿为主」，该节点偏技术替代，源文未点名'
+    last_reviewed: '2026-08-09'
+
+  # ---------- 六张网 · 新型电网 ----------
+  - node_id: grid.01
+    name: 特高压/主网设备
+    axis: six_networks
+    group: grid
+    primary_color: deep_green
+    reading: 源网荷储的骨架，财政与安全刚需
+    source_ref: '5.6 深绿条「特高压/主网」'
+    last_reviewed: '2026-08-09'
+  - node_id: grid.02
+    name: 配网一二次
+    axis: six_networks
+    group: grid
+    primary_color: deep_green
+    reading: 电网底座
+    source_ref: '5.2 六网一览「深绿设备」'
+    last_reviewed: '2026-08-09'
+  - node_id: grid.03
+    name: 电化学储能
+    axis: six_networks
+    group: grid
+    primary_color: light_green
+    reading: 绿电接入的关键环节
+    source_ref: '5.6 浅绿条「储能」'
+    last_reviewed: '2026-08-09'
+  - node_id: grid.04
+    name: 虚拟电厂软件
+    axis: six_networks
+    group: grid
+    primary_color: light_green
+    reading: 智能调度，信创慢变量
+    source_ref: '5.2 六网一览「浅绿储能软件」'
+    last_reviewed: '2026-08-09'
+  - node_id: grid.05
+    name: 电力芯片/工控安全
+    axis: six_networks
+    group: grid
+    primary_color: orange
+    reading: 管制与许可博弈的落点
+    source_ref: '5.2 chip 高亮橙；5.2 六网一览「局部橙工控芯」'
+    last_reviewed: '2026-08-09'
+  - node_id: grid.06
+    name: 柔性输电
+    axis: six_networks
+    group: grid
+    primary_color: deep_green
+    reading: 电网底座
+    source_ref: '5.2 六网一览「深绿设备」'
+    last_reviewed: '2026-08-09'
+
+  # ---------- 六张网 · 算力网 ----------
+  - node_id: compute.01
+    name: IDC/智算中心
+    axis: six_networks
+    group: compute
+    primary_color: light_green
+    reading: 东数西算的物理承载
+    source_ref: '5.6 浅绿条「IDC/液冷」；5.2 六网一览「浅绿 IDC/液冷」'
+    last_reviewed: '2026-08-09'
+  - node_id: compute.02
+    name: 液冷/温控/电力模块
+    axis: six_networks
+    group: compute
+    primary_color: light_green
+    reading: 替代斜率清晰
+    source_ref: '5.6 浅绿条「IDC/液冷」'
+    last_reviewed: '2026-08-09'
+  - node_id: compute.03
+    name: 服务器整机
+    axis: six_networks
+    group: compute
+    primary_color: yellow
+    reading: 出海与全球定价
+    source_ref: '5.2 六网一览「黄光模块服务器」'
+    last_reviewed: '2026-08-09'
+  - node_id: compute.04
+    name: 国产AI芯片
+    axis: six_networks
+    group: compute
+    primary_color: orange
+    reading: 先进计算管制的正面战场
+    source_ref: '5.2 chip 高亮橙；5.6 橙条「AI 训练芯片」'
+    last_reviewed: '2026-08-09'
+  - node_id: compute.05
+    name: 光模块/连接
+    axis: six_networks
+    group: compute
+    primary_color: yellow
+    reading: 外需驱动，全球比较定价
+    source_ref: '5.6 黄条「光模块」'
+    last_reviewed: '2026-08-09'
+  - node_id: compute.06
+    name: 算力调度软件
+    axis: six_networks
+    group: compute
+    primary_color: light_green
+    reading: 信创慢变量
+    source_ref: '5.6 浅绿条「信创软件」；5.2 网级浅绿'
+    last_reviewed: '2026-08-09'
+  - node_id: compute.07
+    name: 枢纽电力配套
+    axis: six_networks
+    group: compute
+    primary_color: deep_green
+    reading: 公用与电网底座
+    source_ref: '5.6 深绿条「公用」「电网底座」'
+    last_reviewed: '2026-08-09'
+
+  # ---------- 六张网 · 新一代通信网 ----------
+  - node_id: telecom.01
+    name: 主设备
+    axis: six_networks
+    group: telecom
+    primary_color: orange
+    secondary_color: yellow
+    qualifier: 海外市场受点名影响最直接，内需部分按外需定价
+    reading: 5G-A/6G 主轴
+    source_ref: '5.6 橙条「主设备海外」；5.2 网级含黄'
+    last_reviewed: '2026-08-09'
+  - node_id: telecom.02
+    name: 射频/天线/滤波
+    axis: six_networks
+    group: telecom
+    primary_color: light_green
+    reading: 替代弹性好
+    source_ref: '5.2 六网一览「浅绿射频光器件」'
+    last_reviewed: '2026-08-09'
+  - node_id: telecom.03
+    name: 光纤光器件
+    axis: six_networks
+    group: telecom
+    primary_color: light_green
+    reading: 替代弹性好
+    source_ref: '5.2 六网一览「浅绿射频光器件」'
+    last_reviewed: '2026-08-09'
+  - node_id: telecom.04
+    name: 卫星互联网
+    axis: six_networks
+    group: telecom
+    primary_color: orange
+    reading: 空天地海，国家任务与许可博弈并存
+    source_ref: '5.2 六网一览「橙 6G/卫星」'
+    last_reviewed: '2026-08-09'
+  - node_id: telecom.05
+    name: 物联网模组
+    axis: six_networks
+    group: telecom
+    primary_color: yellow
+    reading: 出口制造
+    source_ref: '5.6 黄条「物联网模组」'
+    last_reviewed: '2026-08-09'
+  - node_id: telecom.06
+    name: 工业互联网专网
+    axis: six_networks
+    group: telecom
+    primary_color: pending
+    reading: ''
+    source_ref: '5.2 网级标「黄/橙/浅绿」，源文未点名该节点'
+    last_reviewed: '2026-08-09'
+
+  # ---------- 六张网 · 城市地下管网 ----------
+  - node_id: underground.01
+    name: 管廊/市政施工
+    axis: six_networks
+    group: underground
+    primary_color: deep_green
+    reading: 城市韧性，财政刚需
+    source_ref: '5.6 深绿条「水网/地下管网市政」'
+    last_reviewed: '2026-08-09'
+  - node_id: underground.02
+    name: 管网更新改造
+    axis: six_networks
+    group: underground
+    primary_color: deep_green
+    reading: 供排水燃气更新
+    source_ref: '5.6 深绿条「水网/地下管网市政」'
+    last_reviewed: '2026-08-09'
+  - node_id: underground.03
+    name: 检测机器人/非开挖
+    axis: six_networks
+    group: underground
+    primary_color: pending
+    reading: ''
+    source_ref: '5.2 网级标「深绿为主」，该节点偏设备，源文未点名'
+    last_reviewed: '2026-08-09'
+  - node_id: underground.04
+    name: GIS一张图/数字孪生
+    axis: six_networks
+    group: underground
+    primary_color: pending
+    reading: ''
+    source_ref: '5.2 网级标「深绿为主」，该节点偏软件，源文未点名'
+    last_reviewed: '2026-08-09'
+  - node_id: underground.05
+    name: 传感器/边缘网关
+    axis: six_networks
+    group: underground
+    primary_color: pending
+    reading: ''
+    source_ref: '5.2 网级标「深绿为主」，该节点偏器件，源文未点名'
+    last_reviewed: '2026-08-09'
+
+  # ---------- 六张网 · 物流网 ----------
+  - node_id: logistics.01
+    name: 物流枢纽/园区
+    axis: six_networks
+    group: logistics
+    primary_color: deep_green
+    reading: 枢纽与多式联运的底座
+    source_ref: '5.6 深绿条「物流枢纽」'
+    last_reviewed: '2026-08-09'
+  - node_id: logistics.02
+    name: 多式联运设备
+    axis: six_networks
+    group: logistics
+    primary_color: light_green
+    reading: 降本增效的设备侧
+    source_ref: '5.2 六网一览「浅绿冷链自动化」'
+    last_reviewed: '2026-08-09'
+  - node_id: logistics.03
+    name: 冷链仓储设备
+    axis: six_networks
+    group: logistics
+    primary_color: light_green
+    reading: 内需替代
+    source_ref: '5.2 六网一览「浅绿冷链自动化」'
+    last_reviewed: '2026-08-09'
+  - node_id: logistics.04
+    name: 分拣/自动化仓
+    axis: six_networks
+    group: logistics
+    primary_color: light_green
+    reading: 内需替代
+    source_ref: '5.2 六网一览「浅绿冷链自动化」'
+    last_reviewed: '2026-08-09'
+  - node_id: logistics.05
+    name: TMS/WMS软件
+    axis: six_networks
+    group: logistics
+    primary_color: pending
+    reading: ''
+    source_ref: '5.2 网级标「深绿/浅绿/黄」，源文未点名该节点'
+    last_reviewed: '2026-08-09'
+  - node_id: logistics.06
+    name: 干线无人/配送
+    axis: six_networks
+    group: logistics
+    primary_color: yellow
+    reading: 无人驾驶，全球比较定价
+    source_ref: '5.2 六网一览「黄无人驾驶」'
+    last_reviewed: '2026-08-09'
+
+  # ---------- 十五五战新 · 新一代信息技术 ----------
+  - node_id: infotech.01
+    name: 互联网平台/云/网安/消费电子
+    axis: strategic_industries
+    group: infotech
+    tier: first
+    primary_color: yellow
+    secondary_color: light_green
+    qualifier: 源表标「黄→浅绿」，方向是向替代主航道演进
+    reading: 内需监管为主，出海看合规
+    source_ref: '5.3 新一代信息技术表'
+    last_reviewed: '2026-08-09'
+  - node_id: infotech.02
+    name: 芯片设计(消费/工控/车规)
+    axis: strategic_industries
+    group: infotech
+    tier: second
+    primary_color: yellow
+    secondary_color: light_green
+    qualifier: 源表标「黄→浅绿」
+    reading: 节点与 EDA 依赖
+    source_ref: '5.3 新一代信息技术表'
+    last_reviewed: '2026-08-09'
+  - node_id: infotech.03
+    name: 先进代工/先进封装/存储
+    axis: strategic_industries
+    group: infotech
+    tier: second
+    primary_color: orange
+    secondary_color: yellow
+    qualifier: 源表标「橙→黄」
+    reading: 管制与周期双杀或双击
+    source_ref: '5.3 新一代信息技术表'
+    last_reviewed: '2026-08-09'
+  - node_id: infotech.04
+    name: 半导体设备
+    axis: strategic_industries
+    group: infotech
+    tier: second
+    primary_color: light_green
+    qualifier: 源表标「浅绿/代理偏红」，代理通道存在回避级风险；按 R3 次色不取红
+    reading: 验证突破定倍数
+    source_ref: '5.3 新一代信息技术表；5.6 浅绿条「国产半导体设备材料」'
+    last_reviewed: '2026-08-09'
+  - node_id: infotech.05
+    name: 材料/特气/光刻胶
+    axis: strategic_industries
+    group: infotech
+    tier: second
+    primary_color: light_green
+    reading: 替代斜率
+    source_ref: '5.3 新一代信息技术表'
+    last_reviewed: '2026-08-09'
+  - node_id: infotech.06
+    name: EDA/工业软件/基础软件
+    axis: strategic_industries
+    group: infotech
+    tier: second
+    primary_color: light_green
+    reading: 信创慢变量
+    source_ref: '5.3 新一代信息技术表；5.6 浅绿条「信创软件」'
+    last_reviewed: '2026-08-09'
+  - node_id: infotech.07
+    name: 行业大模型应用
+    axis: strategic_industries
+    group: infotech
+    tier: second
+    primary_color: light_green
+    secondary_color: orange
+    qualifier: 算力受管制时向橙偏移
+    reading: 算力与数据合规
+    source_ref: '5.3 新一代信息技术表'
+    last_reviewed: '2026-08-09'
+
+  # ---------- 十五五战新 · 新能源 ----------
+  - node_id: newenergy.01
+    name: 光伏全链
+    axis: strategic_industries
+    group: newenergy
+    primary_color: yellow
+    reading: 外需与全球定价
+    source_ref: '5.3 新能源行「黄为主」；5.6 黄条「光伏锂电出海」'
+    last_reviewed: '2026-08-09'
+  - node_id: newenergy.02
+    name: 逆变器
+    axis: strategic_industries
+    group: newenergy
+    primary_color: yellow
+    reading: 出海占比高
+    source_ref: '5.3 新能源行「黄为主」'
+    last_reviewed: '2026-08-09'
+  - node_id: newenergy.03
+    name: 风电
+    axis: strategic_industries
+    group: newenergy
+    primary_color: yellow
+    reading: 出海占比高
+    source_ref: '5.3 新能源行「黄为主」'
+    last_reviewed: '2026-08-09'
+  - node_id: newenergy.04
+    name: 海缆
+    axis: strategic_industries
+    group: newenergy
+    primary_color: yellow
+    reading: 出海占比高
+    source_ref: '5.3 新能源行「黄为主」'
+    last_reviewed: '2026-08-09'
+  - node_id: newenergy.05
+    name: 核电设备
+    axis: strategic_industries
+    group: newenergy
+    primary_color: deep_green
+    secondary_color: light_green
+    qualifier: 源表标「核电深绿/浅绿」，国家任务属性与替代属性并存
+    reading: 国家任务，财政与安全刚需
+    source_ref: '5.3 新能源行'
+    last_reviewed: '2026-08-09'
+
+  # ---------- 十五五战新 · 新材料 ----------
+  - node_id: materials.01
+    name: 半导体材料
+    axis: strategic_industries
+    group: materials
+    primary_color: light_green
+    reading: 替代主航道
+    source_ref: '5.3 新材料行；5.6 浅绿条「国产半导体设备材料」'
+    last_reviewed: '2026-08-09'
+  - node_id: materials.02
+    name: 碳纤维
+    axis: strategic_industries
+    group: materials
+    primary_color: light_green
+    reading: 替代主航道
+    source_ref: '5.3 新材料行'
+    last_reviewed: '2026-08-09'
+  - node_id: materials.03
+    name: 高端合金
+    axis: strategic_industries
+    group: materials
+    primary_color: light_green
+    reading: 替代主航道
+    source_ref: '5.3 新材料行'
+    last_reviewed: '2026-08-09'
+  - node_id: materials.04
+    name: 显示材料
+    axis: strategic_industries
+    group: materials
+    primary_color: light_green
+    reading: 替代主航道
+    source_ref: '5.3 新材料行'
+    last_reviewed: '2026-08-09'
+  - node_id: materials.05
+    name: 电池材料
+    axis: strategic_industries
+    group: materials
+    primary_color: light_green
+    secondary_color: purple
+    qualifier: 部分品种在管制链上，具备反制筹码属性
+    reading: 替代主航道，局部管制
+    source_ref: '5.3 新材料行；5.6 紫条含「部分电池管制链」'
+    last_reviewed: '2026-08-09'
+  - node_id: materials.06
+    name: 稀土磁材
+    axis: strategic_industries
+    group: materials
+    primary_color: purple
+    reading: 出口管制的核心筹码
+    source_ref: '5.3 新材料行「稀土/部分管制紫」；5.6 紫条「稀土磁材」'
+    last_reviewed: '2026-08-09'
+  - node_id: materials.07
+    name: 超硬材料
+    axis: strategic_industries
+    group: materials
+    primary_color: purple
+    reading: 管制链品种
+    source_ref: '5.6 紫条「超硬材料管制链」'
+    last_reviewed: '2026-08-09'
+
+  # ---------- 十五五战新 · 智能网联汽车 ----------
+  - node_id: autos.01
+    name: 整车
+    axis: strategic_industries
+    group: autos
+    primary_color: yellow
+    reading: 出海与全球定价
+    source_ref: '5.3 智能网联车行「整车/电池黄」；5.6 黄条「整车出海」'
+    last_reviewed: '2026-08-09'
+  - node_id: autos.02
+    name: 动力电池
+    axis: strategic_industries
+    group: autos
+    primary_color: yellow
+    reading: 出海与全球定价
+    source_ref: '5.3 智能网联车行「整车/电池黄」'
+    last_reviewed: '2026-08-09'
+  - node_id: autos.03
+    name: 电机电控
+    axis: strategic_industries
+    group: autos
+    primary_color: light_green
+    reading: 内需替代
+    source_ref: '5.3 智能网联车行「电控充换浅绿」'
+    last_reviewed: '2026-08-09'
+  - node_id: autos.04
+    name: 智驾芯片/域控
+    axis: strategic_industries
+    group: autos
+    primary_color: orange
+    reading: 先进计算管制的落点
+    source_ref: '5.3 智能网联车行「智驾芯橙」'
+    last_reviewed: '2026-08-09'
+  - node_id: autos.05
+    name: 激光雷达
+    axis: strategic_industries
+    group: autos
+    primary_color: pending
+    reading: ''
+    source_ref: '5.3 智能网联车行未点名该节点'
+    last_reviewed: '2026-08-09'
+  - node_id: autos.06
+    name: 车路云
+    axis: strategic_industries
+    group: autos
+    primary_color: pending
+    reading: ''
+    source_ref: '5.3 智能网联车行未点名该节点'
+    last_reviewed: '2026-08-09'
+  - node_id: autos.07
+    name: 充换电
+    axis: strategic_industries
+    group: autos
+    primary_color: pending
+    reading: ''
+    source_ref: '源文自相冲突：5.3 表标「充换浅绿」，5.6 深绿条列「充换电基建」；按 R4 记 pending，季度复核时人工裁决'
+    last_reviewed: '2026-08-09'
+
+  # ---------- 十五五战新 · 机器人 ----------
+  - node_id: robotics.01
+    name: 工业本体/集成
+    axis: strategic_industries
+    group: robotics
+    primary_color: light_green
+    reading: 内需替代
+    source_ref: '5.3 机器人行'
+    last_reviewed: '2026-08-09'
+  - node_id: robotics.02
+    name: 减速器伺服控制
+    axis: strategic_industries
+    group: robotics
+    primary_color: light_green
+    reading: 核心件替代
+    source_ref: '5.3 机器人行；5.6 浅绿条「机器人核心件」'
+    last_reviewed: '2026-08-09'
+  - node_id: robotics.03
+    name: 协作
+    axis: strategic_industries
+    group: robotics
+    primary_color: light_green
+    reading: 内需替代
+    source_ref: '5.3 机器人行'
+    last_reviewed: '2026-08-09'
+  - node_id: robotics.04
+    name: 人形零部件
+    axis: strategic_industries
+    group: robotics
+    primary_color: orange
+    reading: 与具身智能交叉，兑现慢
+    source_ref: '5.3 机器人行「人形交叉橙」'
+    last_reviewed: '2026-08-09'
+  - node_id: robotics.05
+    name: 机器视觉
+    axis: strategic_industries
+    group: robotics
+    primary_color: light_green
+    reading: 内需替代
+    source_ref: '5.3 机器人行'
+    last_reviewed: '2026-08-09'
+
+  # ---------- 十五五战新 · 生物医药 ----------
+  - node_id: biomed.01
+    name: 创新药
+    axis: strategic_industries
+    group: biomed
+    primary_color: light_green
+    reading: 国内为主
+    source_ref: '5.3 生物医药行「国内浅绿」'
+    last_reviewed: '2026-08-09'
+  - node_id: biomed.02
+    name: CXO
+    axis: strategic_industries
+    group: biomed
+    primary_color: yellow
+    secondary_color: orange
+    qualifier: 源表标「CXO/仪器黄橙」，外需属性叠加点名风险
+    reading: 外需与全球定价
+    source_ref: '5.3 生物医药行；5.6 黄条「CXO」'
+    last_reviewed: '2026-08-09'
+  - node_id: biomed.03
+    name: 器械
+    axis: strategic_industries
+    group: biomed
+    primary_color: light_green
+    reading: 国内为主
+    source_ref: '5.3 生物医药行「国内浅绿」'
+    last_reviewed: '2026-08-09'
+  - node_id: biomed.04
+    name: 生命科学仪器
+    axis: strategic_industries
+    group: biomed
+    primary_color: orange
+    secondary_color: yellow
+    qualifier: 源表标「CXO/仪器黄橙」，上游依赖美系设备
+    reading: 许可与点名博弈
+    source_ref: '5.3 生物医药行'
+    last_reviewed: '2026-08-09'
+  - node_id: biomed.05
+    name: 疫苗血液
+    axis: strategic_industries
+    group: biomed
+    primary_color: light_green
+    reading: 国内为主
+    source_ref: '5.3 生物医药行「国内浅绿」'
+    last_reviewed: '2026-08-09'
+  - node_id: biomed.06
+    name: 合成生物
+    axis: strategic_industries
+    group: biomed
+    primary_color: light_green
+    qualifier: 与未来产业的 biomfg.01 同名但为两个独立节点（plan Key Decisions）
+    reading: 替代主航道
+    source_ref: '5.3 生物医药行；5.6 浅绿条「生物制造」'
+    last_reviewed: '2026-08-09'
+
+  # ---------- 十五五战新 · 高端装备 ----------
+  - node_id: equipment.01
+    name: 工业母机
+    axis: strategic_industries
+    group: equipment
+    primary_color: light_green
+    secondary_color: orange
+    qualifier: 源表标「母机关键件橙」，整机替代但关键件仍受许可约束
+    reading: 替代主航道，关键件受限
+    source_ref: '5.3 高端装备行'
+    last_reviewed: '2026-08-09'
+  - node_id: equipment.02
+    name: 工程机械智能
+    axis: strategic_industries
+    group: equipment
+    primary_color: pending
+    reading: ''
+    source_ref: '5.3 高端装备行标产业级「浅绿/黄」，未细分到该节点'
+    last_reviewed: '2026-08-09'
+  - node_id: equipment.03
+    name: 仪器仪表
+    axis: strategic_industries
+    group: equipment
+    primary_color: pending
+    reading: ''
+    source_ref: '5.3 高端装备行标产业级「浅绿/黄」，未细分到该节点'
+    last_reviewed: '2026-08-09'
+  - node_id: equipment.04
+    name: 轨交
+    axis: strategic_industries
+    group: equipment
+    primary_color: pending
+    reading: ''
+    source_ref: '5.3 高端装备行标产业级「浅绿/黄」，未细分到该节点'
+    last_reviewed: '2026-08-09'
+  - node_id: equipment.05
+    name: 船舶海工
+    axis: strategic_industries
+    group: equipment
+    primary_color: pending
+    reading: ''
+    source_ref: '5.3 高端装备行标产业级「浅绿/黄」，未细分到该节点'
+    last_reviewed: '2026-08-09'
+  - node_id: equipment.06
+    name: 重大技术装备
+    axis: strategic_industries
+    group: equipment
+    primary_color: pending
+    reading: ''
+    source_ref: '5.3 高端装备行标产业级「浅绿/黄」，未细分到该节点'
+    last_reviewed: '2026-08-09'
+
+  # ---------- 十五五战新 · 航空航天 ----------
+  - node_id: aerospace.01
+    name: 航发材料部件
+    axis: strategic_industries
+    group: aerospace
+    primary_color: deep_green
+    reading: 国家任务偏深绿
+    source_ref: '5.3 航空航天行'
+    last_reviewed: '2026-08-09'
+  - node_id: aerospace.02
+    name: 大飞机配套
+    axis: strategic_industries
+    group: aerospace
+    primary_color: deep_green
+    reading: 国家任务偏深绿
+    source_ref: '5.3 航空航天行'
+    last_reviewed: '2026-08-09'
+  - node_id: aerospace.03
+    name: 卫星载荷
+    axis: strategic_industries
+    group: aerospace
+    primary_color: pending
+    reading: ''
+    source_ref: '5.3 航空航天行标产业级「浅绿/橙」，未细分到该节点'
+    last_reviewed: '2026-08-09'
+  - node_id: aerospace.04
+    name: 航天地面
+    axis: strategic_industries
+    group: aerospace
+    primary_color: pending
+    reading: ''
+    source_ref: '5.3 航空航天行标产业级「浅绿/橙」，未细分到该节点'
+    last_reviewed: '2026-08-09'
+  - node_id: aerospace.05
+    name: 低空经济
+    axis: strategic_industries
+    group: aerospace
+    primary_color: light_green
+    reading: 政策主航道
+    source_ref: '5.6 浅绿条「低空」'
+    last_reviewed: '2026-08-09'
+
+  # ---------- 十五五未来产业 · 量子科技 ----------
+  - node_id: quantum.01
+    name: 量子通信
+    axis: future_industries
+    group: quantum
+    primary_color: orange
+    secondary_color: light_green
+    qualifier: 研发早期，国家订单为主
+    reading: 研发早期，国家订单为主
+    source_ref: '5.4 未来产业表'
+    last_reviewed: '2026-08-09'
+  - node_id: quantum.02
+    name: 量子计算硬件
+    axis: future_industries
+    group: quantum
+    primary_color: orange
+    secondary_color: light_green
+    qualifier: 研发早期，受先进计算管制波及
+    reading: 研发早期，国家订单为主
+    source_ref: '5.4 未来产业表'
+    last_reviewed: '2026-08-09'
+  - node_id: quantum.03
+    name: 量子测量
+    axis: future_industries
+    group: quantum
+    primary_color: orange
+    secondary_color: light_green
+    qualifier: 研发早期
+    reading: 研发早期，国家订单为主
+    source_ref: '5.4 未来产业表'
+    last_reviewed: '2026-08-09'
+
+  # ---------- 十五五未来产业 · 生物制造 ----------
+  - node_id: biomfg.01
+    name: 合成生物
+    axis: future_industries
+    group: biomfg
+    primary_color: light_green
+    qualifier: 与战新的 biomed.06 同名但为两个独立节点（plan Key Decisions）
+    reading: 场景与监管约束
+    source_ref: '5.4 未来产业表'
+    last_reviewed: '2026-08-09'
+  - node_id: biomfg.02
+    name: 酶工程
+    axis: future_industries
+    group: biomfg
+    primary_color: light_green
+    reading: 场景与监管约束
+    source_ref: '5.4 未来产业表'
+    last_reviewed: '2026-08-09'
+  - node_id: biomfg.03
+    name: 生物基材料
+    axis: future_industries
+    group: biomfg
+    primary_color: light_green
+    reading: 场景与监管约束
+    source_ref: '5.4 未来产业表'
+    last_reviewed: '2026-08-09'
+
+  # ---------- 十五五未来产业 · 氢能与核聚变 ----------
+  - node_id: hydrogen.01
+    name: 电解槽
+    axis: future_industries
+    group: hydrogen
+    primary_color: light_green
+    reading: 氢能链长
+    source_ref: '5.4 未来产业表；5.6 浅绿条「氢能中游」'
+    last_reviewed: '2026-08-09'
+  - node_id: hydrogen.02
+    name: 储运
+    axis: future_industries
+    group: hydrogen
+    primary_color: light_green
+    reading: 氢能链长
+    source_ref: '5.4 未来产业表；5.6 浅绿条「氢能中游」'
+    last_reviewed: '2026-08-09'
+  - node_id: hydrogen.03
+    name: 燃料电池
+    axis: future_industries
+    group: hydrogen
+    primary_color: light_green
+    reading: 氢能链长
+    source_ref: '5.4 未来产业表；5.6 浅绿条「氢能中游」'
+    last_reviewed: '2026-08-09'
+  - node_id: hydrogen.04
+    name: 聚变材料/超导
+    axis: future_industries
+    group: hydrogen
+    primary_color: light_green
+    secondary_color: purple
+    qualifier: 源表标「浅绿/紫」，超导材料具备管制筹码属性；聚变极早期
+    reading: 聚变极早期
+    source_ref: '5.4 未来产业表'
+    last_reviewed: '2026-08-09'
+
+  # ---------- 十五五未来产业 · 脑机接口 ----------
+  - node_id: bci.01
+    name: 设备
+    axis: future_industries
+    group: bci
+    primary_color: orange
+    secondary_color: light_green
+    qualifier: 临床与伦理约束
+    reading: 临床与伦理
+    source_ref: '5.4 未来产业表'
+    last_reviewed: '2026-08-09'
+  - node_id: bci.02
+    name: 电极
+    axis: future_industries
+    group: bci
+    primary_color: orange
+    secondary_color: light_green
+    qualifier: 临床与伦理约束
+    reading: 临床与伦理
+    source_ref: '5.4 未来产业表'
+    last_reviewed: '2026-08-09'
+  - node_id: bci.03
+    name: 康复接口
+    axis: future_industries
+    group: bci
+    primary_color: orange
+    secondary_color: light_green
+    qualifier: 临床与伦理约束
+    reading: 临床与伦理
+    source_ref: '5.4 未来产业表'
+    last_reviewed: '2026-08-09'
+
+  # ---------- 十五五未来产业 · 具身智能 ----------
+  - node_id: embodied.01
+    name: 人形
+    axis: future_industries
+    group: embodied
+    primary_color: orange
+    secondary_color: light_green
+    qualifier: 与机器人的 robotics.04 重叠，兑现慢
+    reading: 与机器人重叠，兑现慢
+    source_ref: '5.4 未来产业表'
+    last_reviewed: '2026-08-09'
+  - node_id: embodied.02
+    name: 多模态
+    axis: future_industries
+    group: embodied
+    primary_color: orange
+    secondary_color: light_green
+    qualifier: 依赖算力，受管制波及
+    reading: 与机器人重叠，兑现慢
+    source_ref: '5.4 未来产业表'
+    last_reviewed: '2026-08-09'
+  - node_id: embodied.03
+    name: 灵巧手
+    axis: future_industries
+    group: embodied
+    primary_color: orange
+    secondary_color: light_green
+    qualifier: 兑现慢
+    reading: 与机器人重叠，兑现慢
+    source_ref: '5.4 未来产业表'
+    last_reviewed: '2026-08-09'
+  - node_id: embodied.04
+    name: 触觉
+    axis: future_industries
+    group: embodied
+    primary_color: orange
+    secondary_color: light_green
+    qualifier: 兑现慢
+    reading: 与机器人重叠，兑现慢
+    source_ref: '5.4 未来产业表'
+    last_reviewed: '2026-08-09'
+
+  # ---------- 十五五未来产业 · 第六代移动通信 ----------
+  - node_id: sixg.01
+    name: 6G预研
+    axis: future_industries
+    group: sixg
+    primary_color: orange
+    secondary_color: light_green
+    qualifier: 与通信网、卫星交叉
+    reading: 与通信网/卫星交叉
+    source_ref: '5.4 未来产业表'
+    last_reviewed: '2026-08-09'
+  - node_id: sixg.02
+    name: 太赫兹
+    axis: future_industries
+    group: sixg
+    primary_color: orange
+    secondary_color: light_green
+    qualifier: 研发早期
+    reading: 与通信网/卫星交叉
+    source_ref: '5.4 未来产业表'
+    last_reviewed: '2026-08-09'
+  - node_id: sixg.03
+    name: 空天地一体
+    axis: future_industries
+    group: sixg
+    primary_color: orange
+    secondary_color: light_green
+    qualifier: 与卫星互联网交叉
+    reading: 与通信网/卫星交叉
+    source_ref: '5.4 未来产业表'
+    last_reviewed: '2026-08-09'
