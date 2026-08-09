@@ -79,6 +79,21 @@ struct SyncToken: Equatable {
     let contentRevision: Int
 }
 
+/// 主题重推判定（纯函数，可单测）。
+/// 图表侧 `kssSetTheme` 会拆掉整个 chart 重建，重建即把用户的缩放/平移打回原比例——
+/// 而 updateNSView 每次调用都会走 synchronize（实时行情 tick、父视图任何 @Published 变更），
+/// 所以 payload 没变就不能重推。Markdown 侧把 overflowScript 挂在 themeScript 上，
+/// 必须每次推（`skipsUnchanged: false`），否则 fitsContent 切换会漏应用。
+enum WebThemePush {
+    static func shouldPush(latest: KSSWebThemePayload?,
+                           lastApplied: KSSWebThemePayload?,
+                           skipsUnchanged: Bool) -> Bool {
+        guard latest != nil else { return false }
+        guard skipsUnchanged else { return true }
+        return latest != lastApplied
+    }
+}
+
 // MARK: - 共享协调器
 
 /// 串行化「主题→内容」更新的 WKWebView 协调器基类。
@@ -89,6 +104,8 @@ class BridgedWebCoordinator: NSObject, WKNavigationDelegate {
     private(set) var state = WebSyncState()
     var latestTheme: KSSWebThemePayload?
     private(set) var lastError: String?
+    /// 最近一次成功应用到页面的主题；导航（reload）后页面 JS 状态清空，这里同步置 nil。
+    private(set) var lastAppliedTheme: KSSWebThemePayload?
 
     private weak var webView: WKWebView?
 
@@ -106,9 +123,14 @@ class BridgedWebCoordinator: NSObject, WKNavigationDelegate {
     }
     func contentScript() -> String? { nil }
 
+    /// 子类覆写：主题 payload 与上次一致时是否跳过重推。
+    /// 默认 false（保守，维持既有行为）；图表覆写为 true——重推等于 chart 重建。
+    var skipsUnchangedTheme: Bool { false }
+
     // MARK: WKNavigationDelegate
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         state.didStartNavigation(navigation.map { ObjectIdentifier($0).hashValue })
+        lastAppliedTheme = nil   // 新页面 JS 状态清空，主题必须重推一次
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -139,17 +161,30 @@ class BridgedWebCoordinator: NSObject, WKNavigationDelegate {
             }
         }
 
+        let pushedTheme = latestTheme
+        let themeJS: String? = WebThemePush.shouldPush(
+            latest: latestTheme,
+            lastApplied: lastAppliedTheme,
+            skipsUnchanged: skipsUnchangedTheme
+        ) ? themeScript() : nil
+
         if state.needsContent {
             // theme → content 串行
-            if let theme = themeScript() {
-                eval(webView, theme, token) { ok in if ok { applyContent() } }
+            if let theme = themeJS {
+                eval(webView, theme, token) { [weak self] ok in
+                    guard ok else { return }
+                    self?.lastAppliedTheme = pushedTheme
+                    applyContent()
+                }
             } else {
                 applyContent()
             }
         } else {
-            // 内容已最新：只推主题（图表用缓存 bars 重绘）。
-            if let theme = themeScript() {
-                eval(webView, theme, token) { _ in }
+            // 内容已最新：只推主题（图表用缓存 bars 重绘）；主题也没变则本轮什么都不推。
+            if let theme = themeJS {
+                eval(webView, theme, token) { [weak self] ok in
+                    if ok { self?.lastAppliedTheme = pushedTheme }
+                }
             }
         }
     }

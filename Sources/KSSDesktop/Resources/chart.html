@@ -120,6 +120,47 @@
     let intradayBars = [];
     let pendingIntraday = null;
 
+    // ---- 视窗保持 ----
+    // 每次 setData / 主题重建都 fitContent，等于用户刚缩放平移完就被打回原比例
+    // （盘中行情 tick 每 120s 推一次数据，父视图任何状态变更也会重推主题）。
+    // 只有首帧、周期切换、日线与日内互切才重新 fit，其余从上一帧的可视区间恢复。
+    let viewKeyApplied = null;                    // 上一次真正画出数据时的视窗键
+    let savedRange = { key: null, logical: null };
+    let lastThemeSig = null;                      // 同一 payload 重推：不拆 chart
+    let resizeWired = false;                      // resize 监听只挂一次（chart 会重建）
+    let timeScaleMode = null;                     // 已应用的时间轴形态："D" / "I"
+
+    // 日内 1m / 5m 的 currentTF 都停在 "D"，视窗键要单独带上分钟档，
+    // 否则 1m 换 5m 会拿 1m 的区间去套 5m 的 bar 数。
+    let intradayTF = null;
+    function viewKey() {
+      return intradayMode ? ("I:" + (intradayTF || "?")) : ("D:" + currentTF);
+    }
+
+    // 记住当前可视区间。空图（无数据）时 getVisibleLogicalRange 返回 null，
+    // 此时保留上一次的记录——chart 重建后第一帧正是这种状态。
+    function rememberRange() {
+      if (!chart || !viewKeyApplied) return;
+      try {
+        const r = chart.timeScale().getVisibleLogicalRange();
+        if (r) savedRange = { key: viewKeyApplied, logical: { from: r.from, to: r.to } };
+      } catch (e) { /* ignore */ }
+    }
+
+    // 同一视窗键 → 恢复用户的缩放平移；键变了（切周期/切日内）→ 重新 fit。
+    function restoreOrFit() {
+      if (!chart) return;
+      const key = viewKey();
+      const keep = savedRange.logical && savedRange.key === key;
+      try {
+        if (keep) chart.timeScale().setVisibleLogicalRange(savedRange.logical);
+        else chart.timeScale().fitContent();
+      } catch (e) {
+        try { chart.timeScale().fitContent(); } catch (e2) { /* ignore */ }
+      }
+      viewKeyApplied = key;
+    }
+
     // ---- 指标 ----
     function sma(values, period) {
       const out = []; let sum = 0;
@@ -240,6 +281,7 @@
       // 旧 chart 的通用指标 series 句柄随重建失效；清空，随后按 lastIndicatorOverlays 重建。
       indicatorSeriesMap = new Map();
       srPriceLines = [];  // 旧 candleSeries 的价位线句柄同样失效，不显式 remove（对象已随 chart 销毁）
+      timeScaleMode = null;  // 新实例的时间轴回到默认形态，日内需重设一次
       const el = document.getElementById("chart");
       chart = LightweightCharts.createChart(el, {
         layout: {
@@ -299,9 +341,15 @@
       // 给主图/OBV 让出底部给 MI
       chart.priceScale("obv").applyOptions({ scaleMargins: { top: 0.78, bottom: 0.14 } });
 
-      window.addEventListener("resize", () => {
-        chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
-      });
+      // chart 会随主题重建，监听只挂一次（否则每次重建多攒一个）。
+      if (!resizeWired) {
+        resizeWired = true;
+        window.addEventListener("resize", () => {
+          if (!chart) return;
+          const box = document.getElementById("chart");
+          chart.applyOptions({ width: box.clientWidth, height: box.clientHeight });
+        });
+      }
 
       chart.subscribeCrosshairMove((param) => {
         if (!param || !param.time || !param.seriesData) { renderLegendLast(); return; }
@@ -384,6 +432,7 @@
 
     function renderTF() {
       if (!chart) return;
+      rememberRange();   // setData 之前先记住用户当前的缩放平移
       const el = document.getElementById("chart");
       chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
       // R6 R8：provisional（当日未收盘实时 bar）只进日档；周/月/年维持 EOD 口径，
@@ -445,7 +494,7 @@
         bbi: last(bb), bUp: last(bl.up), bMid: last(bl.mid), bLow: last(bl.low),
       };
       renderLegendLast();
-      chart.timeScale().fitContent();
+      restoreOrFit();
       // setData 后重绑 MI overlay + 通用指标 overlay，避免 markers 被冲掉
       if (lastMiOverlay) applyMiOverlay(lastMiOverlay);
       if (lastIndicatorOverlays.length) applyIndicatorOverlays(lastIndicatorOverlays);
@@ -470,11 +519,17 @@
     }
     function renderIntraday() {
       if (!chart) return;
+      rememberRange();
       const el = document.getElementById("chart");
-      chart.applyOptions({
-        width: el.clientWidth, height: el.clientHeight,
-        timeScale: { timeVisible: true, secondsVisible: false, borderColor: COLORS.grid, rightOffset: 4 },
-      });
+      chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
+      // rightOffset 是「应用即滚动」的选项（LWC 内部直接 setRightOffset），
+      // 每帧重推会把用户平移过的位置拽回右端。同一 chart 实例只在进日内形态时设一次。
+      if (timeScaleMode !== "I") {
+        chart.applyOptions({
+          timeScale: { timeVisible: true, secondsVisible: false, borderColor: COLORS.grid, rightOffset: 4 },
+        });
+        timeScaleMode = "I";
+      }
       document.getElementById("empty").style.display = intradayBars.length ? "none" : "flex";
       // 隐藏日线级指标 series（日内不渲染）。
       [ma5Series, ma20Series, bbiSeries, bollUpper, bollMid, bollLower,
@@ -504,12 +559,17 @@
           "分时 · O " + num(last.open) + " H " + num(last.high) +
           " L " + num(last.low) + " C " + num(last.close);
       }
-      chart.timeScale().fitContent();
+      restoreOrFit();
     }
 
     // 从原生 palette payload 应用主题：覆盖 COLORS + CSS 变量，并从缓存 rawBars 重建图表
     // （保留 currentTF 与 indState）。主题 API 与数据 API 分离，不依赖后续 kssSetData。
     function applyThemePayload(p) {
+      // 同一 payload 重复推送不重建 chart：重建 = 用户的缩放/平移/价格轴手动区间全丢。
+      // Swift 侧已做去重（BridgedWebCoordinator.skipsUnchangedTheme），这里是第二道闸。
+      const sig = JSON.stringify(p || {});
+      if (chart && sig === lastThemeSig) return;
+      lastThemeSig = sig;
       const c = (p && p.colors) || {};
       COLORS = {
         up: c.up, down: c.down, ma5: c.ma5, ma20: c.ma20,
@@ -534,6 +594,8 @@
       // 用新配色重建（renderTF 从 rawBars 还原数据，applyIndVisibility 还原指标可见性）。
       // U3：日内模式下从 intradayBars 重建，不走日线 renderTF。
       // 重建后必须重绑 lastMiOverlay（series 句柄已失效；renderTF 末尾也会再绑一次）。
+      // 拆之前先存可视区间，重建后 restoreOrFit 把用户的缩放平移还回去。
+      rememberRange();
       if (chart) { chart.remove(); chart = null; }
       if (buildChart()) {
         if (intradayMode) renderIntraday();
@@ -564,6 +626,7 @@
           setTFHighlight(tf);
           // 分钟线：请求 Swift 拉 Longbridge；日/周/月/年：本地 resample
           if (tf === "1m" || tf === "5m") {
+            intradayTF = tf;
             postNative({ type: "tf", tf: tf });
             return;
           }
@@ -585,7 +648,7 @@
         if (!tf) return;
         setTFHighlight(tf);
         if (tf === "1m" || tf === "5m") {
-          // 等 kssSetIntradayData
+          intradayTF = tf;   // 等 kssSetIntradayData
         } else {
           currentTF = tf;
           intradayMode = false;

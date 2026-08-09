@@ -160,6 +160,11 @@ struct ChartWebView: NSViewRepresentable {
             super.init()
         }
 
+        /// kssSetTheme 会 chart.remove() 后重建，用户的缩放/平移随之丢失。
+        /// updateNSView 每次都会 requestSync（行情 tick / 父视图任何状态变更），
+        /// 所以主题没变就不推——否则等于隔一会儿把图表打回原比例。
+        override var skipsUnchangedTheme: Bool { true }
+
         override func contentScript() -> String? {
             var parts: [String] = []
             if let tf = pendingTFScript {
