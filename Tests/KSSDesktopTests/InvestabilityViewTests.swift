@@ -136,6 +136,36 @@ final class InvestabilityViewTests: XCTestCase {
                        "深绿在前、橙在后、未定色垫底；同色保持 YAML 原序")
     }
 
+    // MARK: - 色段拆分（去容器化后泳道的骨架）
+
+    func testColorRunsFollowTheSortedColorOrder() {
+        let sections = InvestabilityLaneBuilder.sections(map: fixtureMap())
+        let runs = InvestabilityLaneBuilder.colorRuns(sections[0].lanes[0].nodes)
+        XCTAssertEqual(runs.map(\.colorKey), ["deep_green", "orange", "pending"],
+                       "段序必须跟着按色排序的结果走")
+        XCTAssertEqual(runs[0].nodes.map(\.name), ["泵阀管材", "水务运营"])
+        XCTAssertEqual(runs[2].nodes.map(\.name), ["水质监测治理"])
+    }
+
+    /// 未定色单独成段，键是 `pending` 而不是它的机器色键——渲染时要能查到「待定色」这三个字。
+    func testPendingNodesFormTheirOwnRun() {
+        let runs = InvestabilityLaneBuilder.colorRuns(fixtureMap().nodes.filter(\.isPending))
+        XCTAssertEqual(runs.count, 1)
+        XCTAssertEqual(runs[0].colorKey, "pending")
+    }
+
+    /// 每个节点恰好落进一段，一个不多一个不少。
+    func testEveryNodeLandsInExactlyOneRun() {
+        let nodes = InvestabilityLaneBuilder.sortedByColor(
+            fixtureMap().nodes.enumerated().map { ($0, $1) })
+        let placed = InvestabilityLaneBuilder.colorRuns(nodes).flatMap(\.nodes)
+        XCTAssertEqual(placed.map(\.nodeId), nodes.map(\.nodeId))
+    }
+
+    func testEmptyLaneProducesNoRuns() {
+        XCTAssertTrue(InvestabilityLaneBuilder.colorRuns([]).isEmpty)
+    }
+
     /// 覆盖 AE5：未定色节点不归入任何色块，只出现在未定色区。
     func testPendingNodeStaysOutOfEveryColorBlock() {
         let map = fixtureMap()

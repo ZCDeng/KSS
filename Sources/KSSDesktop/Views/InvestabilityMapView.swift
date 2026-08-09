@@ -254,16 +254,19 @@ struct InvestabilityMapView: View {
                     swatch: { AnyView(ExposureSwatch(color: theme.exposureRed)) },
                     text: "红区（个股区位，非行业色）", help: "8 问答「是」达 5 项")
                 legendMark(
-                    swatch: { AnyView(RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .strokeBorder(theme.outlineVariant, lineWidth: 1)
-                        .frame(width: 13, height: 13)) },
-                    text: "无标记 = 未核", help: "还没人工确认过这个方向有没有标的，不计入无暴露结论")
+                    swatch: { AnyView(Text("3")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundStyle(theme.accent)
+                        .frame(width: 13)) },
+                    text: "节点名后的数字 = 挂了几只票",
+                    help: "只有挂了票的节点才出数字")
                 legendMark(
-                    swatch: { AnyView(RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .strokeBorder(theme.outlineVariant,
-                                      style: StrokeStyle(lineWidth: 1, dash: [2.5, 2]))
-                        .frame(width: 13, height: 13)) },
-                    text: "虚线 = 已确认无标的", help: "人工确认过没有可投标的，计入无暴露结论")
+                    swatch: { AnyView(Text("灰")
+                        .font(KSSFont.themed(9.5, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                        .frame(width: 13)) },
+                    text: "灰名带「无标的」= 已确认无标的，其余为未核",
+                    help: "未核尚未人工确认过有无标的，不计入无暴露结论；已确认无标的才计入")
             }
         }
         .padding(.top, 2)
@@ -315,25 +318,25 @@ struct InvestabilityMapView: View {
     private func laneRow(
         _ lane: InvestabilityLaneBuilder.Lane, palette: [String: ExposurePaletteColor]
     ) -> some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(alignment: .top, spacing: 16) {
             Text(lane.title)
                 .font(KSSFont.themed(12, .semibold, theme: theme))
                 .foregroundStyle(theme.textBody)
                 .frame(width: 96, alignment: .leading)
-                .padding(.top, 6)
-            FlowLayout(spacing: 6, lineSpacing: 6) {
-                ForEach(lane.nodes) { node in
-                    InvestabilityNodeTile(
-                        node: node,
+                .padding(.top, 4)
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(InvestabilityLaneBuilder.colorRuns(lane.nodes)) { run in
+                    InvestabilityColorRunRow(
+                        run: run,
                         palette: palette,
-                        isSelected: node.nodeId == selectedNodeId,
-                        onTap: { toggle(node) }
+                        selectedNodeId: selectedNodeId,
+                        onTap: { toggle($0) }
                     )
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 9)
+        .padding(.vertical, 7)
     }
 
     private func toggle(_ node: ExposureNode) {
@@ -400,6 +403,36 @@ enum InvestabilityLaneBuilder {
             .map(\.1)
     }
 
+    /// 一条色段：泳道内连续同色的一串节点。
+    struct ColorRun: Identifiable {
+        let colorKey: String        // 五色之一，或 `pending`
+        let nodes: [ExposureNode]
+        var id: String { colorKey }
+    }
+
+    /// 把已按色排好序的节点切成色段。段序即色序（`sortedByColor` 的结果），
+    /// 所以只需扫一遍看相邻两个色键是否相同，不重新排序也不重新分组。
+    static func colorRuns(_ nodes: [ExposureNode]) -> [ColorRun] {
+        var out: [ColorRun] = []
+        var currentKey: String?
+        var bucket: [ExposureNode] = []
+        for node in nodes {
+            let key = node.isPending ? "pending" : node.primaryColor
+            if key != currentKey {
+                if let currentKey, !bucket.isEmpty {
+                    out.append(ColorRun(colorKey: currentKey, nodes: bucket))
+                }
+                currentKey = key
+                bucket = []
+            }
+            bucket.append(node)
+        }
+        if let currentKey, !bucket.isEmpty {
+            out.append(ColorRun(colorKey: currentKey, nodes: bucket))
+        }
+        return out
+    }
+
     static func colorRank(_ node: ExposureNode) -> Int {
         if node.isPending { return ExposureFilter.paletteOrder.count }
         return ExposureFilter.paletteOrder.firstIndex(of: node.primaryColor)
@@ -407,137 +440,130 @@ enum InvestabilityLaneBuilder {
     }
 }
 
-// MARK: - 节点瓦片
+// MARK: - 色段行与节点标签
 
-/// 节点瓦片。三处设计决定，每处都有实测理由：
+/// 一条色段：色块 + 色名 + 该色下的节点名。
 ///
-/// 1. **左侧色轨代替色点。** 4pt × 全高的竖条比 7pt 圆点多出约三倍色面积，且相邻瓦片的
-///    色轨在同一条基线上，眼睛是在比较而不是在辨认——深绿与浅绿只有在挨着时才分得开。
-/// 2. **色名以文字同时出现。** 泳道里原先只有色点没有色的文字标签，那是 R2 的硬性违反：
-///    色不得作为唯一信息载体。
-/// 3. **未核不画标记。** 103 个节点开局全是未核，逐个写「未核」等于在页面上重复 103 遍
-///    同一个字。改成安静的默认态，把标记留给两个真正有信息量的状态：挂了票（给只数）
-///    与已确认无标的（虚线 + 「无标的」）。三态仍互相可区分（R9 / AE1）。
+/// 这一版把节点的**容器整个去掉了**。上一版每个节点是一张带边框带底色的瓦片，
+/// 103 个节点就是 103 圈边框、103 块底色、103 次色名——页面上量最大的东西全是
+/// 装饰，节点名反而被压成了其中一层。改成按色分段后：边框与底色为零，色名一段
+/// 只说一次，色块在固定的 x 位置排成一列，眼睛顺着这一列往下扫就能读出整条泳道
+/// 的色分布。节点名回到满对比度的正文。
 ///
-/// 形状用 6pt 圆角矩形而不是胶囊：胶囊的全圆角会把左侧色轨切成月牙，色面积白丢一半；
-/// 而且胶囊在这套界面里的语义是可切换/可移除的标签，节点是只读分类格子。
-struct InvestabilityNodeTile: View {
+/// R2 仍然成立：色块与色名在同一行紧挨着，色从来不是唯一信息载体，只是配对关系
+/// 从「每个节点各配一次」提到了「每段配一次」。
+struct InvestabilityColorRunRow: View {
     @Environment(\.kssTheme) private var theme
-    var node: ExposureNode
+    var run: InvestabilityLaneBuilder.ColorRun
     var palette: [String: ExposurePaletteColor]
-    var isSelected: Bool
-    var onTap: () -> Void
-
-    private static let radius: CGFloat = 6
-
-    private var color: Color {
-        theme.exposureColorOrUnknown(node.primaryColor)
-    }
+    var selectedNodeId: String?
+    var onTap: (ExposureNode) -> Void
 
     private var colorLabel: String {
-        node.isPending
+        run.colorKey == "pending"
             ? "待定色"
-            : (palette[node.primaryColor]?.label ?? ExposureFilter.fallbackLabel(node.primaryColor))
+            : (palette[run.colorKey]?.label ?? ExposureFilter.fallbackLabel(run.colorKey))
     }
 
     var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 0) {
-                Rectangle()
-                    .fill(color.opacity(node.state == .confirmedEmpty ? 0.45 : 1))
-                    .frame(width: 4)
-                HStack(spacing: 6) {
-                    Text(node.name)
-                        .font(KSSFont.themed(12.5, .semibold, theme: theme))
-                        .foregroundStyle(node.state == .confirmedEmpty
-                                         ? theme.textSecondary : theme.textPrimary)
-                        .lineLimit(1)
-                    if let tier = node.tierBadge {
-                        Text(tier)
-                            .font(KSSFont.themed(9.5, theme: theme))
-                            .foregroundStyle(theme.textSecondary)
-                            .padding(.horizontal, 3)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                    .stroke(theme.hairline, lineWidth: 1)
-                            )
-                    }
-                    // 色名用中性色，不跟着上色：色由左缘色轨承担，文字只负责可读。
-                    // 把文字也染成暴露色是重复编码，代价是对比度——实测 xcom 亮色下
-                    // 浅绿 4.24:1、待定色 2.77:1，两个都够不着正文 4.5:1。
-                    Text(colorLabel)
-                        .font(KSSFont.themed(10, .semibold, theme: theme))
-                        .foregroundStyle(theme.textSecondary)
-                    if node.stale {
-                        // 陈旧标记不再用 ma5：那是 5 日均线的图表槽，对暴露黄的 ΔE00 只有
-                        // 25.9，同屏三套暖色会互撞。形状（时钟）加 tooltip 已经够认。
-                        Image(systemName: "clock.badge.exclamationmark")
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundStyle(theme.textSecondary)
-                    }
-                    stateMark
+        HStack(alignment: .top, spacing: 9) {
+            ExposureSwatch(color: theme.exposureColorOrUnknown(run.colorKey), size: 12)
+                .padding(.top, 4)
+            Text(colorLabel)
+                .font(KSSFont.themed(10.5, .semibold, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+                .frame(width: 38, alignment: .leading)
+                .padding(.top, 3)
+            FlowLayout(spacing: 8, lineSpacing: 3) {
+                ForEach(run.nodes) { node in
+                    InvestabilityNodeLabel(
+                        node: node,
+                        isSelected: node.nodeId == selectedNodeId,
+                        onTap: { onTap(node) }
+                    )
                 }
-                .padding(.leading, 8)
-                .padding(.trailing, 9)
-                // 定死行高：带层级角标/只数的瓦片本来会比纯文字的高 1-2pt，
-                // 一行里高低不齐，左侧色轨就对不成一条可比较的基线。
-                .frame(height: 26)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(colorLabel) · \(run.nodes.count) 个节点")
+    }
+}
+
+/// 一个节点：静止时是纯文字，交互时才长出背景。
+///
+/// 三态不再靠边框虚实区分（实测虚线与实线的描边对比只有 1.25，那个区分在真机上
+/// 不成立）：挂了票给等宽数字，已确认无标的给灰名加「无标的」，未核是零装饰的
+/// 默认态。开局 103 个节点全是未核，默认态零装饰意味着页面开局就是干净的。
+struct InvestabilityNodeLabel: View {
+    @Environment(\.kssTheme) private var theme
+    var node: ExposureNode
+    var isSelected: Bool
+    var onTap: () -> Void
+
+    @State private var isHovering = false
+
+    private var isEmptyConfirmed: Bool { node.state == .confirmedEmpty }
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 4) {
+                Text(node.name)
+                    .font(KSSFont.themed(13, isSelected ? .bold : .medium, theme: theme))
+                    .foregroundStyle(nameColor)
+                    .lineLimit(1)
+                if let tier = node.tierBadge {
+                    Text(tier)
+                        .font(KSSFont.themed(9.5, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                        .baselineOffset(3)
+                }
+                if node.state == .hasStocks {
+                    Text("\(node.attachedStocks.count)")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundStyle(theme.accent)
+                }
+                if isEmptyConfirmed {
+                    Text("无标的")
+                        .font(KSSFont.themed(9.5, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                if node.stale {
+                    Image(systemName: "clock.badge.exclamationmark")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+                }
+            }
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
             .background(background)
-            .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
-            .overlay(border)
-            .contentShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         }
         .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
         .help(helpText)
         .accessibilityLabel(helpText)
     }
 
-    /// 只有两个信息量高的状态才出标记；未核是安静的默认态。
-    @ViewBuilder
-    private var stateMark: some View {
-        switch node.state {
-        case .hasStocks:
-            Text("\(node.attachedStocks.count)")
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundStyle(theme.accent)
-        case .confirmedEmpty:
-            Text("无标的")
-                .font(KSSFont.themed(9.5, theme: theme))
-                .foregroundStyle(theme.textSecondary)
-        case .unreviewed:
-            EmptyView()
-        }
+    private var nameColor: Color {
+        if isSelected { return theme.accent }
+        return isEmptyConfirmed ? theme.textSecondary : theme.textPrimary
     }
 
     @ViewBuilder
     private var background: some View {
-        switch node.state {
-        case .hasStocks:      color.opacity(0.10)
-        case .confirmedEmpty: Color.clear
-        case .unreviewed:     theme.surfaceContainer
-        }
-    }
-
-    @ViewBuilder
-    private var border: some View {
-        let shape = RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
         if isSelected {
-            shape.stroke(theme.accent, lineWidth: 1.6)
+            theme.accent.opacity(0.14)
+        } else if isHovering {
+            theme.surfaceContainer
         } else {
-            switch node.state {
-            case .hasStocks:
-                shape.stroke(color.opacity(0.34), lineWidth: 1)
-            case .confirmedEmpty:
-                shape.stroke(theme.outlineVariant, style: StrokeStyle(lineWidth: 1, dash: [2.5, 2]))
-            case .unreviewed:
-                shape.stroke(theme.hairline, lineWidth: 1)
-            }
+            Color.clear
         }
     }
 
     private var helpText: String {
-        var parts = [node.name, colorLabel]
+        var parts = [node.name]
         switch node.state {
         case .hasStocks:      parts.append("挂 \(node.attachedStocks.count) 只")
         case .confirmedEmpty: parts.append("已人工确认无标的")
