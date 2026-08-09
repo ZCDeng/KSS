@@ -246,12 +246,51 @@ struct KSSPalette: Equatable {
     let downFill: ThemeColor
     let ma5: ThemeColor
     let ma20: ThemeColor
+    // 可投资地图暴露色（plan 2026-08-09-001 U4 / KTD6）：五个行业色逐设计系统逐外观定值。
+    // 未定色按外观固定；未上图灰点复用 muted，未核节点复用 outlineVariant 做虚线描边
+    // ——未核是描边不是填充，否则会盖掉节点主色，泳道按色排序立刻失去依据。
+    let exposureDeepGreen: ThemeColor
+    let exposureLightGreen: ThemeColor
+    let exposureYellow: ThemeColor
+    let exposureOrange: ThemeColor
+    let exposurePurple: ThemeColor
+    let exposurePending: ThemeColor
     // 几何
     let cardRadius: CGFloat
     let chipRadius: CGFloat
     // 字体 / 阴影
     let typography: ThemeTypography
     let elevation: ThemeElevation
+}
+
+extension KSSPalette {
+    /// 桥接返回的行业色机器键 → 本 palette 的取值。
+    ///
+    /// 桥接层只给 key（`deep_green` 这种），不给色值——颜色是外观相关的，
+    /// 判定与渲染分居两侧（plan KTD2）。未标注个股用 `muted`，未核节点用
+    /// `outlineVariant` 做虚线描边，两者都不走这个映射。
+    func exposureColor(forKey key: String) -> ThemeColor? {
+        switch key {
+        case "deep_green":  return exposureDeepGreen
+        case "light_green": return exposureLightGreen
+        case "yellow":      return exposureYellow
+        case "orange":      return exposureOrange
+        case "purple":      return exposurePurple
+        case "pending":     return exposurePending
+        default:            return nil
+        }
+    }
+
+    /// 五个行业色，按色板声明顺序。
+    var exposureIndustryColors: [(key: String, color: ThemeColor)] {
+        [
+            ("deep_green", exposureDeepGreen),
+            ("light_green", exposureLightGreen),
+            ("yellow", exposureYellow),
+            ("orange", exposureOrange),
+            ("purple", exposurePurple),
+        ]
+    }
 }
 
 // MARK: - 目录
@@ -261,6 +300,7 @@ enum ThemeCatalog {
     static func palette(for system: KSSDesignSystem, appearance: KSSAppearance) -> KSSPalette {
         let seed = Self.seed(system, appearance)
         let market = MarketColors.forAppearance(appearance)
+        let exposure = ExposureColors.forSystem(system, appearance)
         return KSSPalette(
             system: system, appearance: appearance,
             canvas: seed.canvas, surfaceLowest: seed.surfaceLowest, surface: seed.surface,
@@ -272,6 +312,9 @@ enum ThemeCatalog {
             accent: seed.accent, onAccent: seed.onAccent, secondary: seed.secondary,
             up: market.up, down: market.down, upFill: market.upFill, downFill: market.downFill,
             ma5: market.ma5, ma20: market.ma20,
+            exposureDeepGreen: exposure.deepGreen, exposureLightGreen: exposure.lightGreen,
+            exposureYellow: exposure.yellow, exposureOrange: exposure.orange,
+            exposurePurple: exposure.purple, exposurePending: exposure.pending,
             cardRadius: seed.cardRadius, chipRadius: seed.chipRadius,
             typography: seed.typography, elevation: seed.elevation
         )
@@ -292,6 +335,79 @@ enum ThemeCatalog {
                     up: ThemeColor(0xF6465D), down: ThemeColor(0x2EBD85),
                     upFill: ThemeColor(0xF6465D, alpha: 0.50), downFill: ThemeColor(0x2EBD85, alpha: 0.50),
                     ma5: ThemeColor(0xFF9F1C), ma20: ThemeColor(0x4C82FB))
+            }
+        }
+    }
+
+    // 可投资地图五色（plan U4）。语义固定、取值逐设计系统调，与 MarketColors 的
+    // 「外观固定、跨系统共享」不同 —— 那是 KTD6 明确否掉的形状。
+    //
+    // 定值约束（由 ThemeCatalogTests 机检，不靠手感）：
+    // - 同一 palette 内任意两个行业色 CIE76 色差 ≥ 25，堵住深绿对浅绿、黄对橙糊在一起
+    // - 每个色对该 palette 的 surface 对比度 ≥ 3:1
+    // - 未定色与 muted 色差 ≥ 15，避免「待定色」被看成「未上图」
+    private struct ExposureColors {
+        let deepGreen, lightGreen, yellow, orange, purple, pending: ThemeColor
+
+        // swiftlint:disable:next function_body_length
+        static func forSystem(_ s: KSSDesignSystem, _ a: KSSAppearance) -> ExposureColors {
+            let dark = a == .dark
+            switch s {
+            case .clayM3:
+                return dark
+                ? ExposureColors(deepGreen: ThemeColor(0x56A47C), lightGreen: ThemeColor(0xABEDC4), yellow: ThemeColor(0xE0B25A),
+                                 orange: ThemeColor(0xF1854A), purple: ThemeColor(0xB79BF0), pending: ThemeColor(0x8FA3B8))
+                : ExposureColors(deepGreen: ThemeColor(0x134E2A), lightGreen: ThemeColor(0x37905B), yellow: ThemeColor(0x8F6A00),
+                                 orange: ThemeColor(0xB8460F), purple: ThemeColor(0x6B3FA0), pending: ThemeColor(0x7A8CA0))
+            case .tradingTerminal:
+                return dark
+                ? ExposureColors(deepGreen: ThemeColor(0x3FA88A), lightGreen: ThemeColor(0x5CEFC0), yellow: ThemeColor(0xE4C05A),
+                                 orange: ThemeColor(0xFF8A3D), purple: ThemeColor(0xA896F5), pending: ThemeColor(0xD6C8B4))
+                : ExposureColors(deepGreen: ThemeColor(0x0F4D35), lightGreen: ThemeColor(0x1E8C63), yellow: ThemeColor(0x8A6A00),
+                                 orange: ThemeColor(0xB34700), purple: ThemeColor(0x5B3FA8), pending: ThemeColor(0x7A8CA0))
+            case .skeuomorphism:
+                return dark
+                ? ExposureColors(deepGreen: ThemeColor(0x57A578), lightGreen: ThemeColor(0xABEEBF), yellow: ThemeColor(0xE8B44A),
+                                 orange: ThemeColor(0xFF8438), purple: ThemeColor(0xB292F2), pending: ThemeColor(0x8FA3B8))
+                : ExposureColors(deepGreen: ThemeColor(0x144B28), lightGreen: ThemeColor(0x328A50), yellow: ThemeColor(0x946800),
+                                 orange: ThemeColor(0xC0410A), purple: ThemeColor(0x6A3B9E), pending: ThemeColor(0x7A8CA0))
+            case .material3:
+                return dark
+                ? ExposureColors(deepGreen: ThemeColor(0x52A277), lightGreen: ThemeColor(0xA3EBC0), yellow: ThemeColor(0xDDB65E),
+                                 orange: ThemeColor(0xF08B4F), purple: ThemeColor(0xAE8CF7), pending: ThemeColor(0xD6C8B4))
+                : ExposureColors(deepGreen: ThemeColor(0x104629), lightGreen: ThemeColor(0x33885A), yellow: ThemeColor(0x8C6A00),
+                                 orange: ThemeColor(0xB34A12), purple: ThemeColor(0x5B3FA8), pending: ThemeColor(0x7A8CA0))
+            case .theVerge:
+                return dark
+                ? ExposureColors(deepGreen: ThemeColor(0x46A183), lightGreen: ThemeColor(0x63F2AE), yellow: ThemeColor(0xE6BE4E),
+                                 orange: ThemeColor(0xFF8033), purple: ThemeColor(0xB08CFF), pending: ThemeColor(0xD6C8B4))
+                : ExposureColors(deepGreen: ThemeColor(0x104527), lightGreen: ThemeColor(0x2A8250), yellow: ThemeColor(0x8F6600),
+                                 orange: ThemeColor(0xBE4408), purple: ThemeColor(0x6321D6), pending: ThemeColor(0x7A8CA0))
+            case .airbnb:
+                return dark
+                ? ExposureColors(deepGreen: ThemeColor(0x5AA87E), lightGreen: ThemeColor(0xB0F0C7), yellow: ThemeColor(0xE7BB63),
+                                 orange: ThemeColor(0xFF9155), purple: ThemeColor(0xBC9DF2), pending: ThemeColor(0x7A6A57))
+                : ExposureColors(deepGreen: ThemeColor(0x165A36), lightGreen: ThemeColor(0x3D9C62), yellow: ThemeColor(0x8F6520),
+                                 orange: ThemeColor(0xC0480F), purple: ThemeColor(0x71399C), pending: ThemeColor(0xA89078))
+            case .discord:
+                return dark
+                ? ExposureColors(deepGreen: ThemeColor(0x4FA079), lightGreen: ThemeColor(0x74E2A0), yellow: ThemeColor(0xDFB755),
+                                 orange: ThemeColor(0xF58A46), purple: ThemeColor(0xA9A0FA), pending: ThemeColor(0xD6C8B4))
+                : ExposureColors(deepGreen: ThemeColor(0x104325), lightGreen: ThemeColor(0x2D8250), yellow: ThemeColor(0x8A6800),
+                                 orange: ThemeColor(0xB54812), purple: ThemeColor(0x5D45B8), pending: ThemeColor(0x7A8CA0))
+            case .binanceUS:
+                // 黄压暗以离开金色 accent，避免地图色被当成品牌色
+                return dark
+                ? ExposureColors(deepGreen: ThemeColor(0x4FA478), lightGreen: ThemeColor(0xA5EDC0), yellow: ThemeColor(0xD9AE3C),
+                                 orange: ThemeColor(0xFF8B2E), purple: ThemeColor(0xB195F0), pending: ThemeColor(0xD6C8B4))
+                : ExposureColors(deepGreen: ThemeColor(0x104527), lightGreen: ThemeColor(0x2C8351), yellow: ThemeColor(0x7E5E00),
+                                 orange: ThemeColor(0xBC4A05), purple: ThemeColor(0x64409C), pending: ThemeColor(0xA89078))
+            case .xcom:
+                return dark
+                ? ExposureColors(deepGreen: ThemeColor(0x4CA37B), lightGreen: ThemeColor(0x9FEDC0), yellow: ThemeColor(0xE0B857),
+                                 orange: ThemeColor(0xF98B43), purple: ThemeColor(0xAE96F6), pending: ThemeColor(0xD6C8B4))
+                : ExposureColors(deepGreen: ThemeColor(0x0D4627), lightGreen: ThemeColor(0x2A8452), yellow: ThemeColor(0x8B6800),
+                                 orange: ThemeColor(0xB8470E), purple: ThemeColor(0x6236B4), pending: ThemeColor(0xA89078))
             }
         }
     }
