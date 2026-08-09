@@ -807,6 +807,61 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             ON paper_trade_shadow_picks(prediction_date, strategy_id);
         """,
     ),
+    (
+        9,
+        """
+        -- ---------------------------------------------------------------
+        -- Investability map: per-stock labels + 8-question exposure answers
+        -- + node-level coverage confirmation
+        -- (plan 2026-08-09-001 U2)
+        --
+        -- 这三张表是 KSS 里第一份不可再生数据：全部由人工在界面上录入，
+        -- 没有任何 cron 能重跑出来。删了就是永久丢失。
+        --
+        -- 不建外键指向 watchlist：set_watchlist 每次点星都整表 DELETE 再
+        -- 重写，外键会连带删掉标注。
+        -- ---------------------------------------------------------------
+        CREATE TABLE IF NOT EXISTS stock_map_labels (
+            ts_code     TEXT NOT NULL,
+            node_id     TEXT NOT NULL,
+            is_primary  INTEGER NOT NULL,
+            updated_at  TEXT NOT NULL,
+            PRIMARY KEY (ts_code, node_id)
+        ) STRICT;
+        -- 主节点唯一性进 schema，不只靠写函数保证：桥接被 subprocess 与
+        -- 长活 sidecar 两条路径调用，并发写会留下两行 is_primary=1，而读侧
+        -- 只取其一，个股色点会随查询顺序摇摆且无处报错。
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_stock_map_labels_primary
+            ON stock_map_labels(ts_code) WHERE is_primary = 1;
+        CREATE INDEX IF NOT EXISTS idx_stock_map_labels_node
+            ON stock_map_labels(node_id);
+
+        -- 8 问三态：1=是(高暴露), 0=否, NULL=未答或未知。
+        -- 用真列不用 payload_json —— 8 个问题来自源文 5.7，结构稳定，
+        -- 且已定题数要能直接在 SQL 里数。
+        CREATE TABLE IF NOT EXISTS stock_exposure_answers (
+            ts_code     TEXT NOT NULL PRIMARY KEY,
+            q1          INTEGER,
+            q2          INTEGER,
+            q3          INTEGER,
+            q4          INTEGER,
+            q5          INTEGER,
+            q6          INTEGER,
+            q7          INTEGER,
+            q8          INTEGER,
+            updated_at  TEXT NOT NULL
+        ) STRICT;
+
+        -- 节点级人工确认「本节点无标的」。没有这张表时，R9 要求的
+        -- 「未核」与「已确认无标的」两态在数据层做不出来，F1 承诺的
+        -- 「哪些方向完全没有暴露」也就永远拿不到结论。
+        CREATE TABLE IF NOT EXISTS map_node_coverage (
+            node_id      TEXT NOT NULL PRIMARY KEY,
+            confirmed_at TEXT NOT NULL,
+            note         TEXT
+        ) STRICT;
+        """,
+    ),
 )
 
 
