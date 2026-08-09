@@ -54,6 +54,30 @@ final class KSSStore: ObservableObject {
     @Published var stockDetail: StockDetail?
     @Published var perillaEnrichment: PerillaEnrichment?   // 紫苏叶个股富化（仅 core/main 票有内容）
     @Published var isLoadingPerilla = false
+
+    // MARK: 可投资地图（plan 2026-08-09-001 U5/U6/U7）
+
+    /// 节点树。加载成功但 `nodes` 为空 = 配置缺失降级（KTD7），与桥接失败是两回事。
+    @Published var exposureMap: ExposureMap?
+    @Published var exposureMapLoading = false
+    /// 桥接失败原因，带失败的命令名——降级后的空树与桥坏掉不能长一个样。
+    @Published var exposureMapError: String?
+    @Published var exposureQuota: ExposureQuota?
+    /// 个股标注字典。`nil` 表示尚未加载：四处落点在 nil 时渲染中性占位而不是灰点，
+    /// 否则每次启动全部个股会先闪一遍「未上图」。
+    @Published var exposureByCode: [String: ExposureStock]?
+    @Published var exposureLoading = false
+    /// 就地补标的选择器目标。四处落点都只是把代码丢过来，sheet 由 ContentView 单点承载，
+    /// 免得三个视图各挂一个同样的 sheet。
+    @Published var exposurePickerTarget: ExposurePickerTarget?
+    /// 8 问的助手草稿，按代码存。只在内存里活着——逐题人工点「采纳」才入库。
+    @Published var exposureDrafts: [String: ExposureAnswerDrafts] = [:]
+    @Published var exposureDraftingSymbol: String?
+
+    /// 打开节点选择器（F2 就地补标）。
+    func openExposurePicker(_ symbol: String) {
+        exposurePickerTarget = ExposurePickerTarget(symbol: symbol)
+    }
     @Published var sectorRotationDetail: HotspotRotationSnapshot?
     @Published var isLoadingSectorRotation = false
     @Published var newsDigest: NewsDigestResponse?
@@ -1807,6 +1831,12 @@ final class KSSStore: ObservableObject {
             errorMessage = error.localizedDescription
         }
         isLoading = false
+        // 快照落定后才知道代码全集，此时补拉地图标注：四处落点的徽标不依赖用户先开地图页。
+        // 不 await——徽标晚一拍出现是可接受的，卡住快照渲染不是。
+        Task { [weak self] in
+            await self?.loadExposureLabels()
+            if self?.exposureMap == nil { await self?.loadInvestabilityMap() }
+        }
     }
 
     func loadStock(symbol: String) async {
@@ -2662,6 +2692,169 @@ final class KSSStore: ObservableObject {
         } else {
             perillaEnrichment = nil
         }
+    }
+
+    // MARK: - 可投资地图（plan 2026-08-09-001 U5/U6/U7）
+
+    /// 需要挂到地图上、需要在四处落点显示徽标的代码全集。
+    ///
+    /// 分母与挂载都由这里显式传给 Python，不让它自己查自选表（KTD3）——自选真源是
+    /// 桌面端的 `@AppStorage`，库里那张镜像表同步失败会被静默吞掉。
+    var exposureUniverse: [String] {
+        var seen = Set<String>()
+        var out: [String] = []
+        func add(_ raw: String) {
+            let code = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !code.isEmpty, seen.insert(code).inserted else { return }
+            out.append(code)
+        }
+        watchlistSymbols.forEach(add)
+        snapshot?.stocks.forEach { add($0.symbol) }
+        snapshot?.recommendations.forEach { add($0.symbol) }
+        snapshot?.perillaPicks?.forEach { add($0.symbol) }
+        snapshot?.bjScan?.top.forEach { add($0.symbol) }
+        return out
+    }
+
+    /// 地图页加载：节点树 + 配额。两者都失败即整页失败，不半渲染。
+    func loadInvestabilityMap(capPct: String = "") async {
+        guard let bridge else {
+            exposureMapError = "无法定位 KSS 项目根目录，桥接不可用"
+            return
+        }
+        exposureMapLoading = true
+        exposureMapError = nil
+        defer { exposureMapLoading = false }
+        let codes = exposureUniverse
+        do {
+            let map = try await Task.detached { try bridge.investabilityMap(codes: codes) }.value
+            exposureMap = map
+        } catch {
+            exposureMap = nil
+            exposureMapError = "investability-map 调用失败：\(error.localizedDescription)"
+            return
+        }
+        // 配额是页内一个区块，单独失败不该把整棵树也判死。
+        let quota = try? await Task.detached {
+            try bridge.investabilitySummary(codes: codes, capPct: capPct)
+        }.value
+        exposureQuota = quota
+    }
+
+    /// 只重算配额（改橙+紫上限时用，不重拉节点树）。
+    func reloadInvestabilityQuota(capPct: String) async {
+        guard let bridge else { return }
+        let codes = exposureUniverse
+        exposureQuota = try? await Task.detached {
+            try bridge.investabilitySummary(codes: codes, capPct: capPct)
+        }.value
+    }
+
+    /// 四处落点共用的标注字典。一次取全集，不给任一视图单开读路径。
+    /// 失败时保持 `nil`（继续显示中性占位），不把桥的问题渲染成「全都未上图」。
+    func loadExposureLabels() async {
+        guard let bridge else { return }
+        guard !exposureLoading else { return }
+        exposureLoading = true
+        defer { exposureLoading = false }
+        let codes = exposureUniverse
+        guard !codes.isEmpty else { return }
+        let stocks = try? await Task.detached {
+            try bridge.investabilityStocks(codes: codes)
+        }.value
+        guard let stocks else { return }
+        exposureByCode = stocks
+    }
+
+    /// 单只票刷新（写入后当场同步四处落点，不等下一次全量）。
+    func refreshExposure(symbol: String) async {
+        guard let bridge else { return }
+        let stocks = try? await Task.detached {
+            try bridge.investabilityStocks(codes: [symbol])
+        }.value
+        guard let fresh = stocks?[symbol] else { return }
+        var dict = exposureByCode ?? [:]
+        dict[symbol] = fresh
+        exposureByCode = dict
+    }
+
+    /// 写节点标注（整体替换）。`primary` 传空串即清空该票全部标注（删主节点）。
+    /// 界面直写不走写确认弹窗——与自选点星的现有行为一致（plan U7）。
+    @discardableResult
+    func setExposureLabel(
+        symbol: String, primary: String, secondaries: [String] = []
+    ) async -> Bool {
+        guard let bridge else { return false }
+        do {
+            _ = try await Task.detached {
+                try bridge.investabilitySetLabel(
+                    symbol: symbol, primary: primary, secondaries: secondaries)
+            }.value
+        } catch {
+            errorMessage = "写标注失败：\(error.localizedDescription)"
+            return false
+        }
+        await refreshExposure(symbol: symbol)
+        await refreshInvestabilityMapIfLoaded()
+        return true
+    }
+
+    /// 写单题 8 问。区位串由 Python 重算后返回，桌面端不自行计算（KTD2）。
+    @discardableResult
+    func setExposureAnswer(symbol: String, question: Int, value: String) async -> Bool {
+        guard let bridge else { return false }
+        do {
+            _ = try await Task.detached {
+                try bridge.investabilitySetAnswer(
+                    symbol: symbol, question: question, value: value)
+            }.value
+        } catch {
+            errorMessage = "写 8 问答案失败：\(error.localizedDescription)"
+            return false
+        }
+        await refreshExposure(symbol: symbol)
+        await refreshInvestabilityMapIfLoaded()
+        return true
+    }
+
+    /// 让助手给 8 问出草稿。草稿只进内存，不入库——写库仍然要人在界面上逐题点「采纳」。
+    func draftExposureAnswers(symbol: String) async {
+        guard let bridge else { return }
+        exposureDraftingSymbol = symbol
+        defer { exposureDraftingSymbol = nil }
+        let result = try? await Task.detached {
+            try bridge.investabilityAnswerDraft(symbol: symbol)
+        }.value
+        if let result {
+            exposureDrafts[symbol] = result
+        } else {
+            exposureDrafts[symbol] = ExposureAnswerDrafts(
+                tsCode: symbol, status: "failed", hint: "桥接调用失败", drafts: [:])
+        }
+    }
+
+    /// 把节点标成已人工确认无标的，或撤销（R9 的空心描边态）。
+    func setExposureNodeCoverage(nodeId: String, confirmed: Bool) async {
+        guard let bridge else { return }
+        do {
+            _ = try await Task.detached {
+                try bridge.investabilitySetNodeCoverage(nodeId: nodeId, confirmed: confirmed)
+            }.value
+        } catch {
+            errorMessage = "写节点覆盖确认失败：\(error.localizedDescription)"
+            return
+        }
+        await refreshInvestabilityMapIfLoaded()
+    }
+
+    /// 地图页已经打开过才刷新，没打开就不白跑一次全量。
+    private func refreshInvestabilityMapIfLoaded() async {
+        guard exposureMap != nil, let bridge else { return }
+        let codes = exposureUniverse
+        let map = try? await Task.detached {
+            try bridge.investabilityMap(codes: codes)
+        }.value
+        if let map { exposureMap = map }
     }
 
     /// 点击任意页面出现的股票：在池→直接看；不在池→先导入（拉日线进池）再看。

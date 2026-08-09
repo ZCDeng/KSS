@@ -32,6 +32,8 @@ struct DashboardView: View {
     /// 自选星标（真源 ContentView AppStorage）
     var watchlist: [String] = []
     var onToggleWatchlist: (String) -> Void = { _ in }
+    /// 可投资地图：两张信号卡的色点、区位标与就地补标（plan U6/U7）。
+    var exposure = ExposureContext()
 
     // Material 3 响应式栅格：统一外边距 / 沟槽，内容封顶居中，断点决定主区列数。
     private let margin: CGFloat = 24
@@ -152,7 +154,8 @@ struct DashboardView: View {
                             items: picks,
                             watchlist: watchlist,
                             onSelect: onSelectSymbol,
-                            onToggleWatchlist: onToggleWatchlist
+                            onToggleWatchlist: onToggleWatchlist,
+                            exposure: exposure
                         )
                     }
 
@@ -219,7 +222,8 @@ struct DashboardView: View {
                 quotes: realtimeQuotes,
                 watchlist: watchlist,
                 onSelect: onSelectSymbol,
-                onToggleWatchlist: onToggleWatchlist
+                onToggleWatchlist: onToggleWatchlist,
+                exposure: exposure
             )
         }
     }
@@ -254,6 +258,8 @@ struct TodayPicksList: View {
     var watchlist: [String] = []
     var onSelect: (String) -> Void
     var onToggleWatchlist: (String) -> Void = { _ in }
+    /// 可投资地图暴露数据与就地补标（plan U6/U7）。
+    var exposure = ExposureContext()
 
     @State private var sortKey: TodayPickSort = .rank
     @State private var ascending = false
@@ -339,6 +345,11 @@ struct TodayPicksList: View {
                     Button { onSelect(item.symbol) } label: { row(item) }
                         .buttonStyle(.plain)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    // 就地补标灰点：行按钮的兄弟节点（嵌套会被行点击吞掉）。
+                    ExposureMarkButton(
+                        exposure: exposure.stock(item.symbol),
+                        loaded: exposure.loaded
+                    ) { exposure.onMark(item.symbol) }
                     WatchlistStarButton(
                         isWatched: watchlist.contains(item.symbol)
                     ) { onToggleWatchlist(item.symbol) }
@@ -371,6 +382,7 @@ struct TodayPicksList: View {
                            alignment: .trailing, width: wClose)
             SortHeaderCell(title: "现价", key: TodayPickSort.price, selection: $sortKey, ascending: $ascending,
                            alignment: .trailing, width: wWeight)
+            Color.clear.frame(width: 24)   // 未上图灰点
             Color.clear.frame(width: 28)
         }
         .font(KSSFont.themed(10.5, .medium, theme: theme))
@@ -396,11 +408,16 @@ struct TodayPicksList: View {
                 .foregroundStyle(theme.textSecondary)
                 .lineLimit(1)
                 .frame(width: wSymbol, alignment: .leading)
-            Text(item.industry.isEmpty ? "—" : item.industry)
-                .font(KSSFont.themed(12.5, theme: theme))
-                .foregroundStyle(theme.textBody)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // 行业列是弹性列：把暴露徽标挂在它下面，不动任何固定列宽。
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.industry.isEmpty ? "—" : item.industry)
+                    .font(KSSFont.themed(12.5, theme: theme))
+                    .foregroundStyle(theme.textBody)
+                    .lineLimit(1)
+                ExposureBadge(exposure: exposure.stock(item.symbol),
+                              loaded: exposure.loaded, showsDotWhenUnlabelled: false)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             StatusBadge.tracking(item.status)
                 .frame(width: wStatus, alignment: .leading)
             Text(priceText(item.latestOpen))
@@ -457,6 +474,8 @@ struct PerillaPicksTable: View {
     var watchlist: [String] = []
     var onSelect: (String) -> Void
     var onToggleWatchlist: (String) -> Void = { _ in }
+    /// 可投资地图暴露数据与就地补标（plan U6/U7）。
+    var exposure = ExposureContext()
 
     // 默认 .none = 保持 bridge 返回的原始顺序（不打乱当前视觉）
     @State private var sortKey: PerillaSort = .none
@@ -538,6 +557,11 @@ struct PerillaPicksTable: View {
                     Button { onSelect(item.symbol) } label: { row(item) }
                         .buttonStyle(.plain)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    // 就地补标灰点：行按钮的兄弟节点（嵌套会被行点击吞掉）。
+                    ExposureMarkButton(
+                        exposure: exposure.stock(item.symbol),
+                        loaded: exposure.loaded
+                    ) { exposure.onMark(item.symbol) }
                     WatchlistStarButton(
                         isWatched: watchlist.contains(item.symbol)
                     ) { onToggleWatchlist(item.symbol) }
@@ -575,6 +599,7 @@ struct PerillaPicksTable: View {
                            alignment: .trailing, width: wRet)
             SortHeaderCell(title: "年", key: PerillaSort.retYear, selection: $sortKey, ascending: $ascending,
                            alignment: .trailing, width: wRet)
+            Color.clear.frame(width: 24)   // 未上图灰点
             Color.clear.frame(width: 28)
         }
         .font(KSSFont.themed(10.5, .medium, theme: theme))
@@ -622,6 +647,9 @@ struct PerillaPicksTable: View {
                             .foregroundStyle(theme.accent)
                     }
                 }
+                // 产业链列是弹性列：徽标挂这里，不动任何固定列宽。
+                ExposureBadge(exposure: exposure.stock(item.symbol),
+                              loaded: exposure.loaded, showsDotWhenUnlabelled: false)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 

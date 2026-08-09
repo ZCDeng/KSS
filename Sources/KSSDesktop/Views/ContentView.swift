@@ -44,6 +44,31 @@ struct ContentView: View {
         Task { await store.syncWatchlistToDB(symbols) }
     }
 
+    /// 四处落点共用的暴露数据与写回调（plan U6）。一份字典由 Store 统一加载后下发，
+    /// 不给任一视图单开读路径，否则四处会各自漂移。
+    private var exposureContext: ExposureContext {
+        ExposureContext(
+            byCode: store.exposureByCode,
+            palette: store.exposureMap?.palette ?? [:],
+            axes: store.exposureMap?.axes ?? [:],
+            onMark: { symbol in store.openExposurePicker(symbol) },
+            onSetLabel: { symbol, primary, secondaries in
+                Task {
+                    await store.setExposureLabel(
+                        symbol: symbol, primary: primary, secondaries: secondaries)
+                }
+            },
+            onSetAnswer: { symbol, question, value in
+                await store.setExposureAnswer(symbol: symbol, question: question, value: value)
+            },
+            onDraftAnswers: { symbol in
+                Task { await store.draftExposureAnswers(symbol: symbol) }
+            },
+            drafts: store.exposureDrafts,
+            draftingSymbol: store.exposureDraftingSymbol
+        )
+    }
+
     /// 用户自定义导航顺序（总览置顶），由 sidebarOrder 解析。
     private var orderedSections: [WorkspaceSection] {
         WorkspaceSection.ordered(from: sidebarOrder)
@@ -195,6 +220,14 @@ struct ContentView: View {
         } message: {
             Text(store.errorMessage ?? "")
         }
+        // 可投资地图节点选择器：四处落点的灰点与详情页的改标共用这一个 sheet（plan U7）。
+        .sheet(item: $store.exposurePickerTarget) { target in
+            ExposureNodePickerView(
+                store: store,
+                symbol: target.symbol,
+                onClose: { store.exposurePickerTarget = nil }
+            )
+        }
         // U5：人在环内写确认 app-modal（sheet 阻塞窗口；dismiss=拒，gate 幂等）。
         .sheet(item: $store.pendingWriteConfirm,
                onDismiss: { store.resolveWriteConfirm(approved: false) }) { pending in
@@ -260,6 +293,12 @@ struct ContentView: View {
             AIChatView(globalNavigationExpanded: $seesawNavigationExpanded)
         } else if store.selectedSection == .investmentAnalysis {
             InvestmentAnalysisView(store: store)
+        } else if store.selectedSection == .investabilityMap {
+            // 地图只读一份配置与两张小表，不该跟着大快照一起等（plan U5）。
+            InvestabilityMapView(
+                store: store,
+                onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } }
+            )
         } else if let snapshot = store.snapshot {
             switch store.selectedSection {
             case .dashboard:
@@ -297,7 +336,8 @@ struct ContentView: View {
                         store.selectedSection = .aiChat
                     },
                     watchlist: watchlist,
-                    onToggleWatchlist: toggleWatchlist
+                    onToggleWatchlist: toggleWatchlist,
+                    exposure: exposureContext
                 )
             case .recommendations:
                 RecommendationsView(
@@ -317,7 +357,8 @@ struct ContentView: View {
                     },
                     onWriteShadow: { styleId in
                         Task { await store.writeStyleContrastShadow(styleId: styleId) }
-                    }
+                    },
+                    exposure: exposureContext
                 )
             case .watchlist:
                 StockBrowserView(
@@ -339,7 +380,8 @@ struct ContentView: View {
                     onRetryRealtime: { Task { await store.retryRealtime() } },
                     onLoadRealtimeForSymbol: { sym in Task { await store.loadRealtimeData(symbol: sym) } },
                     isRunningTask: store.isUpdatingCsData,
-                    onUpdateCsData: { Task { await updateCsDataAndRefreshDetail() } }
+                    onUpdateCsData: { Task { await updateCsDataAndRefreshDetail() } },
+                    exposure: exposureContext
                 )
             case .runbook:
                 RunbookView(
@@ -389,7 +431,7 @@ struct ContentView: View {
                     onSelectSectorRotationDate: { date in Task { await store.loadSectorRotation(date: date) } },
                     onOpenExternally: { path in store.openReportInMarkEdit(path: path) }
                 )
-            case .investmentAnalysis:
+            case .investmentAnalysis, .investabilityMap:
                 EmptyView()
             case .backtests:
                 BacktestsView(
@@ -421,7 +463,8 @@ struct ContentView: View {
                     onRetryRealtime: { Task { await store.retryRealtime() } },
                     onLoadRealtimeForSymbol: { sym in Task { await store.loadRealtimeData(symbol: sym) } },
                     isRunningTask: store.isUpdatingCsData,
-                    onUpdateCsData: { Task { await updateCsDataAndRefreshDetail() } }
+                    onUpdateCsData: { Task { await updateCsDataAndRefreshDetail() } },
+                    exposure: exposureContext
                 )
             case .aiChat:
                 EmptyView()

@@ -35,6 +35,14 @@ struct KSSThemeTokens: Equatable {
     let down: Color
     let ma5: Color
     let ma20: Color
+    // 可投资地图暴露色（plan 2026-08-09-001 U4/KTD6）：五个行业色 + 未定色。
+    // 未上图灰点复用 textSecondary，未核节点复用 outlineVariant 虚线描边，两者不占独立槽。
+    let exposureDeepGreen: Color
+    let exposureLightGreen: Color
+    let exposureYellow: Color
+    let exposureOrange: Color
+    let exposurePurple: Color
+    let exposurePending: Color
     // 几何 / 字体 / 阴影
     let cardRadius: CGFloat
     let chipRadius: CGFloat
@@ -53,6 +61,20 @@ struct KSSThemeTokens: Equatable {
     func signColor(_ value: Double?) -> Color {
         guard let value, value != 0 else { return textBody }
         return value > 0 ? up : down
+    }
+
+    /// 桥接返回的行业色机器键 → 当前主题取值（与 `KSSPalette.exposureColor` 同一张表）。
+    /// 未知键返回 nil；红不是行业色，永远查不到（plan R2）。
+    func exposureColor(forKey key: String) -> Color? {
+        switch key {
+        case "deep_green":  return exposureDeepGreen
+        case "light_green": return exposureLightGreen
+        case "yellow":      return exposureYellow
+        case "orange":      return exposureOrange
+        case "purple":      return exposurePurple
+        case "pending":     return exposurePending
+        default:            return nil
+        }
     }
 }
 
@@ -82,6 +104,12 @@ extension KSSPalette {
             down: down.color,
             ma5: ma5.color,
             ma20: ma20.color,
+            exposureDeepGreen: exposureDeepGreen.color,
+            exposureLightGreen: exposureLightGreen.color,
+            exposureYellow: exposureYellow.color,
+            exposureOrange: exposureOrange.color,
+            exposurePurple: exposurePurple.color,
+            exposurePending: exposurePending.color,
             cardRadius: cardRadius,
             chipRadius: chipRadius,
             titleDesign: typography.titleDesign,

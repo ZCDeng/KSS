@@ -1771,6 +1771,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     case recommendations = "Daily Picks"
     case watchlist = "Watchlist"
     case themes = "Themes"
+    case investabilityMap = "Investability Map"
     case trends = "Trends"
     case reviews = "Reviews"
     case investmentAnalysis = "Investment Analysis"
@@ -1790,6 +1791,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .recommendations: return "推荐"
         case .watchlist: return "自选"
         case .themes: return "主题"
+        case .investabilityMap: return "可投资地图"
         case .trends: return "趋势观察"
         case .runbook: return "任务台"
         case .reviews: return "AI复盘"
@@ -1809,6 +1811,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .recommendations: return "target"
         case .watchlist: return "star"
         case .themes: return "square.grid.2x2"
+        case .investabilityMap: return "map"
         case .trends: return "calendar"
         case .runbook: return "terminal"
         case .reviews: return "doc.text.magnifyingglass"
@@ -4260,5 +4263,250 @@ struct TradingHours: Codable, Hashable {
         case sessionEnd = "session_end"
         case now
         case referenceTradeDate = "reference_trade_date"
+    }
+}
+
+// MARK: - 可投资地图（plan 2026-08-09-001 U5/U6/U7，bridge `investability-*`）
+//
+// 判定全在 Python 侧算完（KTD2）：区位串、配额占比、陈旧标记都是成品，
+// 这里只做解码与取色所需的机器键映射，不在桌面端重算任何一条规则。
+
+/// 一个行业色的机器键 + 中文标签 + 语义。色在任何落点都要与标签成对出现（R2）。
+struct ExposurePaletteColor: Codable, Hashable {
+    var key: String
+    var label: String
+    var meaning: String
+}
+
+/// 一条主轴（六张网 / 战新 / 未来产业）及其所属组的显示名。
+struct ExposureAxis: Codable, Hashable {
+    var label: String
+    var sourceRef: String
+    var groups: [String: String]
+}
+
+/// 节点在地图上的覆盖态（R9）。三态互不共用样式。
+enum ExposureNodeState: String, Codable {
+    case hasStocks = "has_stocks"
+    case confirmedEmpty = "confirmed_empty"   // 人工确认过无标的 → 空心描边，计入「无暴露」
+    case unreviewed                            // 未经人工确认 → 「未核」，不计入「无暴露」
+}
+
+/// 一个子行业节点。`nodeState` / `stocks` / `confirmedAt` 只在地图命令的返回里有，
+/// 个股暴露命令返回的节点是裸 `as_dict()`，故均为可选。
+struct ExposureNode: Codable, Hashable, Identifiable {
+    var nodeId: String
+    var name: String
+    var axis: String
+    var group: String
+    var primaryColor: String
+    var secondaryColor: String
+    var tier: String
+    var reading: String
+    var qualifier: String
+    var sourceRef: String
+    var lastReviewed: String
+    var isPending: Bool
+    var isStale: Bool?
+    var nodeState: ExposureNodeState?
+    var confirmedAt: String?
+    var stocks: [String]?
+
+    var id: String { nodeId }
+    var attachedStocks: [String] { stocks ?? [] }
+    var state: ExposureNodeState { nodeState ?? .unreviewed }
+    var stale: Bool { isStale ?? false }
+    /// 一线 / 二线角标，仅新一代信息技术有值（R5/R16）。
+    var tierBadge: String? {
+        switch tier {
+        case "first": return "一线"
+        case "second": return "二线"
+        default: return nil
+        }
+    }
+}
+
+/// 地图命令的完整返回：节点树 + 色板 + 主轴 + 页头所需的源版本与最旧复核日期（R23）。
+struct ExposureMap: Codable {
+    var sourceVersion: String
+    var oldestReviewed: String
+    var staleCount: Int
+    var palette: [String: ExposurePaletteColor]
+    var axes: [String: ExposureAxis]
+    var nodes: [ExposureNode]
+}
+
+/// 8 问区位（R14/R15）。`display` 是 Python 算好的成品串，桌面端不拼。
+struct ExposureZone: Codable, Hashable {
+    var key: String
+    var label: String
+    var decided: Int
+    var yes: Int
+    var total: Int
+    var display: String
+
+    /// 红区要在四处落点都显眼（R22）。
+    var isRed: Bool { key == "red" }
+    /// 一题未答也算「还没开始」，用来决定详情页是否折叠 8 问卡。
+    var isUntouched: Bool { decided == 0 && yes == 0 }
+}
+
+/// 个股的上图态（R8）。三态在界面上互相可区分。
+enum ExposureLabelState: String, Codable {
+    case unlabelled                        // 未上图 → 实心灰点
+    case pendingColor = "pending_color"     // 已上图 · 待定色 → 未定色样式
+    case labelled                           // 五色之一
+}
+
+/// 8 问三态答案。桥接给 `{"1": true, "2": null, …}`，null 表示「未知」或未答；
+/// `Dictionary<String, Bool?>` 解 JSON null 会抛 valueNotFound，故自解。
+struct ExposureAnswers: Codable, Hashable {
+    /// 题号（1…8）→ 是/否。「未知」与未答一律缺席。
+    var decided: [Int: Bool]
+
+    static let questionCount = 8
+
+    /// 源 PDF 5.7 原文八题（Appendix A5），逐条录入为三态字段。
+    static let questions: [String] = [
+        "收入，美 + 盟伴、政府军方占比？",
+        "BOM，美系设备 / EDA / IP 是否不可替换？",
+        "股权，是否穿透连坐？",
+        "上市融资，中概 / 美元债 / 美资股东？",
+        "客户集中，前五是否高风险？",
+        "政策角色，是否握许可物项或六张网 / 十五五订单？",
+        "合规史，点名 / 拒许可 / 被罚？",
+        "出境，技术数据人员是否触发新规？",
+    ]
+
+    init(decided: [Int: Bool] = [:]) { self.decided = decided }
+
+    subscript(question: Int) -> Bool? { decided[question] }
+
+    private struct AnswerKey: CodingKey {
+        var stringValue: String
+        var intValue: Int? { Int(stringValue) }
+        init(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { self.stringValue = String(intValue) }
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: AnswerKey.self)
+        var out: [Int: Bool] = [:]
+        for key in c.allKeys {
+            guard let index = Int(key.stringValue) else { continue }
+            if try c.decodeNil(forKey: key) { continue }
+            out[index] = try c.decode(Bool.self, forKey: key)
+        }
+        decided = out
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: AnswerKey.self)
+        for index in 1...Self.questionCount {
+            let key = AnswerKey(stringValue: String(index))
+            if let value = decided[index] {
+                try c.encode(value, forKey: key)
+            } else {
+                try c.encodeNil(forKey: key)
+            }
+        }
+    }
+}
+
+/// 一只票的完整暴露信息。R21 详情卡与 U8 只读工具用的是同一份字段集。
+struct ExposureStock: Codable, Hashable, Identifiable {
+    var tsCode: String
+    var state: ExposureLabelState
+    var stateLabel: String
+    var colorKey: String
+    var colorLabel: String
+    var primaryNode: ExposureNode?
+    var secondaryNodes: [ExposureNode]
+    var zone: ExposureZone
+    var answers: ExposureAnswers
+    var labelUpdatedAt: String
+    /// 主节点复核日期超 120 天（R23）。
+    var isStale: Bool
+
+    var id: String { tsCode }
+    var isLabelled: Bool { state != .unlabelled }
+    var answersDecidedCount: Int { answers.decided.count }
+}
+
+/// 批量取暴露信息的返回。
+struct ExposureStocksResponse: Codable {
+    var stocks: [String: ExposureStock]
+}
+
+/// 组合暴露配额（R18）。主轨五色相加 100%，副轨红区单独一条，两轨不相加。
+struct ExposureQuota: Codable {
+    var denominator: Int
+    var denominatorSource: String
+    var sampleInsufficient: Bool
+    var minSample: Int
+    var counts: [String: Int]
+    var ratios: [String: Double]
+    var redCount: Int
+    var redRatio: Double?
+    var unlabelledCount: Int
+    var pendingColorCount: Int
+    var cap: Double?
+    var overCap: Bool?
+    var redSymbols: [String]
+}
+
+/// 写标注的返回（整体替换某票的主副节点）。
+struct ExposureLabelResult: Codable {
+    var ok: Bool
+    var tsCode: String
+}
+
+/// 写单题 8 问的返回：带重算后的区位串，桌面端直接采用不自算（KTD2）。
+struct ExposureAnswerResult: Codable {
+    var ok: Bool
+    var tsCode: String
+    var zone: ExposureZone
+}
+
+/// 节点覆盖确认的返回（把节点标成已人工确认无标的，或撤销）。
+struct ExposureNodeCoverageResult: Codable {
+    var ok: Bool
+    var nodeId: String
+    var confirmed: Bool
+    var confirmedAt: String
+}
+
+/// 节点选择器的目标票（`sheet(item:)` 需要 Identifiable）。
+struct ExposurePickerTarget: Identifiable, Hashable {
+    var symbol: String
+    var id: String { symbol }
+}
+
+/// 8 问的助手草稿（2026-08-09 裁决：给助手草拟路径，草稿人工确认后入库）。
+/// 草稿只在界面上停留，逐题人工点「采纳」才走写命令——写的仍然是人（KTD8）。
+struct ExposureAnswerDraft: Codable, Hashable {
+    var value: String   // yes / no / unknown
+    var why: String
+}
+
+struct ExposureAnswerDrafts: Codable, Hashable {
+    var tsCode: String
+    /// ok / llm_unavailable / failed / unparsable
+    var status: String
+    var hint: String
+    var drafts: [String: ExposureAnswerDraft]
+
+    var isOK: Bool { status == "ok" }
+
+    subscript(question: Int) -> ExposureAnswerDraft? { drafts[String(question)] }
+
+    /// 失败原因的人话版本；成功时为 nil。
+    var failureText: String? {
+        switch status {
+        case "ok": return nil
+        case "llm_unavailable": return "模型未配置或不可用：\(hint)"
+        case "unparsable": return "模型返回解析不了，未产生草稿"
+        default: return hint.isEmpty ? "草拟失败" : "草拟失败：\(hint)"
+        }
     }
 }

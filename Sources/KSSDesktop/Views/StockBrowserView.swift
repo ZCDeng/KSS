@@ -33,15 +33,20 @@ struct StockBrowserView: View {
     /// 日线新鲜度：一键 update-cs-data
     var isRunningTask: Bool = false
     var onUpdateCsData: () -> Void = {}
+    /// 可投资地图暴露数据与写回调（plan U6/U7）。
+    var exposure = ExposureContext()
 
     @State private var sort: StockSort = .symbol
     @State private var ascending = true
     @State private var showChartFullscreen = false
     @State private var showImport = false
     @State private var showUpdateCsConfirm = false
+    @State private var exposureFilter: ExposureFilter = .all
 
     private var filteredStocks: [StockSummary] {
-        var items = stocks
+        var items = stocks.filter {
+            exposureFilter.matches(exposure.stock($0.symbol), loaded: exposure.loaded)
+        }
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             let q = trimmed.lowercased()
@@ -67,6 +72,12 @@ struct StockBrowserView: View {
                 return ascending ? ca < cb : ca > cb
             }
         }
+    }
+
+    /// 当前暴露色筛选的文本标签（筛选态永远有字，不靠色块表达）。
+    private var exposureFilterLabel: String {
+        ExposureFilter.options(palette: exposure.palette)
+            .first { $0.0 == exposureFilter }?.1 ?? "全部"
     }
 
     /// 列表行展示口径（R6 R6）：盘中实时价/涨跌合并（与推荐页现价列同模式），
@@ -116,6 +127,37 @@ struct StockBrowserView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
+
+                // 按暴露色筛选（R20）。筛选项以文本呈现——纯色块做可点目标，
+                // 色盲用户与截图读者都无从下手。
+                HStack(spacing: 6) {
+                    Menu {
+                        ForEach(Array(ExposureFilter.options(palette: exposure.palette).enumerated()),
+                                id: \.offset) { _, option in
+                            Button {
+                                exposureFilter = option.0
+                            } label: {
+                                Label(option.1,
+                                      systemImage: exposureFilter == option.0 ? "checkmark" : "")
+                            }
+                        }
+                    } label: {
+                        Text("暴露色 · \(exposureFilterLabel)")
+                            .font(KSSFont.themed(11.5, .semibold, theme: theme))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .foregroundStyle(exposureFilter == .all ? theme.textSecondary : theme.accent)
+                    if exposureFilter != .all {
+                        Button("清除") { exposureFilter = .all }
+                            .buttonStyle(.plain)
+                            .font(KSSFont.themed(11, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 6)
 
                 // column header
                 HStack(spacing: 6) {
@@ -171,6 +213,12 @@ struct StockBrowserView: View {
                                     .font(.system(size: 11.5, design: .monospaced))
                                     .foregroundStyle(theme.textSecondary)
                                     .lineLimit(1)
+                                // 徽标进既有的名称与代码竖排，不新开一列（表头列宽是重复字面量）
+                                ExposureBadge(
+                                    exposure: exposure.stock(stock.symbol),
+                                    loaded: exposure.loaded,
+                                    showsDotWhenUnlabelled: false
+                                )
                             }
                             .padding(.vertical, 2)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -178,6 +226,11 @@ struct StockBrowserView: View {
                             .opacity(barFresh == .stale ? 0.95 : 1)
                         }
                         .buttonStyle(.plain)
+                        // 未上图灰点：可点补标。与行按钮平级——嵌套进去会被 List 吞掉点击。
+                        ExposureMarkButton(
+                            exposure: exposure.stock(stock.symbol),
+                            loaded: exposure.loaded
+                        ) { exposure.onMark(stock.symbol) }
                         // 日线末日期 / 陈旧点（陈旧可点 → 确认日更）；独立 Button 不嵌套
                         DailyFreshnessLabel(
                             barDate: stock.latestDate,
@@ -216,7 +269,8 @@ struct StockBrowserView: View {
                         realtimeUpdatedAt: realtimeUpdatedAt,
                         onRetryRealtime: onRetryRealtime,
                         isRunningTask: isRunningTask,
-                        onRequestUpdateCsData: { showUpdateCsConfirm = true }
+                        onRequestUpdateCsData: { showUpdateCsConfirm = true },
+                        exposure: exposure
                     )
                     .onAppear { onLoadRealtimeForSymbol(detail.symbol) }
                     .onChange(of: detail.symbol) { _, sym in onLoadRealtimeForSymbol(sym) }
@@ -283,6 +337,8 @@ struct StockDetailView: View {
     var onRetryRealtime: () -> Void = {}
     var isRunningTask: Bool = false
     var onRequestUpdateCsData: () -> Void = {}
+    /// 可投资地图：节点路径卡与 8 问卡（plan U7 / R21）。
+    var exposure = ExposureContext()
     // U3 分钟 K 线模式（R7/R15）
     @State private var chartMode: ChartDataMode = .daily
     @State private var intradayBars: IntradayBars? = nil
@@ -447,6 +503,35 @@ struct StockDetailView: View {
                 if let enrichment {
                     PerillaEnrichmentCard(data: enrichment)
                 }
+
+                // 可投资地图：节点路径 + 8 问，与复盘卡、紫苏叶富化卡并列（R21）。
+                ExposurePathCard(
+                    symbol: detail.symbol,
+                    exposure: exposure.stock(detail.symbol),
+                    loaded: exposure.loaded,
+                    axes: exposure.axes,
+                    palette: exposure.palette,
+                    onEdit: { exposure.onMark(detail.symbol) },
+                    onRemoveSecondary: { nodeId in
+                        let current = exposure.stock(detail.symbol)
+                        let primary = current?.primaryNode?.nodeId ?? ""
+                        let seconds = (current?.secondaryNodes ?? [])
+                            .map(\.nodeId).filter { $0 != nodeId }
+                        exposure.onSetLabel(detail.symbol, primary, seconds)
+                    },
+                    onDeletePrimary: { exposure.onSetLabel(detail.symbol, "", []) }
+                )
+                ExposureQuestionsCard(
+                    symbol: detail.symbol,
+                    exposure: exposure.stock(detail.symbol),
+                    loaded: exposure.loaded,
+                    onAnswer: { question, value in
+                        await exposure.onSetAnswer(detail.symbol, question, value)
+                    },
+                    draft: exposure.drafts[detail.symbol],
+                    isDrafting: exposure.draftingSymbol == detail.symbol,
+                    onRequestDraft: { exposure.onDraftAnswers(detail.symbol) }
+                )
 
                 SectionHeader("分析指标")
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 10)], spacing: 10) {

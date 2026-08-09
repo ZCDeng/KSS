@@ -27,6 +27,8 @@ struct RecommendationsView: View {
     var onLoadRealtime: () -> Void = {}
     /// 对照整池写入影子纸交易；参数为 styleId。
     var onWriteShadow: (String) -> Void = { _ in }
+    /// 可投资地图暴露数据与就地补标（plan U6/U7）。
+    var exposure = ExposureContext()
 
     @State private var tab: RecTab = .current
     @State private var sort: RecSort = .rank
@@ -336,6 +338,7 @@ struct RecommendationsView: View {
             Text("log_mv").frame(width: 72, alignment: .trailing)
             SortHeaderCell(title: "跟踪", key: RecSort.tracking, selection: $sort, ascending: $ascending,
                            alignment: .trailing, width: 72)
+            Color.clear.frame(width: 24)   // 未上图灰点（行内是行按钮的兄弟节点）
             Color.clear.frame(width: 28)
         }
         .font(KSSFont.themed(11, .semibold, theme: theme))
@@ -361,6 +364,13 @@ struct RecommendationsView: View {
                             .font(.system(size: 11.5, design: .monospaced))
                             .foregroundStyle(theme.textSecondary)
                             .lineLimit(1)
+                        // 徽标塞进既有名称与代码竖排，不新增列（表头列宽是重复字面量）。
+                        // 未上图的票只在行尾出一个可点灰点，避免同一行出现两个灰点。
+                        ExposureBadge(
+                            exposure: exposure.stock(item.symbol),
+                            loaded: exposure.loaded,
+                            showsDotWhenUnlabelled: false
+                        )
                     }
                     .frame(width: 140, alignment: .leading)
                     Text(recReasonText(item))
@@ -385,6 +395,12 @@ struct RecommendationsView: View {
             }
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity, alignment: .leading)
+
+            // 就地补标入口（F2）：与行按钮平级，嵌套会被行点击吞掉。
+            ExposureMarkButton(
+                exposure: exposure.stock(item.symbol),
+                loaded: exposure.loaded
+            ) { exposure.onMark(item.symbol) }
 
             WatchlistStarButton(
                 isWatched: watchlist.contains(item.symbol)

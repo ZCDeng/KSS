@@ -448,6 +448,69 @@ struct BridgeClient {
         try run(["watchlist-set", symbols.joined(separator: ",")], as: WatchlistSetResult.self)
     }
 
+    // MARK: 可投资地图（plan 2026-08-09-001 U5/U6/U7）
+    //
+    // 区位串、配额占比、陈旧标记都由 Python 算完返回（KTD2）；这里只做传输。
+    // 配额分母由调用方传显式代码列表，不让 Python 去查自选表（KTD3）。
+
+    /// 节点树 + 色板 + 主轴 + 每个节点的挂载个股与覆盖态。
+    /// `codes` 是要挂到节点上的代码全集；传空则节点展开区一只票都没有。
+    func investabilityMap(codes: [String] = []) throws -> ExposureMap {
+        try run(["investability-map", codes.joined(separator: ",")], as: ExposureMap.self)
+    }
+
+    /// 批量取暴露信息；传单个代码即单票查询。空列表不打桥，直接返回空。
+    func investabilityStocks(codes: [String]) throws -> [String: ExposureStock] {
+        guard !codes.isEmpty else { return [:] }
+        return try run(
+            ["investability-stocks", codes.joined(separator: ",")],
+            as: ExposureStocksResponse.self
+        ).stocks
+    }
+
+    /// 组合暴露配额。`capPct` 为橙+紫合计上限，空串即不判定越线。
+    func investabilitySummary(codes: [String], capPct: String = "") throws -> ExposureQuota {
+        try run(
+            ["investability-summary", codes.joined(separator: ","), capPct],
+            as: ExposureQuota.self
+        )
+    }
+
+    /// 整体替换一只票的节点标注；`primary` 传空串等同于清空该票全部标注。
+    func investabilitySetLabel(
+        symbol: String, primary: String, secondaries: [String] = []
+    ) throws -> ExposureLabelResult {
+        try run(
+            ["investability-label", symbol, primary, secondaries.joined(separator: ",")],
+            as: ExposureLabelResult.self
+        )
+    }
+
+    /// 写一只票的单题 8 问答案。`value` 取 yes / no / unknown。
+    func investabilitySetAnswer(
+        symbol: String, question: Int, value: String
+    ) throws -> ExposureAnswerResult {
+        try run(
+            ["investability-answer", symbol, String(question), value],
+            as: ExposureAnswerResult.self
+        )
+    }
+
+    /// 让助手给 8 问出草稿。只读命令——草稿不落库，界面上逐题人工确认才写。
+    func investabilityAnswerDraft(symbol: String) throws -> ExposureAnswerDrafts {
+        try run(["investability-answer-draft", symbol], as: ExposureAnswerDrafts.self)
+    }
+
+    /// 把节点标成已人工确认无标的，或撤销该确认（R9 的「空心描边」态）。
+    func investabilitySetNodeCoverage(
+        nodeId: String, confirmed: Bool
+    ) throws -> ExposureNodeCoverageResult {
+        try run(
+            ["investability-node-coverage", nodeId, confirmed ? "true" : "false"],
+            as: ExposureNodeCoverageResult.self
+        )
+    }
+
     /// 趋势页：某月月度格子。
     func trendsMonth(_ month: String) throws -> TrendMonth {
         try run(["trends-month", month], as: TrendMonth.self)
@@ -464,6 +527,8 @@ struct BridgeClient {
     // perilla-enrichment 走外网(Tushare+yFinance)耗时常 >3s，跳过 sidecar 避免超时双跑。
     private static let subprocessOnlyCommands: Set<String> = [
         "run", "import", "perilla-enrichment",
+        // 8 问草拟走外网 LLM，耗时常 >3s：跟 perilla-enrichment 同理跳过 sidecar，避免超时双跑
+        "investability-answer-draft",
         "intel-radar", "intel-yupi-ingest", "intel-keywords-get", "intel-keywords-set",
         "yupi-status", "yupi-ensure",
         "intel-digest", "intel-panorama", "intel-digest-save",
