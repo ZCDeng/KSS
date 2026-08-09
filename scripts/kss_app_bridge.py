@@ -5506,6 +5506,323 @@ def _indicator_retire(entry_id: str) -> dict[str, Any]:
     return {"ok": True, "entryId": entry_id, "status": updated.status}
 
 
+# ---------------------------------------------------------------------------
+# 可投资地图（plan 2026-08-09-001 U3）—— 判定全在这一层算完，桌面端与 MCP 只渲染。
+#
+# 返回值同时给机器键与展示串：桌面端按色筛选、查主题色槽、画配额参考线都要机器键，
+# 只给成品串会逼实现方去嗅探字符串前缀。判定规则仍只在这里实现一次（KTD2）。
+# ---------------------------------------------------------------------------
+
+#: 8 问已定题数达到这个数才给核心区结论（plan R14）。
+_INV_TOTAL_QUESTIONS = 8
+#: 配额条渲染百分比所需的最小已标注只数（plan R18）。
+_INV_MIN_SAMPLE = 10
+
+
+def _investability_db() -> Path:
+    """两张写表的落点。显式传路径而不是导入常量，测试可替换 STATE_ROOT。"""
+    return STATE_ROOT / "storage" / "kss.db"
+
+
+def _investability_map_registry() -> Any:
+    """加载节点树。每次读命令重新解析，不做进程内缓存——sidecar 是长进程，
+    缓存会让改完 YAML 不重启就一直看到旧树，而 103 个节点的重解析开销可忽略。"""
+    from kss.investability.registry import InvestabilityMap  # noqa: PLC0415
+
+    return InvestabilityMap.from_yaml()
+
+
+def _inv_zone(answers: dict[int, Any]) -> dict[str, Any]:
+    """按 8 问答案算暴露区位（plan R14 / R15）。
+
+    已定题数指答「是」或「否」的题数；「未知」与未答都不计入。8 题全定才给核心区
+    结论，未定满时按下界定档——只往危险方向报，不往安全方向报。
+    """
+    decided = sum(1 for v in answers.values() if v is not None)
+    yes = sum(1 for v in answers.values() if v is True)
+    total = _INV_TOTAL_QUESTIONS
+
+    if decided == total:
+        if yes <= 2:
+            key, label = "core", "核心区"
+        elif yes <= 4:
+            key, label = "satellite", "卫星"
+        else:
+            key, label = "red", "红区"
+    elif yes >= 5:
+        key, label = "red", "红区"
+    elif yes >= 3:
+        key, label = "at_least_satellite", "至少卫星"
+    else:
+        key, label = "undetermined", "未尽调"
+
+    return {
+        "key": key,
+        "label": label,
+        "decided": decided,
+        "yes": yes,
+        "total": total,
+        "display": f"{label} · 已定 {decided}/{total}",
+    }
+
+
+def _inv_stock_payload(
+    ts_code: str,
+    labels: list[Any],
+    answers: dict[int, Any],
+    registry: Any,
+    stale_ids: set[str],
+) -> dict[str, Any]:
+    """组装一只票的暴露信息。四处落点与 MCP 工具共用这一份字段集。"""
+    primary = next((x for x in labels if x.is_primary), None)
+    secondaries = [x for x in labels if not x.is_primary]
+    node = registry.get(primary.node_id) if primary else None
+
+    if primary is None:
+        state, color_key = "unlabelled", ""
+    elif node is None or node.is_pending:
+        state, color_key = "pending_color", ""
+    else:
+        state, color_key = "labelled", node.primary_color
+
+    palette = registry.palette
+    color_label = palette[color_key].label if color_key in palette else ""
+    state_label = {
+        "unlabelled": "未上图",
+        "pending_color": "已上图 · 待定色",
+        "labelled": color_label,
+    }[state]
+
+    return {
+        "tsCode": ts_code,
+        "state": state,
+        "stateLabel": state_label,
+        "colorKey": color_key,
+        "colorLabel": color_label,
+        "primaryNode": node.as_dict() if node else None,
+        "secondaryNodes": [
+            registry.get(x.node_id).as_dict()
+            for x in secondaries
+            if registry.get(x.node_id) is not None
+        ],
+        "zone": _inv_zone(answers),
+        "answers": {str(i): answers.get(i) for i in range(1, _INV_TOTAL_QUESTIONS + 1)},
+        "labelUpdatedAt": primary.updated_at if primary else "",
+        "isStale": bool(primary and primary.node_id in stale_ids),
+    }
+
+
+def _investability_map_cmd(codes_csv: str = "") -> dict[str, Any]:
+    """节点树 + 色板 + 主轴 + 每个节点的挂载个股与覆盖态。
+
+    Args:
+        codes_csv: 可选的逗号分隔代码列表；给了就把这些票按主副节点挂到各节点上。
+    """
+    from datetime import date  # noqa: PLC0415
+
+    from kss.storage.investability import (  # noqa: PLC0415
+        load_labels_bulk,
+        load_node_coverage,
+    )
+
+    registry = _investability_map_registry()
+    db = _investability_db()
+    codes = [c.strip() for c in codes_csv.split(",") if c.strip()]
+    labels_by_code = load_labels_bulk(codes, db_path=db) if codes else {}
+    coverage = load_node_coverage(db_path=db)
+    stale_ids = registry.stale_node_ids(as_of=date.today())
+
+    attached: dict[str, list[str]] = {}
+    for code, labels in labels_by_code.items():
+        for label in labels:
+            attached.setdefault(label.node_id, []).append(code)
+
+    nodes = []
+    for node in registry.all_nodes():
+        stocks = attached.get(node.node_id, [])
+        if stocks:
+            node_state = "has_stocks"
+        elif node.node_id in coverage:
+            node_state = "confirmed_empty"
+        else:
+            node_state = "unreviewed"
+        nodes.append(
+            {
+                **node.as_dict(),
+                "isStale": node.node_id in stale_ids,
+                "nodeState": node_state,
+                "confirmedAt": coverage.get(node.node_id, ""),
+                "stocks": stocks,
+            }
+        )
+
+    return {
+        "sourceVersion": registry.source_version,
+        "oldestReviewed": registry.oldest_reviewed(),
+        "staleCount": len(stale_ids),
+        "palette": {k: v.as_dict() for k, v in registry.palette.items()},
+        "axes": {
+            k: {"label": a.label, "sourceRef": a.source_ref, "groups": a.groups}
+            for k, a in registry.axes.items()
+        },
+        "nodes": nodes,
+    }
+
+
+def _investability_stocks(codes_csv: str) -> dict[str, Any]:
+    """按代码列表批量取暴露信息；传单个代码即单票查询。"""
+    from datetime import date  # noqa: PLC0415
+
+    from kss.storage.investability import (  # noqa: PLC0415
+        load_answers_bulk,
+        load_labels_bulk,
+    )
+
+    codes = [c.strip() for c in codes_csv.split(",") if c.strip()]
+    if not codes:
+        return {"stocks": {}}
+
+    registry = _investability_map_registry()
+    db = _investability_db()
+    labels_by_code = load_labels_bulk(codes, db_path=db)
+    answers_by_code = load_answers_bulk(codes, db_path=db)
+    stale_ids = registry.stale_node_ids(as_of=date.today())
+    blank = {i: None for i in range(1, _INV_TOTAL_QUESTIONS + 1)}
+
+    return {
+        "stocks": {
+            code: _inv_stock_payload(
+                code,
+                labels_by_code.get(code, []),
+                answers_by_code.get(code, blank),
+                registry,
+                stale_ids,
+            )
+            for code in codes
+        }
+    }
+
+
+def _investability_summary(codes_csv: str, cap_pct: str = "") -> dict[str, Any]:
+    """按显式代码列表算组合暴露配额（plan R18）。
+
+    分母由调用方传入而不是这里查自选表：自选真源在桌面端，库里那张表是同步失败被
+    静默吞掉的镜像，从表里算会漂移（KTD3）。
+
+    主轨按五个行业色算已标注且主色非待定的只数占比，五色相加为 100%；红区走副轨，
+    用同一分母，两轨不相加。
+    """
+    payload = _investability_stocks(codes_csv)["stocks"]
+    registry = _investability_map_registry()
+    palette_keys = list(registry.palette)
+
+    counts = dict.fromkeys(palette_keys, 0)
+    unlabelled = pending = red = 0
+    for item in payload.values():
+        if item["state"] == "unlabelled":
+            unlabelled += 1
+            continue
+        if item["state"] == "pending_color":
+            pending += 1
+            continue
+        counts[item["colorKey"]] += 1
+        if item["zone"]["key"] == "red":
+            red += 1
+
+    denominator = sum(counts.values())
+    sample_ok = denominator >= _INV_MIN_SAMPLE
+    ratios = (
+        {k: round(v * 100 / denominator, 1) for k, v in counts.items()}
+        if sample_ok
+        else {}
+    )
+    red_ratio = round(red * 100 / denominator, 1) if sample_ok else None
+
+    cap: float | None = None
+    over_cap = None
+    if cap_pct.strip():
+        try:
+            cap = float(cap_pct)
+        except ValueError:
+            cap = None
+    if cap is not None and sample_ok:
+        over_cap = (ratios.get("orange", 0.0) + ratios.get("purple", 0.0)) > cap
+
+    return {
+        "denominator": denominator,
+        "denominatorSource": "explicit",
+        "sampleInsufficient": not sample_ok,
+        "minSample": _INV_MIN_SAMPLE,
+        "counts": counts,
+        "ratios": ratios,
+        "redCount": red,
+        "redRatio": red_ratio,
+        "unlabelledCount": unlabelled,
+        "pendingColorCount": pending,
+        "cap": cap,
+        "overCap": over_cap,
+        "redSymbols": [
+            c for c, v in payload.items() if v["zone"]["key"] == "red"
+        ],
+    }
+
+
+def _investability_export() -> dict[str, Any]:
+    """全量导出标注与 8 问答案。这份数据没有任何上游能重跑出来，导出是唯一的第二份拷贝。"""
+    from kss.storage.investability import export_all  # noqa: PLC0415
+
+    return export_all(db_path=_investability_db())
+
+
+def _investability_set_label(
+    ts_code: str, primary: str, secondaries_csv: str = ""
+) -> dict[str, Any]:
+    """整体替换一只票的节点标注；主节点传空串等同于清空。"""
+    from kss.storage.investability import load_labels, set_labels  # noqa: PLC0415
+
+    db = _investability_db()
+    seconds = [s.strip() for s in secondaries_csv.split(",") if s.strip()]
+    set_labels(ts_code, primary, seconds, db_path=db)
+    return {
+        "ok": True,
+        "tsCode": ts_code,
+        "labels": [x.as_dict() for x in load_labels(ts_code, db_path=db)],
+    }
+
+
+def _investability_set_answer(
+    ts_code: str, question: str, value: str
+) -> dict[str, Any]:
+    """写一只票的单题 8 问答案。value 取 yes / no / unknown。"""
+    from kss.storage.investability import load_answers, set_answer  # noqa: PLC0415
+
+    mapped = {"yes": True, "no": False, "unknown": None}
+    if value not in mapped:
+        raise ValueError(f"value 必须是 yes / no / unknown，收到 {value!r}")
+    db = _investability_db()
+    set_answer(ts_code, int(question), mapped[value], db_path=db)
+    answers = load_answers(ts_code, db_path=db)
+    return {"ok": True, "tsCode": ts_code, "zone": _inv_zone(answers)}
+
+
+def _investability_set_node_coverage(node_id: str, confirmed: str) -> dict[str, Any]:
+    """把节点标成已人工确认无标的，或撤销该确认（plan R9）。"""
+    from kss.storage.investability import (  # noqa: PLC0415
+        load_node_coverage,
+        set_node_coverage,
+    )
+
+    db = _investability_db()
+    flag = confirmed.strip().lower() in {"1", "true", "yes"}
+    set_node_coverage(node_id, flag, db_path=db)
+    return {
+        "ok": True,
+        "nodeId": node_id,
+        "confirmed": flag,
+        "confirmedAt": load_node_coverage(db_path=db).get(node_id, ""),
+    }
+
+
 # 写命令（产生副作用 / 修改状态）；U6 MCP 的 paper-only 闸据此分类。
 WRITE_COMMANDS = frozenset({
     "run", "import", "resolve",
@@ -5523,6 +5840,12 @@ WRITE_COMMANDS = frozenset({
     "indicator-retire",    # 退役：注册表 status=retired
     "cs-freshness",  # notify 时外发 Telegram（消息即副作用；不带 notify 纯只读）
     "surface-apply",  # 盯盘 surface 配置写（隔夜追加 / 指标小卡）
+    # 可投资地图写命令（plan U3）。这三条不给 agent：R25 禁写，
+    # 写确认的 confirm=True 来自 agent 不来自人，拿它守人工色表等于
+    # 把手工标注偷换成模型标注。MCP 侧只注册读工具。
+    "investability-label",
+    "investability-answer",
+    "investability-node-coverage",
 })
 
 # ---------------------------------------------------------------------------
@@ -5554,6 +5877,31 @@ COMMANDS = {
     "theme-leaders": {"desc": "主题龙头梯队", "args": []},
     "get-discovery-candidates": {"desc": "潜力股发现候选", "args": []},
     "perilla-enrichment": {"desc": "紫苏叶个股富化(机构/PE/美股对标)", "args": ["SYMBOL"]},
+    "investability-map": {
+        "desc": "可投资地图节点树(103 子行业 · 五色暴露分类 · 覆盖态)",
+        "args": ["[CODES]"],
+    },
+    "investability-stocks": {
+        "desc": "个股暴露信息(行业色 · 节点路径 · 8 问区位)",
+        "args": ["CODES"],
+    },
+    "investability-summary": {
+        "desc": "组合暴露配额(五色主轨 + 红区副轨；分母须显式传入)",
+        "args": ["CODES", "[CAP_PCT]"],
+    },
+    "investability-export": {"desc": "地图标注与 8 问答案全量导出(留档用)", "args": []},
+    "investability-label": {
+        "desc": "写个股节点标注(整体替换)",
+        "args": ["SYMBOL", "PRIMARY_NODE", "[SECONDARY_NODES]"],
+    },
+    "investability-answer": {
+        "desc": "写个股 8 问单题答案",
+        "args": ["SYMBOL", "QUESTION_1_8", "yes|no|unknown"],
+    },
+    "investability-node-coverage": {
+        "desc": "标记节点已人工确认无标的",
+        "args": ["NODE_ID", "true|false"],
+    },
     "cron-list": {"desc": "计划任务及状态", "args": []},
     "cron-rerun": {"desc": "重跑计划任务", "args": ["LABEL"]},
     "cron-enable": {"desc": "启用计划任务", "args": ["LABEL"]},
@@ -6672,6 +7020,34 @@ def dispatch(command: str, args: list[str]) -> Any:
         return _cron_edit_schedule(args[0], args[1])
     if command == "watchlist-set":
         return _watchlist_set(args[0] if args else "")
+    if command == "investability-map":
+        return _investability_map_cmd(args[0] if args else "")
+    if command == "investability-stocks":
+        return _investability_stocks(args[0] if args else "")
+    if command == "investability-summary":
+        return _investability_summary(
+            args[0] if args else "", args[1] if len(args) > 1 else ""
+        )
+    if command == "investability-export":
+        return _investability_export()
+    if command == "investability-label":
+        if not args:
+            raise ValueError("investability-label requires SYMBOL PRIMARY_NODE")
+        return _investability_set_label(
+            args[0],
+            args[1] if len(args) > 1 else "",
+            args[2] if len(args) > 2 else "",
+        )
+    if command == "investability-answer":
+        if len(args) < 3:
+            raise ValueError(
+                "investability-answer requires SYMBOL QUESTION yes|no|unknown"
+            )
+        return _investability_set_answer(args[0], args[1], args[2])
+    if command == "investability-node-coverage":
+        if len(args) < 2:
+            raise ValueError("investability-node-coverage requires NODE_ID true|false")
+        return _investability_set_node_coverage(args[0], args[1])
     if command == "trends-month":
         if not args:
             raise ValueError("trends-month requires YYYY-MM")
