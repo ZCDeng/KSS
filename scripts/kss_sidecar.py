@@ -145,6 +145,79 @@ def _execute_write(command: str, args: list[str]) -> dict:
         return {"error": "write_failed", "detail": f"{type(exc).__name__}: {exc}"}
 
 
+# Harness 工具 execute 的 callId 授权表。不是 chat-turn pending，不构成第二写主人（KTD2）。
+_HARNESS_GRANTS: dict[str, str] = {}
+
+
+def clear_harness_grants() -> None:
+    _HARNESS_GRANTS.clear()
+
+
+def grant_harness_write(call_id: str, command: str) -> None:
+    """记录 Harness 已允许的一次 live 写 callId。无授权不得 dispatch。"""
+    if not isinstance(call_id, str) or not call_id.strip():
+        raise ValueError("harness grant requires call_id")
+    if not isinstance(command, str) or not command.strip():
+        raise ValueError("harness grant requires command")
+    _HARNESS_GRANTS[call_id] = command
+
+
+def execute_harness_tool(
+    *,
+    name: str,
+    args: dict[str, Any] | None,
+    call_id: str,
+    force_read: bool = False,
+    override_command: str | None = None,
+    override_positional: list[str] | None = None,
+) -> dict:
+    """Harness 插件 execute 的 RPC 意图入口。
+
+    读：``_make_read_only_call``（碰 WRITE_COMMANDS 即失败）。
+    写：仅当该 callId 当前已被 Harness allow，才 ``_execute_write``。
+    """
+    import kss_chat_loop as chat_loop  # 惰性：sidecar→chat_loop 单向
+
+    tool_args = args if isinstance(args, dict) else {}
+    registry = chat_loop.ToolRegistry()
+    if name not in {str(spec["name"]) for spec in chat_loop.TOOL_SPECS}:
+        return {"error": "unknown_tool", "name": name}
+
+    spec = registry.spec(name) or {}
+    spec_command = str(spec.get("command") or "")
+    try:
+        command, positional = registry.resolve(name, tool_args)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": "resolve_failed", "detail": f"{type(exc).__name__}: {exc}"}
+
+    if override_command is not None:
+        command = override_command
+        positional = list(override_positional or [])
+        if command in bridge.WRITE_COMMANDS and spec_command not in bridge.WRITE_COMMANDS:
+            return {
+                "error": "read_only_violation",
+                "hint": "read plugin cannot dispatch writes",
+            }
+
+    if force_read or command not in bridge.WRITE_COMMANDS:
+        try:
+            read_call = bridge._make_read_only_call(bridge.dispatch)
+            payload = read_call(command, positional)
+            return {"ok": True, "command": command, "result": payload}
+        except (PermissionError, ValueError, SystemExit) as exc:
+            return {
+                "error": "read_only_violation",
+                "detail": str(exc),
+                "command": command,
+            }
+
+    allowed = _HARNESS_GRANTS.get(call_id)
+    if allowed != command:
+        return {"error": "not_allowed", "hint": "Harness callId is not currently allowed"}
+    _HARNESS_GRANTS.pop(call_id, None)
+    return _execute_write(command, positional)
+
+
 def _reject_all(pending: dict, result: dict) -> None:
     """断连/SIGHUP/收尾:把所有未决 confirm 按拒收尾,防 loop 的 await 永挂(KTD-3/F3)。"""
     for entry in list(pending.values()):
@@ -1340,6 +1413,17 @@ def _handle_agent_json_command(req: dict) -> str | None:
     """Agent v1 非流式 JSON 命令；返回标准 sidecar response。"""
     cmd = req.get("cmd")
     try:
+        if cmd == "harness-tool-grant":
+            grant_harness_write(str(req.get("call_id") or ""), str(req.get("command") or ""))
+            return _sidecar_ok({"ok": True, "call_id": req.get("call_id")})
+        if cmd == "harness-tool-execute":
+            raw_args = req.get("args")
+            return _sidecar_ok(execute_harness_tool(
+                name=str(req.get("name") or ""),
+                args=raw_args if isinstance(raw_args, dict) else {},
+                call_id=str(req.get("call_id") or ""),
+                force_read=bool(req.get("force_read")),
+            ))
         if cmd == "agent-research":
             return _sidecar_ok(_research_action_payload(req))
         if cmd == "agent-artifacts":

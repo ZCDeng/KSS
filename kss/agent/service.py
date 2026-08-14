@@ -74,6 +74,7 @@ class RuntimeRunOptions:
     max_steps: int = 8
     timeout_seconds: float = 240.0
     max_provider_tokens: int | None = None
+    # 遗留 Python runtime 的写剥离。Harness 上 agent 可见 live 写以插件包为准（U2），不在此扩表。
     allow_write_tools: bool = True
     trusted_internal_input: bool = False
     profile_id: str | None = None

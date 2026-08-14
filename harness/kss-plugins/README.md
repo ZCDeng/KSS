@@ -1,5 +1,9 @@
 # `@kss/harness-plugins`
 
-KSS 业务插件包的占位目录。U1 只提供 bundle 入口与空 `apply`，工具、审批与 pre-execute 策略由后续单元填入。
+KSS 业务能力的唯一 Cordis 登记面：目录从 chat `TOOL_SPECS` 派生。
 
-本包作为 out-of-tree bundle 叠在 `@deepseek-ai/dsh-base` 之上，不引入 `dsh-web-app`。
+- 只读工具：desktop / research / MCP 投影（`mcpVisible`）。
+- live 写：仅 desktop + research；execute 只发 sidecar RPC 意图，Python 仅在 Harness 已允许该 `callId` 后 `_execute_write`。
+- R12 投资可标写命令永不登记。
+
+`kss_mcp.py` `_LIVE` 不是本包目录。包变更在下次 `agents.create` / MCP 重连后可见。
