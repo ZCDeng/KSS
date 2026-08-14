@@ -4,9 +4,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createConnection } from "node:net";
 import { loadPackCatalog, packToolMeta } from "./catalog.js";
+import { apply as applyPolicy } from "./policy.js";
 
 export const name = "kss";
-export const inject = ["tools"];
+export const inject = ["tools", "approval"];
 export { packToolMeta, loadPackCatalog };
 
 function resolveDefineTool() {
@@ -75,6 +76,7 @@ function renderJson(_args, value) {
 }
 
 export function apply(ctx) {
+  applyPolicy(ctx);
   for (const entry of loadPackCatalog()) {
     ctx.tools.register(
       defineTool({
