@@ -1,17 +1,16 @@
-"""AgentRuntime-backed execution for non-deterministic research nodes."""
+"""Harness-backed execution for non-deterministic research nodes."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
-import threading
 from pathlib import Path
 from typing import Any
 
-from kss.agent.service import KSSAgentService, RuntimeRunOptions
-from kss.agent.types import AgentEvent
 from kss.llm.sanitizer import sanitize_llm_input
+
+from .allowlist import bound_write_allowlist
+from .harness_driver import ResearchHarnessDriver, ResearchTurnRequest
 
 _JSON_FENCE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL)
 _RESULT_KEYS = {
@@ -25,42 +24,26 @@ _RESULT_KEYS = {
 
 
 class AgentResearchTaskRunner:
-    """Run one research node through the existing stateful AgentRuntime.
-
-    The research overlay deliberately rejects every write request. Successful
-    tool terminal events are returned to the coordinator for evidence capture;
-    assistant prose by itself never becomes evidence.
-    """
+    """将一个研究节点交给 ResearchHarnessDriver，由 overlay 判定完成。"""
 
     def __init__(
         self,
         *,
         state_root: Path,
         project_root: Path,
-        shared_agent: KSSAgentService | None = None,
+        driver: ResearchHarnessDriver | None = None,
+        shared_agent: Any | None = None,
     ) -> None:
+        del shared_agent
         self._state_root = Path(state_root)
         self._project_root = Path(project_root)
-        # Test/compatibility injection point. Production leaves this unset so
-        # each concurrent attempt owns an isolated runtime instance.
-        self._agent = shared_agent
-        self._active_sessions: dict[
-            str, dict[str, tuple[KSSAgentService, str]]
-        ] = {}
-        self._lock = threading.Lock()
+        self._driver = driver or ResearchHarnessDriver(
+            state_root=self._state_root,
+            project_root=self._project_root,
+        )
 
     def abort(self, goal_id: str, reason: str = "research_paused") -> bool:
-        with self._lock:
-            sessions = list(
-                self._active_sessions.get(goal_id, {}).values()
-            )
-        if not sessions:
-            return False
-        aborted = False
-        for agent, session_id in sessions:
-            run_id = agent.runtime.active_run_id(session_id)
-            aborted = bool(run_id and agent.abort(run_id, reason)) or aborted
-        return aborted
+        return bool(self._driver.abort(goal_id, reason))
 
     def run(
         self,
@@ -70,197 +53,82 @@ class AgentResearchTaskRunner:
         attempt_id: str,
         dependency_summaries: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        return asyncio.run(
-            self._run_async(
-                goal=goal,
-                task=task,
-                attempt_id=attempt_id,
-                dependency_summaries=dependency_summaries,
-            )
-        )
-
-    async def _run_async(
-        self,
-        *,
-        goal: dict[str, Any],
-        task: dict[str, Any],
-        attempt_id: str,
-        dependency_summaries: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        events: list[AgentEvent] = []
-
-        async def emit(event: AgentEvent) -> None:
-            events.append(event)
-
-        async def reject_write(**_: Any) -> dict[str, Any]:
-            return {
-                "error": "research_read_only",
-                "is_error": True,
-                "hint": "深度研究节点只允许只读工具",
-            }
-
-        session_id = (
-            f"research-{goal['goal_id']}-{task['task_id']}-{attempt_id}"
-        )
-        agent = self._agent or KSSAgentService(
-            self._state_root, self._project_root
-        )
-        owns_agent = self._agent is None
-
-        def finish(value: dict[str, Any]) -> dict[str, Any]:
-            if owns_agent:
-                agent.close()
-            return value
         prompt = self._prompt(
             goal=goal,
             task=task,
             dependency_summaries=dependency_summaries,
         )
-        with self._lock:
-            self._active_sessions.setdefault(
-                str(goal["goal_id"]), {}
-            )[attempt_id] = (agent, session_id)
-        payload = task.get("payload") or {}
-        timeout_seconds = float(payload.get("timeout_seconds") or 240.0)
-        token_budget = int(payload.get("max_provider_tokens") or 25_000)
-        run_options = RuntimeRunOptions(
-            allowed_tools=frozenset(payload.get("tool_whitelist") or []),
-            allowed_skills=frozenset(payload.get("skill_whitelist") or []),
-            allowed_memory_kinds=frozenset({"preference"}),
-            max_steps=int(payload.get("max_steps") or 8),
-            timeout_seconds=timeout_seconds,
-            max_provider_tokens=token_budget,
-            allow_write_tools=False,
-            trusted_internal_input=True,
-            profile_id=str(goal.get("profile_id") or "") or None,
+        origin = str(goal.get("origin") or "manual")
+        request = self._driver.prepare_attempt(
+            goal_id=str(goal.get("goal_id") or ""),
+            task=task,
+            attempt_id=attempt_id,
+            origin=origin,
         )
-        try:
-            try:
-                result = await asyncio.wait_for(
-                    agent.run_turn(
-                        session_id,
-                        attempt_id,
-                        prompt,
-                        emit,
-                        reject_write,
-                        run_options=run_options,
-                    ),
-                    timeout=timeout_seconds + 5.0,
-                )
-            except TimeoutError:
-                run_id = agent.runtime.active_run_id(session_id)
-                if run_id:
-                    agent.abort(run_id, "research_task_timeout")
-                return finish(
-                    self._incomplete("agent_runtime_timeout", events=events)
-                )
-            except Exception as exc:  # provider/runtime errors become durable incomplete results
-                return finish(
-                    self._incomplete(f"agent_runtime_error: {exc}")
-                )
-        finally:
-            with self._lock:
-                active = self._active_sessions.get(str(goal["goal_id"]), {})
-                active.pop(attempt_id, None)
-                if not active:
-                    self._active_sessions.pop(str(goal["goal_id"]), None)
-
-        if result.status != "completed":
-            return finish(
-                self._incomplete(
-                    result.error or result.termination_reason or result.status,
-                    usage=dict(result.usage),
-                )
+        request.prompt = prompt
+        turn = self._driver.run(request)
+        extra = {
+            "workspace": str(request.workspace),
+            "agent_preset": request.agent_preset,
+        }
+        if turn.harness_status == "interrupted":
+            return self._incomplete(
+                turn.error or "interrupted",
+                usage=dict(turn.usage),
+                harness_status="interrupted",
+                extra=extra,
             )
-        tool_messages = result.messages
-        initial_usage = dict(result.usage)
-        assistant_text = next(
-            (
-                message.content
-                for message in reversed(result.messages)
-                if message.role == "assistant" and message.content.strip()
-            ),
-            "",
-        )
-        parsed = self._parse_result(assistant_text)
-        combined_usage = initial_usage
+        if turn.harness_status not in {"completed", "succeeded"}:
+            return self._incomplete(
+                turn.error or turn.harness_status,
+                usage=dict(turn.usage),
+                harness_status=turn.harness_status,
+                extra=extra,
+            )
+        parsed = self._parse_result(turn.assistant_text)
+        combined = dict(turn.usage)
         if parsed is None:
-            repair_events: list[AgentEvent] = []
-
-            async def emit_repair(event: AgentEvent) -> None:
-                repair_events.append(event)
-
-            repair_options = RuntimeRunOptions(
-                allowed_tools=frozenset(),
-                allowed_skills=frozenset(),
-                allowed_memory_kinds=frozenset(),
-                max_steps=1,
-                timeout_seconds=min(timeout_seconds, 60.0),
-                max_provider_tokens=min(token_budget, 5_000),
-                allow_write_tools=False,
-                trusted_internal_input=True,
-                profile_id=str(goal.get("profile_id") or "") or None,
+            repair_req = ResearchTurnRequest(
+                goal_id=request.goal_id,
+                task=task,
+                attempt_id=f"{attempt_id}-repair",
+                prompt=(
+                    "上一条回复不符合任务结果契约。请仅按指定六个字段输出合法 JSON，不调用工具。"
+                ),
+                origin=origin,
+                workspace=request.workspace,
+                allowlist=request.allowlist,
+                agent_preset=request.agent_preset,
+                attach_desktop_answerer=False,
+                applied_write_ids=turn.applied_write_ids,
             )
-            with self._lock:
-                self._active_sessions.setdefault(
-                    str(goal["goal_id"]), {}
-                )[attempt_id] = (agent, session_id)
-            try:
-                try:
-                    repair = await asyncio.wait_for(
-                        agent.run_turn(
-                            session_id,
-                            f"{attempt_id}-repair",
-                            "上一条回复不符合任务结果契约。请仅按指定六个字段输出合法 JSON，不调用工具。",
-                            emit_repair,
-                            reject_write,
-                            run_options=repair_options,
-                        ),
-                        timeout=repair_options.timeout_seconds + 5.0,
-                    )
-                except Exception:
-                    repair = None
-            finally:
-                with self._lock:
-                    active = self._active_sessions.get(
-                        str(goal["goal_id"]), {}
-                    )
-                    active.pop(attempt_id, None)
-                    if not active:
-                        self._active_sessions.pop(
-                            str(goal["goal_id"]), None
-                        )
-            events.extend(repair_events)
-            if repair is not None and repair.status == "completed":
-                repaired_text = next(
-                    (
-                        message.content
-                        for message in reversed(repair.messages)
-                        if message.role == "assistant" and message.content.strip()
-                    ),
-                    "",
+            repair = self._driver.run(repair_req)
+            combined = self._merge_usage(combined, dict(repair.usage))
+            if repair.harness_status == "interrupted":
+                return self._incomplete(
+                    repair.error or "interrupted",
+                    usage=combined,
+                    harness_status="interrupted",
+                    extra=extra,
                 )
-                parsed = self._parse_result(repaired_text)
-            if parsed is None:
-                return finish(
-                    self._incomplete(
-                        "task_result_schema_invalid_after_repair",
-                        usage=self._merge_usage(
-                            initial_usage,
-                            dict(repair.usage) if repair is not None else {},
-                        ),
-                        events=events,
-                    )
-                )
-            combined_usage = self._merge_usage(
-                initial_usage, dict(repair.usage)
+            parsed = self._parse_result(repair.assistant_text)
+            turn = repair
+        if parsed is None:
+            return self._incomplete(
+                "task_result_schema_invalid_after_repair",
+                usage=combined,
+                harness_status=turn.harness_status,
+                extra=extra,
             )
-            result = repair
-        parsed["usage"] = combined_usage
-        parsed["_tool_evidence"] = self._tool_evidence(events)
-        parsed["_tool_results"] = self._tool_results(tool_messages)
-        parsed["run_id"] = result.run_id
-        return finish(parsed)
+        parsed["usage"] = combined
+        parsed["_tool_evidence"] = list(turn.tool_evidence)
+        parsed["_tool_results"] = list(turn.tool_results)
+        parsed["harness_status"] = turn.harness_status
+        parsed["workspace"] = str(request.workspace)
+        parsed["write_allowlist"] = list(request.allowlist.tools)
+        parsed["attach_desktop_answerer"] = False
+        parsed["agent_preset"] = request.agent_preset
+        return parsed
 
     def _prompt(
         self,
@@ -269,12 +137,14 @@ class AgentResearchTaskRunner:
         task: dict[str, Any],
         dependency_summaries: list[dict[str, Any]],
     ) -> str:
+        writes = bound_write_allowlist(task)
         controlled = {
             "objective": self._sanitize_controlled(goal.get("objective")),
             "criterion": self._sanitize_controlled(task.get("title")),
             "snapshot": self._sanitize_controlled(goal.get("snapshot") or {}),
             "dependencies": self._sanitize_controlled(dependency_summaries),
             "allowed_tools": (task.get("payload") or {}).get("tool_whitelist") or [],
+            "write_allowlist": writes,
             "agent": {
                 "agent_id": task.get("agent_id"),
                 "role": (task.get("payload") or {}).get("agent_role"),
@@ -303,16 +173,24 @@ class AgentResearchTaskRunner:
             structured_hint = (
                 " 本节点的 claims 至少一项应包含 metric 对象："
                 f'{{"metric_id":"{metric_id}","value":数字,"unit":"%",'
-                f'"precision":1,"formula_id":"{formula_id}",'
+                f'"formula_id":"{formula_id}",'
                 '"formula_version":"v1","formula_inputs":[参与计算的原始数字],'
                 '"input_refs":[对应成功工具的 tool_call_id、工具名或来源 URL],'
                 '"as_of":"YYYY-MM-DD"}。value 必须等于 formula_inputs 的算术平均，'
                 "不得填写未出现在对应工具结果中的数字。"
             )
+        write_hint = (
+            "写操作仅允许命中研究白名单且落在本 attempt 独立工作区；"
+            "未命中直接拒绝且不问人。仓库根与数据库不可写。"
+            if writes
+            else "本节点写白名单为空，任何写都会失败关闭。"
+        )
         return (
-            "你正在执行 KSS 深度研究任务节点。只允许使用只读工具；任何写操作都会被拒绝。"
+            "你正在执行 KSS 深度研究任务节点。"
+            f"{write_hint}"
             "会话历史、长期记忆、Skill 文本和模型自身知识不能充当已验证证据。"
             "角色不能验证自己的 Evidence、修改 Criteria、提高预算或发布报告。"
+            "模型文本不能标记研究目标完成；完成判定只属于研究 overlay 审计。"
             "只可引用本次成功工具结果中的来源。最终只输出一个 JSON 对象，不要 Markdown：\n"
             '{"status":"succeeded|incomplete","claims":[],"evidence_refs":[],'
             '"artifact_refs":[],"open_questions":[],"warnings":[]}\n'
@@ -341,65 +219,15 @@ class AgentResearchTaskRunner:
             return None
         return {key: value[key] for key in _RESULT_KEYS}
 
-    def _tool_evidence(self, events: list[AgentEvent]) -> list[dict[str, Any]]:
-        captured: list[dict[str, Any]] = []
-        for event in events:
-            if event.type != "tool_end" or event.payload.get("is_error"):
-                continue
-            drawer = event.payload.get("evidenceDrawer")
-            if not isinstance(drawer, dict):
-                continue
-            sources = drawer.get("externalSources")
-            if not isinstance(sources, list):
-                continue
-            for source in sources:
-                if isinstance(source, dict) and source.get("url"):
-                    captured.append(
-                        {
-                            **source,
-                            "tool_name": event.payload.get("name"),
-                            "tool_event_id": event.id,
-                        }
-                    )
-        return captured
-
-    @staticmethod
-    def _tool_results(messages: tuple[Any, ...]) -> list[dict[str, Any]]:
-        """Capture successful scrubbed tool results from the runtime transcript.
-
-        This stays internal to the research coordinator. It is not emitted on
-        the public event stream, and only its content hash plus bounded numeric
-        lineage enters the Evidence Ledger.
-        """
-
-        captured: list[dict[str, Any]] = []
-        for message in messages:
-            if getattr(message, "role", None) != "tool":
-                continue
-            for call in getattr(message, "tool_calls", ()):
-                result = getattr(call, "result", None)
-                error = getattr(call, "error", None)
-                if error or not isinstance(result, dict):
-                    continue
-                captured.append(
-                    {
-                        "tool_name": str(getattr(call, "name", None) or "tool"),
-                        "tool_call_id": str(
-                            getattr(call, "id", None) or message.id
-                        ),
-                        "result": result,
-                    }
-                )
-        return captured
-
     def _incomplete(
         self,
         warning: str,
         *,
         usage: dict[str, Any] | None = None,
-        events: list[AgentEvent] | None = None,
+        harness_status: str | None = None,
+        extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return {
+        payload = {
             "status": "incomplete",
             "claims": [],
             "evidence_refs": [],
@@ -407,9 +235,13 @@ class AgentResearchTaskRunner:
             "open_questions": [],
             "warnings": [warning],
             "usage": usage or {},
-            "_tool_evidence": self._tool_evidence(events or []),
+            "_tool_evidence": [],
             "_tool_results": [],
+            "harness_status": harness_status or "incomplete",
+            "attach_desktop_answerer": False,
         }
+        payload.update(extra or {})
+        return payload
 
     @staticmethod
     def _merge_usage(*items: dict[str, Any]) -> dict[str, Any]:

@@ -34,6 +34,9 @@ export function isWriteTool(name) {
 }
 
 export function loadResearchAllowlistStub() {
+  // Conservative default: bash + in-workspace file edits only.
+  // KSS live WRITE_COMMANDS are omitted; if added later they still grant then
+  // dispatch via sidecar execute_harness_tool, never as cwd-local files.
   const path = join(dirname(fileURLToPath(import.meta.url)), "research-allowlist.json");
   return JSON.parse(readFileSync(path, "utf8"));
 }

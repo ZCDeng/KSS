@@ -283,3 +283,28 @@ def test_sidecar_constructs_real_research_service_and_lists_profiles(
 
     assert created["goal"]["goal_id"] == created["goal_id"]
     assert opened["goal"]["snapshot"]["as_of"] == "2026-07-17"
+
+
+def test_f5_scheduled_resume_does_not_attach_desktop_confirm(monkeypatch, tmp_path):
+    calls = []
+
+    class Service:
+        def resume_goal(self, goal_id=None, **kwargs):
+            calls.append({"goal_id": goal_id, "kwargs": kwargs})
+            return {
+                "goal_id": goal_id,
+                "event": "resumed",
+                "origin": "scheduled",
+                "attach_desktop_answerer": False,
+            }
+
+    _install_fake_service(monkeypatch, tmp_path, Service())
+    payload = _payload(sc._handle_agent_json_command({
+        "cmd": "agent-research",
+        "action": "resume",
+        "goal_id": "scheduled-goal",
+    }))
+    src = Path(sc.__file__).read_text(encoding="utf-8")
+    assert payload["attach_desktop_answerer"] is False
+    assert calls[0]["goal_id"] == "scheduled-goal"
+    assert "AUTO_TASKS" not in src

@@ -1,4 +1,4 @@
 {
-  "tools": [],
+  "tools": ["bash", "write", "edit", "str_replace_editor"],
   "cwd": ""
 }

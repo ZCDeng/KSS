@@ -1013,3 +1013,141 @@ def test_audit_rejects_verified_evidence_from_disallowed_source_tier(tmp_path):
     assert audit["status"] == "fail"
     assert any(item["code"] == "criterion_insufficient_evidence" and item["criterion_id"] == snapshot_criterion["criterion_id"] for item in audit["findings"])
     assert audit["coverage"]["criteria"][snapshot_criterion["criterion_id"]]["allowed_tier"] == 0
+
+
+def _patch_write_allowlist(service, goal_id, kinds, tools):
+    with connect(service.db_path) as conn:
+        ensure_schema(conn)
+        rows = conn.execute(
+            "SELECT task_id, kind, payload_json FROM research_tasks WHERE goal_id=?",
+            (goal_id,),
+        ).fetchall()
+        for row in rows:
+            if str(row["kind"]) not in kinds:
+                continue
+            payload = json.loads(row["payload_json"] or "{}")
+            payload["write_allowlist"] = list(tools)
+            conn.execute(
+                "UPDATE research_tasks SET payload_json=? WHERE task_id=?",
+                (json.dumps(payload, ensure_ascii=False), row["task_id"]),
+            )
+
+
+def test_write_capable_nodes_do_not_run_in_parallel(tmp_path):
+    class RecordingRunner:
+        def __init__(self) -> None:
+            self.lock = threading.Lock()
+            self.active = 0
+            self.max_active = 0
+
+        def run(self, **_: object) -> dict[str, object]:
+            with self.lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            time.sleep(0.05)
+            with self.lock:
+                self.active -= 1
+            return {
+                "status": "succeeded",
+                "claims": [],
+                "evidence_refs": [],
+                "artifact_refs": [],
+                "open_questions": [],
+                "warnings": [],
+                "usage": {},
+                "_tool_evidence": [],
+                "_tool_results": [],
+            }
+
+        def abort(self, *_: object, **__: object) -> bool:
+            return True
+
+    runner = RecordingRunner()
+    service = ResearchService(
+        state_root=tmp_path,
+        project_root=Path(__file__).resolve().parents[2],
+        task_runner=runner,  # type: ignore[arg-type]
+    )
+    created = service.create_goal(
+        payload={
+            "client_request_id": "write-serial",
+            "profile_id": "investment-weekly-v3",
+            "execution_mode": "multi_agent_pilot",
+            "objective": "写节点串行",
+            "inputs": {
+                "date_range": "2026-07-13_to_2026-07-17",
+                "as_of": "2026-07-17",
+            },
+        }
+    )
+    goal_id = created["goal_id"]
+    _patch_write_allowlist(
+        service,
+        goal_id,
+        {"compute_temperature", "theme_consensus", "risk_radar"},
+        ["bash", "write"],
+    )
+    service.start_goal(goal_id=goal_id)
+    assert service.wait_for_idle(goal_id, timeout=10)["ok"] is True
+    assert runner.max_active == 1
+
+
+def test_read_only_layer_still_caps_at_two(tmp_path):
+    test_multi_agent_pilot_binds_roles_and_caps_concurrency(tmp_path)
+
+
+def test_model_text_cannot_mark_goal_complete(tmp_path):
+    class BoastRunner:
+        def run(self, **_: object) -> dict[str, object]:
+            return {
+                "status": "succeeded",
+                "claims": [{"content": "GOAL COMPLETE"}],
+                "evidence_refs": [],
+                "artifact_refs": [],
+                "open_questions": [],
+                "warnings": ["研究目标已完成"],
+                "usage": {},
+                "_tool_evidence": [],
+                "_tool_results": [],
+            }
+
+        def abort(self, *_: object, **__: object) -> bool:
+            return True
+
+    service = ResearchService(
+        state_root=tmp_path,
+        project_root=Path(__file__).resolve().parents[2],
+        task_runner=BoastRunner(),  # type: ignore[arg-type]
+    )
+    created = service.create_goal(
+        payload={
+            "client_request_id": "model-cannot-complete",
+            "profile_id": "investment-weekly-v3",
+            "execution_mode": "multi_agent_pilot",
+            "objective": "模型不得结案",
+            "inputs": {
+                "date_range": "2026-07-13_to_2026-07-17",
+                "as_of": "2026-07-17",
+            },
+        }
+    )
+    goal_id = created["goal_id"]
+    service.start_goal(goal_id=goal_id)
+    service.wait_for_idle(goal_id, timeout=10)
+    opened = service.open_goal(goal_id=goal_id)["detail"]
+    assert opened["status"] != "completed"
+
+
+def test_parallel_classifier_uses_write_allowlist_not_read_only_agent():
+    from kss.research.service import ResearchService as RS
+
+    empty = {
+        "agent_id": "source_collector",
+        "payload": {"read_only_agent": False, "write_allowlist": []},
+    }
+    writes = {
+        "agent_id": "source_collector",
+        "payload": {"read_only_agent": True, "write_allowlist": ["write"]},
+    }
+    assert RS._parallel_research_task(empty) is True
+    assert RS._parallel_research_task(writes) is False
