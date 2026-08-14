@@ -60,6 +60,16 @@ async function desktopTurn(req) {
   const callId = String(req.call_id || `r9-desktop-${Date.now()}`);
   const toolName = String(req.tool || "get_orientation");
   const args = req.args && typeof req.args === "object" ? req.args : {};
+  if (DRIVER === "dsh") {
+    if (!dshCtx?.agents) {
+      return {
+        ok: false,
+        status: "unavailable",
+        error: "harness_session_unavailable",
+        hint: "dsh agents.create is not ready",
+      };
+    }
+  }
   if (!SIDECAR) {
     const text = `planned ${toolName}`;
     return {
@@ -113,6 +123,13 @@ async function desktopTurn(req) {
 }
 
 async function researchTurn(req) {
+  if (DRIVER === "dsh" && !dshCtx?.agents) {
+    return {
+      ok: false,
+      status: "interrupted",
+      error: "harness_session_unavailable",
+    };
+  }
   const cwd = String(req.cwd || "");
   if (!cwd) {
     return { ok: false, status: "interrupted", error: "research cwd unset" };
