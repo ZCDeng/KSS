@@ -5949,6 +5949,10 @@ WRITE_COMMANDS = frozenset({
 COMMANDS = {
     "snapshot": {"desc": "今日总览快照", "args": []},
     "stock": {"desc": "单只股票明细", "args": ["SYMBOL"]},
+    "listing-resolve": {
+        "desc": "解析名称/代码到带后缀上市地(只读门控)",
+        "args": ["QUERY"],
+    },
     "report": {"desc": "读 storage 下 markdown 报告", "args": ["PATH"]},
     "paper-summary": {"desc": "模拟盘跟踪汇总", "args": []},
     "resolve": {"desc": "文本/OCR → ts_code", "args": ["TEXT"]},
@@ -7044,6 +7048,10 @@ def dispatch(command: str, args: list[str]) -> Any:
         if not args:
             raise ValueError("stock command requires SYMBOL")
         return stock_detail(args[0])
+    if command == "listing-resolve":
+        from kss.equity_research.listing_resolve import resolve_listing
+
+        return resolve_listing(args[0] if args else "")
     if command == "report":
         if not args:
             raise ValueError("report command requires PATH")

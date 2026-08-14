@@ -105,6 +105,16 @@ TOOL_SPECS: list[dict[str, Any]] = [
     ),
     _spec("get_stock", "stock", "单只股票明细(日线派生指标)。symbol 如 688008.SH",
           {"symbol": _STR}, ["symbol"], execution_mode="parallel"),
+    _spec(
+        "resolve_listing",
+        "listing-resolve",
+        "解析公司名或代码到带后缀上市地(只读)。门控只看 .SH/.SZ/.BJ/.HK；"
+        "美股与在美上市 ADR 超出范围。同一中文名命中美股别名与 A/港时范围内优先。"
+        "query 如 阿里巴巴 或 600519.SH",
+        {"query": _STR},
+        ["query"],
+        execution_mode="parallel",
+    ),
     _spec("get_sector_rotation", "sector-rotation", "板块热点轮动快照;date 为 YYYYMMDD 空则最新",
           {"date": _STR}, ["date"]),
     _spec("get_sector_rotation_history", "sector-rotation-history", "板块轮动历史近 limit 条",
