@@ -889,6 +889,11 @@ def _load_project_env() -> dict[str, str]:
         "LONGBRIDGE_APP_KEY",
         "LONGBRIDGE_APP_SECRET",
         "LONGBRIDGE_ACCESS_TOKEN",
+        "KSS_RESEARCH_PROVIDER",
+        "KSS_RESEARCH_FETCH_PROVIDER",
+        "KSS_RESEARCH_FIXTURE_PATH",
+        "JINA_API_KEY",
+        "SERPER_API_KEY",
     }
     loaded: dict[str, str] = {}
     # U3：dev .env（代码根）+ bundle-mode network.env（state root，非敏感，非 iCloud）。
@@ -4823,6 +4828,7 @@ def _self_check() -> dict[str, Any]:
     for item, label, keys in _CREDENTIAL_CHECKS:
         items.append(_check_credential(item, label, keys))
     items.append(_check_llm_credential())
+    items.append(_check_research_credential())
     items.append(_check_yupi_runtime())
     items.append(_check_cs_data_freshness())
     return {"items": items, "generatedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
@@ -5479,6 +5485,80 @@ def _datasource_test_llm() -> dict[str, Any]:
     }
 
 
+
+def _check_research_credential() -> dict[str, Any]:
+    """外部研究是可选能力：未配为 warn，不阻断应用。"""
+    try:
+        from kss.research.adapter import research_status  # noqa: PLC0415
+        status = research_status()
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "item": "research",
+            "status": "warn",
+            "detail": f"外部研究不可用: {exc}",
+            "fixHint": "去设置页外部研究分区填写",
+            "fixAction": "open_settings",
+        }
+    if status.get("available"):
+        provider = status.get("provider") or ""
+        return {
+            "item": "research",
+            "status": "ok",
+            "detail": f"外部研究已配置（{provider}）",
+            "fixHint": None,
+            "fixAction": None,
+        }
+    provider = status.get("provider") or "disabled"
+    if provider == "serper":
+        detail = "已选 Serper 但缺少 SERPER_API_KEY"
+    else:
+        detail = "未配置外部研究"
+    return {
+        "item": "research",
+        "status": "warn",
+        "detail": detail,
+        "fixHint": "去设置页外部研究分区填写",
+        "fixAction": "open_settings",
+    }
+
+
+def _datasource_test_research() -> dict[str, Any]:
+    """只读探测 research_status，不打真实搜索以免计费。"""
+    try:
+        from kss.research.adapter import research_status  # noqa: PLC0415
+        status = research_status()
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "source": "research",
+            "ok": False,
+            "error": type(exc).__name__,
+            "hint": str(exc)[:200],
+            "latency_ms": None,
+        }
+    provider = status.get("provider") or "disabled"
+    if not status.get("available"):
+        if provider == "serper":
+            hint = "已选 Serper 但缺少 SERPER_API_KEY"
+        elif provider in {"disabled", ""}:
+            hint = "未配置外部研究，去设置里选择 Jina/Serper/HTTP"
+        else:
+            hint = f"外部研究不可用（provider={provider}）"
+        return {
+            "source": "research",
+            "ok": False,
+            "error": "not_configured",
+            "hint": hint,
+            "latency_ms": None,
+        }
+    return {
+        "source": "research",
+        "ok": True,
+        "error": None,
+        "hint": f"provider={provider}；搜索走 research_bundle，仅作 evidence-only 背景",
+        "latency_ms": None,
+    }
+
+
 def _datasource_test(source: str) -> dict[str, Any]:
     """按数据源探测连通性（R7/KTD6）：只读、给出成功/失败与明确原因。"""
     source = (source or "").strip().lower()
@@ -5490,6 +5570,8 @@ def _datasource_test(source: str) -> dict[str, Any]:
         return _datasource_test_telegram()
     if source == "llm":
         return _datasource_test_llm()
+    if source == "research":
+        return _datasource_test_research()
     return {"source": source, "ok": False, "error": "unknown_source",
              "hint": f"未知数据源: {source!r}", "latency_ms": None}
 
@@ -6090,7 +6172,7 @@ COMMANDS = {
     },
     "indicator-retire": {"desc": "退役已固化指标(status=retired，不删数据)", "args": ["ENTRY_ID"]},
     "datasource-test": {
-        "desc": "数据源连通性测试(tushare/longbridge/telegram/llm)，只读",
+        "desc": "数据源连通性测试(tushare/longbridge/telegram/llm/research)，只读",
         "args": ["SOURCE"],
     },
     "log-list": {"desc": "枚举 storage/logs 下全部日志文件(含轮转代)", "args": []},

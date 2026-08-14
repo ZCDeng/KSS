@@ -67,7 +67,7 @@ struct EvidenceDrawerView: View {
                 .background(theme.surface, in: Capsule())
                 .overlay(Capsule().stroke(theme.hairline))
         }
-        .help(provider == "disabled" ? "外部研究 provider 当前不可用，不影响本地 KSS 问答" : "外部研究 provider")
+        .help(provider == "disabled" ? "外部研究未配置。去设置 → 外部研究选择 Jina/Serper/HTTP" : "外部研究 provider")
     }
 
     private var drawerBody: some View {

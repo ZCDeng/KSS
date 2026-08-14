@@ -73,7 +73,7 @@ def _unavailable(kind: str, *, query: str = "", url: str = "", provider: str | N
         "partial": True,
         "failedSteps": [kind],
         "error": "research_unavailable",
-        "hint": hint or "Set KSS_RESEARCH_PROVIDER=fixture|requests|jina|serper with required keys.",
+        "hint": hint or "设置 → 外部研究，或设 KSS_RESEARCH_PROVIDER=fixture|requests|jina|serper with required keys.",
     }
     if query:
         payload["query"] = query

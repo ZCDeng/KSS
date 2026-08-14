@@ -37,6 +37,12 @@ enum KeychainStore {
         "OPENROUTER_API_KEY",
         "KSS_YUPI_MODEL",
         "KSS_YUPI_PORT",
+        // 外部研究（evidence-only）：provider + 可选 Jina/Serper Key，注入 sidecar。
+        "KSS_RESEARCH_PROVIDER",
+        "KSS_RESEARCH_FETCH_PROVIDER",
+        "KSS_RESEARCH_FIXTURE_PATH",
+        "JINA_API_KEY",
+        "SERPER_API_KEY",
     ]
 
     static func read(_ key: String) -> String? {

@@ -111,6 +111,30 @@ class TestTelegramProbe:
         assert result["error"] == "auth_failed"
 
 
+
+class TestResearchProbe:
+    def test_disabled_reports_not_configured(self, monkeypatch):
+        monkeypatch.delenv("KSS_RESEARCH_PROVIDER", raising=False)
+        monkeypatch.delenv("SERPER_API_KEY", raising=False)
+        out = b._datasource_test("research")
+        assert out["ok"] is False
+        assert out["error"] == "not_configured"
+
+    def test_requests_reports_ok_without_network(self, monkeypatch):
+        monkeypatch.setenv("KSS_RESEARCH_PROVIDER", "requests")
+        out = b._datasource_test("research")
+        assert out["ok"] is True
+        assert "requests" in (out.get("hint") or "")
+
+    def test_serper_without_key_is_not_configured(self, monkeypatch):
+        monkeypatch.setenv("KSS_RESEARCH_PROVIDER", "serper")
+        monkeypatch.delenv("SERPER_API_KEY", raising=False)
+        out = b._datasource_test("research")
+        assert out["ok"] is False
+        assert out["error"] == "not_configured"
+        assert "SERPER_API_KEY" in (out.get("hint") or "")
+
+
 class TestLLMProbe:
     def test_no_credentials_reports_not_configured(self, monkeypatch):
         for key in (

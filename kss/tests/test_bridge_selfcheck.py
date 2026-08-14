@@ -22,6 +22,7 @@ _ALL_CREDENTIAL_ENV = (
     "TUSHARE_TOKEN", "LONGBRIDGE_APP_KEY", "LONGBRIDGE_APP_SECRET", "LONGBRIDGE_ACCESS_TOKEN",
     "TELEGRAM_BOT_TOKEN", "KSS_LLM_PRIMARY_KEY", "KSS_LLM_FALLBACK_KEY",
     "DEEPSEEK_API_KEY", "OPENAI_API_KEY",
+    "KSS_RESEARCH_PROVIDER", "JINA_API_KEY", "SERPER_API_KEY",
 )
 
 
@@ -29,6 +30,7 @@ _ALL_CREDENTIAL_ENV = (
 def all_credentials_set(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in _ALL_CREDENTIAL_ENV:
         monkeypatch.setenv(key, "fake-value")
+    monkeypatch.setenv("KSS_RESEARCH_PROVIDER", "requests")
 
 
 @pytest.fixture
@@ -52,6 +54,7 @@ class TestFullyConfigured:
         assert statuses["longbridge"] == "ok"
         assert statuses["telegram"] == "ok"
         assert statuses["llm"] == "ok"
+        assert statuses["research"] == "ok"
         assert "generatedAt" in result
 
 
@@ -66,11 +69,20 @@ class TestMissingCredentials:
         assert by_item["longbridge"]["fixHint"] == "去设置页数据源分区填写"
         assert by_item["longbridge"]["fixAction"] == "open_settings"
 
+    def test_missing_research_is_warn_not_fail(self, no_credentials, monkeypatch, tmp_path):
+        monkeypatch.setattr(b, "STATE_ROOT", tmp_path)
+        monkeypatch.delenv("KSS_RESEARCH_PROVIDER", raising=False)
+        result = b._self_check()
+        by_item = {item["item"]: item for item in result["items"]}
+        assert by_item["research"]["status"] == "warn"
+        assert by_item["research"]["fixAction"] == "open_settings"
+        assert "外部研究" in by_item["research"]["fixHint"]
+
     def test_no_credentials_all_warn(self, no_credentials, monkeypatch, tmp_path):
         monkeypatch.setattr(b, "STATE_ROOT", tmp_path)
         result = b._self_check()
         by_item = {item["item"]: item for item in result["items"]}
-        for item in ("tushare", "longbridge", "telegram", "llm"):
+        for item in ("tushare", "longbridge", "telegram", "llm", "research"):
             assert by_item[item]["status"] == "warn"
         # venv/storage 与凭据无关，不受影响。
         assert by_item["storage"]["status"] == "ok"

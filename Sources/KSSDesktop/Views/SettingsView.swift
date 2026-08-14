@@ -22,6 +22,7 @@ struct SettingsView: View {
             store.isCredentialConfigured("tushare"),
             store.isCredentialConfigured("longbridge"),
             store.isCredentialConfigured("telegram"),
+            store.isCredentialConfigured("research"),
         ].map { $0 ?? true }   // 尚未自检（nil）时不误判为「未配置」而乱亮点
     }
 
@@ -213,8 +214,8 @@ struct SettingsView: View {
                             tab = cat.tab
                         }
                     })
-                case .tushare, .longbridge, .telegram:
-                    // 固定 id：三源共享同一份 @State，切换分类不丢未保存编辑（plan KTD3）。
+                case .tushare, .longbridge, .telegram, .research:
+                    // 固定 id：多源共享同一份 @State，切换分类不丢未保存编辑（plan KTD3）。
                     SettingsCredentialsSection(
                         results: $dataSourceResults,
                         dirtySources: $dirtySources,
@@ -255,7 +256,7 @@ private struct SettingsPlaceholderCard: View {
 
 /// 凭证与数据源（R4 合并）：按源合一卡——每张卡 = 该源的凭证字段 + 连通性测试 + 独立保存。
 /// Keychain 读写与「保存后全杀重启 sidecar」语义承袭原密钥分区。
-/// `focusSource != nil`（xcom）：只渲染该源详情；`nil`（经典）：三源同屏。
+/// `focusSource != nil`（xcom）：只渲染该源详情；`nil`（经典）：各源同屏。
 struct SettingsCredentialsSection: View {
     @Environment(\.kssTheme) private var theme
     @EnvironmentObject private var store: KSSStore
@@ -273,6 +274,10 @@ struct SettingsCredentialsSection: View {
     @State private var longbridgeAppKey = ""
     @State private var longbridgeAppSecret = ""
     @State private var longbridgeAccessToken = ""
+    @State private var researchProvider = "disabled"
+    @State private var researchJinaKey = ""
+    @State private var researchSerperKey = ""
+    @State private var researchFixturePath = ""
     /// 已保存反馈按卡显示（source.rawValue）。任一字段编辑即清除对应卡的反馈。
     @State private var savedSources: Set<String> = []
     /// Keychain/provider route 回填会触发 SwiftUI `onChange`；回填期间不能被误判成用户编辑。
@@ -326,6 +331,39 @@ struct SettingsCredentialsSection: View {
                 field("Chat ID", text: $telegramChatId, secure: false, source: .telegram)
                 field("API URL（自建中继，可选）", text: $telegramApiUrl, secure: false, source: .telegram)
             }
+        case .research:
+            sourceCard(.research, note: "覆盖与对话可拉取公告/舆情作为 evidence-only 背景，不得覆盖本地盘面，不得写成动作或仓位。") {
+                researchProviderPicker
+                if researchProvider == "jina" {
+                    field("Jina API Key（可选）", text: $researchJinaKey, secure: true, source: .research)
+                }
+                if researchProvider == "serper" {
+                    field("Serper API Key", text: $researchSerperKey, secure: true, source: .research)
+                }
+                if researchProvider == "fixture" {
+                    field("夹具路径（开发，可选）", text: $researchFixturePath, secure: false, source: .research)
+                }
+            }
+        }
+    }
+
+    private var researchProviderPicker: some View {
+        VStack(alignment: .leading, spacing: isXcomFlat ? SettingsFormStyle.titleMetaSpacing : 5) {
+            Text("提供方")
+                .font(KSSFont.themed(
+                    isXcomFlat ? SettingsFormStyle.fieldLabel : 13,
+                    isXcomFlat ? .bold : .semibold,
+                    theme: theme
+                ))
+                .foregroundStyle(theme.textSecondary)
+            Picker("", selection: $researchProvider) {
+                ForEach(ResearchProviderOption.allCases) { option in
+                    Text(option.label).tag(option.rawValue)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .onChange(of: researchProvider) { _, _ in markDirty(.research) }
         }
     }
 
@@ -535,6 +573,11 @@ struct SettingsCredentialsSection: View {
         longbridgeAppKey = KeychainStore.read("LONGBRIDGE_APP_KEY") ?? ""
         longbridgeAppSecret = KeychainStore.read("LONGBRIDGE_APP_SECRET") ?? ""
         longbridgeAccessToken = KeychainStore.read("LONGBRIDGE_ACCESS_TOKEN") ?? ""
+        let provider = (KeychainStore.read("KSS_RESEARCH_PROVIDER") ?? "disabled").lowercased()
+        researchProvider = ResearchProviderOption(rawValue: provider)?.rawValue ?? "disabled"
+        researchJinaKey = KeychainStore.read("JINA_API_KEY") ?? ""
+        researchSerperKey = KeychainStore.read("SERPER_API_KEY") ?? ""
+        researchFixturePath = KeychainStore.read("KSS_RESEARCH_FIXTURE_PATH") ?? ""
     }
 
     /// 按源保存（只写该卡字段）；随后重启 sidecar 并刷新自检。
@@ -554,6 +597,12 @@ struct SettingsCredentialsSection: View {
             KeychainStore.write("TELEGRAM_BOT_TOKEN", telegramBotToken)
             KeychainStore.write("TELEGRAM_CHAT_ID", telegramChatId)
             KeychainStore.write("TELEGRAM_API_URL", telegramApiUrl)
+        case .research:
+            KeychainStore.write("KSS_RESEARCH_PROVIDER", researchProvider)
+            KeychainStore.write("KSS_RESEARCH_FETCH_PROVIDER", researchProvider)
+            KeychainStore.write("JINA_API_KEY", researchJinaKey)
+            KeychainStore.write("SERPER_API_KEY", researchSerperKey)
+            KeychainStore.write("KSS_RESEARCH_FIXTURE_PATH", researchFixturePath)
         }
         BridgeClient.restartSidecarForEnvChange()
         store.refreshLLMCredentialsStatus()
@@ -580,10 +629,25 @@ enum SettingsCredentialChangePolicy {
     }
 }
 
+private enum ResearchProviderOption: String, CaseIterable, Identifiable {
+    case disabled, requests, jina, serper, fixture
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .disabled: return "关闭"
+        case .requests: return "HTTP 直连"
+        case .jina: return "Jina"
+        case .serper: return "Serper"
+        case .fixture: return "本地夹具（开发）"
+        }
+    }
+}
+
 // MARK: - 数据源定义（配置状态判定，凭证卡与 tab 状态点共用）
 
 enum SettingsDataSource: String, CaseIterable, Identifiable {
-    case tushare, longbridge, telegram
+    case tushare, longbridge, telegram, research
     var id: String { rawValue }
 
     var displayName: String {
@@ -591,6 +655,7 @@ enum SettingsDataSource: String, CaseIterable, Identifiable {
         case .tushare: return "Tushare"
         case .longbridge: return "Longbridge"
         case .telegram: return "Telegram"
+        case .research: return "外部研究"
         }
     }
 
@@ -604,6 +669,12 @@ enum SettingsDataSource: String, CaseIterable, Identifiable {
                 .allSatisfy { !(KeychainStore.read($0) ?? "").isEmpty }
         case .telegram:
             return !(KeychainStore.read("TELEGRAM_BOT_TOKEN") ?? "").isEmpty
+        case .research:
+            let provider = (KeychainStore.read("KSS_RESEARCH_PROVIDER") ?? "disabled").lowercased()
+            if provider == "serper" {
+                return !(KeychainStore.read("SERPER_API_KEY") ?? "").isEmpty
+            }
+            return ["fixture", "requests", "jina"].contains(provider)
         }
     }
 
@@ -612,6 +683,7 @@ enum SettingsDataSource: String, CaseIterable, Identifiable {
         case .tushare: return .tushare
         case .longbridge: return .longbridge
         case .telegram: return .telegram
+        case .research: return .research
         }
     }
 }
@@ -628,6 +700,7 @@ extension SettingsCategory {
         case .tushare: return .tushare
         case .longbridge: return .longbridge
         case .telegram: return .telegram
+        case .research: return .research
         default: return nil
         }
     }

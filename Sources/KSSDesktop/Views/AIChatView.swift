@@ -3717,7 +3717,7 @@ struct AIChatView: View {
             .padding(.vertical, 4)
             .background(theme.surface, in: Capsule())
             .overlay(Capsule().stroke(theme.hairline))
-            .help(provider == "disabled" ? "外部研究 provider 当前不可用，不影响本地 KSS 问答" : "当前外部研究 provider")
+            .help(provider == "disabled" ? "外部研究未配置。去设置 → 外部研究选择 Jina/Serper/HTTP" : "当前外部研究 provider")
     }
 
     // MARK: 能力卡(列出 Skill/剧本)

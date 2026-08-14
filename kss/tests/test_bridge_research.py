@@ -87,3 +87,18 @@ def test_research_bridge_cli_direct_fixture_bundle():
     assert payload["provider"] == "fixture"
     assert len(payload["sources"]) == 2
     assert payload["rules"]["localTruthPrecedence"] is True
+
+
+def test_load_project_env_keeps_research_keys(tmp_path, monkeypatch):
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path / "empty_root")
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    (tmp_path / "empty_root").mkdir()
+    (tmp_path / "network.env").write_text(
+        "KSS_RESEARCH_PROVIDER=jina\nJINA_API_KEY=jk\nSERPER_API_KEY=sk\n",
+        encoding="utf-8",
+    )
+    loaded = bridge._load_project_env()
+    assert loaded["KSS_RESEARCH_PROVIDER"] == "jina"
+    assert loaded["JINA_API_KEY"] == "jk"
+    assert loaded["SERPER_API_KEY"] == "sk"
+

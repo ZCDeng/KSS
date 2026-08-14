@@ -58,7 +58,7 @@ final class SettingsTabTests: XCTestCase {
     // MARK: - 自检 fail 项 → 目标 tab 映射
 
     func testCredentialItemsRouteToDataSources() {
-        for item in ["tushare", "longbridge", "telegram", "llm"] {
+        for item in ["tushare", "longbridge", "telegram", "research", "llm"] {
             XCTAssertEqual(SettingsTabRouting.targetTab(forSelfCheckItem: item), .dataSources)
         }
     }
@@ -77,6 +77,7 @@ final class SettingsTabTests: XCTestCase {
         XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "longbridge"), .longbridge)
         XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "intraday_secrets"), .longbridge)
         XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "telegram"), .telegram)
+        XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "research"), .research)
         // LLM credentials are configured in Seesaw Models, not a global
         // Settings category. The self-check row owns the explicit deep link.
         XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "llm"), .selfCheck)
@@ -91,6 +92,7 @@ final class SettingsTabTests: XCTestCase {
 
     func testCategoryProjectsToClassicTab() {
         XCTAssertEqual(SettingsCategory.tushare.tab, .credentials)
+        XCTAssertEqual(SettingsCategory.research.tab, .credentials)
         XCTAssertEqual(SettingsCategory.yupi.tab, .credentials)
         XCTAssertEqual(SettingsCategory.tasks.tab, .operations)
         XCTAssertEqual(SettingsCategory.logs.tab, .operations)
@@ -105,7 +107,7 @@ final class SettingsTabTests: XCTestCase {
     func testCategoryOrderIsStable() {
         XCTAssertEqual(
             SettingsCategory.allCases.map(\.rawValue),
-            ["selfCheck", "tushare", "longbridge", "telegram", "yupi", "tasks", "logs"]
+            ["selfCheck", "tushare", "longbridge", "telegram", "research", "yupi", "tasks", "logs"]
         )
     }
 
@@ -135,6 +137,13 @@ final class SettingsTabTests: XCTestCase {
         XCTAssertEqual(SettingsTab.dataSources, .credentials)
         XCTAssertEqual(SettingsTab.scheduledTasks, .operations)
         XCTAssertEqual(SettingsTab.logs, .operations)
+    }
+
+    func testResearchKeysAreInjectedViaKeychain() {
+        for key in ["KSS_RESEARCH_PROVIDER", "KSS_RESEARCH_FETCH_PROVIDER",
+                    "KSS_RESEARCH_FIXTURE_PATH", "JINA_API_KEY", "SERPER_API_KEY"] {
+            XCTAssertTrue(KeychainStore.managedKeys.contains(key), key)
+        }
     }
 
     func testCredentialHydrationDoesNotLookLikeAnUnsavedUserEdit() {

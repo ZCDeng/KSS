@@ -28,6 +28,9 @@ def run_equity_coverage_tool(args: dict[str, Any], on_update=None) -> dict[str, 
     published = args.get("published") if isinstance(args.get("published"), dict) else None
     if published is None and _is_cite_query(query):
         published = _load_published(state)
+    excerpts = args.get("excerpts") if isinstance(args.get("excerpts"), list) else None
+    if published is None:
+        excerpts = _maybe_research_excerpts(query, excerpts, on_update=on_update)
     result = run_coverage(
         query,
         mode,
@@ -41,7 +44,7 @@ def run_equity_coverage_tool(args: dict[str, Any], on_update=None) -> dict[str, 
         history_quarters=args.get("history_quarters"),
         vie_priced=args.get("vie_priced"),
         fundamentals=args.get("fundamentals") if isinstance(args.get("fundamentals"), dict) else None,
-        excerpts=args.get("excerpts") if isinstance(args.get("excerpts"), list) else None,
+        excerpts=excerpts,
     )
     if result.get("r12"):
         return result
@@ -51,8 +54,10 @@ def run_equity_coverage_tool(args: dict[str, Any], on_update=None) -> dict[str, 
     r9 = result.get("r9")
     code = (result.get("listing") or {}).get("candidates") or [{}]
     code0 = code[0].get("code") if code else "unknown"
+    markdown = str(args.get("markdown") or f"# {code0}\n\n覆盖正文只引用脚本字段。\n")
+    markdown = _evidence_appendix(markdown, excerpts)
     compiled = compile_report(
-        str(args.get("markdown") or f"# {code0}\n\n覆盖正文只引用脚本字段。\n"),
+        markdown,
         r9=r9,
         output_dir=state,
         stem=timestamped_stem(str(code0)),
@@ -71,6 +76,60 @@ def run_equity_coverage_tool(args: dict[str, Any], on_update=None) -> dict[str, 
     result["chat_summary"] = _chat_summary(result)
     _save_published(state, result)
     return result
+
+
+def _maybe_research_excerpts(query: str, excerpts, on_update=None):
+    if isinstance(excerpts, list) and excerpts:
+        return excerpts
+    try:
+        from kss.research.adapter import research_bundle, research_status  # noqa: PLC0415
+        status = research_status()
+    except Exception:
+        return excerpts
+    if not status.get("available"):
+        return excerpts
+    if on_update:
+        try:
+            on_update({"message": "research_bundle", "step": "evidence"})
+        except Exception:
+            pass
+    try:
+        bundle = research_bundle(
+            f"{query} 公告 年报 基本面 舆情",
+            limit=3,
+            max_chars_per_source=1200,
+        )
+    except Exception:
+        return excerpts
+    sources = [item for item in (bundle.get("sources") or []) if isinstance(item, dict)]
+    return sources or excerpts
+
+
+def _evidence_appendix(markdown: str, excerpts) -> str:
+    if "外部背景（evidence-only）" in (markdown or ""):
+        return markdown
+    from kss.research.evidence import quarantine_rating_inputs  # noqa: PLC0415
+    kept, _dropped = quarantine_rating_inputs(excerpts if isinstance(excerpts, list) else None)
+    if not kept:
+        return markdown
+    lines = [
+        markdown.rstrip(),
+        "",
+        "## 外部背景（evidence-only）",
+        "",
+        "以下摘录只作科目与背景，不得覆盖本地盘面，不得写成动作或仓位。",
+        "",
+    ]
+    for item in kept[:5]:
+        title = str(item.get("title") or "来源")
+        url = str(item.get("url") or "")
+        excerpt = str(item.get("excerpt") or item.get("summary") or "").strip()
+        if len(excerpt) > 800:
+            excerpt = excerpt[:800] + "…"
+        lines.append(f"- {title}" + (f" ({url})" if url else ""))
+        if excerpt:
+            lines.append(f"  {excerpt}")
+    return "\n".join(lines) + "\n"
 
 
 def _is_cite_query(query: str) -> bool:

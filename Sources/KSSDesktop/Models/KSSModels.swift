@@ -1918,6 +1918,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
     case tushare
     case longbridge
     case telegram
+    case research
     case yupi
     case tasks
     case logs
@@ -1930,6 +1931,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
         case .tushare: return "Tushare"
         case .longbridge: return "Longbridge"
         case .telegram: return "Telegram"
+        case .research: return "外部研究"
         case .yupi: return "资讯雷达"
         case .tasks: return "任务"
         case .logs: return "日志"
@@ -1939,7 +1941,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
     /// 投影到经典两 Tab。
     var tab: SettingsTab {
         switch self {
-        case .selfCheck, .tushare, .longbridge, .telegram, .yupi:
+        case .selfCheck, .tushare, .longbridge, .telegram, .research, .yupi:
             return .credentials
         case .tasks, .logs:
             return .operations
@@ -1964,6 +1966,8 @@ enum SettingsTabRouting {
             return .longbridge
         case "telegram":
             return .telegram
+        case "research":
+            return .research
         case "llm", "openrouter", "yupi":
             // LLM 具体配置已迁到 Seesaw 的模型页面；Settings 保留自检。
             return item == "yupi" || item == "openrouter" ? .yupi : .selfCheck
@@ -1995,7 +1999,7 @@ enum SettingsTabRouting {
         switch category {
         case .selfCheck, .yupi, .logs:
             return false
-        case .tushare, .longbridge, .telegram:
+        case .tushare, .longbridge, .telegram, .research:
             let raw = category.rawValue
             if !isSourceConfigured(raw) { return true }
             if let ok = testOK(raw), !ok { return true }
@@ -4174,6 +4178,7 @@ struct SelfCheckItem: Codable, Hashable, Identifiable {
         case "kss_db": return "统一库"
         case "duckdb_ext": return "查询扩展"
         case "intraday_secrets": return "分时采集凭证"
+        case "research": return "外部研究"
         default: return item
         }
     }
