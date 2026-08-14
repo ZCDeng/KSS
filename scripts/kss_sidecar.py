@@ -153,25 +153,104 @@ def _execute_write(command: str, args: list[str]) -> dict:
 
 # Harness 工具 execute 的 callId 授权表。不是 chat-turn pending，不构成第二写主人（KTD2）。
 _HARNESS_GRANTS: dict[str, str] = {}
+_HARNESS_GRANT_SURFACES: dict[str, str] = {}
 
 
 def clear_harness_grants() -> None:
     _HARNESS_GRANTS.clear()
+    _HARNESS_GRANT_SURFACES.clear()
 
 
-def grant_harness_write(call_id: str, command: str) -> None:
+def _drop_grants(*, surface: str | None = None) -> None:
+    """作废授权。surface=None 清全部；桌面断连不得误伤研究 grant。"""
+    if surface is None:
+        clear_harness_grants()
+        return
+    for call_id, tagged in list(_HARNESS_GRANT_SURFACES.items()):
+        if tagged == surface:
+            _HARNESS_GRANTS.pop(call_id, None)
+            _HARNESS_GRANT_SURFACES.pop(call_id, None)
+
+
+def _normalize_grant_surface(surface: str | None) -> str:
+    return "research" if surface == "research" else "desktop"
+
+
+# 崩溃域：Node / Python / Swift 各自可不可用，但不各自拥有写权限。
+# Live 写 = Node grant 然后 Python dispatch。任一段死亡 ⇒ 失败关闭（KTD2 / R6 / U7）。
+_HARNESS_KERNEL_ALIVE = True
+_HARNESS_ANSWERER_ALIVE = True
+
+
+def harness_kernel_alive() -> bool:
+    return bool(_HARNESS_KERNEL_ALIVE)
+
+
+def harness_answerer_alive() -> bool:
+    return bool(_HARNESS_ANSWERER_ALIVE)
+
+
+def mark_harness_kernel_dead() -> None:
+    """Node 内核死亡：作废全部 pending grant，不得再 dispatch。"""
+    global _HARNESS_KERNEL_ALIVE
+    _HARNESS_KERNEL_ALIVE = False
+    clear_harness_grants()
+    host = globals().get("_DESKTOP_HARNESS_HOST")
+    if host is not None:
+        host.invalidate_all()
+
+
+def mark_harness_kernel_alive() -> None:
+    global _HARNESS_KERNEL_ALIVE
+    _HARNESS_KERNEL_ALIVE = True
+
+
+def mark_harness_answerer_dead() -> None:
+    """Swift/应答者断开：桌面待批写失败关闭。研究 pre-execute grant 不受影响。"""
+    global _HARNESS_ANSWERER_ALIVE
+    _HARNESS_ANSWERER_ALIVE = False
+    _drop_grants(surface="desktop")
+    host = globals().get("_DESKTOP_HARNESS_HOST")
+    if host is not None:
+        host.invalidate_all()
+
+
+def mark_harness_answerer_alive() -> None:
+    global _HARNESS_ANSWERER_ALIVE
+    _HARNESS_ANSWERER_ALIVE = True
+
+
+def reset_harness_crash_domains(*, kernel_alive: bool = True, answerer_alive: bool = True) -> None:
+    """测试/启动复位。授权只存在于进程内存，永不落盘。"""
+    global _HARNESS_KERNEL_ALIVE, _HARNESS_ANSWERER_ALIVE
+    _HARNESS_KERNEL_ALIVE = bool(kernel_alive)
+    _HARNESS_ANSWERER_ALIVE = bool(answerer_alive)
+    clear_harness_grants()
+    host = globals().get("_DESKTOP_HARNESS_HOST")
+    if host is not None and (not kernel_alive or not answerer_alive):
+        host.invalidate_all()
+
+
+def grant_harness_write(call_id: str, command: str, *, surface: str = "desktop") -> None:
     """记录 Harness 已允许的一次 live 写 callId。无授权不得 dispatch。"""
+    if not harness_kernel_alive():
+        raise ValueError("harness kernel is not available")
+    tagged = _normalize_grant_surface(surface)
+    if tagged == "desktop" and not harness_answerer_alive():
+        raise ValueError("harness answerer is not available")
     if not isinstance(call_id, str) or not call_id.strip():
         raise ValueError("harness grant requires call_id")
     if not isinstance(command, str) or not command.strip():
         raise ValueError("harness grant requires command")
     _HARNESS_GRANTS[call_id] = command
+    _HARNESS_GRANT_SURFACES[call_id] = tagged
 
 
 def revoke_harness_write(call_id: str) -> None:
     """作废一个 callId 的授权。中止/断开后迟到允许不得 dispatch。"""
     if isinstance(call_id, str) and call_id:
         _HARNESS_GRANTS.pop(call_id, None)
+        _HARNESS_GRANT_SURFACES.pop(call_id, None)
 
 
 def execute_harness_tool(
@@ -223,15 +302,34 @@ def execute_harness_tool(
                 "command": command,
             }
 
+    if not harness_kernel_alive():
+        clear_harness_grants()
+        return {
+            "error": "harness_unavailable",
+            "hint": "Node kernel is not available; live dispatch is fail-closed",
+        }
+    surface = _HARNESS_GRANT_SURFACES.get(call_id, "desktop")
+    if surface == "desktop" and not harness_answerer_alive():
+        _drop_grants(surface="desktop")
+        return {
+            "error": "harness_unavailable",
+            "hint": "desktop answerer is gone; live dispatch is fail-closed",
+        }
+
     allowed = _HARNESS_GRANTS.get(call_id)
     if allowed != command:
         return {"error": "not_allowed", "hint": "Harness callId is not currently allowed"}
+    # 一次性窗口：消费 grant 后再 dispatch。进程在此崩溃 ⇒ 无静默成功，
+    # 同一 callId 不得在没有新的 Harness allow 时重试。
     _HARNESS_GRANTS.pop(call_id, None)
+    _HARNESS_GRANT_SURFACES.pop(call_id, None)
     return _execute_write(command, positional)
 
 
 def _reject_all(pending: dict, result: dict) -> None:
     """断连/SIGHUP/收尾:把所有未决 confirm 按拒收尾,防 loop 的 await 永挂(KTD-3/F3)。"""
+    if result.get("error") == "disconnected":
+        mark_harness_answerer_dead()
     for call_id, entry in list(pending.items()):
         revoke_harness_write(str(call_id))
         fut = entry.get("future")
@@ -1453,8 +1551,12 @@ async def _handle_agent_turn(reader: asyncio.StreamReader,
             attachment_ids=tuple(attachment_ids or ()),
             source_queue_id=source_queue_id,
         )
+        mark_harness_kernel_alive()
+        mark_harness_answerer_alive()
         result = await host.run(request, emit_projected)
         if result.status == "unavailable":
+            # 本回合失败关闭。不要把「未注入会话」锁成内核永久死亡，
+            # 否则会误伤同进程里的研究 grant。Node 子进程退出由 U8 监督器标死。
             await write_agent_frame("error", {
                 "error": result.error or "harness_session_unavailable",
                 "is_error": True,
@@ -1584,7 +1686,11 @@ def _handle_agent_json_command(req: dict) -> str | None:
     cmd = req.get("cmd")
     try:
         if cmd == "harness-tool-grant":
-            grant_harness_write(str(req.get("call_id") or ""), str(req.get("command") or ""))
+            grant_harness_write(
+                str(req.get("call_id") or ""),
+                str(req.get("command") or ""),
+                surface=str(req.get("surface") or "research"),
+            )
             return _sidecar_ok({"ok": True, "call_id": req.get("call_id")})
         if cmd == "harness-tool-execute":
             raw_args = req.get("args")

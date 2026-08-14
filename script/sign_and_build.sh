@@ -32,6 +32,7 @@ INFO_PLIST="$APP_CONTENTS/Info.plist"
 ENTITLEMENTS="$ROOT_DIR/script/KSSDesktop.entitlements"
 NODE_ENTITLEMENTS="$ROOT_DIR/script/NodeHelper.entitlements"
 PI_AI_BUILD_ROOT="$ROOT_DIR/.build/pi-ai-helper"
+HARNESS_BUILD_ROOT="$ROOT_DIR/.build/harness-node"
 
 # ---- 签名身份解析（缺则大声失败）----
 SIGN_IDENTITY="${KSS_SIGN_IDENTITY:-}"
@@ -54,6 +55,8 @@ pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 # Node runtime archive checksum and npm dependency lock; release bundles never
 # fall back to a system Node installation.
 KSS_PI_AI_OUTPUT_ROOT="$PI_AI_BUILD_ROOT" "$ROOT_DIR/script/prepare_pi_ai_helper.sh"
+# Harness Node kernel: pinned Node + profile/plugins tree (npm ci in .build).
+KSS_HARNESS_OUTPUT_ROOT="$HARNESS_BUILD_ROOT" "$ROOT_DIR/script/prepare_harness_node.sh"
 # 强制 swiftpm 原生 build-system（与 build_and_run.sh 一致）：默认 build system
 # 产出 Contents/ 布局的资源包，运行时 Bundle.module 定位不到 →
 # resource_bundle_accessor.swift 启动即 SIGTRAP。native 落平铺资源包，布局可被找到。
@@ -135,6 +138,12 @@ done
 cp -R "$PI_AI_BUILD_ROOT/runtime" "$APP_RESOURCES/pi-ai-runtime"
 cp -R "$PI_AI_BUILD_ROOT/helper" "$APP_RESOURCES/pi-ai-helper"
 
+# ---- DeepSeek Harness Node kernel（同一 Node 指纹；profile + plugins，非 git 内 node_modules）----
+cp -R "$HARNESS_BUILD_ROOT/runtime" "$APP_RESOURCES/harness-runtime"
+mkdir -p "$APP_RESOURCES/harness"
+cp -R "$HARNESS_BUILD_ROOT/harness/kss-profile" "$APP_RESOURCES/harness/kss-profile"
+cp -R "$HARNESS_BUILD_ROOT/harness/kss-plugins" "$APP_RESOURCES/harness/kss-plugins"
+
 # ---- Agent skills 进 Resources（bundle-mode 只读发现面）----
 for skills_root in .claude/skills .agents/skills; do
   copy_resource_item "$skills_root" "$APP_RESOURCES/$(dirname "$skills_root")"
@@ -174,6 +183,18 @@ if find "$APP_RESOURCES/pi-ai-helper/node_modules" -type f -name '*.node' -print
   echo "ERROR: pi-ai helper contains unsupported native .node modules." >&2
   exit 1
 fi
+if find "$APP_RESOURCES/harness" -type f -name '*.node' -print -quit | grep -q .; then
+  echo "ERROR: Harness tree contains unsupported native .node modules." >&2
+  exit 1
+fi
+if [ ! -x "$APP_RESOURCES/harness-runtime/bin/node" ]; then
+  echo "ERROR: Harness Node runtime missing from bundle." >&2
+  exit 1
+fi
+if [ ! -f "$APP_RESOURCES/harness/kss-profile/node_modules/@deepseek-ai/dsh/lib/bin.js" ]; then
+  echo "ERROR: bundled Harness profile is missing the dsh entry used at launch." >&2
+  exit 1
+fi
 # Prefer explicit Apple HTTP TSA — bare --timestamp sometimes fails with
 # "The timestamp service is not available" when the default endpoint flakes.
 CODESIGN_TIMESTAMP="${KSS_CODESIGN_TIMESTAMP:-http://timestamp.apple.com/ts01}"
@@ -184,6 +205,17 @@ codesign --verify --strict --verbose=2 "$APP_RESOURCES/pi-ai-runtime/bin/node"
 if ! codesign -d --entitlements :- "$APP_RESOURCES/pi-ai-runtime/bin/node" 2>&1 \
   | grep -q 'com.apple.security.cs.allow-jit'; then
   echo "ERROR: signed Node helper is missing allow-jit entitlement." >&2
+  exit 1
+fi
+# The Harness kernel runs dsh with this nested Node binary. Independent
+# availability from Python, but live writes still require a Node grant first.
+codesign --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
+  --entitlements "$NODE_ENTITLEMENTS" \
+  --sign "$SIGN_IDENTITY" "$APP_RESOURCES/harness-runtime/bin/node"
+codesign --verify --strict --verbose=2 "$APP_RESOURCES/harness-runtime/bin/node"
+if ! codesign -d --entitlements :- "$APP_RESOURCES/harness-runtime/bin/node" 2>&1 \
+  | grep -q 'com.apple.security.cs.allow-jit'; then
+  echo "ERROR: signed Harness Node is missing allow-jit entitlement." >&2
   exit 1
 fi
 # The scheduler helper is a nested executable.  It owns the ephemeral

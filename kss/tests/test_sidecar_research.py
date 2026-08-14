@@ -5,12 +5,22 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 _ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "scripts"))
 
 import kss_app_bridge as bridge  # noqa: E402
 import kss_sidecar as sc  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _reset_harness_crash_domains():
+    sc.reset_harness_crash_domains()
+    yield
+    sc.reset_harness_crash_domains()
+
 
 
 class FakeWriter:

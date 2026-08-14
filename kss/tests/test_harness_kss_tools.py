@@ -24,6 +24,14 @@ import kss_app_bridge as bridge  # noqa: E402
 import kss_chat_loop as chat_loop  # noqa: E402
 import kss_sidecar as sidecar  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _reset_harness_crash_domains():
+    sidecar.reset_harness_crash_domains()
+    yield
+    sidecar.reset_harness_crash_domains()
+
+
 from kss.agent.harness_pack import (  # noqa: E402
     R12_WRITE_COMMANDS,
     R12_WRITE_ALIASES,

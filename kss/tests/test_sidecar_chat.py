@@ -20,6 +20,14 @@ import kss_chat_loop as chat_loop  # noqa: E402
 import kss_sidecar as sc  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _reset_harness_crash_domains():
+    sc.reset_harness_crash_domains()
+    yield
+    sc.reset_harness_crash_domains()
+
+
+
 class FakeWriter:
     def __init__(self):
         self.buf = []

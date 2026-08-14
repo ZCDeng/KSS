@@ -145,7 +145,7 @@ export function decidePreExecute(exec, repoRoot) {
   return { kind: "allow" };
 }
 
-function sidecarGrant(callId, command) {
+function sidecarGrant(callId, command, surface) {
   const socketPath = process.env.KSS_SIDECAR_SOCKET || "";
   if (!socketPath) {
     return Promise.resolve({ error: "no_socket" });
@@ -166,20 +166,25 @@ function sidecarGrant(callId, command) {
       }
     });
     conn.write(
-      `${JSON.stringify({ cmd: "harness-tool-grant", call_id: callId, command })}\n`,
+      `${JSON.stringify({
+        cmd: "harness-tool-grant",
+        call_id: callId,
+        command,
+        surface: surface === "research" ? "research" : "desktop",
+      })}\n`,
     );
     conn.end();
   });
 }
 
-async function grantIfKssWrite(name, callId, grantWrite) {
+async function grantIfKssWrite(name, callId, grantWrite, surface) {
   const command = catalogWrites().get(name);
   if (!command || !callId) return;
   if (grantWrite) {
     await grantWrite(String(callId), command);
     return;
   }
-  await sidecarGrant(String(callId), command);
+  await sidecarGrant(String(callId), command, surface);
 }
 
 export function resolveDesktopApproval(callId, outcome) {
@@ -197,7 +202,7 @@ export function applyKssApprovalPolicy(ctx, options = {}) {
     if (decision.kind === "allow" && isWriteTool(exec.name)) {
       const attached = exec.agent ? policies.get(exec.agent) : undefined;
       if (attached?.surface === "research") {
-        await grantIfKssWrite(exec.name, exec.callId, grantWrite);
+        await grantIfKssWrite(exec.name, exec.callId, grantWrite, "research");
       }
     }
     return decision;
@@ -222,7 +227,7 @@ export function applyKssApprovalPolicy(ctx, options = {}) {
       });
     }
     if (outcome === "allowed-once") {
-      await grantIfKssWrite(req.toolName, req.callId, grantWrite);
+      await grantIfKssWrite(req.toolName, req.callId, grantWrite, attached?.surface || "desktop");
     }
     return outcome;
   });
