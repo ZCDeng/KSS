@@ -490,6 +490,9 @@ class AgentRuntime:
             "usage": dict(result.usage),
             "termination_reason": result.termination_reason,
         }
+        if result.termination_reason == "unable_to_complete":
+            terminal_payload["coverage_path"] = True
+            terminal_payload["disable_legacy_fallback"] = True
         if not self._runner_owns_turn_boundaries:
             await turn.emit("turn_end", terminal_payload)
         await turn.emit("agent_end", terminal_payload)

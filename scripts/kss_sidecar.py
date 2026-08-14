@@ -1241,6 +1241,10 @@ async def _handle_agent_turn(reader: asyncio.StreamReader,
         source_queue_id = req.get("source_queue_id")
         if isinstance(source_queue_id, str) and source_queue_id:
             kwargs["source_queue_id"] = source_queue_id
+        from kss.equity_research.envelope import options_for_user_text
+        run_options = options_for_user_text(str(user_text_or_error or ""))
+        if run_options is not None:
+            kwargs["run_options"] = run_options
         await _maybe_call(
             _call_with_supported_kwargs(
                 service.run_turn,

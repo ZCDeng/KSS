@@ -400,3 +400,23 @@ def test_investment_analysis_skills_are_protected_method_only_entries() -> None:
     for skill in skills.values():
         text = skill.path.read_text(encoding="utf-8")
         assert not any(term in text for term in forbidden_instructions)
+
+
+def test_cn_hk_equity_research_is_chat_bundled_and_not_weekly() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    manager = SkillManager(repo_root)
+    manager.available_tools = frozenset({"resolve_listing", "run_equity_coverage"})
+    skills, _ = manager.discover()
+    skill = next(s for s in skills if s.name == "cn-hk-equity-research")
+    assert skill.source == "kss-bundled"
+    assert skill.protected is True
+    assert skill.allowed_profiles == ("chat",)
+    assert "investment-weekly-v3" not in skill.allowed_profiles
+    assert "为什么动" in skill.description
+    assert "研究" in skill.description
+    assert skill.missing_required_tools == ()
+    manager.available_tools = frozenset({"get_stock"})
+    missing, _ = manager.discover()
+    broken = next(s for s in missing if s.name == "cn-hk-equity-research")
+    assert broken.missing_required_tools
+    assert "run_equity_coverage" in broken.missing_required_tools or "resolve_listing" in broken.missing_required_tools

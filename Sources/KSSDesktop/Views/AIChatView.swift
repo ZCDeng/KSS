@@ -3914,9 +3914,12 @@ struct AIChatView: View {
         guard !text.isEmpty || (!store.isChatStreaming && !store.pendingAgentAttachments.isEmpty)
         else { return }
         if store.isChatStreaming {
+            let queuedMode = (text.contains("为什么动") || text.contains("为什么涨") || text.contains("为什么跌"))
+                ? "follow_up"
+                : mode
             pendingQueueClientMessageId = store.enqueueAgentInput(
                 text,
-                mode: mode,
+                mode: queuedMode,
                 sourceQueueId: loadedQueueInputId)
             return
         }

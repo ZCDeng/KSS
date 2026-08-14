@@ -1158,7 +1158,10 @@ final class KSSStore: ObservableObject {
         let isDuplicate = duplicateValues.contains {
             $0.contains("duplicate_completed") || $0.contains("already_running")
         }
-        return !userAborted && !isAbort && !isDuplicate
+        let closer = (terminationReason?.lowercased() ?? "").contains("unable_to_complete")
+            || (error?.contains("无法完成") ?? false)
+            || (error?.lowercased().contains("coverage") ?? false)
+        return !userAborted && !isAbort && !isDuplicate && !closer
             && error != nil && assistantEmpty && !assistantIsError
     }
 

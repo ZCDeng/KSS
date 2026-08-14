@@ -77,6 +77,8 @@ class RuntimeRunOptions:
     allow_write_tools: bool = True
     trusted_internal_input: bool = False
     profile_id: str | None = None
+    coverage_closer: bool = False
+    coverage_path: bool = False
 
     def __post_init__(self) -> None:
         if self.max_steps < 1:
@@ -116,6 +118,7 @@ class KSSAgentService:
         self._request_writes: dict[tuple[str, str], RequestWrite] = {}
         self._source_queue_ids: dict[tuple[str, str], str] = {}
         self._run_options: dict[tuple[str, str], RuntimeRunOptions] = {}
+        self._coverage_sessions: set[str] = set()
         self._turn_attachment_ids: dict[tuple[str, str], tuple[str, ...]] = {}
         self._live_context_scopes: dict[tuple[str, str], Any] = {}
         self._transcripts: dict[str, Any] = {}
@@ -511,6 +514,8 @@ class KSSAgentService:
             self._source_queue_ids[key] = source_queue_id
         if run_options is not None:
             self._run_options[key] = run_options
+            if run_options.coverage_closer:
+                self._coverage_sessions.add(session_id)
         if attachment_ids:
             self._turn_attachment_ids[key] = tuple(str(value) for value in attachment_ids)
         if live_context_scope is not None:
@@ -533,6 +538,7 @@ class KSSAgentService:
             self._run_options.pop(key, None)
             self._turn_attachment_ids.pop(key, None)
             self._live_context_scopes.pop(key, None)
+            self._coverage_sessions.discard(session_id)
 
     def steer(
         self,
@@ -612,6 +618,16 @@ class KSSAgentService:
                 "error": "invalid_input",
                 "reason": "queued input is empty after sanitization",
             }
+        if mode == "steering":
+            try:
+                state = self.runtime.state(run_id)
+                session_id = getattr(state, "session_id", None) if state is not None else None
+            except Exception:
+                session_id = None
+            if session_id and session_id in self._coverage_sessions:
+                from kss.equity_research.intent import is_explainer_priority
+                if is_explainer_priority(cleaned):
+                    mode = "follow_up"
         try:
             if mode == "steering":
                 item = self.runtime.steer(
@@ -696,15 +712,20 @@ class KSSAgentService:
         session_id = turn.state.session_id
         run_id = turn.state.run_id
         client_turn_id = turn.state.client_turn_id
-        run_options = self._run_options.get(
-            (session_id, client_turn_id), RuntimeRunOptions()
-        )
+        run_key = (session_id, client_turn_id)
+        explicit_options = run_key in self._run_options
+        run_options = self._run_options.get(run_key, RuntimeRunOptions())
         session_routes = self._session_routes(session_id)
         active_route = session_routes.primary
         request_write = self._request_writes[(session_id, client_turn_id)]
 
         had_user = any(message.role == "user" for message in turn.messages[:-1])
         current_user = turn.messages[-1]
+        if not explicit_options:
+            from kss.equity_research.envelope import options_for_user_text
+            inferred = options_for_user_text(current_user.content)
+            if inferred is not None:
+                run_options = inferred
         attachment_ids = self._turn_attachment_ids.get(
             (session_id, client_turn_id),
             (),
@@ -1142,9 +1163,33 @@ class KSSAgentService:
                 emit_internal_boundaries=True,
                 max_steps=run_options.max_steps,
                 turn_timeout=run_options.timeout_seconds,
+                coverage_path=bool(run_options.coverage_path or run_options.coverage_closer),
                 chat_client=chat_client,
             )
-        except BaseException:
+        except BaseException as exc:
+            if run_options.coverage_closer:
+                from kss.equity_research.intent import r12_phrase
+                phrase = r12_phrase("incomplete")
+                await emit_loop({"type": "chunk", "text": phrase})
+                if message_open:
+                    message_open = False
+                    await turn.emit(
+                        "message_end",
+                        {"role": "assistant", "reason": "unable_to_complete"},
+                    )
+                if boundary_open:
+                    boundary_open = False
+                    await turn.emit("turn_end", {"reason": "unable_to_complete", "coverage_path": True, "disable_legacy_fallback": True})
+                return RunResult(
+                    run_id=run_id,
+                    session_id=session_id,
+                    client_turn_id=client_turn_id,
+                    status="completed",
+                    messages=tuple(turn.messages),
+                    error=None,
+                    usage=dict(turn.state.usage),
+                    termination_reason="unable_to_complete",
+                )
             if message_open:
                 message_open = False
                 await turn.emit(
@@ -1180,6 +1225,21 @@ class KSSAgentService:
         )
         if provider_budget_exceeded:
             reason = "provider_token_budget_exceeded"
+        if run_options.coverage_closer:
+            from kss.equity_research.envelope import apply_coverage_closer
+            from kss.equity_research.intent import r12_phrase
+            aborted = reason in {"aborted", "client_abort"}
+            closed, closed_reason, replaced = apply_coverage_closer(
+                [{"role": "assistant", "content": ""}],
+                reason=reason,
+                aborted=aborted,
+            )
+            if replaced:
+                phrase = r12_phrase("incomplete")
+                await emit_loop({"type": "chunk", "text": "\n" + phrase})
+                reason = closed_reason
+                failed = False
+                provider_error = None
         return RunResult(
             run_id=run_id,
             session_id=session_id,

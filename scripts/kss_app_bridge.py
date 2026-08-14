@@ -5953,6 +5953,10 @@ COMMANDS = {
         "desc": "解析名称/代码到带后缀上市地(只读门控)",
         "args": ["QUERY"],
     },
+    "equity-coverage": {
+        "desc": "A/港深度覆盖脊柱(只读,脚本估值/检查器)",
+        "args": ["QUERY", "[MODE]", "[FORMAT]", "[ASSUMPTIONS_JSON]"],
+    },
     "report": {"desc": "读 storage 下 markdown 报告", "args": ["PATH"]},
     "paper-summary": {"desc": "模拟盘跟踪汇总", "args": []},
     "resolve": {"desc": "文本/OCR → ts_code", "args": ["TEXT"]},
@@ -7052,6 +7056,15 @@ def dispatch(command: str, args: list[str]) -> Any:
         from kss.equity_research.listing_resolve import resolve_listing
 
         return resolve_listing(args[0] if args else "")
+    if command == "equity-coverage":
+        from kss.equity_research.handler import run_equity_coverage_tool
+
+        return run_equity_coverage_tool({
+            "query": args[0] if args else "",
+            "mode": args[1] if len(args) > 1 else "full",
+            "format": args[2] if len(args) > 2 else "pdf",
+            "assumptions": args[3] if len(args) > 3 else "",
+        })
     if command == "report":
         if not args:
             raise ValueError("report command requires PATH")

@@ -43,6 +43,7 @@ AUTO_TASKS: frozenset[str] = frozenset()
 
 _DEFAULT_MAX_STEPS = 8          # 步数上限(KTD-6 Q2 初始值)
 _DEFAULT_TURN_TIMEOUT = 240.0   # 单轮总超时秒(多轮放宽,KTD-6)
+COVERAGE_KEEPALIVE_SECONDS = 15.0  # 覆盖路径心跳；测试可 monkeypatch
 
 # U6:system prompt 放 config(改不动码)。operator-not-decider + 首调 orientation + 数字纪律。
 _SYSTEM_PROMPT_PATH = bridge.PROJECT_ROOT / "kss" / "config" / "chat_system_prompt.md"
@@ -113,6 +114,15 @@ TOOL_SPECS: list[dict[str, Any]] = [
         {"query": _STR},
         ["query"],
         execution_mode="parallel",
+    ),
+    _spec(
+        "run_equity_coverage",
+        "equity-coverage",
+        "A/港个股深度覆盖脊柱(只读):解析上市地、脚本估值/检查器、VIE门、返回标定标签/动作/Kelly-lite。"
+        "query 如 600519.SH 或 阿里巴巴；mode=full|earnings。数字只能引用本工具 JSON。",
+        {"query": _STR, "mode": _STR, "format": _STR, "assumptions": _STR},
+        ["query", "mode", "format", "assumptions"],
+        execution_mode="sequential",
     ),
     _spec("get_sector_rotation", "sector-rotation", "板块热点轮动快照;date 为 YYYYMMDD 空则最新",
           {"date": _STR}, ["date"]),
@@ -418,6 +428,9 @@ class ToolRegistry:
         }
         for spec in TOOL_SPECS if specs is None else specs:
             self.register_tool(spec)
+        if "run_equity_coverage" in self._by_name and self.handler("run_equity_coverage") is None:
+            from kss.equity_research.handler import run_equity_coverage_tool
+            self.register_handler("run_equity_coverage", run_equity_coverage_tool)
 
     def register_tool(
         self,
@@ -688,6 +701,7 @@ async def run_turn(
     take_steering: TakeSteeringFn | None = None,
     take_follow_up: TakeFollowUpFn | None = None,
     emit_internal_boundaries: bool = False,
+    coverage_path: bool = False,
 ) -> TurnTranscript:
     """跑一轮多步对话。emit 逐帧(await drain by caller);写经 request_write(loop 不 dispatch 写)。
 
@@ -712,124 +726,154 @@ async def run_turn(
     next_turn_kind = "initial"
     next_message_ids: list[str] = []
 
-    for step in range(max_steps):
-        _check_abort(abort_token)
-        if before_step:
+    passthrough = emit
+    chunk_buffer: list[str] = []
+    stop_keepalive = asyncio.Event()
+    keepalive_task: asyncio.Task | None = None
+
+    async def _coverage_fail(reason: str) -> TurnTranscript:
+        from kss.equity_research.coverage_envelope import R12_INCOMPLETE
+        while convo and convo[-1].get("role") == "assistant":
+            convo.pop()
+        convo.append({"role": "assistant", "content": R12_INCOMPLETE})
+        transcript.messages = list(convo)
+        transcript.run_state.update(status="done", reason=reason)
+        chunk_buffer.clear()
+        await passthrough({"type": "chunk", "text": R12_INCOMPLETE})
+        await passthrough({"type": "done", "reason": reason, "note": R12_INCOMPLETE})
+        return transcript
+
+    async def _flush_coverage() -> None:
+        if not coverage_path or not chunk_buffer:
+            return
+        text = "".join(chunk_buffer)
+        chunk_buffer.clear()
+        await passthrough({"type": "chunk", "text": text})
+
+    async def _gated_emit(event: dict[str, Any]) -> None:
+        if coverage_path and event.get("type") == "chunk":
+            chunk_buffer.append(str(event.get("text") or ""))
+            return
+        await passthrough(event)
+
+    async def _beat() -> None:
+        while not stop_keepalive.is_set():
             try:
-                await _await_with_abort(
-                    _maybe_await(before_step({"step": step, "messages": list(convo)})),
-                    abort_token,
+                await asyncio.wait_for(
+                    stop_keepalive.wait(),
+                    timeout=COVERAGE_KEEPALIVE_SECONDS,
+                )
+                return
+            except asyncio.TimeoutError:
+                await passthrough({"type": "keepalive"})
+
+    if coverage_path:
+        keepalive_task = asyncio.create_task(_beat())
+
+    try:
+        for step in range(max_steps):
+            _check_abort(abort_token)
+            if before_step:
+                try:
+                    await _await_with_abort(
+                        _maybe_await(before_step({"step": step, "messages": list(convo)})),
+                        abort_token,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    await _emit_hook_error(_gated_emit, "before_step", exc)
+            if time.monotonic() > deadline:
+                if coverage_path:
+                    return await _coverage_fail("timeout")
+                transcript.run_state.update(status="done", reason="timeout")
+                await _gated_emit({"type": "done", "reason": "timeout",
+                            "note": "已达单轮总超时,优雅终止"})
+                return transcript
+
+            assistant_text_parts: list[str] = []
+            assistant_blocks: dict[int, dict[str, Any]] = {}
+            assistant_block_order: list[int] = []
+            tool_calls: list[dict[str, Any]] = []
+            had_error = False
+
+            _check_abort(abort_token)
+            boundary_payload: dict[str, Any] = {"step": step, "kind": next_turn_kind}
+            if len(next_message_ids) == 1:
+                boundary_payload["message_id"] = next_message_ids[0]
+            elif next_message_ids:
+                boundary_payload["message_ids"] = list(next_message_ids)
+            await _emit_internal_boundary(
+                _gated_emit, emit_internal_boundaries, "turn_start", boundary_payload,
+            )
+            try:
+                provider_messages = await _provider_context(
+                    convo,
+                    transform_context=transform_context,
+                    emit=_gated_emit,
+                    abort_token=abort_token,
                 )
             except asyncio.CancelledError:
+                await _emit_internal_boundary(
+                    _gated_emit, emit_internal_boundaries, "turn_end",
+                    {**boundary_payload, "reason": "aborted"},
+                )
                 raise
-            except Exception as exc:  # noqa: BLE001
-                await _emit_hook_error(emit, "before_step", exc)
-        if time.monotonic() > deadline:
-            transcript.run_state.update(status="done", reason="timeout")
-            await emit({"type": "done", "reason": "timeout",
-                        "note": "已达单轮总超时,优雅终止"})
-            return transcript
-
-        assistant_text_parts: list[str] = []
-        assistant_blocks: dict[int, dict[str, Any]] = {}
-        assistant_block_order: list[int] = []
-        tool_calls: list[dict[str, Any]] = []
-        had_error = False
-
-        _check_abort(abort_token)
-        boundary_payload: dict[str, Any] = {"step": step, "kind": next_turn_kind}
-        if len(next_message_ids) == 1:
-            boundary_payload["message_id"] = next_message_ids[0]
-        elif next_message_ids:
-            boundary_payload["message_ids"] = list(next_message_ids)
-        await _emit_internal_boundary(
-            emit, emit_internal_boundaries, "turn_start", boundary_payload,
-        )
-        try:
-            provider_messages = await _provider_context(
-                convo,
-                transform_context=transform_context,
-                emit=emit,
-                abort_token=abort_token,
-            )
-        except asyncio.CancelledError:
+            except Exception:
+                await _emit_internal_boundary(
+                    _gated_emit, emit_internal_boundaries, "turn_end",
+                    {**boundary_payload, "reason": "error"},
+                )
+                raise
             await _emit_internal_boundary(
-                emit, emit_internal_boundaries, "turn_end",
-                {**boundary_payload, "reason": "aborted"},
+                _gated_emit, emit_internal_boundaries, "message_start",
+                {**boundary_payload, "role": "assistant"},
             )
-            raise
-        except Exception:
-            await _emit_internal_boundary(
-                emit, emit_internal_boundaries, "turn_end",
-                {**boundary_payload, "reason": "error"},
-            )
-            raise
-        await _emit_internal_boundary(
-            emit, emit_internal_boundaries, "message_start",
-            {**boundary_payload, "role": "assistant"},
-        )
-        # 阻塞 SDK 流在线程里逐事件取出 → 每次 await 让出事件循环,reader 任务得以并发收 confirm。
-        step_t0 = time.monotonic()
-        event_count = 0
-        try:
-            gen = client.stream_turn(provider_messages, tools)
-            while True:
-                ev_t0 = time.monotonic()
-                ev = await asyncio.to_thread(_next_event, gen)
-                ev_wait = time.monotonic() - ev_t0
-                if ev_wait > 5.0:   # 单次取事件明显偏慢(如模型静默/网络卡顿)才记,避免刷屏
-                    logger.info("[chat-loop] step=%d 取事件耗时=%.1fs (第 %d 个事件)",
-                                step, ev_wait, event_count)
-                event_count += 1
-                _check_abort(abort_token)
-                if ev is None:
-                    break
-                etype = ev["type"]
-                if etype == "text":
-                    assistant_text_parts.append(ev["text"])
-                    content_index = int(
-                        ev.get("content_index")
-                        if ev.get("content_index") is not None
-                        else 10_000
-                    )
-                    if content_index not in assistant_blocks:
-                        assistant_block_order.append(content_index)
-                        assistant_blocks[content_index] = {
-                            "type": "text",
-                            "text": "",
+            # 阻塞 SDK 流在线程里逐事件取出 → 每次 await 让出事件循环,reader 任务得以并发收 confirm。
+            step_t0 = time.monotonic()
+            event_count = 0
+            try:
+                gen = client.stream_turn(provider_messages, tools)
+                while True:
+                    ev_t0 = time.monotonic()
+                    ev = await asyncio.to_thread(_next_event, gen)
+                    ev_wait = time.monotonic() - ev_t0
+                    if ev_wait > 5.0:   # 单次取事件明显偏慢(如模型静默/网络卡顿)才记,避免刷屏
+                        logger.info("[chat-loop] step=%d 取事件耗时=%.1fs (第 %d 个事件)",
+                                    step, ev_wait, event_count)
+                    event_count += 1
+                    _check_abort(abort_token)
+                    if ev is None:
+                        break
+                    etype = ev["type"]
+                    if etype == "text":
+                        assistant_text_parts.append(ev["text"])
+                        content_index = int(
+                            ev.get("content_index")
+                            if ev.get("content_index") is not None
+                            else 10_000
+                        )
+                        if content_index not in assistant_blocks:
+                            assistant_block_order.append(content_index)
+                            assistant_blocks[content_index] = {
+                                "type": "text",
+                                "text": "",
+                                "content_index": content_index,
+                                "provider": ev.get("provider"),
+                                "model": ev.get("model"),
+                            }
+                        assistant_blocks[content_index]["text"] += ev["text"]
+                        await _gated_emit({
+                            "type": "chunk",
+                            "text": ev["text"],
                             "content_index": content_index,
                             "provider": ev.get("provider"),
                             "model": ev.get("model"),
-                        }
-                    assistant_blocks[content_index]["text"] += ev["text"]
-                    await emit({
-                        "type": "chunk",
-                        "text": ev["text"],
-                        "content_index": content_index,
-                        "provider": ev.get("provider"),
-                        "model": ev.get("model"),
-                    })
-                elif etype == "thinking_start":
-                    content_index = int(ev.get("content_index") or 0)
-                    if content_index not in assistant_blocks:
-                        assistant_block_order.append(content_index)
-                    assistant_blocks[content_index] = {
-                        "type": "thinking",
-                        "thinking": "",
-                        "content_index": content_index,
-                        "provider": ev.get("provider"),
-                        "model": ev.get("model"),
-                    }
-                    await emit({
-                        "type": "thinking_start",
-                        "content_index": content_index,
-                        "provider": ev.get("provider"),
-                        "model": ev.get("model"),
-                    })
-                elif etype == "thinking":
-                    content_index = int(ev.get("content_index") or 0)
-                    if content_index not in assistant_blocks:
-                        assistant_block_order.append(content_index)
+                        })
+                    elif etype == "thinking_start":
+                        content_index = int(ev.get("content_index") or 0)
+                        if content_index not in assistant_blocks:
+                            assistant_block_order.append(content_index)
                         assistant_blocks[content_index] = {
                             "type": "thinking",
                             "thinking": "",
@@ -837,103 +881,248 @@ async def run_turn(
                             "provider": ev.get("provider"),
                             "model": ev.get("model"),
                         }
-                    assistant_blocks[content_index]["thinking"] += ev.get("text") or ""
-                    await emit({
-                        "type": "thinking_delta",
-                        "text": ev.get("text") or "",
-                        "content_index": content_index,
-                        "provider": ev.get("provider"),
-                        "model": ev.get("model"),
-                    })
-                elif etype == "thinking_end":
-                    content_index = int(ev.get("content_index") or 0)
-                    block = assistant_blocks.setdefault(
-                        content_index,
-                        {
-                            "type": "thinking",
-                            "thinking": ev.get("text") or "",
+                        await _gated_emit({
+                            "type": "thinking_start",
                             "content_index": content_index,
                             "provider": ev.get("provider"),
                             "model": ev.get("model"),
-                        },
-                    )
-                    if content_index not in assistant_block_order:
-                        assistant_block_order.append(content_index)
-                    block["signature"] = ev.get("signature")
-                    block["thinkingSignature"] = ev.get("signature")
-                    block["redacted"] = bool(ev.get("redacted"))
-                    await emit({
-                        "type": "thinking_end",
-                        "text": ev.get("text") or block.get("thinking") or "",
-                        "content_index": content_index,
-                        "signature": ev.get("signature"),
-                        "redacted": bool(ev.get("redacted")),
-                        "provider": ev.get("provider"),
-                        "model": ev.get("model"),
-                    })
-                elif etype == "tool_call":
-                    tool_calls.append(ev)
-                elif etype == "error":
-                    had_error = True
-                    transcript.run_state["error"] = str(
-                        ev.get("error") or "未知 provider 错误"
-                    )
-                    await emit({"type": "error", "error": ev["error"]})
-                elif etype == "usage":
-                    usage = ev.get("usage")
-                    if isinstance(usage, dict):
-                        transcript.run_state["usage"] = dict(usage)
-                # finish 事件:不额外处理,循环靠 None(StopIteration)收尾
-        except asyncio.CancelledError:
-            await _emit_internal_boundary(
-                emit, emit_internal_boundaries, "message_end",
-                {**boundary_payload, "role": "assistant", "reason": "aborted"},
-            )
-            await _emit_internal_boundary(
-                emit, emit_internal_boundaries, "turn_end",
-                {**boundary_payload, "reason": "aborted"},
-            )
-            raise
-        except Exception:
-            await _emit_internal_boundary(
-                emit, emit_internal_boundaries, "message_end",
-                {**boundary_payload, "role": "assistant", "reason": "error"},
-            )
-            await _emit_internal_boundary(
-                emit, emit_internal_boundaries, "turn_end",
-                {**boundary_payload, "reason": "error"},
-            )
-            raise
-        await _emit_internal_boundary(
-            emit, emit_internal_boundaries, "message_end",
-            {**boundary_payload, "role": "assistant"},
-        )
-
-        if had_error:
-            await _emit_internal_boundary(
-                emit, emit_internal_boundaries, "turn_end",
-                {**boundary_payload, "reason": "error"},
-            )
-            transcript.run_state.update(status="done", reason="error")
-            await emit({"type": "done", "reason": "error"})
-            return transcript
-
-        if not tool_calls:
-            # 无工具表示当前内部 turn 自然结束；steering 优先于 follow-up。
-            full_text = "".join(assistant_text_parts)
-            ordered_blocks = [
-                assistant_blocks[index]
-                for index in assistant_block_order
-            ]
-            if full_text or ordered_blocks:
-                assistant_msg = _assistant_msg(
-                    assistant_text_parts,
-                    [],
-                    content_blocks=ordered_blocks,
+                        })
+                    elif etype == "thinking":
+                        content_index = int(ev.get("content_index") or 0)
+                        if content_index not in assistant_blocks:
+                            assistant_block_order.append(content_index)
+                            assistant_blocks[content_index] = {
+                                "type": "thinking",
+                                "thinking": "",
+                                "content_index": content_index,
+                                "provider": ev.get("provider"),
+                                "model": ev.get("model"),
+                            }
+                        assistant_blocks[content_index]["thinking"] += ev.get("text") or ""
+                        await _gated_emit({
+                            "type": "thinking_delta",
+                            "text": ev.get("text") or "",
+                            "content_index": content_index,
+                            "provider": ev.get("provider"),
+                            "model": ev.get("model"),
+                        })
+                    elif etype == "thinking_end":
+                        content_index = int(ev.get("content_index") or 0)
+                        block = assistant_blocks.setdefault(
+                            content_index,
+                            {
+                                "type": "thinking",
+                                "thinking": ev.get("text") or "",
+                                "content_index": content_index,
+                                "provider": ev.get("provider"),
+                                "model": ev.get("model"),
+                            },
+                        )
+                        if content_index not in assistant_block_order:
+                            assistant_block_order.append(content_index)
+                        block["signature"] = ev.get("signature")
+                        block["thinkingSignature"] = ev.get("signature")
+                        block["redacted"] = bool(ev.get("redacted"))
+                        await _gated_emit({
+                            "type": "thinking_end",
+                            "text": ev.get("text") or block.get("thinking") or "",
+                            "content_index": content_index,
+                            "signature": ev.get("signature"),
+                            "redacted": bool(ev.get("redacted")),
+                            "provider": ev.get("provider"),
+                            "model": ev.get("model"),
+                        })
+                    elif etype == "tool_call":
+                        tool_calls.append(ev)
+                    elif etype == "error":
+                        had_error = True
+                        transcript.run_state["error"] = str(
+                            ev.get("error") or "未知 provider 错误"
+                        )
+                        await _gated_emit({"type": "error", "error": ev["error"]})
+                    elif etype == "usage":
+                        usage = ev.get("usage")
+                        if isinstance(usage, dict):
+                            transcript.run_state["usage"] = dict(usage)
+                    # finish 事件:不额外处理,循环靠 None(StopIteration)收尾
+            except asyncio.CancelledError:
+                await _emit_internal_boundary(
+                    _gated_emit, emit_internal_boundaries, "message_end",
+                    {**boundary_payload, "role": "assistant", "reason": "aborted"},
                 )
-                convo.append(assistant_msg)
-                transcript.assistant_messages.append(assistant_msg)
-                transcript.messages = list(convo)
+                await _emit_internal_boundary(
+                    _gated_emit, emit_internal_boundaries, "turn_end",
+                    {**boundary_payload, "reason": "aborted"},
+                )
+                raise
+            except Exception:
+                await _emit_internal_boundary(
+                    _gated_emit, emit_internal_boundaries, "message_end",
+                    {**boundary_payload, "role": "assistant", "reason": "error"},
+                )
+                await _emit_internal_boundary(
+                    _gated_emit, emit_internal_boundaries, "turn_end",
+                    {**boundary_payload, "reason": "error"},
+                )
+                raise
+            await _emit_internal_boundary(
+                _gated_emit, emit_internal_boundaries, "message_end",
+                {**boundary_payload, "role": "assistant"},
+            )
+
+            if had_error:
+                await _emit_internal_boundary(
+                    _gated_emit, emit_internal_boundaries, "turn_end",
+                    {**boundary_payload, "reason": "error"},
+                )
+                transcript.run_state.update(status="done", reason="error")
+                await _gated_emit({"type": "done", "reason": "error"})
+                return transcript
+
+            if not tool_calls:
+                # 无工具表示当前内部 turn 自然结束；steering 优先于 follow-up。
+                full_text = "".join(assistant_text_parts)
+                ordered_blocks = [
+                    assistant_blocks[index]
+                    for index in assistant_block_order
+                ]
+                if full_text or ordered_blocks:
+                    assistant_msg = _assistant_msg(
+                        assistant_text_parts,
+                        [],
+                        content_blocks=ordered_blocks,
+                    )
+                    convo.append(assistant_msg)
+                    transcript.assistant_messages.append(assistant_msg)
+                    transcript.messages = list(convo)
+                if after_step:
+                    try:
+                        await _await_with_abort(
+                            _maybe_await(after_step({
+                                "step": step,
+                                "messages": list(convo),
+                                "transcript": transcript.as_dict(),
+                            })),
+                            abort_token,
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:  # noqa: BLE001
+                        await _emit_hook_error(_gated_emit, "after_step", exc)
+                stop_requested = await _should_stop_turn(
+                    should_stop_after_turn or should_stop,
+                    transcript,
+                    _gated_emit,
+                    abort_token,
+                )
+                current_unverified = number_guard(full_text, "\n".join(tool_results_text))
+                unverified_numbers.update(current_unverified)
+                if current_unverified:
+                    logger.warning("[chat-loop] 未核实数字(非 tool 真值): %s", current_unverified)
+                if stop_requested:
+                    await _emit_internal_boundary(
+                        emit, emit_internal_boundaries, "turn_end",
+                        {**boundary_payload, "reason": "stop_hook"},
+                    )
+                    transcript.run_state.update(status="done", reason="stop_hook")
+                    await _flush_coverage()
+                    await _gated_emit({"type": "done", "reason": "stop_hook"})
+                    return transcript
+
+                if _can_start_next_step(step, max_steps=max_steps, deadline=deadline):
+                    steering = await _take_steering_batch(
+                        take_steering, emit=_gated_emit, abort_token=abort_token,
+                    )
+                    if steering:
+                        queued, next_message_ids = steering
+                        convo.extend(queued)
+                        transcript.messages = list(convo)
+                        next_turn_kind = "steering"
+                        await _emit_internal_boundary(
+                            emit, emit_internal_boundaries, "turn_end",
+                            {**boundary_payload, "reason": "steering"},
+                        )
+                        continue
+                    follow_up = await _take_follow_up_message(
+                        take_follow_up, emit=_gated_emit, abort_token=abort_token,
+                    )
+                    if follow_up is not None:
+                        queued, message_id = follow_up
+                        convo.append(queued)
+                        transcript.messages = list(convo)
+                        next_turn_kind = "follow_up"
+                        next_message_ids = [message_id] if message_id else []
+                        await _emit_internal_boundary(
+                            emit, emit_internal_boundaries, "turn_end",
+                            {**boundary_payload, "reason": "follow_up"},
+                        )
+                        continue
+
+                await _emit_internal_boundary(
+                    _gated_emit, emit_internal_boundaries, "turn_end",
+                    {**boundary_payload, "reason": "stop"},
+                )
+                await _flush_coverage()
+                unverified = sorted(unverified_numbers)
+                transcript.run_state.update(status="done", reason="stop",
+                                            numberGuard={"unverified": unverified})
+                await _gated_emit({"type": "done", "reason": "stop",
+                            "numberGuard": {"unverified": unverified}})
+                return transcript
+
+            logger.info("[chat-loop] step=%d 流式耗时=%.1fs tool_calls=%s",
+                        step, time.monotonic() - step_t0, [tc.get("name") for tc in tool_calls])
+            # 把本轮 assistant(含 tool_calls)记入对话,再逐个执行工具。
+            assistant_msg = _assistant_msg(
+                assistant_text_parts,
+                tool_calls,
+                content_blocks=[
+                    assistant_blocks[index]
+                    for index in assistant_block_order
+                ],
+            )
+            convo.append(assistant_msg)
+            transcript.assistant_messages.append(assistant_msg)
+            try:
+                executions = await _execute_tool_batch(
+                    tool_calls,
+                    read_call,
+                    request_write,
+                    emit,
+                    registry=registry,
+                    abort_token=abort_token,
+                    before_tool_call=before_tool_call,
+                    after_tool_call=after_tool_call,
+                    transform_tool_result=transform_tool_result,
+                    messages=list(convo),
+                )
+            except asyncio.CancelledError:
+                await _emit_internal_boundary(
+                    _gated_emit, emit_internal_boundaries, "turn_end",
+                    {**boundary_payload, "reason": "aborted"},
+                )
+                raise
+
+            # Pi 语义：tool_done 可按实际完成顺序发出，但喂回模型/持久化时严格恢复
+            # assistant 原始调用顺序，避免并发完成时 transcript 漂移。
+            for tc, execution in zip(tool_calls, executions, strict=True):
+                tool_results_text.append(execution.content)
+                tool_msg = {"role": "tool", "tool_call_id": tc.get("id") or tc.get("name") or "tool",
+                            "name": tc.get("name") or "unknown", "content": execution.content}
+                convo.append(tool_msg)
+                transcript.tool_results.append(tool_msg)
+            terminate_requested = bool(executions) and all(
+                execution.terminate for execution in executions
+            )
+            termination_reason = next(
+                (
+                    execution.termination_reason
+                    for execution in executions
+                    if execution.termination_reason
+                ),
+                "after_tool_call" if terminate_requested else None,
+            )
+            transcript.messages = list(convo)
             if after_step:
                 try:
                     await _await_with_abort(
@@ -947,189 +1136,78 @@ async def run_turn(
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:  # noqa: BLE001
-                    await _emit_hook_error(emit, "after_step", exc)
+                    await _emit_hook_error(_gated_emit, "after_step", exc)
             stop_requested = await _should_stop_turn(
                 should_stop_after_turn or should_stop,
                 transcript,
-                emit,
+                _gated_emit,
                 abort_token,
             )
-            current_unverified = number_guard(full_text, "\n".join(tool_results_text))
-            unverified_numbers.update(current_unverified)
-            if current_unverified:
-                logger.warning("[chat-loop] 未核实数字(非 tool 真值): %s", current_unverified)
+            if terminate_requested:
+                await _emit_internal_boundary(
+                    _gated_emit, emit_internal_boundaries, "turn_end",
+                    {
+                        **boundary_payload,
+                        "reason": "tool_terminated",
+                        "termination_reason": termination_reason,
+                    },
+                )
+                transcript.run_state.update(
+                    status="done",
+                    reason="tool_terminated",
+                    termination_reason=termination_reason,
+                )
+                await _gated_emit({
+                    "type": "done",
+                    "reason": "tool_terminated",
+                    "termination_reason": termination_reason,
+                })
+                return transcript
             if stop_requested:
                 await _emit_internal_boundary(
-                    emit, emit_internal_boundaries, "turn_end",
+                    _gated_emit, emit_internal_boundaries, "turn_end",
                     {**boundary_payload, "reason": "stop_hook"},
                 )
                 transcript.run_state.update(status="done", reason="stop_hook")
-                await emit({"type": "done", "reason": "stop_hook"})
+                await _flush_coverage()
+                await _gated_emit({"type": "done", "reason": "stop_hook"})
                 return transcript
-
             if _can_start_next_step(step, max_steps=max_steps, deadline=deadline):
                 steering = await _take_steering_batch(
-                    take_steering, emit=emit, abort_token=abort_token,
+                    take_steering, emit=_gated_emit, abort_token=abort_token,
                 )
                 if steering:
                     queued, next_message_ids = steering
                     convo.extend(queued)
                     transcript.messages = list(convo)
                     next_turn_kind = "steering"
-                    await _emit_internal_boundary(
-                        emit, emit_internal_boundaries, "turn_end",
-                        {**boundary_payload, "reason": "steering"},
-                    )
-                    continue
-                follow_up = await _take_follow_up_message(
-                    take_follow_up, emit=emit, abort_token=abort_token,
-                )
-                if follow_up is not None:
-                    queued, message_id = follow_up
-                    convo.append(queued)
-                    transcript.messages = list(convo)
-                    next_turn_kind = "follow_up"
-                    next_message_ids = [message_id] if message_id else []
-                    await _emit_internal_boundary(
-                        emit, emit_internal_boundaries, "turn_end",
-                        {**boundary_payload, "reason": "follow_up"},
-                    )
-                    continue
-
+                else:
+                    next_turn_kind = "tool_continuation"
+                    next_message_ids = []
             await _emit_internal_boundary(
-                emit, emit_internal_boundaries, "turn_end",
-                {**boundary_payload, "reason": "stop"},
+                _gated_emit, emit_internal_boundaries, "turn_end",
+                {**boundary_payload, "reason": "tool_calls"},
             )
-            unverified = sorted(unverified_numbers)
-            transcript.run_state.update(status="done", reason="stop",
-                                        numberGuard={"unverified": unverified})
-            await emit({"type": "done", "reason": "stop",
-                        "numberGuard": {"unverified": unverified}})
-            return transcript
 
-        logger.info("[chat-loop] step=%d 流式耗时=%.1fs tool_calls=%s",
-                    step, time.monotonic() - step_t0, [tc.get("name") for tc in tool_calls])
-        # 把本轮 assistant(含 tool_calls)记入对话,再逐个执行工具。
-        assistant_msg = _assistant_msg(
-            assistant_text_parts,
-            tool_calls,
-            content_blocks=[
-                assistant_blocks[index]
-                for index in assistant_block_order
-            ],
-        )
-        convo.append(assistant_msg)
-        transcript.assistant_messages.append(assistant_msg)
-        try:
-            executions = await _execute_tool_batch(
-                tool_calls,
-                read_call,
-                request_write,
-                emit,
-                registry=registry,
-                abort_token=abort_token,
-                before_tool_call=before_tool_call,
-                after_tool_call=after_tool_call,
-                transform_tool_result=transform_tool_result,
-                messages=list(convo),
-            )
-        except asyncio.CancelledError:
-            await _emit_internal_boundary(
-                emit, emit_internal_boundaries, "turn_end",
-                {**boundary_payload, "reason": "aborted"},
-            )
-            raise
-
-        # Pi 语义：tool_done 可按实际完成顺序发出，但喂回模型/持久化时严格恢复
-        # assistant 原始调用顺序，避免并发完成时 transcript 漂移。
-        for tc, execution in zip(tool_calls, executions, strict=True):
-            tool_results_text.append(execution.content)
-            tool_msg = {"role": "tool", "tool_call_id": tc.get("id") or tc.get("name") or "tool",
-                        "name": tc.get("name") or "unknown", "content": execution.content}
-            convo.append(tool_msg)
-            transcript.tool_results.append(tool_msg)
-        terminate_requested = bool(executions) and all(
-            execution.terminate for execution in executions
-        )
-        termination_reason = next(
-            (
-                execution.termination_reason
-                for execution in executions
-                if execution.termination_reason
-            ),
-            "after_tool_call" if terminate_requested else None,
-        )
+        if coverage_path:
+            return await _coverage_fail("max_steps")
         transcript.messages = list(convo)
-        if after_step:
+        transcript.run_state.update(status="done", reason="max_steps")
+        await _gated_emit({"type": "done", "reason": "max_steps",
+                    "note": f"已达步数上限 {max_steps},优雅终止"})
+        return transcript
+    except asyncio.CancelledError:
+        if coverage_path:
+            await _coverage_fail("aborted")
+        raise
+    finally:
+        stop_keepalive.set()
+        if keepalive_task is not None:
+            keepalive_task.cancel()
             try:
-                await _await_with_abort(
-                    _maybe_await(after_step({
-                        "step": step,
-                        "messages": list(convo),
-                        "transcript": transcript.as_dict(),
-                    })),
-                    abort_token,
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:  # noqa: BLE001
-                await _emit_hook_error(emit, "after_step", exc)
-        stop_requested = await _should_stop_turn(
-            should_stop_after_turn or should_stop,
-            transcript,
-            emit,
-            abort_token,
-        )
-        if terminate_requested:
-            await _emit_internal_boundary(
-                emit, emit_internal_boundaries, "turn_end",
-                {
-                    **boundary_payload,
-                    "reason": "tool_terminated",
-                    "termination_reason": termination_reason,
-                },
-            )
-            transcript.run_state.update(
-                status="done",
-                reason="tool_terminated",
-                termination_reason=termination_reason,
-            )
-            await emit({
-                "type": "done",
-                "reason": "tool_terminated",
-                "termination_reason": termination_reason,
-            })
-            return transcript
-        if stop_requested:
-            await _emit_internal_boundary(
-                emit, emit_internal_boundaries, "turn_end",
-                {**boundary_payload, "reason": "stop_hook"},
-            )
-            transcript.run_state.update(status="done", reason="stop_hook")
-            await emit({"type": "done", "reason": "stop_hook"})
-            return transcript
-        if _can_start_next_step(step, max_steps=max_steps, deadline=deadline):
-            steering = await _take_steering_batch(
-                take_steering, emit=emit, abort_token=abort_token,
-            )
-            if steering:
-                queued, next_message_ids = steering
-                convo.extend(queued)
-                transcript.messages = list(convo)
-                next_turn_kind = "steering"
-            else:
-                next_turn_kind = "tool_continuation"
-                next_message_ids = []
-        await _emit_internal_boundary(
-            emit, emit_internal_boundaries, "turn_end",
-            {**boundary_payload, "reason": "tool_calls"},
-        )
-
-    transcript.messages = list(convo)
-    transcript.run_state.update(status="done", reason="max_steps")
-    await emit({"type": "done", "reason": "max_steps",
-                "note": f"已达步数上限 {max_steps},优雅终止"})
-    return transcript
+                await keepalive_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
 
 async def _provider_context(

@@ -767,3 +767,68 @@ def test_service_applies_steering_then_follow_up_in_one_settled_run(
         assert service.queued_inputs(run_id=run_id) == []
 
     asyncio.run(scenario())
+
+
+def test_non_coverage_turn_keeps_default_budget(monkeypatch, tmp_path):
+    async def scenario():
+        service = KSSAgentService(tmp_path, tmp_path)
+        captured = {}
+
+        async def fake_run_turn(messages, emit, request_write, **kwargs):
+            captured["max_steps"] = kwargs["max_steps"]
+            captured["timeout"] = kwargs["turn_timeout"]
+            await emit({"type": "chunk", "text": "复盘"})
+            await emit({"type": "done", "reason": "stop"})
+            return chat_loop.TurnTranscript(
+                messages=[*messages, {"role": "assistant", "content": "复盘"}],
+                run_state={"status": "done", "reason": "stop", "usage": {"total_tokens": 3}},
+            )
+
+        monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+
+        async def no_write(**kwargs):
+            raise AssertionError("write")
+
+        events = []
+        await service.run_turn("s", "c1", "今天为什么涨", events.append, no_write)
+        assert captured == {"max_steps": 8, "timeout": 240.0}
+
+    asyncio.run(scenario())
+
+
+def test_coverage_timeout_emits_r12_and_not_empty(monkeypatch, tmp_path):
+    async def scenario():
+        from kss.agent.service import RuntimeRunOptions
+        from kss.equity_research.intent import is_r12_text
+        service = KSSAgentService(tmp_path, tmp_path)
+        chunks = []
+
+        async def fake_run_turn(messages, emit, request_write, **kwargs):
+            await emit({"type": "chunk", "text": "半章备忘"})
+            await emit({"type": "done", "reason": "timeout"})
+            return chat_loop.TurnTranscript(
+                messages=[*messages, {"role": "assistant", "content": "半章备忘"}],
+                run_state={"status": "done", "reason": "timeout", "usage": {}},
+            )
+
+        monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+        events = []
+
+        async def no_write(**kwargs):
+            raise AssertionError("write")
+
+        result = await service.run_turn(
+            "s",
+            "c2",
+            "研究一下 600519.SH",
+            events.append,
+            no_write,
+            run_options=RuntimeRunOptions(coverage_closer=True, timeout_seconds=1, max_steps=2),
+        )
+        texts = [getattr(e, "payload", e) for e in events]
+        blob = str(texts)
+        assert result.termination_reason == "unable_to_complete"
+        assert result.error is None
+        assert "无法完成" in blob or is_r12_text(blob)
+
+    asyncio.run(scenario())

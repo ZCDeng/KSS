@@ -273,6 +273,12 @@ final class AgentFrameTests: XCTestCase {
             error: "aborted", userAborted: false, assistantEmpty: true, assistantIsError: false))
         XCTAssertTrue(KSSStore.shouldFallbackToLegacyAgent(
             error: "Agent 连接中断", userAborted: false, assistantEmpty: true, assistantIsError: false))
+        XCTAssertFalse(KSSStore.shouldFallbackToLegacyAgent(
+            error: "Agent 响应超时",
+            terminationReason: "unable_to_complete",
+            userAborted: false,
+            assistantEmpty: true,
+            assistantIsError: false))
     }
 
     func testDuplicateRunFramesUpdateStateHydrateAndNeverFallbackToLegacy() throws {

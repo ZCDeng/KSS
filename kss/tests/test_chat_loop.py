@@ -1294,3 +1294,31 @@ def test_invalid_queued_role_is_rejected_without_context_injection():
     error = next(frame for frame in frames if frame["type"] == "error")
     assert error["error"] == "hook_error"
     assert error["hook"] == "take_steering"
+
+
+def test_equity_coverage_tool_registered_readonly():
+    names = {s["name"] for s in loop.TOOL_SPECS}
+    assert "run_equity_coverage" in names
+    spec = next(s for s in loop.TOOL_SPECS if s["name"] == "run_equity_coverage")
+    assert spec["command"] == "equity-coverage"
+    assert loop.is_write_command("equity-coverage") is False
+
+
+def test_coverage_handler_heartbeat_emits_tool_update():
+    updates = []
+
+    def on_update(payload):
+        updates.append(payload)
+
+    from kss.equity_research.handler import run_equity_coverage_tool
+    run_equity_coverage_tool(
+        {
+            "query": "600519.SH",
+            "assumptions": '{"price": 100, "eps": 8}',
+            "board": {"600519.SH": {"price": 100}},
+            "heartbeat_interval": 0,
+            "output_dir": "/tmp/kss-coverage-hb",
+        },
+        on_update=on_update,
+    )
+    assert updates
