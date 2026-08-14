@@ -125,8 +125,37 @@ def test_unregistered_write_commands_stay_off_pack() -> None:
 
 
 # ---------------------------------------------------------------------------
-# MCP 投影表征（不删 kss_mcp._LIVE；U6 才改投影器）
+# U6 MCP 只读投影（AE4 / AE7 / R12 / KTD5 / KTD10）
 # ---------------------------------------------------------------------------
+
+_HOST_TOOLBOX = ("bash", "fs", "filesystem", "terminal")
+_NEW_READONLY = "get_brand_new_readonly"
+
+
+def _load_kss_mcp(monkeypatch: pytest.MonkeyPatch, *, live: str = "0"):
+    class FakeFastMCP:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.tools: list[str] = []
+
+        def tool(self, fn=None, **kwargs):
+            def deco(f):
+                self.tools.append(str(kwargs.get("name") or f.__name__))
+                return f
+
+            if callable(fn):
+                return deco(fn)
+            return deco
+
+        def run(self) -> None:
+            raise AssertionError("test should not run MCP server")
+
+    mod = types.ModuleType("fastmcp")
+    mod.FastMCP = FakeFastMCP
+    monkeypatch.setitem(sys.modules, "fastmcp", mod)
+    monkeypatch.setenv("KSS_MCP_LIVE", live)
+    sys.modules.pop("kss_mcp", None)
+    return importlib.import_module("kss_mcp")
 
 
 def test_pack_says_mcp_would_not_see_live_writes() -> None:
@@ -135,32 +164,82 @@ def test_pack_says_mcp_would_not_see_live_writes() -> None:
         assert entry["name"] not in mcp_names
 
 
-def test_current_mcp_list_characterization_without_live(monkeypatch: pytest.MonkeyPatch) -> None:
-    """KSS_MCP_LIVE 关闭时，现有 MCP 列表不含 pack 的 live 写名。"""
-    monkeypatch.setenv("KSS_MCP_LIVE", "0")
-    mod = types.ModuleType("fastmcp")
-
-    class FakeFastMCP:
-        def __init__(self, name: str) -> None:
-            self.name = name
-            self.tools: list[str] = []
-
-        def tool(self, fn):
-            self.tools.append(fn.__name__)
-            return fn
-
-        def run(self) -> None:
-            raise AssertionError("test should not run MCP server")
-
-    mod.FastMCP = FakeFastMCP
-    monkeypatch.setitem(sys.modules, "fastmcp", mod)
-    sys.modules.pop("kss_mcp", None)
-    kss_mcp = importlib.import_module("kss_mcp")
+def test_live_write_names_in_pack_absent_from_restrict(monkeypatch: pytest.MonkeyPatch) -> None:
+    """pack 有 live 写名；restrict 投影没有它们。缺席断言，不是 confirm=True。"""
+    live_names = {e["name"] for e in live_write_entries()}
+    assert live_names
+    kss_mcp = _load_kss_mcp(monkeypatch, live="1")
+    projected = {e["name"] for e in kss_mcp.restrict_mcp_projection()}
+    assert live_names.isdisjoint(projected)
     mcp_tools = set(kss_mcp.mcp.tools)
-    for entry in live_write_entries():
-        assert entry["name"] not in mcp_tools
+    assert live_names.isdisjoint(mcp_tools)
+    assert "run_task" not in mcp_tools
+    assert "cron_action" not in mcp_tools
+    src = (_ROOT / "scripts" / "kss_mcp.py").read_text(encoding="utf-8")
+    assert "confirm: bool = False" not in src
+    assert "if _LIVE" not in src
+
+
+def test_ae7_r12_names_absent_from_mcp(monkeypatch: pytest.MonkeyPatch) -> None:
+    kss_mcp = _load_kss_mcp(monkeypatch, live="1")
+    mcp_tools = set(kss_mcp.mcp.tools)
+    projected = {e["name"] for e in kss_mcp.restrict_mcp_projection()}
     for forbidden in R12_SCHEMA_NAMES:
         assert forbidden not in mcp_tools
+        assert forbidden not in projected
+
+
+def test_ae4_new_readonly_plugin_visible_after_reconnect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reset_pack_test_mutation()
+    try:
+        first = _load_kss_mcp(monkeypatch)
+        assert _NEW_READONLY not in set(first.mcp.tools)
+        append_pack_entry_for_test(
+            {
+                "name": _NEW_READONLY,
+                "command": "orientation",
+                "desc": "U6 AE4 probe",
+                "params": {},
+                "order": [],
+                "write": False,
+                "surfaces": ["desktop", "research", "mcp"],
+                "mcpVisible": True,
+            }
+        )
+        assert _NEW_READONLY not in set(first.mcp.tools)
+        for name in _HOST_TOOLBOX:
+            assert name not in set(first.mcp.tools)
+        for entry in live_write_entries():
+            assert entry["name"] not in set(first.mcp.tools)
+
+        second = _load_kss_mcp(monkeypatch)
+        tools = set(second.mcp.tools)
+        assert _NEW_READONLY in tools
+        for name in _HOST_TOOLBOX:
+            assert name not in tools
+        for entry in live_write_entries():
+            assert entry["name"] not in tools
+    finally:
+        reset_pack_test_mutation()
+
+
+def test_mcp_read_path_fails_closed_on_write_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dispatched: list[str] = []
+    kss_mcp = _load_kss_mcp(monkeypatch)
+    monkeypatch.setattr(
+        kss_mcp.bridge,
+        "dispatch",
+        lambda c, a: dispatched.append(c) or {"ok": True},
+    )
+    with pytest.raises(PermissionError):
+        kss_mcp._call("run", ["update-cs-data"])
+    with pytest.raises(PermissionError):
+        kss_mcp._call("investability-label", ["688008.SH", "compute.05"])
+    assert dispatched == []
 
 
 # ---------------------------------------------------------------------------

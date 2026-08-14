@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # kss-mcp 启动 wrapper —— 供 .mcp.json 注册,任何 clone 此 repo 的 Claude Code / MCP client
-# 都能起同一套 KSS 只读工具(get_orientation / get_data_catalog / list_recipes / run_recipe 等)。
+# 都能起同一套 KSS 只读业务工具（pack mcpVisible 投影；无 bash/fs/terminal/live 写）。
 #
 # 可移植:PROJECT_ROOT 由脚本自身位置推导(不硬编码用户路径);解释器按优先级挑**第一个装了
-# fastmcp 的** venv(fastmcp 已在 pyproject,`uv sync` 后任一 venv 均可)。写 tool 默认不注册,
-# 仅 KSS_MCP_LIVE=1 才开(见 kss_mcp.py 威胁模型)。
+# fastmcp 的** venv(fastmcp 已在 pyproject,`uv sync` 后任一 venv 均可)。
 #
 # 手动测试:bash scripts/run_kss_mcp.sh   # 应进入 stdio MCP 循环(无输出,等 client)
 
