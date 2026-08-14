@@ -108,9 +108,8 @@ TOOL_SPECS: list[dict[str, Any]] = [
     _spec(
         "resolve_listing",
         "listing-resolve",
-        "解析公司名或代码到带后缀上市地(只读)。门控只看 .SH/.SZ/.BJ/.HK；"
-        "美股与在美上市 ADR 超出范围。同一中文名命中美股别名与 A/港时范围内优先。"
-        "query 如 阿里巴巴 或 600519.SH",
+        "只读解析上市地:名称或代码→带后缀候选。门控看.SH/.SZ/.BJ/.HK;"
+        "美股与ADR不进入覆盖。同一中文名优先A/港而非美股别名",
         {"query": _STR},
         ["query"],
         execution_mode="parallel",
