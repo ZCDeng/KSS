@@ -1,4 +1,4 @@
-"""KSS-specific application service built on the provider-neutral AgentRuntime."""
+"""KSS application service: sessions/skills/memory. Agent loop owner is Harness (U8)."""
 
 from __future__ import annotations
 
@@ -129,16 +129,23 @@ class KSSAgentService:
         self._summary_route_set: ContextVar[ProviderRouteSet | None] = ContextVar(
             "summary_route_set", default=None
         )
-        self.runtime = AgentRuntime(
-            self._execute_turn,
-            model=self.model or None,
-            model_resolver=lambda: self._active_model() or None,
-            message_loader=self.sessions.read_messages,
-            run_admission=self._admit_run,
-            persistence_barrier=self._persist_turn,
-            queue_store=self.sessions,
-            runner_owns_turn_boundaries=True,
-        )
+        # U8：生产编排主人是 Harness。AgentRuntime 仅在 debug/测试调用 run_turn 时惰性构建。
+        self._runtime: AgentRuntime | None = None
+
+    @property
+    def runtime(self) -> AgentRuntime:
+        if self._runtime is None:
+            self._runtime = AgentRuntime(
+                self._execute_turn,
+                model=self.model or None,
+                model_resolver=lambda: self._active_model() or None,
+                message_loader=self.sessions.read_messages,
+                run_admission=self._admit_run,
+                persistence_barrier=self._persist_turn,
+                queue_store=self.sessions,
+                runner_owns_turn_boundaries=True,
+            )
+        return self._runtime
 
     def _build_provider(self, *, start_provider: bool) -> Any:
         self._provider_start_error: str | None = None
@@ -478,7 +485,10 @@ class KSSAgentService:
         if (
             record.get("status") == "running"
             and record.get("owner_pid") == os.getpid()
-            and self.runtime.active_run_id(session_id) != record.get("run_id")
+            and (
+                self._runtime is None
+                or self._runtime.active_run_id(session_id) != record.get("run_id")
+            )
         ):
             self.sessions.finish_run(
                 session_id,

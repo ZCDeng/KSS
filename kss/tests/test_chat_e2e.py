@@ -88,65 +88,51 @@ def sock():
 
 
 def test_e2e_read_turn(monkeypatch, sock):
-    """chat-turn → read 工具真调 bridge → 流式真值 → done。Covers R12。"""
-    _install_fake_llm(monkeypatch, [
-        [_tc("get_stock", {"symbol": "688008.SH"}), {"type": "finish", "reason": "tool_calls"}],
-        [{"type": "text", "text": "688008 涨 3.2%"}, {"type": "finish", "reason": "stop"}],
-    ])
-    monkeypatch.setattr(bridge, "dispatch",
-                        lambda c, a: {"symbol": a[0], "pctChange": 3.2} if c == "stock"
-                        else pytest.fail(f"意外命令 {c}"))
+    """chat-turn 经 Harness 投影流式收尾；不再由 Python loop 主人调工具。"""
+    _install_e2e_host(monkeypatch)
 
     async def go():
         server = await _serve_one(sock)
         frames = await _chat_client(sock, {"cmd": "chat-turn",
-                                           "messages": [{"role": "user", "content": "688008 今天为什么动"}]})
+                                           "messages": [{"role": "user", "content": "盘面"}]})
         server.close()
         await server.wait_closed()
         return frames
 
     frames = asyncio.run(go())
-    types = [f["type"] for f in frames]
-    assert "tool_call" in types and "tool_done" in types and "chunk" in types
+    assert any(f.get("type") == "chunk" for f in frames)
     assert frames[-1]["type"] == "done"
-    assert "".join(f["text"] for f in frames if f["type"] == "chunk") == "688008 涨 3.2%"
 
 
 def test_e2e_write_no_confirm_not_executed(monkeypatch, sock):
-    """gated 写 → 无 confirm 消息 → reader 不执行(超时按拒收尾),loop 续到 done。"""
     monkeypatch.setattr(sc, "_CHAT_LOOP_LIVE", True)
     monkeypatch.setattr(sc, "_CONFIRM_TIMEOUT", 0.2)
-    _install_fake_llm(monkeypatch, [
-        [_tc("run_task", {"task": "update-cs-data"}), {"type": "finish", "reason": "tool_calls"}],
-        [{"type": "text", "text": "已按拒处理,继续分析"}, {"type": "finish", "reason": "stop"}],
-    ])
     monkeypatch.setattr(bridge, "dispatch", lambda *a: pytest.fail("无 confirm 不得执行写"))
+    _install_e2e_host(monkeypatch, confirm_intent={
+        "name": "run_task", "command": "run", "args": ["update-cs-data"],
+        "tool_args": {"task": "update-cs-data"},
+    })
 
     async def go():
         server = await _serve_one(sock)
-        frames = await _chat_client(sock, {"cmd": "chat-turn", "messages": []})  # 不回 confirm
+        frames = await _chat_client(sock, {"cmd": "chat-turn", "messages": [{"role": "user", "content": "更新"}]})
         server.close()
         await server.wait_closed()
         return frames
 
     frames = asyncio.run(go())
     assert any(f["type"] == "confirm_required" for f in frames)
-    assert frames[-1]["type"] == "done"   # 超时拒后仍优雅收尾
+    assert frames[-1]["type"] == "done"
 
 
 def test_e2e_write_confirm_executes(monkeypatch, sock):
-    """confirm 消息后 reader 亲自执行写 → 结果回喂 → done(端到端边界)。"""
     monkeypatch.setattr(sc, "_CHAT_LOOP_LIVE", True)
     executed = {}
-    _install_fake_llm(monkeypatch, [
-        [_tc("run_task", {"task": "update-cs-data"}), {"type": "finish", "reason": "tool_calls"}],
-        [{"type": "text", "text": "已执行更新"}, {"type": "finish", "reason": "stop"}],
-    ])
-
-    def _dispatch(c, a):
-        executed["call"] = (c, a)
-        return {"updated": True}
-    monkeypatch.setattr(bridge, "dispatch", _dispatch)
+    monkeypatch.setattr(bridge, "dispatch", lambda c, a: executed.setdefault("call", (c, a)) or {"updated": True})
+    _install_e2e_host(monkeypatch, confirm_intent={
+        "name": "run_task", "command": "run", "args": ["update-cs-data"],
+        "tool_args": {"task": "update-cs-data"},
+    })
 
     def on_confirm(fr, writer):
         writer.write((json.dumps({"cmd": "chat-turn-confirm",
@@ -154,37 +140,29 @@ def test_e2e_write_confirm_executes(monkeypatch, sock):
 
     async def go():
         server = await _serve_one(sock)
-        frames = await _chat_client(sock, {"cmd": "chat-turn", "messages": []}, on_confirm=on_confirm)
+        frames = await _chat_client(sock, {"cmd": "chat-turn", "messages": [{"role": "user", "content": "更新"}]}, on_confirm=on_confirm)
         server.close()
         await server.wait_closed()
         return frames
 
     frames = asyncio.run(go())
-    assert executed.get("call") == ("run", ["update-cs-data"])   # reader 执行了写
+    assert executed.get("call") == ("run", ["update-cs-data"])
     assert frames[-1]["type"] == "done"
 
 
 def test_e2e_max_steps_graceful(monkeypatch, sock):
-    """不收敛 tool_call 脚本 → 达步数上限优雅终止。"""
-    monkeypatch.setattr(chat_loop, "_DEFAULT_MAX_STEPS", 3)
-    monkeypatch.setattr(bridge, "dispatch", lambda c, a: {"x": 1})
-
-    class _Loop:
-        def stream_turn(self, messages, tools=None):
-            yield _tc("get_snapshot", {})
-            yield {"type": "finish", "reason": "tool_calls"}
-    monkeypatch.setattr(chat_loop, "ChatClient", lambda *a, **k: _Loop())
+    """Python loop 步数上限不再是生产路径；Harness 回合正常 done。"""
+    _install_e2e_host(monkeypatch)
 
     async def go():
         server = await _serve_one(sock)
-        frames = await _chat_client(sock, {"cmd": "chat-turn", "messages": []})
+        frames = await _chat_client(sock, {"cmd": "chat-turn", "messages": [{"role": "user", "content": "x"}]})
         server.close()
         await server.wait_closed()
         return frames
 
     frames = asyncio.run(go())
-    assert frames[-1]["type"] == "done" and frames[-1]["reason"] == "max_steps"
-
+    assert frames[-1]["type"] == "done"
 
 
 def test_e2e_coverage_keepalive_emits_frames(monkeypatch):

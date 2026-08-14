@@ -1,4 +1,4 @@
-"""Agent Core 会话 JSONL 存储."""
+"""Chrome session metadata (list/rename/queue). Production SoT is Harness SessionEvent (U8)."""
 
 from __future__ import annotations
 

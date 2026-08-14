@@ -64,6 +64,17 @@ class ResearchTurnSession(Protocol):
         ...
 
 
+def _default_research_session() -> ResearchTurnSession:
+    try:
+        from kss.agent.harness_kernel import get_harness_kernel
+        kernel = get_harness_kernel()
+        if kernel is not None and kernel.alive:
+            return kernel.research_session()
+    except Exception:  # noqa: BLE001
+        pass
+    return UnavailableResearchTurnSession()
+
+
 class UnavailableResearchTurnSession:
     """未注入真实 Harness 时失败关闭，避免回落到 Python loop 主人。"""
 
@@ -87,7 +98,7 @@ class ResearchHarnessDriver:
     ) -> None:
         self._state_root = Path(state_root).resolve()
         self._project_root = Path(project_root).resolve()
-        self._session = session or UnavailableResearchTurnSession()
+        self._session = session if session is not None else _default_research_session()
         self._lock = threading.Lock()
         self.last_requests: list[ResearchTurnRequest] = []
 

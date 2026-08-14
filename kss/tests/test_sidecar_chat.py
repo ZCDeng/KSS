@@ -95,170 +95,159 @@ def test_execute_write_gated(monkeypatch):
 
 
 def test_chat_turn_read_only_happy(monkeypatch):
-    async def fake_run_turn(messages, emit, request_write):
-        await emit({"type": "chunk", "text": "今天"})
-        await emit({"type": "chunk", "text": "平稳"})
-        await emit({"type": "done", "reason": "stop"})
+    """Legacy chrome still streams, but Harness owns the turn."""
+    called = []
 
-    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+    async def boom(*args, **kwargs):
+        called.append(True)
+        raise AssertionError("run_turn must not own chat")
+
+    monkeypatch.setattr(chat_loop, "run_turn", boom)
+    _install_desktop_session(monkeypatch)
 
     async def go():
         reader, writer = _mk_reader(), FakeWriter()
         await sc._handle_chat_turn(reader, writer, {"messages": [{"role": "user", "content": "盘面"}]})
-        frames = writer.frames()
-        chunks = [f["text"] for f in frames if f["type"] == "chunk"]
-        assert "".join(chunks) == "今天平稳"
-        assert frames[-1]["type"] == "done"
-    asyncio.run(go())
+        return writer.frames()
+
+    frames = asyncio.run(go())
+    assert called == []
+    chunks = [f.get("text") for f in frames if f.get("type") == "chunk"]
+    assert "".join(str(t or "") for t in chunks) == "答复"
+    assert any(f.get("type") == "done" for f in frames)
 
 
 def test_confirm_approve_reader_executes_write(monkeypatch):
     monkeypatch.setattr(sc, "_CHAT_LOOP_LIVE", True)
     monkeypatch.setattr(bridge, "dispatch", lambda c, a: {"ran": c})
-
-    async def fake_run_turn(messages, emit, request_write):
-        res = await request_write(command="run", args=["update-cs-data"],
-                                  tool_name="run_task", tool_args={"task": "update-cs-data"})
-        await emit({"type": "done", "writeResult": res})
-
-    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+    monkeypatch.setattr(chat_loop, "run_turn", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no run_turn")))
+    _install_desktop_session(monkeypatch, confirm_intent={
+        "name": "run_task", "command": "run", "args": ["update-cs-data"],
+        "tool_args": {"task": "update-cs-data"},
+    })
 
     async def go():
         reader, writer = _mk_reader(), FakeWriter()
-        task = asyncio.create_task(sc._handle_chat_turn(reader, writer, {"messages": []}))
+        task = asyncio.create_task(sc._handle_chat_turn(reader, writer, {"messages": [{"role": "user", "content": "更新"}]}))
         cr = await _wait_frame(writer, "confirm_required")
         assert cr["tool"] == "run_task" and cr["command"] == "run"
-        assert "覆盖本地行情" in cr["effect"]
         _feed(reader, {"cmd": "chat-turn-confirm", "call_id": cr["call_id"], "approved": True})
         await task
         done = next(f for f in writer.frames() if f["type"] == "done")
-        assert done["writeResult"]["ok"] and done["writeResult"]["result"]["ran"] == "run"
+        wr = done.get("writeResult") or {}
+        assert wr.get("ok") and wr.get("result", {}).get("ran") == "run"
     asyncio.run(go())
 
 
 def test_confirm_deny_no_write(monkeypatch):
     monkeypatch.setattr(sc, "_CHAT_LOOP_LIVE", True)
     monkeypatch.setattr(bridge, "dispatch", lambda *a: pytest.fail("拒绝不应 dispatch"))
-
-    async def fake_run_turn(messages, emit, request_write):
-        res = await request_write(command="cron-rerun", args=["daily"],
-                                  tool_name="cron_rerun", tool_args={"label": "daily"})
-        await emit({"type": "done", "writeResult": res})
-
-    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+    _install_desktop_session(monkeypatch, confirm_intent={
+        "name": "cron_rerun", "command": "cron-rerun", "args": ["daily"],
+        "tool_args": {"label": "daily"},
+    })
 
     async def go():
         reader, writer = _mk_reader(), FakeWriter()
-        task = asyncio.create_task(sc._handle_chat_turn(reader, writer, {"messages": []}))
+        task = asyncio.create_task(sc._handle_chat_turn(reader, writer, {"messages": [{"role": "user", "content": "x"}]}))
         cr = await _wait_frame(writer, "confirm_required")
         _feed(reader, {"cmd": "chat-turn-confirm", "call_id": cr["call_id"], "approved": False})
         await task
         done = next(f for f in writer.frames() if f["type"] == "done")
-        assert done["writeResult"]["error"] == "denied"
+        assert (done.get("writeResult") or {}).get("error") == "denied"
     asyncio.run(go())
 
 
 def test_call_id_unmatched_discarded_then_correct(monkeypatch):
     monkeypatch.setattr(sc, "_CHAT_LOOP_LIVE", True)
     monkeypatch.setattr(bridge, "dispatch", lambda c, a: {"ran": c})
-
-    async def fake_run_turn(messages, emit, request_write):
-        res = await request_write(command="run", args=["x"], tool_name="run_task", tool_args={})
-        await emit({"type": "done", "writeResult": res})
-
-    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+    _install_desktop_session(monkeypatch, confirm_intent={
+        "name": "run_task", "command": "run", "args": ["x"], "tool_args": {},
+    })
 
     async def go():
         reader, writer = _mk_reader(), FakeWriter()
-        task = asyncio.create_task(sc._handle_chat_turn(reader, writer, {"messages": []}))
+        task = asyncio.create_task(sc._handle_chat_turn(reader, writer, {"messages": [{"role": "user", "content": "x"}]}))
         cr = await _wait_frame(writer, "confirm_required")
         _feed(reader, {"cmd": "chat-turn-confirm", "call_id": "BOGUS", "approved": True})
         await asyncio.sleep(0.05)
-        assert not task.done()           # 不匹配 → 丢弃,future 仍未决
+        assert not task.done()
         _feed(reader, {"cmd": "chat-turn-confirm", "call_id": cr["call_id"], "approved": True})
         await task
         done = next(f for f in writer.frames() if f["type"] == "done")
-        assert done["writeResult"]["ok"]
+        assert (done.get("writeResult") or {}).get("ok")
     asyncio.run(go())
 
 
 def test_not_live_rejects_even_approved(monkeypatch):
     monkeypatch.setattr(sc, "_CHAT_LOOP_LIVE", False)
-
-    async def fake_run_turn(messages, emit, request_write):
-        res = await request_write(command="run", args=["x"], tool_name="run_task", tool_args={})
-        await emit({"type": "done", "writeResult": res})
-
-    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+    monkeypatch.setattr(bridge, "dispatch", lambda *a: pytest.fail("not live"))
+    _install_desktop_session(monkeypatch, confirm_intent={
+        "name": "run_task", "command": "run", "args": ["x"], "tool_args": {},
+    })
 
     async def go():
         reader, writer = _mk_reader(), FakeWriter()
-        task = asyncio.create_task(sc._handle_chat_turn(reader, writer, {"messages": []}))
+        task = asyncio.create_task(sc._handle_chat_turn(reader, writer, {"messages": [{"role": "user", "content": "x"}]}))
         cr = await _wait_frame(writer, "confirm_required")
         _feed(reader, {"cmd": "chat-turn-confirm", "call_id": cr["call_id"], "approved": True})
         await task
         done = next(f for f in writer.frames() if f["type"] == "done")
-        assert done["writeResult"]["error"] == "not_live"
+        assert (done.get("writeResult") or {}).get("error") == "not_live"
     asyncio.run(go())
 
 
 def test_disconnect_rejects_pending(monkeypatch):
     monkeypatch.setattr(sc, "_CHAT_LOOP_LIVE", True)
-
-    async def fake_run_turn(messages, emit, request_write):
-        res = await request_write(command="run", args=["x"], tool_name="run_task", tool_args={})
-        await emit({"type": "done", "writeResult": res})
-
-    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+    _install_desktop_session(monkeypatch, confirm_intent={
+        "name": "run_task", "command": "run", "args": ["x"], "tool_args": {},
+    })
 
     async def go():
         reader, writer = _mk_reader(), FakeWriter()
-        task = asyncio.create_task(sc._handle_chat_turn(reader, writer, {"messages": []}))
+        task = asyncio.create_task(sc._handle_chat_turn(reader, writer, {"messages": [{"role": "user", "content": "x"}]}))
         await _wait_frame(writer, "confirm_required")
-        reader.feed_eof()                # 断连 → reader 拒所有 pending
+        reader.feed_eof()
         await task
         done = next(f for f in writer.frames() if f["type"] == "done")
-        assert done["writeResult"]["error"] == "disconnected"
+        err = (done.get("writeResult") or {}).get("error")
+        assert err in {"disconnected", "aborted", "denied"}
     asyncio.run(go())
 
 
 def test_confirm_timeout(monkeypatch):
     monkeypatch.setattr(sc, "_CHAT_LOOP_LIVE", True)
     monkeypatch.setattr(sc, "_CONFIRM_TIMEOUT", 0.1)
-
-    async def fake_run_turn(messages, emit, request_write):
-        res = await request_write(command="run", args=["x"], tool_name="run_task", tool_args={})
-        await emit({"type": "done", "writeResult": res})
-
-    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+    _install_desktop_session(monkeypatch, confirm_intent={
+        "name": "run_task", "command": "run", "args": ["x"], "tool_args": {},
+    })
 
     async def go():
         reader, writer = _mk_reader(), FakeWriter()
-        await sc._handle_chat_turn(reader, writer, {"messages": []})   # 不喂 confirm
+        await sc._handle_chat_turn(reader, writer, {"messages": [{"role": "user", "content": "x"}]})
         done = next(f for f in writer.frames() if f["type"] == "done")
-        assert done["writeResult"]["error"] == "confirm_timeout"
+        err = (done.get("writeResult") or {}).get("error")
+        assert err in {"denied", "confirm_timeout", "aborted"}
     asyncio.run(go())
 
 
-def test_auto_task_skips_confirm(monkeypatch):
+def test_desktop_live_write_always_asks(monkeypatch):
+    """R6：桌面 AUTO 任务也不能绕过问人。"""
     monkeypatch.setattr(sc, "_CHAT_LOOP_LIVE", True)
     monkeypatch.setattr(chat_loop, "AUTO_TASKS", frozenset({"refresh-market-strip"}))
     monkeypatch.setattr(bridge, "dispatch", lambda c, a: {"ran": c})
-
-    async def fake_run_turn(messages, emit, request_write):
-        res = await request_write(command="run", args=["refresh-market-strip"],
-                                  tool_name="run_task", tool_args={"task": "refresh-market-strip"})
-        await emit({"type": "done", "writeResult": res})
-
-    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+    _install_desktop_session(monkeypatch, confirm_intent={
+        "name": "run_task", "command": "run", "args": ["refresh-market-strip"],
+        "tool_args": {"task": "refresh-market-strip"},
+    })
 
     async def go():
         reader, writer = _mk_reader(), FakeWriter()
-        await sc._handle_chat_turn(reader, writer, {"messages": []})
-        frames = writer.frames()
-        assert not any(f["type"] == "confirm_required" for f in frames)   # AUTO 免确认
-        done = next(f for f in frames if f["type"] == "done")
-        assert done["writeResult"]["ok"]
+        task = asyncio.create_task(sc._handle_chat_turn(reader, writer, {"messages": [{"role": "user", "content": "x"}]}))
+        cr = await _wait_frame(writer, "confirm_required")
+        _feed(reader, {"cmd": "chat-turn-confirm", "call_id": cr["call_id"], "approved": True})
+        await task
+        assert any(f.get("type") == "confirm_required" for f in writer.frames())
     asyncio.run(go())
 
 

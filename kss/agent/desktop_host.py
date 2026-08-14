@@ -353,7 +353,11 @@ class ScriptedDesktopSession:
                 self.last_write = result
                 tool_results.append(result)
             else:
-                tool_results.append({"error": "aborted" if host.abort_token.aborted else "denied"})
+                tool_results.append({
+                    "error": (host.abort_token.reason or "aborted")
+                    if host.abort_token.aborted
+                    else "denied",
+                })
 
         if self.wait_inbox:
             await host.wait_inbox()

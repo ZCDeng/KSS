@@ -367,7 +367,16 @@ def _desktop_harness_host() -> DesktopHarnessHost:
     """桌面 Harness 宿主。未注入会话时失败关闭，不把 Python loop 当主人。"""
     global _DESKTOP_HARNESS_HOST
     if _DESKTOP_HARNESS_HOST is None:
+        session = None
+        try:
+            from kss.agent.harness_kernel import get_harness_kernel
+            kernel = get_harness_kernel()
+            if kernel is not None and kernel.alive:
+                session = kernel.desktop_session()
+        except Exception:  # noqa: BLE001
+            session = None
         _DESKTOP_HARNESS_HOST = DesktopHarnessHost(
+            session=session,
             grant_write=grant_harness_write,
             revoke_grant=revoke_harness_write,
         )
@@ -443,69 +452,99 @@ async def _confirm_reader(reader: asyncio.StreamReader, pending: dict) -> None:
 
 async def _handle_chat_turn(reader: asyncio.StreamReader,
                             writer: asyncio.StreamWriter, req: dict) -> None:
-    """长连聊天一轮:spawn loop 任务 + reader 任务(解 Gap1 死锁);emit 逐帧 drain。"""
-    import kss_chat_loop as chat_loop  # 惰性 import(sidecar→chat_loop 单向,KTD-2 红线)
+    """Legacy chrome adapter onto the Harness host. Python loop is not the owner."""
+    import kss_chat_loop as chat_loop  # catalog / effect labels only
 
+    write_lock = asyncio.Lock()
+    host = _desktop_harness_host()
     pending: dict[str, dict] = {}
-    write_lock = asyncio.Lock()              # 串行化 writer,emit 与帧不交错
+    confirm_seen = asyncio.Event()
 
     async def emit(ev: dict) -> None:
         async with write_lock:
             writer.write((json.dumps(ev, ensure_ascii=False) + "\n").encode("utf-8"))
-            await writer.drain()             # 每帧 drain(KTD-3 Gap2)
+            await writer.drain()
 
-    async def request_write(*, command: str, args: list, tool_name: str, tool_args: dict) -> dict:
-        """loop 发来的写意图。auto 任务直接执行(reader/handler 侧),否则 emit confirm 等人工 tap。
-        loop 只 await 本协程结果,不持 Future、不调 dispatch(KTD-4)。"""
-        if chat_loop.is_auto_task(command, args):
-            call_id = uuid4().hex
-            grant_harness_write(call_id, command)
-            return await asyncio.to_thread(
-                execute_harness_tool,
-                name=tool_name,
-                args=tool_args if isinstance(tool_args, dict) else {},
-                call_id=call_id,
-            )
-        call_id = uuid4().hex                 # handler 生成,loop 不能选值(F1)
-        fut = asyncio.get_running_loop().create_future()
-        pending[call_id] = {
-            "future": fut,
-            "call_id": call_id,
-            "command": command,
-            "args": args,
-            "tool_name": tool_name,
-            "tool_args": tool_args,
-        }
-        logger.info("[chat] confirm_required 发出 call_id=%s command=%s", call_id, command)
-        await emit({"type": "confirm_required", "call_id": call_id,
-                    "tool": tool_name, "command": command, "args": tool_args,
-                    "argsText": json.dumps(tool_args, ensure_ascii=False),   # Swift modal 直接显
-                    "effect": chat_loop.write_effect_label(command, args)})   # 人话效果(U5)
-        t0 = time.monotonic()
-        try:
-            result = await asyncio.wait_for(fut, timeout=_CONFIRM_TIMEOUT)
-            logger.info("[chat] confirm 收到 call_id=%s 等待=%.1fs", call_id, time.monotonic() - t0)
-            return result
-        except asyncio.TimeoutError:          # 超时即拒(B3),删条目防后到 approved 复用
-            pending.pop(call_id, None)
-            revoke_harness_write(call_id)
-            logger.warning("[chat] confirm 超时 call_id=%s 等待=%.1fs", call_id, time.monotonic() - t0)
-            return {"error": "confirm_timeout", "hint": "确认超时,写按拒"}
+    async def emit_projected(event: dict) -> None:
+        projected = _project_session_event(event, host) or event
+        if projected.get("type") == "message_delta":
+            await emit({
+                "type": "chunk",
+                "text": projected.get("delta") or projected.get("text") or "",
+            })
+        if projected.get("type") == "confirm_required":
+            pending[str(projected.get("call_id") or "")] = {"call_id": projected.get("call_id")}
+            confirm_seen.set()
+        await emit(projected)
+
+    async def confirm_reader() -> None:
+        while True:
+            try:
+                line = await reader.readline()
+            except (ConnectionError, asyncio.IncompleteReadError):
+                line = b""
+            if not line:
+                host.abort("disconnected")
+                host.invalidate_all()
+                return
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(msg, dict):
+                continue
+            parsed = _parse_confirm_message(msg)
+            if parsed is None:
+                continue
+            call_id, approved = parsed
+            host.resolve_approval(str(call_id), bool(approved))
 
     raw = req.get("messages") if isinstance(req, dict) else None
     messages = _prepare_messages(raw)
+    user_text = ""
+    for item in reversed(messages):
+        if item.get("role") == "user":
+            user_text = str(item.get("content") or "")
+            break
+    request = DesktopTurnRequest(
+        session_id="legacy-chat",
+        client_turn_id=uuid4().hex,
+        input=user_text,
+        run_id=uuid4().hex,
+    )
+    async def confirm_watchdog() -> None:
+        await confirm_seen.wait()
+        await asyncio.sleep(_CONFIRM_TIMEOUT)
+        host.invalidate_all()
 
-    reader_task = asyncio.create_task(_confirm_reader(reader, pending))
+    reader_task = asyncio.create_task(confirm_reader())
+    watchdog = asyncio.create_task(confirm_watchdog())
     try:
-        await chat_loop.run_turn(messages, emit, request_write)
-    except Exception as exc:  # noqa: BLE001  loop 意外异常 → error 帧,daemon 存活
-        logger.warning("[chat] run_turn 异常: %s", exc)
+        result = await host.run(request, emit_projected)
+        write_result = result.tool_results[0] if result.tool_results else None
+        if result.status == "unavailable":
+            await emit({
+                "type": "error",
+                "error": result.error or "harness_session_unavailable",
+            })
+        await emit({
+            "type": "done",
+            "reason": result.status,
+            "writeResult": write_result,
+            "text": result.assistant_text,
+        })
+        _ = chat_loop.write_effect_label
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[chat] harness turn 异常: %s", exc)
         try:
             await emit({"type": "error", "error": f"{type(exc).__name__}: {exc}"})
+            await emit({"type": "done", "reason": "error"})
         except Exception:  # noqa: BLE001
             pass
     finally:
         reader_task.cancel()
+        watchdog.cancel()
+        host.invalidate_all()
         _reject_all(pending, {"error": "turn_ended"})
 
 
@@ -2017,8 +2056,23 @@ async def _serve() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, lambda: stop.done() or stop.set_result(None))
 
+    try:
+        from kss.agent.harness_kernel import ensure_harness_kernel
+        driver = os.environ.get("KSS_HARNESS_DRIVER", "dsh")
+        ensure_harness_kernel(driver=driver, sidecar_socket=str(SOCKET_PATH))
+        mark_harness_kernel_alive()
+        logger.info("[harness] Node kernel started driver=%s", driver)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[harness] Node kernel not started: %s", exc)
+        mark_harness_kernel_dead()
+
     async with server:
         await stop
+    try:
+        from kss.agent.harness_kernel import stop_harness_kernel
+        stop_harness_kernel()
+    except Exception:  # noqa: BLE001
+        pass
     if _AGENT_SERVICE is not None:
         _AGENT_SERVICE.close()
     # 清理：socket/pid/version 文件一起移除，避免 orphan 文件。
