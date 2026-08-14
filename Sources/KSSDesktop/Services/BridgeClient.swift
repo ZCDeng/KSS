@@ -1381,21 +1381,9 @@ struct BridgeClient {
         isAgentDuplicateTerminal(frame) || frame.type == "agent_end"
     }
 
-    /// 在同连接写回 chat-turn-confirm{call_id, approved}（U5 人在环内闸）。
+    /// Legacy chat-turn adapter onto the same grant path as `AgentControlChannel.confirm`.
     private static func sendConfirm(fd: Int32, callId: String, approved: Bool) {
-        guard var line = try? JSONSerialization.data(withJSONObject: [
-            "cmd": "chat-turn-confirm", "call_id": callId, "approved": approved
-        ]) else { return }
-        line.append(0x0A)
-        let bytes = [UInt8](line)
-        var sent = 0
-        while sent < bytes.count {
-            let w = bytes.withUnsafeBytes { raw in
-                send(fd, raw.baseAddress!.advanced(by: sent), bytes.count - sent, 0)
-            }
-            if w <= 0 { return }
-            sent += w
-        }
+        AgentControlChannel(fd: fd).confirm(runId: nil, callId: callId, approved: approved)
     }
 
     final class AgentControlChannel {

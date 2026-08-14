@@ -220,3 +220,113 @@ def test_e2e_coverage_keepalive_emits_frames(monkeypatch):
     ))
     assert any(f.get("type") == "keepalive" for f in frames)
     assert any(f.get("type") == "chunk" and "完整覆盖" in str(f.get("text")) for f in frames)
+
+
+
+async def _agent_client(path, request, *, on_confirm=None, on_start=None, timeout=5.0):
+    reader, writer = await asyncio.open_unix_connection(path=str(path))
+    writer.write((json.dumps(request) + "\n").encode("utf-8"))
+    await writer.drain()
+    frames = []
+    while True:
+        try:
+            line = await asyncio.wait_for(reader.readline(), timeout=timeout)
+        except asyncio.TimeoutError:
+            break
+        if not line:
+            break
+        fr = json.loads(line)
+        frames.append(fr)
+        if fr.get("type") == "agent_start" and on_start:
+            on_start(fr, writer)
+        if fr.get("type") == "confirm_required" and on_confirm:
+            on_confirm(fr, writer)
+        if fr.get("type") == "agent_end":
+            break
+    writer.close()
+    return frames
+
+
+def _install_e2e_host(monkeypatch, **kwargs):
+    from kss.agent.desktop_host import DesktopHarnessHost, ScriptedDesktopSession
+    session = ScriptedDesktopSession(**kwargs)
+    host = DesktopHarnessHost(
+        session=session,
+        grant_write=sc.grant_harness_write,
+        revoke_grant=sc.revoke_harness_write,
+    )
+    host.execute_tool = lambda **kw: sc.execute_harness_tool(**kw)
+    monkeypatch.setattr(sc, "_desktop_harness_host", lambda: host)
+    monkeypatch.setattr(sc, "_DESKTOP_HARNESS_HOST", host)
+    return host, session
+
+
+def test_e2e_agent_turn_confirm_executes(monkeypatch, sock, tmp_path):
+    """AE1：桌面 live 写经 agent-turn 确认后才 dispatch。"""
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(sc, "_CHAT_LOOP_LIVE", True)
+    executed = {}
+    monkeypatch.setattr(bridge, "dispatch", lambda c, a: executed.setdefault("call", (c, a)) or {"updated": True})
+    _install_e2e_host(monkeypatch, confirm_intent={
+        "name": "run_task", "command": "run",
+        "args": ["update-cs-data"], "tool_args": {"task": "update-cs-data"},
+    })
+
+    def on_confirm(fr, writer):
+        writer.write((json.dumps({
+            "cmd": "agent-control", "action": "confirm",
+            "run_id": fr["run_id"], "call_id": fr["call_id"], "approved": True,
+        }) + "\n").encode())
+
+    async def go():
+        server = await _serve_one(sock)
+        frames = await _agent_client(
+            sock,
+            {"cmd": "agent-turn", "session_id": "s1", "client_turn_id": "c1", "input": "更新"},
+            on_confirm=on_confirm,
+        )
+        server.close()
+        await server.wait_closed()
+        return frames
+
+    frames = asyncio.run(go())
+    assert any(f["type"] == "confirm_required" for f in frames)
+    assert executed["call"][0] == "run"
+    assert frames[-1]["type"] == "agent_end"
+
+
+def test_e2e_agent_turn_steer_uses_harness_inbox(monkeypatch, sock, tmp_path):
+    """AE5：生成中转向进入 Harness inbox，不另起 sidecar 队列主人。"""
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+    host, _ = _install_e2e_host(monkeypatch, wait_inbox=True)
+    calls = []
+    orig = host.enqueue
+
+    def wrapped(**kwargs):
+        calls.append(kwargs)
+        return orig(**kwargs)
+
+    host.enqueue = wrapped
+
+    def on_start(fr, writer):
+        writer.write((json.dumps({
+            "cmd": "agent-control", "action": "steer",
+            "run_id": fr["run_id"], "client_message_id": "m1", "input": "补充",
+        }) + "\n").encode())
+
+    async def go():
+        server = await _serve_one(sock)
+        frames = await _agent_client(
+            sock,
+            {"cmd": "agent-turn", "session_id": "s1", "client_turn_id": "c1", "input": "开始"},
+            on_start=on_start,
+        )
+        server.close()
+        await server.wait_closed()
+        return frames
+
+    frames = asyncio.run(go())
+    assert any(f.get("type") == "queue_update" and f.get("operation") == "accepted" for f in frames)
+    assert calls and calls[0]["mode"] == "steer"

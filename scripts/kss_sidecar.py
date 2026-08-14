@@ -41,6 +41,11 @@ from kss.agent import (  # noqa: E402
     RuntimeBusyError,
     SessionStore,
     SkillManager,
+    ToolCall,
+)
+from kss.agent.desktop_host import (  # noqa: E402
+    DesktopHarnessHost,
+    DesktopTurnRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,6 +74,7 @@ _AGENT_SERVICE: KSSAgentService | None = None
 _AGENT_SERVICE_ROOTS: tuple[Path, Path] | None = None
 _RESEARCH_SERVICE: Any | None = None
 _RESEARCH_SERVICE_ROOTS: tuple[Path, Path] | None = None
+_DESKTOP_HARNESS_HOST: DesktopHarnessHost | None = None
 
 
 def _agent_service() -> KSSAgentService:
@@ -162,6 +168,12 @@ def grant_harness_write(call_id: str, command: str) -> None:
     _HARNESS_GRANTS[call_id] = command
 
 
+def revoke_harness_write(call_id: str) -> None:
+    """作废一个 callId 的授权。中止/断开后迟到允许不得 dispatch。"""
+    if isinstance(call_id, str) and call_id:
+        _HARNESS_GRANTS.pop(call_id, None)
+
+
 def execute_harness_tool(
     *,
     name: str,
@@ -220,16 +232,86 @@ def execute_harness_tool(
 
 def _reject_all(pending: dict, result: dict) -> None:
     """断连/SIGHUP/收尾:把所有未决 confirm 按拒收尾,防 loop 的 await 永挂(KTD-3/F3)。"""
-    for entry in list(pending.values()):
-        fut = entry["future"]
-        if not fut.done():
+    for call_id, entry in list(pending.items()):
+        revoke_harness_write(str(call_id))
+        fut = entry.get("future")
+        if fut is not None and not fut.done():
             fut.set_result(dict(result))
     pending.clear()
 
 
+def _parse_confirm_message(msg: dict) -> tuple[Any, bool] | None:
+    """chat-turn-confirm 与 agent-control confirm 投影到同一 grant 路径。"""
+    if msg.get("cmd") == "chat-turn-confirm":
+        return msg.get("call_id"), bool(msg.get("approved"))
+    if msg.get("cmd") == "agent-control" and msg.get("action") == "confirm":
+        return msg.get("call_id"), bool(msg.get("approved"))
+    return None
+
+
+async def _settle_granted_write(entry: dict, *, approved: bool) -> dict:
+    """Chrome pending 只投影意图；dispatch 必须再过 execute_harness_tool 的 grant 检查。"""
+    call_id = str(entry.get("call_id") or "")
+    command = str(entry.get("command") or "")
+    if not approved:
+        revoke_harness_write(call_id)
+        return {"error": "denied", "hint": "用户拒绝该写操作"}
+    grant_harness_write(call_id, command)
+    return await asyncio.to_thread(
+        execute_harness_tool,
+        name=str(entry.get("tool_name") or entry.get("tool") or ""),
+        args=entry.get("tool_args") if isinstance(entry.get("tool_args"), dict) else {},
+        call_id=call_id,
+    )
+
+
+def _desktop_harness_host() -> DesktopHarnessHost:
+    """桌面 Harness 宿主。未注入会话时失败关闭，不把 Python loop 当主人。"""
+    global _DESKTOP_HARNESS_HOST
+    if _DESKTOP_HARNESS_HOST is None:
+        _DESKTOP_HARNESS_HOST = DesktopHarnessHost(
+            grant_write=grant_harness_write,
+            revoke_grant=revoke_harness_write,
+        )
+        _DESKTOP_HARNESS_HOST.execute_tool = lambda **kwargs: execute_harness_tool(**kwargs)
+    return _DESKTOP_HARNESS_HOST
+
+
+def _project_session_event(event: dict[str, Any], host: DesktopHarnessHost) -> dict[str, Any] | None:
+    """Harness SessionEvent → 既有皮肤帧词汇。不发明第二份 transcript。"""
+    if not isinstance(event, dict):
+        return None
+    etype = str(event.get("type") or "")
+    if etype in {"approval_request", "approval/request"}:
+        call_id = str(event.get("call_id") or "")
+        projected = host.project_confirm(call_id)
+        projected["type"] = "confirm_required"
+        return projected
+    if etype in {"inbox_accepted", "inbox_rejected", "inbox_restored"}:
+        items = event.get("queued_inputs") or ([event["item"]] if event.get("item") else [])
+        operation = {
+            "inbox_accepted": "accepted",
+            "inbox_rejected": "rejected",
+            "inbox_restored": "restored",
+        }[etype]
+        payload = {
+            "type": "queue_update",
+            "operation": event.get("operation") or operation,
+            "queued_inputs": items,
+            **_queue_counts([_queue_item_wire(i) for i in items]),
+        }
+        if event.get("item") is not None:
+            payload["item"] = _queue_item_wire(event["item"])
+        if event.get("reason"):
+            payload["reason"] = event["reason"]
+        return payload
+    if etype == "chunk":
+        return {**event, "type": "message_delta", "delta": event.get("delta") or event.get("text")}
+    return event
+
+
 async def _confirm_reader(reader: asyncio.StreamReader, pending: dict) -> None:
-    """并发 reader 任务:收 chat-turn-confirm{call_id,approved},是 confirm 处理+写执行的唯一点。
-    StreamReader/StreamWriter 是同 fd 独立两半,与 emit 写并发无 fd 争用 → 无 Gap1 死锁。"""
+    """并发 reader：legacy chat-turn-confirm 适配到同一 Harness grant 路径。"""
     while True:
         try:
             line = await reader.readline()
@@ -242,22 +324,21 @@ async def _confirm_reader(reader: asyncio.StreamReader, pending: dict) -> None:
             msg = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if not isinstance(msg, dict) or msg.get("cmd") != "chat-turn-confirm":
+        if not isinstance(msg, dict):
             continue
-        call_id = msg.get("call_id")
-        approved = bool(msg.get("approved"))
-        logger.info("[chat] 收到 chat-turn-confirm call_id=%s approved=%s", call_id, approved)
-        entry = pending.pop(call_id, None)   # 单用途:取出即删,杜绝重放/串号(F1/B2)
+        parsed = _parse_confirm_message(msg)
+        if parsed is None:
+            continue
+        call_id, approved = parsed
+        logger.info("[chat] 收到 confirm call_id=%s approved=%s", call_id, approved)
+        entry = pending.pop(call_id, None)
         if entry is None:
             logger.warning("[chat] 丢弃不匹配/已消费 confirm call_id=%r", call_id)
             continue
         fut = entry["future"]
-        if fut.done():                       # 幂等:重复 approved 忽略
+        if fut.done():
             continue
-        if approved:
-            result = await asyncio.to_thread(_execute_write, entry["command"], entry["args"])
-        else:
-            result = {"error": "denied", "hint": "用户拒绝该写操作"}
+        result = await _settle_granted_write(entry, approved=approved)
         if not fut.done():
             fut.set_result(result)
 
@@ -279,10 +360,24 @@ async def _handle_chat_turn(reader: asyncio.StreamReader,
         """loop 发来的写意图。auto 任务直接执行(reader/handler 侧),否则 emit confirm 等人工 tap。
         loop 只 await 本协程结果,不持 Future、不调 dispatch(KTD-4)。"""
         if chat_loop.is_auto_task(command, args):
-            return await asyncio.to_thread(_execute_write, command, args)   # AUTO 免确认
+            call_id = uuid4().hex
+            grant_harness_write(call_id, command)
+            return await asyncio.to_thread(
+                execute_harness_tool,
+                name=tool_name,
+                args=tool_args if isinstance(tool_args, dict) else {},
+                call_id=call_id,
+            )
         call_id = uuid4().hex                 # handler 生成,loop 不能选值(F1)
         fut = asyncio.get_running_loop().create_future()
-        pending[call_id] = {"future": fut, "command": command, "args": args}
+        pending[call_id] = {
+            "future": fut,
+            "call_id": call_id,
+            "command": command,
+            "args": args,
+            "tool_name": tool_name,
+            "tool_args": tool_args,
+        }
         logger.info("[chat] confirm_required 发出 call_id=%s command=%s", call_id, command)
         await emit({"type": "confirm_required", "call_id": call_id,
                     "tool": tool_name, "command": command, "args": tool_args,
@@ -295,6 +390,7 @@ async def _handle_chat_turn(reader: asyncio.StreamReader,
             return result
         except asyncio.TimeoutError:          # 超时即拒(B3),删条目防后到 approved 复用
             pending.pop(call_id, None)
+            revoke_harness_write(call_id)
             logger.warning("[chat] confirm 超时 call_id=%s 等待=%.1fs", call_id, time.monotonic() - t0)
             return {"error": "confirm_timeout", "hint": "确认超时,写按拒"}
 
@@ -1080,16 +1176,18 @@ async def _agent_control_reader(
     abort_token: Any,
     run_id: str,
     *,
-    service: KSSAgentService,
+    host: DesktopHarnessHost,
+    session_id: str,
     emit_control: Callable[[str, dict[str, Any]], Any],
 ) -> None:
-    """agent-turn 同连接控制 reader:支持 confirm/abort/steer/follow_up。"""
+    """agent-turn 同连接控制：confirm/abort/steer 映射 Harness grant、cancel、inbox。"""
     while True:
         try:
             line = await reader.readline()
         except (ConnectionError, asyncio.IncompleteReadError):
             line = b""
         if not line:
+            host.abort("disconnected")
             _reject_all(pending, {"error": "disconnected", "hint": "连接中断,写按拒收尾"})
             abort_token.abort("disconnected")
             return
@@ -1101,12 +1199,14 @@ async def _agent_control_reader(
             continue
         if msg.get("cmd") == "agent-control":
             action = msg.get("action")
-            if action == "abort" and msg.get("run_id") in (None, run_id):
-                abort_token.abort(str(msg.get("reason") or "client_abort"))
+            if action == "abort" and msg.get("run_id") in (None, "", run_id):
+                reason = str(msg.get("reason") or "client_abort")
+                host.abort(reason)
                 _reject_all(pending, {"error": "aborted", "hint": "用户中止本轮"})
+                abort_token.abort(reason)
                 return
             if action in {"steer", "follow_up"}:
-                if msg.get("run_id") not in (None, run_id):
+                if msg.get("run_id") not in (None, "", run_id):
                     await _emit_queue_update(
                         emit_control,
                         operation="rejected",
@@ -1129,12 +1229,12 @@ async def _agent_control_reader(
                         reason="missing_input",
                     )
                     continue
-                ok, payload = await _service_queue_control(
-                    service,
-                    action=action,
-                    run_id=run_id,
+                ok, payload = host.enqueue(
+                    mode=action,
                     client_message_id=client_message_id,
                     input_text=input_text,
+                    session_id=session_id,
+                    run_id=run_id,
                     source_queue_id=msg.get("source_queue_id")
                     if isinstance(msg.get("source_queue_id"), str)
                     else None,
@@ -1148,9 +1248,10 @@ async def _agent_control_reader(
                     if isinstance(payload, dict)
                     else None
                 )
+                operation = payload.get("operation") if isinstance(payload, dict) else None
                 await _emit_queue_update(
                     emit_control,
-                    operation="accepted" if ok else "rejected",
+                    operation=operation or ("accepted" if ok else "rejected"),
                     item=item,
                     queued_inputs=queued_inputs,
                     reason=reason if not ok else None,
@@ -1169,22 +1270,18 @@ async def _agent_control_reader(
         if entry is None:
             logger.warning("[agent] 丢弃不匹配/已消费 confirm call_id=%r", call_id)
             continue
-        fut = entry["future"]
-        if fut.done():
+        resolved = host.resolve_approval(str(call_id), approved)
+        if not resolved:
+            logger.warning("[agent] 迟到允许无效 call_id=%r", call_id)
             continue
-        if approved:
-            result = await asyncio.to_thread(_execute_write, entry["command"], entry["args"])
-        else:
-            result = {"error": "denied", "hint": "用户拒绝该写操作"}
-        if not fut.done():
-            fut.set_result(result)
+        fut = entry.get("future")
+        if fut is not None and not fut.done():
+            fut.set_result({"ok": bool(approved)} if approved else {"error": "denied"})
 
 
 async def _handle_agent_turn(reader: asyncio.StreamReader,
                              writer: asyncio.StreamWriter, req: dict) -> None:
-    """Agent v1 transport: decode, stream Runtime events, and own the write gate."""
-    import kss_chat_loop as chat_loop
-
+    """Agent v1 传输：Harness SessionEvent 投影到既有皮肤帧；不把 Python loop 当主人。"""
     session_id, client_turn_id, user_text_or_error, attachment_ids = (
         _validate_agent_turn_request(req)
     )
@@ -1232,8 +1329,12 @@ async def _handle_agent_turn(reader: asyncio.StreamReader,
     pending: dict[str, dict] = {}
     writer_lock = asyncio.Lock()
     control_task: asyncio.Task | None = None
-    active_run_id: str | None = None
+    active_run_id: str | None = transport_run_id
     wire_sequence = 0
+    host = _desktop_harness_host()
+    host.execute_tool = lambda **kwargs: execute_harness_tool(**kwargs)
+    abort_token = host.abort_token
+    store = _session_store()
 
     async def write_agent_frame(
         event_type: str,
@@ -1267,70 +1368,162 @@ async def _handle_agent_turn(reader: asyncio.StreamReader,
             writer.write((json.dumps(frame, ensure_ascii=False) + "\n").encode("utf-8"))
             await writer.drain()
 
-    async def emit_runtime(event: AgentEvent) -> None:
-        nonlocal control_task, active_run_id
-        if active_run_id is None:
-            active_run_id = event.run_id
-            state = service.runtime.state(event.run_id)
-            token = state.abort_token if state is not None else None
-            if token is not None:
-                _AGENT_ABORTS[event.run_id] = token
-                control_task = asyncio.create_task(
-                    _agent_control_reader(
-                        reader,
-                        pending,
-                        token,
-                        event.run_id,
-                        service=service,
-                        emit_control=write_agent_frame,
-                    )
-                )
-        await write_agent_frame(event.type, event=event)
+    async def emit_projected(raw: dict[str, Any]) -> None:
+        projected = _project_session_event(raw, host)
+        if not projected:
+            return
+        event_type = str(projected.get("type") or "message_delta")
+        payload = {k: v for k, v in projected.items() if k != "type"}
+        if event_type == "confirm_required":
+            call_id = str(payload.get("call_id") or "")
+            if call_id and call_id not in pending:
+                pending[call_id] = {"call_id": call_id, "chrome": True}
+        await write_agent_frame(event_type, payload)
 
-    async def request_write(*, command: str, args: list,
-                            tool_name: str, tool_args: dict,
-                            emit_event: Any) -> dict:
-        if chat_loop.is_auto_task(command, args):
-            return await asyncio.to_thread(_execute_write, command, args)
-        call_id = uuid4().hex
-        fut = asyncio.get_running_loop().create_future()
-        pending[call_id] = {"future": fut, "command": command, "args": args}
-        await emit_event("confirm_required", {
-            "call_id": call_id,
-            "tool": tool_name,
-            "command": command,
-            "args": tool_args,
-            "argsText": json.dumps(tool_args, ensure_ascii=False),
-            "effect": chat_loop.write_effect_label(command, args),
-        })
-        try:
-            return await asyncio.wait_for(fut, timeout=_CONFIRM_TIMEOUT)
-        except asyncio.TimeoutError:
-            pending.pop(call_id, None)
-            return {"error": "confirm_timeout", "hint": "确认超时,写按拒"}
+    _AGENT_ABORTS[transport_run_id] = abort_token
+    control_task = asyncio.create_task(
+        _agent_control_reader(
+            reader,
+            pending,
+            abort_token,
+            transport_run_id,
+            host=host,
+            session_id=session_id,
+            emit_control=write_agent_frame,
+        )
+    )
 
     try:
-        kwargs: dict[str, Any] = {}
-        source_queue_id = req.get("source_queue_id")
-        if isinstance(source_queue_id, str) and source_queue_id:
-            kwargs["source_queue_id"] = source_queue_id
-        from kss.equity_research.envelope import options_for_user_text
-        run_options = options_for_user_text(str(user_text_or_error or ""))
-        if run_options is not None:
-            kwargs["run_options"] = run_options
-        await _maybe_call(
-            _call_with_supported_kwargs(
-                service.run_turn,
-                session_id=session_id,
-                client_turn_id=client_turn_id,
-                input=user_text_or_error,
-                emit=emit_runtime,
-                request_write=request_write,
-                attachment_ids=attachment_ids,
-                live_context_scope=req.get("live_context_scope"),
-                **kwargs,
-            )
+        admission = store.try_start_run(
+            session_id,
+            run_id=transport_run_id,
+            client_turn_id=client_turn_id,
         )
+        if not admission.admitted:
+            payload = {
+                "existing_run_id": admission.run_id,
+                "client_turn_id": client_turn_id,
+            }
+            if admission.status == "running":
+                await write_agent_frame("agent_start", payload)
+                await write_agent_frame("agent_end", {
+                    **payload,
+                    "reason": "already_running",
+                    "termination_reason": "already_running",
+                })
+            elif admission.status == "completed":
+                await write_agent_frame("agent_start", payload)
+                await write_agent_frame("agent_end", {
+                    **payload,
+                    "reason": "duplicate_completed",
+                    "termination_reason": "duplicate_completed",
+                })
+            else:
+                await write_agent_frame("error", {
+                    **payload,
+                    "error": "interrupted or failed turns require a new client_turn_id",
+                    "is_error": True,
+                })
+                await write_agent_frame("agent_end", {
+                    **payload,
+                    "reason": "retry_requires_new_client_turn_id",
+                    "termination_reason": "retry_requires_new_client_turn_id",
+                })
+            return
+        source_queue_id = req.get("source_queue_id")
+        if not isinstance(source_queue_id, str) or not source_queue_id:
+            source_queue_id = None
+        user_message = AgentMessage(
+            id=uuid4().hex,
+            role="user",
+            content=str(user_text_or_error or ""),
+            timestamp=time.time(),
+        )
+        store.append_message(
+            session_id,
+            user_message,
+            source_queue_id=source_queue_id,
+        )
+        await write_agent_frame("agent_start", {"client_turn_id": client_turn_id})
+        request = DesktopTurnRequest(
+            session_id=session_id,
+            client_turn_id=client_turn_id,
+            input=str(user_text_or_error or ""),
+            run_id=transport_run_id,
+            attachment_ids=tuple(attachment_ids or ()),
+            source_queue_id=source_queue_id,
+        )
+        result = await host.run(request, emit_projected)
+        if result.status == "unavailable":
+            await write_agent_frame("error", {
+                "error": result.error or "harness_session_unavailable",
+                "is_error": True,
+            })
+            store.finish_run(
+                session_id,
+                transport_run_id,
+                status="interrupted",
+                reason="harness_unavailable",
+            )
+            await write_agent_frame("agent_end", {
+                "reason": "harness_unavailable",
+                "termination_reason": "harness_unavailable",
+            })
+            return
+        assistant_text = result.assistant_text or ""
+        if assistant_text:
+            store.append_message(
+                session_id,
+                AgentMessage(
+                    id=uuid4().hex,
+                    role="assistant",
+                    content=assistant_text,
+                    timestamp=time.time(),
+                ),
+            )
+        for tool_result in result.tool_results:
+            store.append_message(
+                session_id,
+                AgentMessage(
+                    id=uuid4().hex,
+                    role="tool",
+                    content=json.dumps(tool_result, ensure_ascii=False),
+                    timestamp=time.time(),
+                    tool_calls=(
+                        ToolCall(
+                            id=uuid4().hex,
+                            name="run_task",
+                            arguments={},
+                            result=tool_result,
+                        ),
+                    ),
+                ),
+            )
+        aborted = abort_token.aborted or result.status == "aborted"
+        reason = abort_token.reason or result.error or ("client_abort" if aborted else "stop")
+        store.finish_run(
+            session_id,
+            transport_run_id,
+            status="aborted" if aborted else "completed",
+            reason=reason,
+        )
+        await write_agent_frame("agent_end", {
+            "reason": reason,
+            "termination_reason": reason,
+            "status": "aborted" if aborted else "completed",
+        })
+    except (KeyError, ValueError) as exc:
+        store.finish_run(
+            session_id,
+            transport_run_id,
+            status="failed",
+            reason="bad_request",
+        )
+        await write_agent_frame("error", {"error": str(exc), "is_error": True})
+        await write_agent_frame("agent_end", {
+            "reason": "bad_request",
+            "termination_reason": "bad_request",
+        })
     except RunAdmissionError as exc:
         rejected = _AgentFrameEmitter(writer, session_id, transport_run_id)
         payload = {
@@ -1340,43 +1533,19 @@ async def _handle_agent_turn(reader: asyncio.StreamReader,
         if exc.status == "running":
             reason = "already_running"
             await rejected.emit("agent_start", payload)
-            await rejected.emit(
-                "agent_end",
-                {
-                    **payload,
-                    "reason": reason,
-                    "termination_reason": reason,
-                },
-            )
+            await rejected.emit("agent_end", {**payload, "reason": reason, "termination_reason": reason})
         elif exc.status == "completed":
             reason = "duplicate_completed"
             await rejected.emit("agent_start", payload)
-            await rejected.emit(
-                "agent_end",
-                {
-                    **payload,
-                    "reason": reason,
-                    "termination_reason": reason,
-                },
-            )
+            await rejected.emit("agent_end", {**payload, "reason": reason, "termination_reason": reason})
         else:
             reason = "retry_requires_new_client_turn_id"
-            await rejected.emit(
-                "error",
-                {
-                    **payload,
-                    "error": "interrupted or failed turns require a new client_turn_id",
-                    "is_error": True,
-                },
-            )
-            await rejected.emit(
-                "agent_end",
-                {
-                    **payload,
-                    "reason": reason,
-                    "termination_reason": reason,
-                },
-            )
+            await rejected.emit("error", {
+                **payload,
+                "error": "interrupted or failed turns require a new client_turn_id",
+                "is_error": True,
+            })
+            await rejected.emit("agent_end", {**payload, "reason": reason, "termination_reason": reason})
     except RuntimeBusyError as exc:
         busy = _AgentFrameEmitter(writer, session_id, transport_run_id)
         payload = {
@@ -1390,6 +1559,7 @@ async def _handle_agent_turn(reader: asyncio.StreamReader,
     finally:
         if control_task is not None:
             control_task.cancel()
+        host.invalidate_all()
         _reject_all(pending, {"error": "turn_ended"})
         if active_run_id is not None:
             _AGENT_ABORTS.pop(active_run_id, None)

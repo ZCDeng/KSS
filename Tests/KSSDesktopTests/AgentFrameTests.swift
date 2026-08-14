@@ -503,6 +503,47 @@ final class AgentFrameTests: XCTestCase {
         XCTAssertEqual(response.recalls?[0].injectionText, "【待复核】历史判断")
     }
 
+    func testConfirmRequiredProjectsHarnessCallIdAndEffect() throws {
+        let frame = try decodeFrame("""
+        {"type":"confirm_required","call_id":"harness-call-1","tool":"run_task",
+         "command":"run","argsText":"{\\"task\\":\\"update-cs-data\\"}",
+         "effect":"更新并覆盖本地行情(cs_data)数据"}
+        """)
+        XCTAssertEqual(frame.callId, "harness-call-1")
+        XCTAssertEqual(frame.tool, "run_task")
+        XCTAssertEqual(frame.command, "run")
+        XCTAssertEqual(frame.effect, "更新并覆盖本地行情(cs_data)数据")
+        XCTAssertTrue(frame.argsText?.contains("update-cs-data") == true)
+    }
+
+    func testAbortDuringConfirmClearsPendingWriteConfirm() {
+        let store = KSSStore(testBridge: nil)
+        store.pendingWriteConfirm = PendingWriteConfirm(
+            callId: "harness-call-1",
+            tool: "run_task",
+            command: "run",
+            effect: "更新并覆盖本地行情(cs_data)数据",
+            argsText: "{\"task\":\"update-cs-data\"}",
+            contextLine: "")
+        store.stopChatGeneration()
+        XCTAssertNil(store.pendingWriteConfirm)
+    }
+
+    func testQueueUpdateMapsInboxRestoredToExistingChromeFields() throws {
+        let store = KSSStore(testBridge: nil)
+        store.chatMessages = [ChatMessage(role: .assistant, text: "", numbersUnverified: true)]
+        let assistantId = try XCTUnwrap(store.chatMessages.first?.id)
+        XCTAssertTrue(store.applyAgentFrame(try decodeFrame("""
+        {"type":"queue_update","operation":"restored","steering_count":1,"follow_up_count":0,
+         "item":{"id":"q1","mode":"steering","content":"转向","status":"restored",
+                 "client_message_id":"m1"}}
+        """), assistantId: assistantId))
+        XCTAssertEqual(store.agentSteeringCount, 1)
+        XCTAssertEqual(store.agentFollowUpCount, 0)
+        XCTAssertEqual(store.agentQueuedInputs.first?.status, "restored")
+        XCTAssertEqual(store.agentQueuedInputs.first?.mode, "steering")
+    }
+
     private func decodeFrame(_ json: String) throws -> AgentFrame {
         try JSONDecoder().decode(AgentFrame.self, from: Data(json.utf8))
     }

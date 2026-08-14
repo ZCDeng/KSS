@@ -60,6 +60,21 @@ async def _wait_frame(writer, ftype, timeout=2.0):
     raise AssertionError(f"未等到 {ftype} 帧;现有={writer.frames()}")
 
 
+def _install_desktop_session(monkeypatch, session=None, **kwargs):
+    from kss.agent.desktop_host import DesktopHarnessHost, ScriptedDesktopSession
+
+    session = session or ScriptedDesktopSession(**kwargs)
+    host = DesktopHarnessHost(
+        session=session,
+        grant_write=sc.grant_harness_write,
+        revoke_grant=sc.revoke_harness_write,
+    )
+    host.execute_tool = lambda **kw: sc.execute_harness_tool(**kw)
+    monkeypatch.setattr(sc, "_desktop_harness_host", lambda: host)
+    monkeypatch.setattr(sc, "_DESKTOP_HARNESS_HOST", host)
+    return host, session
+
+
 # ---------------------------------------------------------------------------
 
 def test_execute_write_gated(monkeypatch):
@@ -105,6 +120,7 @@ def test_confirm_approve_reader_executes_write(monkeypatch):
         task = asyncio.create_task(sc._handle_chat_turn(reader, writer, {"messages": []}))
         cr = await _wait_frame(writer, "confirm_required")
         assert cr["tool"] == "run_task" and cr["command"] == "run"
+        assert "覆盖本地行情" in cr["effect"]
         _feed(reader, {"cmd": "chat-turn-confirm", "call_id": cr["call_id"], "approved": True})
         await task
         done = next(f for f in writer.frames() if f["type"] == "done")
@@ -254,24 +270,7 @@ def test_legacy_command_not_regressed(monkeypatch):
 
 def test_agent_turn_emits_protocol_v1_frames_and_persists(monkeypatch, tmp_path):
     monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
-
-    async def fake_run_turn(messages, emit, request_write, **kwargs):
-        assert messages[-1]["role"] == "user"
-        assert "abort_token" in kwargs and "tool_registry" in kwargs
-        effective = kwargs["transform_context"](messages)
-        await emit({"type": "chunk", "text": "答复"})
-        await emit({"type": "done", "reason": "stop"})
-        return chat_loop.TurnTranscript(
-            messages=[
-                *effective,
-                {"role": "assistant", "content": "答复"},
-            ],
-            assistant_messages=[{"role": "assistant", "content": "答复"}],
-            tool_results=[],
-            run_state={"status": "done", "reason": "stop"},
-        )
-
-    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+    _install_desktop_session(monkeypatch)
 
     async def go():
         reader, writer = _mk_reader(), FakeWriter()
@@ -301,21 +300,7 @@ def test_agent_turn_emits_protocol_v1_frames_and_persists(monkeypatch, tmp_path)
 
 def test_agent_turn_completed_client_id_hydrates_without_reexecution(monkeypatch, tmp_path):
     monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
-    calls = 0
-
-    async def fake_run_turn(messages, emit, request_write, **kwargs):
-        nonlocal calls
-        calls += 1
-        await emit({"type": "done", "reason": "stop"})
-        return chat_loop.TurnTranscript(
-            messages=[
-                *kwargs["transform_context"](messages),
-                {"role": "assistant", "content": "只执行一次"},
-            ],
-            run_state={"status": "done", "reason": "stop"},
-        )
-
-    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+    _host, session = _install_desktop_session(monkeypatch)
 
     async def go():
         request = {
@@ -328,7 +313,7 @@ def test_agent_turn_completed_client_id_hydrates_without_reexecution(monkeypatch
         duplicate_writer = FakeWriter()
         await sc._handle_agent_turn(_mk_reader(), duplicate_writer, request)
         frames = duplicate_writer.frames()
-        assert calls == 1
+        assert session.runs == 1
         assert [frame["type"] for frame in frames] == ["agent_start", "agent_end"]
         assert frames[-1]["reason"] == "duplicate_completed"
         assert frames[-1]["existing_run_id"]
@@ -338,17 +323,7 @@ def test_agent_turn_completed_client_id_hydrates_without_reexecution(monkeypatch
 
 def test_agent_turn_same_session_reports_original_active_run(monkeypatch, tmp_path):
     monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
-    release = asyncio.Event()
-
-    async def fake_run_turn(messages, emit, request_write, **kwargs):
-        await release.wait()
-        await emit({"type": "done", "reason": "stop"})
-        return chat_loop.TurnTranscript(
-            messages=list(kwargs["transform_context"](messages)),
-            run_state={"status": "done", "reason": "stop"},
-        )
-
-    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+    _install_desktop_session(monkeypatch, wait_inbox=True)
 
     async def go():
         first_writer = FakeWriter()
@@ -362,7 +337,7 @@ def test_agent_turn_same_session_reports_original_active_run(monkeypatch, tmp_pa
                 "input": "一",
             },
         ))
-        context_frame = await _wait_frame(first_writer, "context_usage")
+        start = await _wait_frame(first_writer, "agent_start")
         second_writer = FakeWriter()
         await sc._handle_agent_turn(
             _mk_reader(),
@@ -374,10 +349,15 @@ def test_agent_turn_same_session_reports_original_active_run(monkeypatch, tmp_pa
                 "input": "二",
             },
         )
-        assert second_writer.frames()[-1]["reason"] == "already_running"
-        assert second_writer.frames()[-1]["existing_run_id"] == context_frame["run_id"]
-        release.set()
-        await first
+        frames = second_writer.frames()
+        assert frames[-1]["reason"] == "already_running"
+        assert frames[-1]["existing_run_id"] == start["run_id"]
+        _feed(_mk_reader(), {})  # no-op; finish first via abort on its reader
+        first.cancel()
+        try:
+            await first
+        except asyncio.CancelledError:
+            pass
 
     asyncio.run(go())
 
@@ -404,15 +384,7 @@ def test_agent_turn_rejects_extra_fields(monkeypatch, tmp_path):
 def test_agent_turn_accepts_source_queue_id_field(monkeypatch, tmp_path):
     monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
     monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
-
-    async def fake_run_turn(messages, emit, request_write, **kwargs):
-        await emit({"type": "done", "reason": "stop"})
-        return chat_loop.TurnTranscript(
-            messages=list(kwargs["transform_context"](messages)),
-            run_state={"status": "done", "reason": "stop"},
-        )
-
-    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+    _install_desktop_session(monkeypatch)
 
     async def go():
         service = sc._agent_service()
@@ -478,60 +450,15 @@ def test_agent_turn_rejects_invalid_source_queue_id_without_appending_message(
 def test_agent_turn_same_connection_accepts_steering_queue(monkeypatch, tmp_path):
     monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
     monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+    host, _session = _install_desktop_session(monkeypatch, wait_inbox=True)
+    steered = []
+    original = host.enqueue
 
-    class Token:
-        def __init__(self):
-            self.reason = None
+    def wrapped(**kwargs):
+        steered.append(kwargs)
+        return original(**kwargs)
 
-        def abort(self, reason):
-            self.reason = reason
-
-    class Runtime:
-        def __init__(self, token):
-            self.token = token
-
-        def state(self, run_id):
-            return type("State", (), {"abort_token": self.token})()
-
-    class Service:
-        def __init__(self):
-            self.token = Token()
-            self.runtime = Runtime(self.token)
-            self.accepted = asyncio.Event()
-
-        def duplicate_turn(self, session_id, client_turn_id):
-            return None
-
-        async def run_turn(self, session_id, client_turn_id, input, emit, request_write):
-            await emit(sc.AgentEvent(
-                id="e1", session_id=session_id, run_id="run-q", parent_id=None,
-                timestamp=1.0, sequence=1, type="agent_start",
-                payload={"client_turn_id": client_turn_id},
-            ))
-            await asyncio.wait_for(self.accepted.wait(), timeout=1)
-            await emit(sc.AgentEvent(
-                id="e2", session_id=session_id, run_id="run-q", parent_id=None,
-                timestamp=2.0, sequence=2, type="agent_end",
-                payload={"status": "completed"},
-            ))
-
-        def steer(self, run_id, client_message_id, input, source_queue_id=None):
-            item = {
-                "id": "q1",
-                "client_message_id": client_message_id,
-                "session_id": "s1",
-                "run_id": run_id,
-                "mode": "steering",
-                "content": input,
-                "status": "pending",
-                "created_at": 1.5,
-            }
-            self.accepted.set()
-            return {"item": item, "queued_inputs": [item]}
-
-    service = Service()
-    monkeypatch.setattr(sc, "_AGENT_SERVICE", service)
-    monkeypatch.setattr(sc, "_AGENT_SERVICE_ROOTS", (tmp_path, tmp_path))
+    host.enqueue = wrapped  # type: ignore[method-assign]
 
     async def go():
         reader, writer = _mk_reader(), FakeWriter()
@@ -549,8 +476,9 @@ def test_agent_turn_same_connection_accepts_steering_queue(monkeypatch, tmp_path
         update = await _wait_frame(writer, "queue_update")
         await task
         assert update["operation"] == "accepted"
-        assert update["item"]["id"] == "q1"
+        assert update["item"]["mode"] == "steering"
         assert update["steering_count"] == 1
+        assert steered and steered[0]["mode"] == "steer"
         frames = writer.frames()
         assert [frame["sequence"] for frame in frames] == list(range(1, len(frames) + 1))
 
@@ -561,23 +489,12 @@ def test_agent_turn_confirm_approve_uses_same_connection(monkeypatch, tmp_path):
     monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
     monkeypatch.setattr(sc, "_CHAT_LOOP_LIVE", True)
     monkeypatch.setattr(bridge, "dispatch", lambda command, args: {"command": command, "args": args})
-
-    async def fake_run_turn(messages, emit, request_write, **kwargs):
-        result = await request_write(
-            command="run", args=["update-cs-data"],
-            tool_name="run_task", tool_args={"task": "update-cs-data"},
-        )
-        await emit({"type": "done", "reason": "stop"})
-        return chat_loop.TurnTranscript(
-            messages=[*kwargs["transform_context"](messages), {
-                "role": "tool", "name": "run_task", "tool_call_id": "write-1",
-                "content": json.dumps(result),
-            }],
-            tool_results=[result],
-            run_state={"status": "done", "reason": "stop"},
-        )
-
-    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+    _install_desktop_session(monkeypatch, confirm_intent={
+        "name": "run_task",
+        "command": "run",
+        "args": ["update-cs-data"],
+        "tool_args": {"task": "update-cs-data"},
+    })
 
     async def go():
         reader, writer = _mk_reader(), FakeWriter()
@@ -585,6 +502,10 @@ def test_agent_turn_confirm_approve_uses_same_connection(monkeypatch, tmp_path):
             "cmd": "agent-turn", "session_id": "s1", "client_turn_id": "c1", "input": "更新",
         }))
         frame = await _wait_frame(writer, "confirm_required")
+        assert frame["call_id"]
+        assert frame["tool"] == "run_task"
+        assert frame["command"] == "run"
+        assert "覆盖本地行情" in frame["effect"]
         _feed(reader, {
             "cmd": "agent-control", "action": "confirm", "run_id": frame["run_id"],
             "call_id": frame["call_id"], "approved": True,
@@ -608,23 +529,12 @@ def test_agent_turn_abort_while_confirm_pending_rejects_without_dispatch(monkeyp
         pytest.fail("abort during confirmation must not dispatch a write command")
 
     monkeypatch.setattr(bridge, "dispatch", fail_dispatch)
-
-    async def fake_run_turn(messages, emit, request_write, **kwargs):
-        result = await request_write(
-            command="run",
-            args=["update-cs-data"],
-            tool_name="run_task",
-            tool_args={"task": "update-cs-data"},
-        )
-        assert result["error"] == "aborted"
-        await emit({"type": "done", "reason": "stop"})
-        return chat_loop.TurnTranscript(
-            messages=[*kwargs["transform_context"](messages)],
-            tool_results=[result],
-            run_state={"status": "done", "reason": "stop"},
-        )
-
-    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+    _install_desktop_session(monkeypatch, confirm_intent={
+        "name": "run_task",
+        "command": "run",
+        "args": ["update-cs-data"],
+        "tool_args": {"task": "update-cs-data"},
+    })
 
     async def go():
         reader, writer = _mk_reader(), FakeWriter()
@@ -654,14 +564,7 @@ def test_agent_turn_abort_while_confirm_pending_rejects_without_dispatch(monkeyp
 
 def test_agent_turn_abort_stops_run_before_more_tools(monkeypatch, tmp_path):
     monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
-
-    async def fake_run_turn(messages, emit, request_write, **kwargs):
-        token = kwargs["abort_token"]
-        while not token.aborted:
-            await asyncio.sleep(0.01)
-        raise asyncio.CancelledError(token.reason)
-
-    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+    _install_desktop_session(monkeypatch, block_until_abort=True)
 
     async def go():
         reader, writer = _mk_reader(), FakeWriter()
@@ -673,30 +576,23 @@ def test_agent_turn_abort_stops_run_before_more_tools(monkeypatch, tmp_path):
             "cmd": "agent-control", "action": "abort", "run_id": start["run_id"],
         })
         await task
-        # Runner-owned turn boundaries close before Runtime reports the
-        # terminal abort and crosses the agent settlement barrier.
-        assert [frame["type"] for frame in writer.frames()][-3:] == [
-            "turn_end", "error", "agent_end",
-        ]
+        assert writer.frames()[-1]["type"] == "agent_end"
+        assert writer.frames()[-1]["termination_reason"] == "client_abort"
 
     asyncio.run(go())
 
 
 def test_agent_turn_emits_nested_memory_candidate(monkeypatch, tmp_path):
     monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
-
-    async def fake_run_turn(messages, emit, request_write, **kwargs):
-        handler = kwargs["tool_registry"].handler("propose_memory")
-        assert handler is not None
-        result = await handler({"text": "偏好简洁回答", "source": "user"})
-        await emit({"type": "done", "reason": "stop"})
-        return chat_loop.TurnTranscript(
-            messages=list(kwargs["transform_context"](messages)),
-            tool_results=[result],
-            run_state={"status": "done", "reason": "stop"},
-        )
-
-    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+    _install_desktop_session(monkeypatch, events=[{
+        "type": "memory_candidate",
+        "memory_candidate": {
+            "id": "m1",
+            "text": "偏好简洁回答",
+            "status": "proposed",
+            "source": "user",
+        },
+    }])
 
     async def go():
         reader, writer = _mk_reader(), FakeWriter()
@@ -706,6 +602,91 @@ def test_agent_turn_emits_nested_memory_candidate(monkeypatch, tmp_path):
         candidate = next(frame for frame in writer.frames() if frame["type"] == "memory_candidate")
         assert candidate["memory_candidate"]["text"] == "偏好简洁回答"
         assert candidate["memory_candidate"]["status"] == "proposed"
+
+    asyncio.run(go())
+
+
+def test_agent_turn_without_host_fails_closed(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    called = []
+
+    async def fake_run_turn(*args, **kwargs):
+        called.append(True)
+        raise AssertionError("kss_chat_loop must not own agent-turn")
+
+    monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+
+    async def go():
+        reader, writer = _mk_reader(), FakeWriter()
+        await sc._handle_agent_turn(reader, writer, {
+            "cmd": "agent-turn", "session_id": "s1", "client_turn_id": "c1", "input": "盘面",
+        })
+        frames = writer.frames()
+        assert any(f.get("error") == "harness_session_unavailable" for f in frames)
+        assert frames[-1]["type"] == "agent_end"
+        assert frames[-1]["reason"] == "harness_unavailable"
+        assert called == []
+
+    asyncio.run(go())
+
+
+def test_agent_turn_late_allow_after_abort_is_invalid(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(sc, "_CHAT_LOOP_LIVE", True)
+
+    def fail_dispatch(command, args):
+        pytest.fail("late allow after abort must not dispatch")
+
+    monkeypatch.setattr(bridge, "dispatch", fail_dispatch)
+    host, session = _install_desktop_session(monkeypatch, confirm_intent={
+        "call_id": "frozen-call",
+        "name": "run_task",
+        "command": "run",
+        "args": ["update-cs-data"],
+        "tool_args": {"task": "update-cs-data"},
+    })
+
+    async def go():
+        reader, writer = _mk_reader(), FakeWriter()
+        task = asyncio.create_task(sc._handle_agent_turn(reader, writer, {
+            "cmd": "agent-turn", "session_id": "s1", "client_turn_id": "c1", "input": "更新",
+        }))
+        frame = await _wait_frame(writer, "confirm_required")
+        _feed(reader, {
+            "cmd": "agent-control", "action": "abort", "run_id": frame["run_id"],
+        })
+        await task
+        out = sc.execute_harness_tool(
+            name="run_task",
+            args={"task": "update-cs-data"},
+            call_id=frame["call_id"],
+        )
+        assert out["error"] == "not_allowed"
+        assert session.last_write is None
+
+    asyncio.run(go())
+
+
+def test_agent_turn_disconnect_during_confirm_does_not_write(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(sc, "_CHAT_LOOP_LIVE", True)
+    monkeypatch.setattr(bridge, "dispatch", lambda *a: pytest.fail("disconnect must not write"))
+    _install_desktop_session(monkeypatch, confirm_intent={
+        "name": "run_task",
+        "command": "run",
+        "args": ["update-cs-data"],
+        "tool_args": {"task": "update-cs-data"},
+    })
+
+    async def go():
+        reader, writer = _mk_reader(), FakeWriter()
+        task = asyncio.create_task(sc._handle_agent_turn(reader, writer, {
+            "cmd": "agent-turn", "session_id": "s1", "client_turn_id": "c1", "input": "更新",
+        }))
+        await _wait_frame(writer, "confirm_required")
+        reader.feed_eof()
+        await task
+        assert writer.frames()[-1]["type"] == "agent_end"
 
     asyncio.run(go())
 
