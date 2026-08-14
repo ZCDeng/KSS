@@ -59,3 +59,25 @@ def test_tool_chat_summary_has_arabic_numbers_and_paths(tmp_path: Path) -> None:
     assert str(result["r9"]["kelly_lite"]) in summary
     assert result["artifacts"]["pdf"]
     assert "assumptions" not in summary.lower() or "price" not in summary
+
+
+def test_cite_published_after_report_does_not_rerun_spine(tmp_path: Path) -> None:
+    first = run_equity_coverage_tool({
+        "query": "600519.SH",
+        "assumptions": '{"price": 100, "eps": 8, "win_prob": 0.55, "lose_prob": 0.45}',
+        "board": {"600519.SH": {"price": 100}},
+        "output_dir": str(tmp_path),
+        "heartbeat_interval": 0,
+        "markdown": "# 覆盖\n",
+    })
+    assert first["spine_ran"] is True
+    kelly = first["r9"]["kelly_lite"]
+    second = run_equity_coverage_tool({
+        "query": "现在仓位多少",
+        "output_dir": str(tmp_path),
+        "heartbeat_interval": 0,
+    })
+    assert second["cited_only"] is True
+    assert second["spine_ran"] is False
+    assert second["r9"]["kelly_lite"] == kelly
+    assert str(kelly) in second["chat_summary"]

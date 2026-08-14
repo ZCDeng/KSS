@@ -832,3 +832,53 @@ def test_coverage_timeout_emits_r12_and_not_empty(monkeypatch, tmp_path):
         assert "无法完成" in blob or is_r12_text(blob)
 
     asyncio.run(scenario())
+
+
+def test_coverage_midflight_explainer_is_follow_up_not_steer(monkeypatch, tmp_path):
+    async def scenario():
+        service = KSSAgentService(tmp_path, tmp_path)
+        provider_ready = asyncio.Event()
+        consume_queue = asyncio.Event()
+
+        async def fake_run_turn(messages, emit, request_write, **kwargs):
+            provider_ready.set()
+            await consume_queue.wait()
+            follow_up = await kwargs["take_follow_up"]()
+            assert follow_up is not None
+            assert follow_up["content"] == "今天为什么涨"
+            await emit({"type": "chunk", "text": "覆盖完成"})
+            await emit({"type": "done", "reason": "stop"})
+            return chat_loop.TurnTranscript(
+                messages=[*messages, follow_up, {"role": "assistant", "content": "覆盖完成"}],
+                run_state={"status": "done", "reason": "stop", "usage": {}},
+            )
+
+        monkeypatch.setattr(chat_loop, "run_turn", fake_run_turn)
+
+        async def no_write(**kwargs):
+            raise AssertionError("write")
+
+        events = []
+        task = asyncio.create_task(
+            service.run_turn(
+                "cov-q",
+                "client-cov",
+                "研究一下 600519.SH",
+                events.append,
+                no_write,
+                run_options=RuntimeRunOptions(
+                    coverage_closer=True, coverage_path=True, timeout_seconds=30, max_steps=4
+                ),
+            )
+        )
+        await provider_ready.wait()
+        run_id = service.runtime.active_run_id("cov-q")
+        assert run_id is not None
+        queued = service.steer(run_id, "client-why", "今天为什么涨")
+        assert queued.get("rejected") is not True
+        assert queued["item"]["mode"] == "follow_up"
+        consume_queue.set()
+        result = await task
+        assert result.status == "completed"
+
+    asyncio.run(scenario())

@@ -121,7 +121,7 @@ TOOL_SPECS: list[dict[str, Any]] = [
         "A/港个股深度覆盖脊柱(只读):解析上市地、脚本估值/检查器、VIE门、返回标定标签/动作/Kelly-lite。"
         "query 如 600519.SH 或 阿里巴巴；mode=full|earnings。数字只能引用本工具 JSON。",
         {"query": _STR, "mode": _STR, "format": _STR, "assumptions": _STR},
-        ["query", "mode", "format", "assumptions"],
+        ["query"],
         execution_mode="sequential",
     ),
     _spec("get_sector_rotation", "sector-rotation", "板块热点轮动快照;date 为 YYYYMMDD 空则最新",

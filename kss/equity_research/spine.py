@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Callable
 
 from kss.equity_research.checker import run_checker
@@ -93,12 +94,24 @@ def run_coverage(
     return payload
 
 
+_CITE_QUERY = re.compile(r"仓位|Kelly|刚才的报告|标签|动作是|冻结")
+
+
+def _is_cite_query(query: str) -> bool:
+    raw = query or ""
+    if is_coverage_intent(raw):
+        return False
+    return bool(_CITE_QUERY.search(raw))
+
+
 def _should_rerun(query: str, force_new: bool | None) -> bool:
     if force_new is True:
         return True
     if force_new is False:
         return False
-    return is_coverage_intent(query)
+    if is_coverage_intent(query):
+        return True
+    return not _is_cite_query(query)
 
 
 def _side_result(

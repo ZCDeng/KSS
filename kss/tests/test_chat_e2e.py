@@ -176,3 +176,47 @@ def test_e2e_max_steps_graceful(monkeypatch, sock):
 
     frames = asyncio.run(go())
     assert frames[-1]["type"] == "done" and frames[-1]["reason"] == "max_steps"
+
+
+
+def test_e2e_coverage_keepalive_emits_frames(monkeypatch):
+    """有帧 vs 无帧：覆盖路径慢工具期间发 keepalive，不因静默超时。"""
+    import time
+    monkeypatch.setattr(chat_loop, "COVERAGE_KEEPALIVE_SECONDS", 0.02)
+
+    def slow_dispatch(*_a, **_k):
+        time.sleep(0.07)
+        return {"ok": True}
+
+    monkeypatch.setattr(bridge, "dispatch", slow_dispatch)
+    frames: list[dict] = []
+
+    async def emit(ev):
+        frames.append(ev)
+
+    async def rw(**_kw):
+        raise AssertionError("no write")
+
+    class Fake:
+        def __init__(self):
+            self.i = 0
+        def stream_turn(self, messages, tools=None):
+            self.i += 1
+            if self.i == 1:
+                yield _tc("get_snapshot", {})
+                yield {"type": "finish", "reason": "tool_calls"}
+            else:
+                yield {"type": "text", "text": "完整覆盖"}
+                yield {"type": "finish", "reason": "stop"}
+
+    asyncio.run(chat_loop.run_turn(
+        [{"role": "user", "content": "研究一下 600519.SH"}],
+        emit,
+        rw,
+        chat_client=Fake(),
+        max_steps=4,
+        turn_timeout=30,
+        coverage_path=True,
+    ))
+    assert any(f.get("type") == "keepalive" for f in frames)
+    assert any(f.get("type") == "chunk" and "完整覆盖" in str(f.get("text")) for f in frames)

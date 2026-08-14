@@ -726,6 +726,8 @@ class KSSAgentService:
             inferred = options_for_user_text(current_user.content)
             if inferred is not None:
                 run_options = inferred
+                if inferred.coverage_closer or inferred.coverage_path:
+                    self._coverage_sessions.add(session_id)
         attachment_ids = self._turn_attachment_ids.get(
             (session_id, client_turn_id),
             (),
@@ -1230,13 +1232,13 @@ class KSSAgentService:
             from kss.equity_research.intent import r12_phrase
             aborted = reason in {"aborted", "client_abort"}
             closed, closed_reason, replaced = apply_coverage_closer(
-                [{"role": "assistant", "content": ""}],
+                list(transcript.messages),
                 reason=reason,
                 aborted=aborted,
             )
             if replaced:
                 phrase = r12_phrase("incomplete")
-                await emit_loop({"type": "chunk", "text": "\n" + phrase})
+                await emit_loop({"type": "chunk", "text": phrase})
                 reason = closed_reason
                 failed = False
                 provider_error = None

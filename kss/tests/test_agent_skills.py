@@ -415,6 +415,8 @@ def test_cn_hk_equity_research_is_chat_bundled_and_not_weekly() -> None:
     assert "为什么动" in skill.description
     assert "研究" in skill.description
     assert skill.missing_required_tools == ()
+    assert skill.enabled is True
+    assert skill.available is True
     manager.available_tools = frozenset({"get_stock"})
     missing, _ = manager.discover()
     broken = next(s for s in missing if s.name == "cn-hk-equity-research")

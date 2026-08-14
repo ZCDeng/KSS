@@ -1304,7 +1304,7 @@ def test_equity_coverage_tool_registered_readonly():
     assert loop.is_write_command("equity-coverage") is False
 
 
-def test_coverage_handler_heartbeat_emits_tool_update():
+def test_coverage_handler_heartbeat_emits_tool_update(tmp_path):
     updates = []
 
     def on_update(payload):
@@ -1317,8 +1317,17 @@ def test_coverage_handler_heartbeat_emits_tool_update():
             "assumptions": '{"price": 100, "eps": 8}',
             "board": {"600519.SH": {"price": 100}},
             "heartbeat_interval": 0,
-            "output_dir": "/tmp/kss-coverage-hb",
+            "output_dir": str(tmp_path),
         },
         on_update=on_update,
     )
     assert updates
+
+
+
+def test_equity_coverage_query_only_required():
+    spec = next(s for s in loop.TOOL_SPECS if s["name"] == "run_equity_coverage")
+    registry = loop.ToolRegistry()
+    params = registry.parameters("run_equity_coverage")
+    assert params["required"] == ["query"]
+    assert "mode" in params["properties"]
