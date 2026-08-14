@@ -1,0 +1,28 @@
+{
+  "name": "dsh-profile-kss",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "KSS DeepSeek Harness profile: dsh-base + KSS bundle, no dsh-web-app",
+  "engines": {
+    "node": ">=22.19.0 <23"
+  },
+  "kssHarness": {
+    "upstreamRepo": "https://github.com/deepseek-ai/deepseek-harness",
+    "upstreamCommit": "47f943859bef60e4160492346772ded9b24f765a",
+    "npmFamily": "0.1.0-rc.6"
+  },
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@kss/harness-plugins"
+      ]
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-base": "0.1.0-rc.6",
+    "@kss/harness-plugins": "file:../kss-plugins"
+  }
+}

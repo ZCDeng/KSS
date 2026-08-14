@@ -1,0 +1,3 @@
+# Profile-layer patch. Empty on purpose: KSS rows come from the @kss/harness-plugins bundle.
+# Later units that override a base row must restate the entire config (no deep merge).
+[]
