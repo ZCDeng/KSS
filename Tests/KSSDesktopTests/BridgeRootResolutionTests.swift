@@ -81,4 +81,70 @@ final class BridgeRootResolutionTests: XCTestCase {
 
         XCTAssertEqual(selected, project)
     }
+
+    func testBundleModeRejectsGitCheckoutBreadcrumb() throws {
+        let base = try temporaryDirectory()
+        let checkout = base.appending(path: "KSS")
+        let appSupport = base.appending(path: "Application Support/KSS")
+        try FileManager.default.createDirectory(at: checkout, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: checkout.appending(path: ".git").path, contents: Data())
+
+        let selected = BridgeClient.selectStateRoot(
+            envState: nil,
+            breadcrumbState: checkout.path,
+            isDevMode: false,
+            projectRoot: base.appending(path: "KSSDesktop.app/Contents/Resources"),
+            appSupportRoot: appSupport
+        )
+
+        XCTAssertEqual(selected, appSupport)
+        XCTAssertNotEqual(selected, checkout, "安装版不得把 git 工作副本当 sidecar 状态根")
+    }
+
+    func testPackagedBreadcrumbKeepsCheckoutProjectRoot() throws {
+        let base = try temporaryDirectory()
+        let checkout = base.appending(path: "KSS")
+        let resources = base.appending(path: "KSSDesktop.app/Contents/Resources")
+        try FileManager.default.createDirectory(
+            at: checkout.appending(path: "scripts"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+        FileManager.default.createFile(
+            atPath: checkout.appending(path: "scripts/kss_app_bridge.py").path, contents: Data())
+
+        let preserved = BridgeClient.packagedBreadcrumbProjectRoot(
+            codeRoot: resources,
+            existingProjectRoot: checkout.path
+        )
+        XCTAssertEqual(preserved, checkout.standardizedFileURL)
+    }
+
+    func testPackagedBreadcrumbDoesNotPersistBundleProjectRoot() throws {
+        let resources = URL(fileURLWithPath: "/Applications/KSSDesktop.app/Contents/Resources")
+        XCTAssertNil(BridgeClient.packagedBreadcrumbProjectRoot(
+            codeRoot: resources,
+            existingProjectRoot: resources.path
+        ))
+        XCTAssertNil(BridgeClient.packagedBreadcrumbProjectRoot(
+            codeRoot: resources,
+            existingProjectRoot: nil
+        ))
+    }
+
+    func testDevModeKeepsGitCheckoutBreadcrumb() throws {
+        let base = try temporaryDirectory()
+        let checkout = base.appending(path: "KSS")
+        try FileManager.default.createDirectory(at: checkout, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: checkout.appending(path: ".git").path, contents: Data())
+
+        let selected = BridgeClient.selectStateRoot(
+            envState: nil,
+            breadcrumbState: checkout.path,
+            isDevMode: true,
+            projectRoot: checkout,
+            appSupportRoot: base.appending(path: "fallback")
+        )
+
+        XCTAssertEqual(selected, checkout.standardizedFileURL)
+    }
 }

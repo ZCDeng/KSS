@@ -1668,4 +1668,15 @@ async def _serve() -> None:
 
 
 if __name__ == "__main__":
+    # Leave the GUI app's session so quitting KSSDesktop does not SIGHUP this
+    # daemon into a half-dead re-exec. Intentional reloads still use kill(pid,
+    # SIGHUP), which is delivered by pid, not by session.
+    try:
+        os.setsid()
+    except OSError:
+        pass
+    try:
+        signal.signal(signal.SIGPIPE, signal.SIG_IGN)
+    except (AttributeError, ValueError, OSError):
+        pass
     asyncio.run(_serve())

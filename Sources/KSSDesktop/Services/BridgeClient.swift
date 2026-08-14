@@ -68,6 +68,17 @@ struct BridgeClient {
         // U2：bundle-mode 首启若 state-root venv 缺失，bootstrap provision（uv sync）。
         try Self.provisionRuntimeIfNeeded(projectRoot: roots.project, stateRoot: roots.state)
         self.python = Self.resolvePython(stateRoot: roots.state)
+        // 已安装 .app 只刷新状态根。projectRoot 必须留给 launchd 用的真实仓库——
+        // 写成 Resources 会让下次 plist 渲染 fail-loud（07-14 趋势归档实锤）。
+        if Self.isBundledApp {
+            if let project = Self.packagedBreadcrumbProjectRoot(
+                codeRoot: roots.project,
+                existingProjectRoot: Self.readBreadcrumb()?.projectRoot,
+                fileManager: .default
+            ) {
+                Self.writeBreadcrumb(project: project, state: roots.state)
+            }
+        }
         // U9：lock 变化则后台非阻塞 uv sync（不卡启动）。
         Self.refreshRuntimeIfLockChanged(projectRoot: roots.project, stateRoot: roots.state)
     }
@@ -660,8 +671,10 @@ struct BridgeClient {
         return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// socket 缺失、pid 失效或版本不匹配则 spawn sidecar daemon（detached，best-effort），
-    /// 等其就绪 ≤3s。U10：版本握手防止陈旧 sidecar 继续服务。
+    /// socket 缺失、pid 失效、版本不匹配或 socket 无法 connect 则 spawn sidecar daemon
+    ///（detached，best-effort），等其真正可接 ≤5s。U10：版本握手防止陈旧 sidecar 继续服务。
+    /// 只看 sock 文件 + pid 存活不够：App 退出后 SIGHUP re-exec / SIGPIPE 可能留下
+    /// 「文件还在、listen 已死」的残留，Agent 路径没有 subprocess 回退，会直接报无法连接。
     private func ensureSidecarRunning() {
         Self.sidecarStartLock.lock()
         defer { Self.sidecarStartLock.unlock() }
@@ -674,10 +687,11 @@ struct BridgeClient {
                 // 版本握手：version 文件缺失 / 空 / 不匹配 → 陈旧，杀旧拉新
                 let expected = Self.sidecarVersionFingerprint(projectRoot: projectRoot)
                 let current = (try? String(contentsOfFile: versionPath, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
-                if let current, !current.isEmpty, current == expected {
-                    return  // socket + alive pid + version 一致 → 复用
+                if let current, !current.isEmpty, current == expected,
+                   Self.sidecarAcceptsConnection(path: socketPath) {
+                    return  // socket + alive pid + version 一致 + 可 connect → 复用
                 }
-                // 旧 sidecar 不认识 version 命令/没写文件，或指纹不同，一律视为陈旧
+                // 旧 sidecar 不认识 version 命令/没写文件，或指纹不同，或 listen 已死
                 kill(pid, SIGTERM)
                 // 给旧进程留 0.2s 收尾；socket 随后会被新 daemon 替换
                 Thread.sleep(forTimeInterval: 0.2)
@@ -702,14 +716,28 @@ struct BridgeClient {
             env["KSS_PI_AI_CREDENTIAL_NONCE"] = broker.nonce
         }
         p.environment = env
+        p.standardInput = FileHandle.nullDevice
         let logHandle = Self.sidecarLogHandle(stateRoot: stateRoot)
         p.standardOutput = logHandle
         p.standardError = logHandle
-        try? p.run()   // detached daemon，不 wait
-        for _ in 0..<30 {
-            if fm.fileExists(atPath: socketPath) { return }
+        do {
+            try p.run()   // detached daemon，不 wait
+        } catch {
+            NSLog("[KSS] sidecar spawn failed python=%@ script=%@ error=%@",
+                  python.path, sidecar.path, String(describing: error))
+            return
+        }
+        for _ in 0..<50 {
+            if Self.sidecarAcceptsConnection(path: socketPath) { return }
             Thread.sleep(forTimeInterval: 0.1)
         }
+    }
+
+    /// sock 文件存在不等于 listen 还活着。Agent 命令必须真能 connect。
+    private static func sidecarAcceptsConnection(path: String) -> Bool {
+        guard let fd = connectToSidecar(path: path) else { return false }
+        close(fd)
+        return true
     }
 
     /// sidecar 是常驻 daemon，此前 stdout/stderr 一律丢 /dev/null——排障时拿不到任何
@@ -1048,9 +1076,15 @@ struct BridgeClient {
             onEnd("无法编码 Agent 请求"); return
         }
         request.append(0x0A)
-        Self.agentTurnStream(path: socketPath, request: request,
-                             onControlReady: onControlReady, onFrame: onFrame,
-                             onConfirmRequired: onConfirmRequired, onEnd: onEnd)
+        Self.agentTurnStream(
+            path: socketPath,
+            request: request,
+            respawn: { [self] in
+                cleanupSidecarFiles()
+                ensureSidecarRunning()
+            },
+            onControlReady: onControlReady, onFrame: onFrame,
+            onConfirmRequired: onConfirmRequired, onEnd: onEnd)
     }
 
     private func agentCommand<T: Decodable>(_ cmd: String, payload: [String: Any], as type: T.Type) throws -> T {
@@ -1061,16 +1095,31 @@ struct BridgeClient {
             throw BridgeError.invalidOutput
         }
         request.append(0x0A)
-        guard let respData = Self.unixSocketRoundtrip(path: socketPath, request: request, timeout: 20),
-              let resp = try? JSONDecoder().decode(SidecarResponse.self, from: respData)
-        else {
+
+        func roundtrip() -> SidecarResponse? {
+            guard let respData = Self.unixSocketRoundtrip(path: socketPath, request: request, timeout: 20) else {
+                return nil
+            }
+            return try? JSONDecoder().decode(SidecarResponse.self, from: respData)
+        }
+
+        func decodeOrThrow(_ resp: SidecarResponse) throws -> T {
+            if resp.code == 0, let out = resp.stdout {
+                return try Self.decodeEnvelope(Data(out.utf8))
+            }
+            throw BridgeError.processFailed(
+                (resp.stderr ?? "Agent sidecar failed").trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+
+        if let resp = roundtrip() {
+            return try decodeOrThrow(resp)
+        }
+        cleanupSidecarFiles()
+        ensureSidecarRunning()
+        guard let retry = roundtrip() else {
             throw BridgeError.processFailed("无法连接 Agent sidecar")
         }
-        if resp.code == 0, let out = resp.stdout {
-            return try Self.decodeEnvelope(Data(out.utf8))
-        }
-        throw BridgeError.processFailed(
-            (resp.stderr ?? "Agent sidecar failed").trimmingCharacters(in: .whitespacesAndNewlines))
+        return try decodeOrThrow(retry)
     }
 
     /// 连接 → 发请求 → 逐 newline 帧读到 done/error/EOF。SO_RCVTIMEO 作 **idle 间隔**而非硬超时。
@@ -1102,10 +1151,18 @@ struct BridgeClient {
     }
 
     private static func agentTurnStream(path: String, request: Data,
+                                        respawn: (() -> Void)? = nil,
                                         onControlReady: @escaping (AgentControlChannel) -> Void,
                                         onFrame: @escaping (AgentFrame) -> Void,
                                         onConfirmRequired: @escaping (AgentFrame) -> Bool,
                                         onEnd: @escaping (String?) -> Void) {
+        if let fd = connectToSidecar(path: path) {
+            runAgentStreamLoop(fd: fd, request: request,
+                               onControlReady: onControlReady, onFrame: onFrame,
+                               onConfirmRequired: onConfirmRequired, onEnd: onEnd)
+            return
+        }
+        respawn?()
         if let fd = connectToSidecar(path: path) {
             runAgentStreamLoop(fd: fd, request: request,
                                onControlReady: onControlReady, onFrame: onFrame,
@@ -1525,6 +1582,32 @@ struct BridgeClient {
         }
     }
 
+    /// launchd 的 projectRoot 必须是可写仓库，不能是 `.app/Contents/Resources`。
+    /// 已装 App 的代码根仍是 Resources；面包屑只保存「真实仓库 + Application Support」。
+    static func packagedBreadcrumbProjectRoot(
+        codeRoot: URL,
+        existingProjectRoot: String?,
+        fileManager: FileManager = .default
+    ) -> URL? {
+        func isBundlePath(_ path: String) -> Bool {
+            path.contains(".app/Contents")
+        }
+        func isLaunchdProject(_ url: URL) -> Bool {
+            !isBundlePath(url.path)
+                && fileManager.fileExists(atPath: url.appending(path: "scripts/kss_app_bridge.py").path)
+        }
+        if isLaunchdProject(codeRoot) {
+            return codeRoot.standardizedFileURL
+        }
+        if let existingProjectRoot, existingProjectRoot.hasPrefix("/") {
+            let candidate = URL(fileURLWithPath: existingProjectRoot).standardizedFileURL
+            if isLaunchdProject(candidate) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
     /// 解析 (代码根, 状态根)。优先级：
     /// projectRoot = KSS_PROJECT_ROOT(dev) → breadcrumb → bundle Resources → 历史爬升兜底。
     /// stateRoot   = KSS_STATE_ROOT → 有效 breadcrumb → (dev? projectRoot : ~/Library/Application Support/KSS)。
@@ -1592,6 +1675,8 @@ struct BridgeClient {
 
     /// 只负责状态根优先级，保留为可单测的启动契约。
     /// 环境变量是显式覆盖，允许指向尚未创建的目录；面包屑来自旧安装，仅接受仍存在的绝对目录。
+    /// 已安装 App（非 dev）不得把 git 工作副本当状态根：开发期 `swift run` 留下的
+    /// breadcrumb 会让公证包去打仓库 venv/socket，退出后再开就复用已死的 sidecar。
     static func selectStateRoot(
         envState: String?,
         breadcrumbState: String?,
@@ -1608,10 +1693,18 @@ struct BridgeClient {
             var isDirectory: ObjCBool = false
             if fileManager.fileExists(atPath: candidate.path, isDirectory: &isDirectory),
                isDirectory.boolValue {
+                if !isDevMode, isSourceCheckout(candidate, fileManager: fileManager) {
+                    return appSupportRoot
+                }
                 return candidate
             }
         }
         return isDevMode ? projectRoot : appSupportRoot
+    }
+
+    /// git 工作副本（含 `.git` 文件或目录）不能作为已安装 App 的可变状态根。
+    static func isSourceCheckout(_ url: URL, fileManager: FileManager = .default) -> Bool {
+        fileManager.fileExists(atPath: url.appending(path: ".git").path)
     }
 
     // MARK: - U2 运行时解析 + 首启 bootstrap
