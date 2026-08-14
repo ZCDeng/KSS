@@ -31,7 +31,26 @@ _REPUTABLE_SECONDARY_DOMAINS = (
     "sina.com.cn",
     "10jqka.com.cn",
 )
-_PRIMARY_HINTS = ("公告", "announcement", "investor", "ir.", "sse.com.cn", "szse.cn", "neeq.com.cn")
+_PRIMARY_HINTS = (
+    "公告",
+    "announcement",
+    "investor",
+    "ir.",
+    "sse.com.cn",
+    "szse.cn",
+    "neeq.com.cn",
+    "hkexnews.hk",
+    "hkex.com.hk",
+    "cninfo.com.cn",
+)
+_PRIMARY_HOSTS = (
+    "sse.com.cn",
+    "szse.cn",
+    "neeq.com.cn",
+    "hkexnews.hk",
+    "hkex.com.hk",
+    "cninfo.com.cn",
+)
 
 
 def evidence_rules() -> dict[str, bool]:
@@ -49,11 +68,46 @@ def source_tier(url: str, title: str = "") -> str:
     text = f"{url} {title}".lower()
     if host.endswith(".gov.cn") or any(hint in text for hint in _PRIMARY_HINTS):
         return "official_or_primary"
-    if host.endswith(("sse.com.cn", "szse.cn", "neeq.com.cn")):
+    if any(host == d or host.endswith("." + d) for d in _PRIMARY_HOSTS):
         return "official_or_primary"
     if any(host == d or host.endswith("." + d) for d in _REPUTABLE_SECONDARY_DOMAINS):
         return "reputable_secondary"
     return "unknown"
+
+
+def quarantine_rating_inputs(
+    items: list[dict[str, Any]] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """覆盖路径喂给评级/VIE 的摘录：命中注入则丢弃，不是只打标。
+
+    其余干净摘录仍可写报告。被丢弃片段若是唯一 VIE/质量证据，由覆盖脊柱将该侧
+    动作置为观望，不得据此脚本买入。
+    """
+    from kss.llm.sanitizer import quarantine_posts, scan_for_injection
+
+    posts: list[dict[str, Any]] = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        excerpt = str(item.get("excerpt") or item.get("summary") or "")
+        title = str(item.get("title") or "")
+        posts.append({
+            **item,
+            "title": title,
+            "summary": excerpt,
+            "excerpt": excerpt,
+        })
+    kept, dropped_posts = quarantine_posts(
+        posts,
+        text_keys=("title", "summary", "excerpt"),
+    )
+    dropped: list[dict[str, Any]] = []
+    for item in dropped_posts:
+        reason = "prompt_injection" if scan_for_injection(
+            f"{item.get('title') or ''}\n{item.get('excerpt') or item.get('summary') or ''}"
+        ) else "quarantined"
+        dropped.append({**item, "drop_reason": reason})
+    return kept, dropped
 
 
 def warning_from_text(text: str) -> dict[str, str] | None:
