@@ -2906,15 +2906,27 @@ final class KSSStore: ObservableObject {
     /// 用 MarkEdit 打开当前选中报告（外部编辑桥）。仅打开文件——不改内容、不重载快照、不入 Python 桥。
     /// 路径校验复用 `ExternalReportOpener`（安全边界，见该文件 source-of-truth 注释）。
     func openReportInMarkEdit(path: String) {
+        openLocalArtifact(path: path)
+    }
+
+    /// `.md` → MarkEdit；`.pdf` → 系统默认应用。两条校验门互不混用。
+    func openLocalArtifact(path: String) {
         guard let bridge else {
             errorMessage = "Cannot locate KSS project root"
             return
         }
         let stateRoot = bridge.stateRoot
         errorMessage = nil
-        // open() 非阻塞返回（resolveReportURL 仅本地 stat，NSWorkspace.open 异步），不必 detach。
+        let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
+        if ext == "pdf" {
+            ArtifactOpener.open(relativePath: path, under: stateRoot) { [weak self] err in
+                Task { @MainActor in
+                    if let err { self?.errorMessage = err.errorDescription }
+                }
+            }
+            return
+        }
         ExternalReportOpener.open(relativePath: path, under: stateRoot) { [weak self] err in
-            // 完成回调可能在主线程外触发——防御性 hop 回 MainActor 改 @Published（已在主线程亦安全）。
             Task { @MainActor in
                 if let err { self?.errorMessage = err.errorDescription }
             }
