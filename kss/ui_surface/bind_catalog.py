@@ -1,7 +1,11 @@
 """Bind Catalog：盯盘可绑目录（唯一可绑真源）。
 
-物化：``$KSS_STATE_ROOT/storage/ui_surface/bind_catalog_v1.json``
+物化：``$KSS_STATE_ROOT/storage/ui_surface/bind_catalog_v{CATALOG_VERSION}.json``
 缺文件时 ``build_catalog()`` 内存生成。
+
+改了目录内容（新增槽位/新增种子）就 **bump CATALOG_VERSION**：文件名带版本号，
+旧物化文件不会被读到，装了新版的机器自动重建。否则代码改了、线上仍读老 JSON，
+改动等于没上线。
 """
 
 from __future__ import annotations
@@ -14,9 +18,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from kss.ui_surface.config import DEFAULT_INDEX_BOARD_CODES
+
 logger = logging.getLogger(__name__)
 
-CATALOG_VERSION = 1
+CATALOG_VERSION = 2  # v2：补齐 index_board 槽位目录
 SLOT_OVERNIGHT = "overnight_marquee"
 SLOT_STRIP = "strip_metric"
 SLOT_INDEX_BOARD = "index_board"
@@ -137,6 +143,29 @@ HOT_METRICS: dict[str, dict[str, Any]] = {
     },
 }
 
+# 指数一览（index_board）展示名 + 额外别名：code → (展示名, 别名)
+#
+# 码集真源是 ``config.DEFAULT_INDEX_BOARD_CODES``，本表只补名字，不自带码集
+# ——两处对不上由 test_bind_catalog 拦截。这些码同时是
+# ``scripts/refresh_market_strip.py`` 的 INDEX_BOARD（唯一给 indexBoard 供价的
+# 抓取表）：不在那张表里的码即使绑上，effective_index_board_quotes 也只能给出
+# close=None 的骨架行，所以 picker 不提供。用户仍可用代码 ad-hoc 追加。
+INDEX_BOARD_NAMES: dict[str, tuple[str, tuple[str, ...]]] = {
+    "000001.SH": ("上证指数", ("上证", "沪指")),
+    "399001.SZ": ("深证成指", ("深成指", "深证")),
+    "399006.SZ": ("创业板指", ("创业板",)),
+    "000688.SH": ("科创50", ("科创",)),
+    "000698.SH": ("科创100", ()),
+    "000680.SH": ("科创综指", ("科创综",)),
+    "000300.SH": ("沪深300", ("沪深",)),
+    "000016.SH": ("上证50", ()),
+    "000905.SH": ("中证500", ()),
+    "000852.SH": ("中证1000", ()),
+    "000510.SH": ("中证A500", ("A500",)),
+    "932000.CSI": ("中证2000", ()),
+    "899050.BJ": ("北证50", ("北证",)),
+}
+
 # 美股/ETF 扩展种子（B2）；精确 ticker 仍可 ad-hoc
 US_ETF_SEED: tuple[dict[str, str], ...] = (
     {"code": "AAPL", "name": "苹果", "kind": "yfinance"},
@@ -192,7 +221,10 @@ def _state_root() -> Path:
 
 
 def catalog_path() -> Path:
-    return _state_root() / "storage" / "ui_surface" / "bind_catalog_v1.json"
+    return (
+        _state_root() / "storage" / "ui_surface"
+        / f"bind_catalog_v{CATALOG_VERSION}.json"
+    )
 
 
 def _item(
@@ -229,6 +261,13 @@ def _item(
 
 
 def _metric_items() -> list[dict[str, Any]]:
+    """HOT_METRICS → strip 槽可绑项（按 metric_id 寻址）。
+
+    kind=="index" 的几项（科创50/创业板指/上证/深证/A50）**不进 index_board**：
+    strip 按 metric_id 绑、index_board 按 code 绑，是两套寻址；且 index_a50
+    的 XIN9 根本不在 indexBoard 的抓取表里。index_board 的目录见
+    ``_index_board_items()``。
+    """
     out: list[dict[str, Any]] = []
     for mid, meta in HOT_METRICS.items():
         aliases = list(meta.get("aliases") or [])
@@ -253,6 +292,42 @@ def _metric_items() -> list[dict[str, Any]]:
                 provenance="hot_metrics",
                 domains=[str(meta.get("domain") or "metric_hot")],
                 extra=extra,
+            )
+        )
+    return out
+
+
+def _index_board_items() -> list[dict[str, Any]]:
+    """指数一览可绑目录：按 code 寻址，码集 = DEFAULT_INDEX_BOARD_CODES。"""
+    out: list[dict[str, Any]] = []
+    for raw in DEFAULT_INDEX_BOARD_CODES:
+        code = str(raw).upper()
+        entry = INDEX_BOARD_NAMES.get(code)
+        if entry is None:
+            # 新加的默认码没配名字：仍然进目录（宁可显示裸码，也不要缺项 picker），
+            # 但要吵出来，并由 test_index_board_names_cover_defaults 拦在 CI。
+            logger.warning("bind_catalog: index_board code %s 缺展示名，暂用裸码", code)
+            name, extra = code, ()
+        else:
+            name, extra = entry
+        bare = code.split(".")[0]
+        aliases: list[str] = []
+        for a in (name, *extra, code, bare, code.lower()):
+            if a and a not in aliases:
+                aliases.append(a)
+        out.append(
+            _item(
+                id=f"index.{code.lower().replace('.', '_')}",
+                kind="index",
+                market="CN",
+                codes={"code": code, "primary": code, "index_code": code},
+                names=[name],
+                aliases=aliases,
+                allowed_slots=[SLOT_INDEX_BOARD],
+                resolve_ref=f"index_board:{code}",
+                provenance="index_board_default",
+                domains=["index_cn"],
+                extra={"code": code, "index_code": code},
             )
         )
     return out
@@ -429,8 +504,13 @@ def _cn_items_from_name_index(limit: int = 8000) -> list[dict[str, Any]]:
 
 def build_catalog(*, include_cn: bool = True) -> dict[str, Any]:
     """构建完整 catalog 字典。"""
-    items = _metric_items() + _overnight_symbol_items() + _hk_items()
-    domains = {"metric_hot", "equity_us", "equity_hk"}
+    items = (
+        _metric_items()
+        + _index_board_items()
+        + _overnight_symbol_items()
+        + _hk_items()
+    )
+    domains = {"metric_hot", "index_cn", "equity_us", "equity_hk"}
     if include_cn:
         cn = _cn_items_from_name_index()
         if cn:
@@ -466,7 +546,12 @@ def load_catalog(*, rebuild_if_missing: bool = True) -> dict[str, Any]:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, dict) and isinstance(data.get("items"), list):
-                return data
+                if data.get("version") == CATALOG_VERSION:
+                    return data
+                logger.info(
+                    "bind_catalog: 物化版本 %s ≠ %s，重建",
+                    data.get("version"), CATALOG_VERSION,
+                )
         except Exception as exc:  # noqa: BLE001
             logger.warning("bind_catalog: load failed %s", exc)
     if rebuild_if_missing:
@@ -476,12 +561,13 @@ def load_catalog(*, rebuild_if_missing: bool = True) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             logger.warning("bind_catalog: save failed %s", exc)
         return cat
+    degraded = _metric_items() + _index_board_items()
     return {
         "version": CATALOG_VERSION,
         "generated_at": None,
-        "domains_online": ["metric_hot"],
-        "item_count": 0,
-        "items": _metric_items(),
+        "domains_online": ["metric_hot", "index_cn"],
+        "item_count": len(degraded),
+        "items": degraded,
     }
 
 

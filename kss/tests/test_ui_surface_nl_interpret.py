@@ -231,3 +231,22 @@ def test_direct_ticker() -> None:
     )
     assert r["ok"] is True
     assert r["ops"][0]["code"] == "AMD"
+
+
+def test_index_board_resolves_through_catalog() -> None:
+    """指数一览的 NL 解析要走 bind_catalog，不再靠函数内的硬编码兜底。
+
+    这几个别名只存在于 catalog（沪指/深证/科创综/北证），_DEFAULT_NAMES 里没有：
+    能解析出来就证明目录真的接住了。目录空掉时（2026-07-31 的回归）这里会挂。
+    """
+    from kss.ui_surface.nl_interpret import interpret_index_board
+
+    for text, code in (
+        ("加上沪指", "000001.SH"),
+        ("加上深证", "399001.SZ"),
+        ("加上科创综", "000680.SH"),
+        ("去掉北证", "899050.BJ"),
+    ):
+        r = interpret_index_board(text)
+        assert r["ok"] is True, f"{text} -> {r.get('error')}"
+        assert r["previews"][0]["code"] == code, text
