@@ -81,10 +81,43 @@ NPM_CLI="$STAGE/node-v${NODE_VERSION}-darwin-arm64/lib/node_modules/npm/bin/npm-
     ci --omit=dev --ignore-scripts --no-audit --no-fund
 )
 
-if find "$STAGE/payload/harness" -type f -name '*.node' -print -quit | grep -q .; then
-  echo "ERROR: Harness tree contains unsupported native .node modules." >&2
-  exit 1
-fi
+# dsh-base ships darwin-arm64 addons (koffi, node-pty, sharp). Keep those;
+# drop Windows/x64 prebuilds that would fail notarization unsigned.
+prune_foreign_harness_natives() {
+  local root="$1"
+  local prebuilds="$root/kss-profile/node_modules/node-pty/prebuilds"
+  if [ -d "$prebuilds" ]; then
+    find "$prebuilds" -mindepth 1 -maxdepth 1 ! -name 'darwin-arm64' -exec rm -rf {} +
+  fi
+  local native desc
+  while IFS= read -r native; do
+    [ -n "$native" ] || continue
+    desc="$(file -b "$native")"
+    case "$desc" in
+      *"Mach-O "*"arm64"*) ;;
+      *) rm -f "$native" ;;
+    esac
+  done < <(find "$root" -type f \( -name '*.node' -o -name '*.dylib' -o -name '*.so' \))
+  local remaining=0
+  while IFS= read -r native; do
+    [ -n "$native" ] || continue
+    remaining=$((remaining + 1))
+    desc="$(file -b "$native")"
+    case "$desc" in
+      *"Mach-O "*"arm64"*) ;;
+      *)
+        echo "ERROR: remaining Harness native is not arm64 Mach-O: $native ($desc)" >&2
+        exit 1
+        ;;
+    esac
+  done < <(find "$root" -type f \( -name '*.node' -o -name '*.dylib' \))
+  if [ "$remaining" -eq 0 ]; then
+    echo "ERROR: Harness tree lost required darwin-arm64 native addons after prune." >&2
+    exit 1
+  fi
+}
+
+prune_foreign_harness_natives "$STAGE/payload/harness"
 
 DSH_BIN="$STAGE/payload/harness/kss-profile/node_modules/@deepseek-ai/dsh/lib/bin.js"
 if [ ! -f "$DSH_BIN" ]; then

@@ -91,6 +91,13 @@ def test_signed_package_copies_harness_tree_and_codesigns_dsh_node() -> None:
     assert 'cp -R "$HARNESS_BUILD_ROOT/runtime" "$APP_RESOURCES/harness-runtime"' in script
     assert 'cp -R "$HARNESS_BUILD_ROOT/harness/kss-profile" "$APP_RESOURCES/harness/kss-profile"' in script
     assert 'cp -R "$HARNESS_BUILD_ROOT/harness/kss-plugins" "$APP_RESOURCES/harness/kss-plugins"' in script
+    assert "prune_foreign_harness_natives" in prepare
+    assert "! -name 'darwin-arm64'" in prepare
+    assert 'ERROR: Harness tree contains unsupported native .node modules.' not in prepare
+    assert 'ERROR: Harness tree contains unsupported native .node modules.' not in script
+    assert '-name \'*.dylib\'' in script
+    assert '-name \'*.node\'' in script
+    assert '签名 Harness native:' in script
     assert 'codesign --verify --strict --verbose=2 "$APP_RESOURCES/harness-runtime/bin/node"' in script
     assert '"$APP_RESOURCES/harness-runtime/bin/node"' in script
     assert "--entitlements \"$NODE_ENTITLEMENTS\"" in script

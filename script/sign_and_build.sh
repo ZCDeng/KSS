@@ -183,10 +183,6 @@ if find "$APP_RESOURCES/pi-ai-helper/node_modules" -type f -name '*.node' -print
   echo "ERROR: pi-ai helper contains unsupported native .node modules." >&2
   exit 1
 fi
-if find "$APP_RESOURCES/harness" -type f -name '*.node' -print -quit | grep -q .; then
-  echo "ERROR: Harness tree contains unsupported native .node modules." >&2
-  exit 1
-fi
 if [ ! -x "$APP_RESOURCES/harness-runtime/bin/node" ]; then
   echo "ERROR: Harness Node runtime missing from bundle." >&2
   exit 1
@@ -198,6 +194,18 @@ fi
 # Prefer explicit Apple HTTP TSA — bare --timestamp sometimes fails with
 # "The timestamp service is not available" when the default endpoint flakes.
 CODESIGN_TIMESTAMP="${KSS_CODESIGN_TIMESTAMP:-http://timestamp.apple.com/ts01}"
+# Nested Harness addons (koffi / node-pty / sharp + libvips) are Mach-O and
+# must be signed before the parent bundle is sealed.
+while IFS= read -r native; do
+  [ -n "$native" ] || continue
+  echo "签名 Harness native: $native"
+  codesign --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
+    --sign "$SIGN_IDENTITY" "$native"
+  codesign --verify --strict --verbose=2 "$native"
+done < <(
+  find "$APP_RESOURCES/harness" -type f -name '*.dylib' | sort
+  find "$APP_RESOURCES/harness" -type f -name '*.node' | sort
+)
 codesign --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
   --entitlements "$NODE_ENTITLEMENTS" \
   --sign "$SIGN_IDENTITY" "$APP_RESOURCES/pi-ai-runtime/bin/node"
