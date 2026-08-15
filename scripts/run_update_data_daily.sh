@@ -54,15 +54,14 @@ echo "===== $(date '+%Y-%m-%d %H:%M:%S') update_data_daily-wrapper 开始 | mode
 export no_proxy="api.tushare.pro,api.waditu.com,${no_proxy:-}"
 export NO_PROXY="$no_proxy"
 
-# Tushare token：Keychain 优先，dev 回落项目 .env，再回落 $HOME/.tushare/token。
+# Tushare token：Keychain 优先，dev 回落项目 .env——kss_load_credential 是唯一入口。
+# 曾有第三级回落 `export TUSHARE_TOKEN=$(cat "$HOME/.tushare/token")`，已删：明文
+# token 文件绕开 Keychain 链，且把凭据名写死进 wrapper 正文，正是 S1 要禁的形态。
 source "$PROJECT_ROOT/scripts/lib_cron_credentials.sh"
 if kss_load_credential TUSHARE_TOKEN "$KSS_ENV"; then
   echo "[wrapper] token loaded: yes"
-elif [ -f "$HOME/.tushare/token" ]; then
-  export TUSHARE_TOKEN=$(cat "$HOME/.tushare/token")
-  echo "[wrapper] token fallback: ok"
 else
-  echo "[wrapper] token loaded: no"
+  echo "[wrapper] WARNING: 未在 Keychain / $KSS_ENV 找到 TUSHARE_TOKEN，更新将失败"
 fi
 
 run_with_retry() {

@@ -3,12 +3,15 @@
 #
 # 用 .venv-desktop 解释器（有 pyarrow，project-owned，不被 brew cleanup GC）—— 见 plan KTD7.
 #
-# 凭据纪律（评审 S1，刻意不抄 run_update_data_daily.sh:26-30 的 .env grep 习惯）：
+# 凭据纪律（评审 S1）：
 #   - **不** grep 任何 .env 取 TUSHARE_TOKEN
-#   - **不** export TUSHARE_TOKEN
+#   - **不** 手写 export <凭据名>=<值>；凭据一律经 kss_load_credential 走 Keychain 优先链
 #   - **不** echo 任何 token 相关值（长度 / 来源 / 等）
 #   token 由采集器从 $KSS_STATE_ROOT/secrets/tushare_token（0600，git-ignored）读
-#   （_resolve_token，KTD4）；本 wrapper 唯一注入/引用的 env 是 KSS_STATE_ROOT。
+#   （_resolve_token，KTD4）。
+#   本 wrapper 注入/引用的 env：KSS_STATE_ROOT、no_proxy/NO_PROXY（代理兜底，非凭据），
+#   以及 6387d339 起经 kss_load_credential 装入的 LONGBRIDGE_APP_KEY /
+#   LONGBRIDGE_APP_SECRET / LONGBRIDGE_ACCESS_TOKEN 三件套（值不落 wrapper 正文）。
 #
 # KSS_STATE_ROOT 由 plist EnvironmentVariables 注入（不在此硬编码 state root；调和
 # 静态 wrapper 约定与 bundle 双根）。WorkingDirectory / 解释器走 PROJECT_ROOT（code root）.
