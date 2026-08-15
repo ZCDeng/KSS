@@ -256,3 +256,53 @@ class TestRunReview:
         assert "**" not in text
         assert "<b>重要</b>" in text
         assert "<b>AI算力</b>" in text
+
+
+# ====================================================================== #
+# 交易日闸门（非交易日被 launchd 补跑时不空转）
+# ====================================================================== #
+
+
+class _FakeCalendarClient:
+    """只提供 ``get_pro().trade_cal`` 的替身。"""
+
+    def __init__(self, rows: list[dict], explode: bool = False) -> None:
+        self._rows = rows
+        self._explode = explode
+
+    def get_pro(self):
+        outer = self
+
+        class _Pro:
+            def trade_cal(self, exchange: str, start_date: str, end_date: str):
+                if outer._explode:
+                    raise RuntimeError("tushare unreachable")
+                return pd.DataFrame(outer._rows)
+
+        return _Pro()
+
+
+class TestTradingDayGate:
+    def test_open_day_is_true(self, script_mod) -> None:
+        client = _FakeCalendarClient([{"cal_date": "20260814", "is_open": 1}])
+        assert script_mod.is_trading_day("20260814", client=client) is True
+
+    def test_closed_day_is_false(self, script_mod) -> None:
+        client = _FakeCalendarClient([{"cal_date": "20260815", "is_open": 0}])
+        assert script_mod.is_trading_day("20260815", client=client) is False
+
+    def test_calendar_outage_returns_none_not_false(self, script_mod) -> None:
+        """Tushare 挂掉必须返回 None,不能返回 False。
+
+        返回 False 会让 main 把一次真实故障当成休市干净跳过,``missing >= 4`` 的
+        exit 3 告警就再也不会响——那才是这个闸门最危险的失败模式。
+        """
+        client = _FakeCalendarClient([], explode=True)
+        assert script_mod.is_trading_day("20260814", client=client) is None
+
+    def test_empty_calendar_returns_none(self, script_mod) -> None:
+        assert script_mod.is_trading_day("20260814", client=_FakeCalendarClient([])) is None
+
+    def test_malformed_is_open_returns_none(self, script_mod) -> None:
+        client = _FakeCalendarClient([{"cal_date": "20260814", "is_open": "?"}])
+        assert script_mod.is_trading_day("20260814", client=client) is None

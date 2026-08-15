@@ -90,6 +90,27 @@ def _archive_radar(trade_date: str, payload: dict) -> None:
     logger.info("雷达存档: %s", trade_date)
 
 
+def is_trading_day(trade_date: str, client: TushareClient | None = None) -> bool | None:
+    """交易日判定。``True`` / ``False`` 是确证,``None`` 表示查不到、不敢下结论。
+
+    只有**确证休市**才让调用方跳过。日历本身取不到时返回 ``None`` 并照常跑,好让真正
+    的 Tushare 故障仍旧撞上 ``missing >= 4`` 的 exit 3 告警,不被误当成休市咽下去。
+    """
+    try:
+        pro = (client or TushareClient()).get_pro()
+        rows = pro.trade_cal(
+            exchange="SSE", start_date=trade_date, end_date=trade_date
+        ).to_dict("records")
+    except Exception:  # noqa: BLE001 - 日历查不到就是 None,不影响主流程
+        return None
+    if not rows:
+        return None
+    try:
+        return int(rows[0].get("is_open", 0)) == 1
+    except (TypeError, ValueError):
+        return None
+
+
 def run_review(
     trade_date: str,
     client: TushareClient | None = None,
@@ -180,6 +201,17 @@ def main() -> None:
             trade_date = args.date  # 兼容直接输入 YYYYMMDD
     else:
         trade_date = _today_yyyymmdd()
+
+    # Mac 在调度时刻休眠时,launchd 会在下次唤醒后补跑——补跑用的是"今天",可能落在
+    # 周末或节假日,照跑只会拿到一份满是占位符的空报告并推给 Telegram,再以 exit 3
+    # 假告警收场。确证休市就干净跳过;日历查不到则照常跑,真故障仍走 exit 3。
+    if is_trading_day(trade_date) is False:
+        logger.info("%s 非交易日，跳过复盘", trade_date)
+        print(json.dumps(
+            {"status": "skipped", "reason": "not_a_trading_day", "trade_date": trade_date},
+            ensure_ascii=False,
+        ))
+        return
 
     commentary, missing = run_review(trade_date=trade_date)
     print(commentary)
