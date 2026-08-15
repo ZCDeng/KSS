@@ -19,6 +19,11 @@ export const inject = ["tools", "approval"];
 const STOCK_WRITES = new Set(["bash", "write", "edit", "str_replace_editor"]);
 const policies = new WeakMap();
 const pendingDesktop = new Map();
+let approvalPrompt = null;
+
+export function setApprovalPrompt(listener) {
+  approvalPrompt = typeof listener === "function" ? listener : null;
+}
 
 function catalogWrites() {
   return new Map(
@@ -197,6 +202,23 @@ export function applyKssApprovalPolicy(ctx, options = {}) {
   const grantWrite = options.grantWrite;
   const answererMode = options.answererMode ?? "plugin";
 
+  ctx.on("agent/created", ({ agent }) => {
+    const parentId = agent?.session?.header?.parentSession;
+    if (!parentId || !ctx.agents?.get) return;
+    const parent = ctx.agents.get(parentId) || ctx.agents.get(String(parentId));
+    if (!parent) return;
+    const parentPolicy = policies.get(parent);
+    if (parentPolicy?.surface === "research") {
+      inheritResearchPolicy(parent, agent, false);
+    } else if (parentPolicy) {
+      attachSessionPolicy(agent, {
+        surface: parentPolicy.surface,
+        owned: parentPolicy.owned,
+        allowlist: parentPolicy.allowlist,
+      });
+    }
+  });
+
   ctx.on("tools/pre-execute", async (exec, next) => {
     const decision = decidePreExecute(exec, repoRoot);
     if (decision.kind === "allow" && isWriteTool(exec.name)) {
@@ -222,6 +244,13 @@ export function applyKssApprovalPolicy(ctx, options = {}) {
     } else if (answererMode === "reject") {
       outcome = "rejected";
     } else {
+      if (approvalPrompt) {
+        try {
+          approvalPrompt(req);
+        } catch {
+          /* chrome projection must not veto the owned answerer */
+        }
+      }
       outcome = await new Promise((resolve) => {
         pendingDesktop.set(callId, resolve);
       });

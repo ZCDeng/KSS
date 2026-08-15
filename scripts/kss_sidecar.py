@@ -246,6 +246,19 @@ def grant_harness_write(call_id: str, command: str, *, surface: str = "desktop")
     _HARNESS_GRANT_SURFACES[call_id] = tagged
 
 
+def _notify_harness_kernel(cmd: str, payload: dict[str, Any] | None = None) -> None:
+    """Forward confirm/abort/steer to the Node kernel without logging secrets."""
+    try:
+        from kss.agent.harness_kernel import get_harness_kernel
+
+        kernel = get_harness_kernel()
+        if kernel is None or not kernel.alive or kernel.driver != "dsh":
+            return
+        kernel.request(cmd, dict(payload or {}), timeout=5.0)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[harness] kernel %s notify failed: %s", cmd, exc)
+
+
 def revoke_harness_write(call_id: str) -> None:
     """作废一个 callId 的授权。中止/断开后迟到允许不得 dispatch。"""
     if isinstance(call_id, str) and call_id:
@@ -497,7 +510,8 @@ async def _handle_chat_turn(reader: asyncio.StreamReader,
             if parsed is None:
                 continue
             call_id, approved = parsed
-            host.resolve_approval(str(call_id), bool(approved))
+            if host.resolve_approval(str(call_id), bool(approved)):
+                _notify_harness_kernel("confirm", {"call_id": str(call_id), "approved": bool(approved)})
 
     raw = req.get("messages") if isinstance(req, dict) else None
     messages = _prepare_messages(raw)
@@ -1327,6 +1341,7 @@ async def _agent_control_reader(
             host.abort("disconnected")
             _reject_all(pending, {"error": "disconnected", "hint": "连接中断,写按拒收尾"})
             abort_token.abort("disconnected")
+            _notify_harness_kernel("abort", {"session_id": session_id, "cause": "parent"})
             return
         try:
             msg = json.loads(line)
@@ -1341,6 +1356,7 @@ async def _agent_control_reader(
                 host.abort(reason)
                 _reject_all(pending, {"error": "aborted", "hint": "用户中止本轮"})
                 abort_token.abort(reason)
+                _notify_harness_kernel("abort", {"session_id": session_id, "cause": "user"})
                 return
             if action in {"steer", "follow_up"}:
                 if msg.get("run_id") not in (None, "", run_id):
@@ -1411,6 +1427,10 @@ async def _agent_control_reader(
         if not resolved:
             logger.warning("[agent] 迟到允许无效 call_id=%r", call_id)
             continue
+        _notify_harness_kernel(
+            "confirm",
+            {"call_id": str(call_id), "approved": bool(approved), "session_id": session_id},
+        )
         fut = entry.get("future")
         if fut is not None and not fut.done():
             fut.set_result({"ok": bool(approved)} if approved else {"error": "denied"})
@@ -2059,7 +2079,12 @@ async def _serve() -> None:
     try:
         from kss.agent.harness_kernel import ensure_harness_kernel
         driver = os.environ.get("KSS_HARNESS_DRIVER", "dsh")
-        ensure_harness_kernel(driver=driver, sidecar_socket=str(SOCKET_PATH))
+        dsh_home = Path(bridge.STATE_ROOT) / "harness" / "dsh-home"
+        ensure_harness_kernel(
+            driver=driver,
+            sidecar_socket=str(SOCKET_PATH),
+            dsh_home=dsh_home,
+        )
         mark_harness_kernel_alive()
         logger.info("[harness] Node kernel started driver=%s", driver)
     except Exception as exc:  # noqa: BLE001

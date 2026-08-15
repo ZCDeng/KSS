@@ -55,6 +55,66 @@ def _find_host() -> Path:
     return Path("/nonexistent/kss_harness_host.mjs")
 
 
+def _find_profile() -> Path:
+    configured = os.getenv("KSS_HARNESS_PROFILE", "").strip()
+    candidates = [
+        Path(configured) if configured else None,
+        _REPO / "harness" / "kss-profile",
+        Path(os.getenv("KSS_PROJECT_ROOT") or _REPO) / "harness" / "kss-profile",
+    ]
+    for candidate in candidates:
+        if candidate is not None and (candidate / "package.json").is_file():
+            return candidate
+    return _REPO / "harness" / "kss-profile"
+
+
+def prepare_dsh_home(home: Path, profile_dir: Path | None = None) -> Path:
+    """Create DSH_HOME/profiles/kss -> vendored KSS profile. Required by runProfile."""
+    home = Path(home)
+    profiles = home / "profiles"
+    profiles.mkdir(parents=True, exist_ok=True)
+    link = profiles / "kss"
+    target = (profile_dir or _find_profile()).resolve()
+    if link.is_symlink() or link.exists():
+        try:
+            if link.resolve() != target:
+                link.unlink()
+                link.symlink_to(target)
+        except OSError:
+            link.unlink()
+            link.symlink_to(target)
+    else:
+        link.symlink_to(target)
+    return home
+
+
+def _agent_options_payload() -> dict[str, str]:
+    provider = os.getenv("KSS_HARNESS_PROVIDER", "").strip()
+    model = os.getenv("KSS_HARNESS_MODEL", "").strip()
+    if provider and model:
+        return {"provider": provider, "model": model}
+    try:
+        from kss.agent.provider_route import ProviderRouteStore
+        import kss_app_bridge as bridge
+
+        primary = ProviderRouteStore(bridge.STATE_ROOT).load().primary
+        mapped = "openai" if primary.provider_id == "openai" else (
+            "deepseek" if primary.provider_id == "deepseek" else primary.provider_id
+        )
+        return {"provider": mapped, "model": primary.model_id}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _redact_kernel_text(text: str) -> str:
+    redacted = text
+    for key in ("DEEPSEEK_API_KEY", "OPENAI_API_KEY", "KSS_LLM_PRIMARY_KEY", "ANTHROPIC_API_KEY"):
+        value = os.getenv(key, "").strip()
+        if len(value) >= 4:
+            redacted = redacted.replace(value, "[redacted]")
+    return redacted
+
+
 class HarnessKernel:
     """Long-lived Node child. Death fail-closes live writes (U7)."""
 
@@ -66,6 +126,7 @@ class HarnessKernel:
         driver: str = "scripted",
         sidecar_socket: str = "",
         dsh_home: Path | None = None,
+        extra_env: dict[str, str] | None = None,
         startup_timeout: float = 8.0,
     ) -> None:
         self.node_path = Path(node_path) if node_path else _find_node()
@@ -73,13 +134,16 @@ class HarnessKernel:
         self.driver = "dsh" if driver == "dsh" else "scripted"
         self.sidecar_socket = sidecar_socket
         self.dsh_home = Path(dsh_home) if dsh_home else None
+        self.extra_env = dict(extra_env or {})
         self.startup_timeout = startup_timeout
         self._proc: subprocess.Popen[str] | None = None
         self._lock = threading.Lock()
         self._pending: dict[str, dict[str, Any]] = {}
         self._hello: dict[str, Any] | None = None
+        self._ready: dict[str, Any] | None = None
         self._reader: threading.Thread | None = None
         self._alive = False
+        self._stderr_tail: list[str] = []
 
     @property
     def alive(self) -> bool:
@@ -92,11 +156,23 @@ class HarnessKernel:
         if not self.node_path.is_file() or not self.host_path.is_file():
             raise FileNotFoundError("Harness Node kernel binary or host script missing")
         env = os.environ.copy()
+        env.update(self.extra_env)
         env["KSS_HARNESS_DRIVER"] = self.driver
+        env["KSS_REPO_ROOT"] = str(_REPO)
         if self.sidecar_socket:
             env["KSS_SIDECAR_SOCKET"] = self.sidecar_socket
-        if self.dsh_home is not None:
+        if self.driver == "dsh":
+            if self.dsh_home is None:
+                configured = os.getenv("DSH_HOME", "").strip()
+                self.dsh_home = Path(configured) if configured else (_REPO / ".build" / "dsh-home")
+            prepare_dsh_home(self.dsh_home)
             env["DSH_HOME"] = str(self.dsh_home)
+            socket = env.get("KSS_PI_AI_CREDENTIAL_SOCKET", "").strip()
+            nonce = env.get("KSS_PI_AI_CREDENTIAL_NONCE", "").strip()
+            if socket and nonce:
+                for key in list(env):
+                    if key.endswith("_API_KEY") or key in {"KSS_LLM_PRIMARY_KEY"}:
+                        env.pop(key, None)
         self._proc = subprocess.Popen(
             [str(self.node_path), str(self.host_path)],
             stdin=subprocess.PIPE,
@@ -134,11 +210,18 @@ class HarnessKernel:
             proc.kill()
         self._proc = None
 
-    def request(self, cmd: str, payload: dict[str, Any] | None = None, *, timeout: float = _DEFAULT_TIMEOUT) -> dict[str, Any]:
+    def request(
+        self,
+        cmd: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        timeout: float = _DEFAULT_TIMEOUT,
+        on_event: Any = None,
+    ) -> dict[str, Any]:
         if not self.alive:
             raise RuntimeError("harness kernel is not available")
         msg_id = uuid4().hex
-        waiter: dict[str, Any] = {"event": threading.Event(), "body": None}
+        waiter: dict[str, Any] = {"event": threading.Event(), "body": None, "on_event": on_event}
         with self._lock:
             self._pending[msg_id] = waiter
         line = json.dumps({"id": msg_id, "cmd": cmd, **dict(payload or {})}, ensure_ascii=False)
@@ -191,7 +274,24 @@ class HarnessKernel:
                 if msg.get("type") == "hello":
                     self._hello = msg
                     continue
+                if msg.get("type") == "ready":
+                    self._ready = msg
+                    nonce = msg.get("credential_next_nonce")
+                    if isinstance(nonce, str) and nonce:
+                        os.environ["KSS_PI_AI_CREDENTIAL_NONCE"] = nonce
+                    continue
                 msg_id = str(msg.get("id") or "")
+                if msg.get("type") == "event":
+                    with self._lock:
+                        waiter = self._pending.get(msg_id)
+                    callback = waiter.get("on_event") if waiter else None
+                    event = msg.get("event")
+                    if callback is not None and isinstance(event, dict):
+                        try:
+                            callback(event)
+                        except Exception:  # noqa: BLE001
+                            pass
+                    continue
                 with self._lock:
                     waiter = self._pending.pop(msg_id, None)
                 if waiter is not None:
@@ -205,8 +305,12 @@ class HarnessKernel:
         if proc is None or proc.stderr is None:
             return
         try:
-            for _line in proc.stderr:
-                pass
+            for line in proc.stderr:
+                text = _redact_kernel_text(line.rstrip())
+                if text:
+                    self._stderr_tail.append(text)
+                    if len(self._stderr_tail) > 40:
+                        self._stderr_tail.pop(0)
         except OSError:
             return
 
@@ -222,23 +326,52 @@ class NodeDesktopSession:
 
         if not self.kernel.alive:
             return DesktopTurnResult(status="unavailable", error="harness_session_unavailable")
+        payload: dict[str, Any] = {
+            "session_id": request.session_id,
+            "input": request.input,
+            "run_id": request.run_id,
+        }
+        payload.update(_agent_options_payload())
+        if self.kernel.driver != "dsh":
+            payload["tool"] = "get_orientation"
+        timeout = 180.0 if self.kernel.driver == "dsh" else _DEFAULT_TIMEOUT
+        loop = asyncio.get_running_loop()
+        seen: set[int] = set()
+
+        async def handle_event(event: dict[str, Any]) -> None:
+            if event.get("type") in {"approval_request", "approval/request"}:
+                host.bind_intent(
+                    str(event.get("call_id") or ""),
+                    name=str(event.get("tool") or ""),
+                    command=str(event.get("command") or event.get("tool") or ""),
+                    args=[],
+                    tool_args=event.get("args") if isinstance(event.get("args"), dict) else {},
+                )
+            emit = host.emit
+            if emit is not None:
+                await emit(event)
+
+        def on_event(event: dict[str, Any]) -> None:
+            marker = id(event)
+            if marker in seen:
+                return
+            seen.add(marker)
+            asyncio.run_coroutine_threadsafe(handle_event(event), loop)
+
         try:
             body = await asyncio.to_thread(
                 self.kernel.request,
                 "desktop.turn",
-                {
-                    "session_id": request.session_id,
-                    "input": request.input,
-                    "run_id": request.run_id,
-                    "tool": "get_orientation",
-                },
+                payload,
+                timeout=timeout,
+                on_event=on_event,
             )
         except Exception as exc:  # noqa: BLE001
             return DesktopTurnResult(status="unavailable", error=str(exc) or "harness_session_unavailable")
-        emit = host.emit
-        for event in body.get("events") or []:
-            if emit is not None and isinstance(event, dict):
-                await emit(event)
+        if self.kernel.driver != "dsh":
+            for event in body.get("events") or []:
+                if isinstance(event, dict):
+                    await handle_event(event)
         tool_results = list(body.get("tool_results") or [])
         for item in body.get("execute") or []:
             if not isinstance(item, dict) or host.execute_tool is None:
@@ -280,15 +413,16 @@ class NodeResearchSession:
                 applied_write_ids=request.applied_write_ids,
             )
         try:
-            body = self.kernel.request(
-                "research.turn",
-                {
-                    "prompt": request.prompt,
-                    "cwd": str(request.allowlist.cwd),
-                    "attempt_id": request.attempt_id,
-                    "allowlist": list(request.allowlist.tools),
-                },
-            )
+            payload: dict[str, Any] = {
+                "prompt": request.prompt,
+                "cwd": str(request.allowlist.cwd),
+                "attempt_id": request.attempt_id,
+                "allowlist": list(request.allowlist.tools),
+                "session_id": request.attempt_id,
+            }
+            payload.update(_agent_options_payload())
+            timeout = 180.0 if self.kernel.driver == "dsh" else _DEFAULT_TIMEOUT
+            body = self.kernel.request("research.turn", payload, timeout=timeout)
         except Exception as exc:  # noqa: BLE001
             return ResearchTurnResult(
                 harness_status="interrupted",

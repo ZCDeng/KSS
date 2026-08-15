@@ -90,6 +90,9 @@ def test_dump_config_excludes_web_app_and_includes_kss_insert(
     assert result.returncode == 0, combined
     assert "dsh-web-app" not in combined
     assert "id: kss" in result.stdout
+    assert "apiKeyEnv: OPENAI_API_KEY" in result.stdout
+    assert "apiKeyEnv: DEEPSEEK_API_KEY" in result.stdout
+    assert "sk-" not in result.stdout
 
 
 def test_missing_patch_target_id_fails_loudly(tmp_path: Path) -> None:

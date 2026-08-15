@@ -12,21 +12,23 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import readline from "node:readline";
+import {
+  OVERLAY_JSON,
+  abortLiveSession,
+  injectCredentialsFromSocket,
+  installStubLlm,
+  loadLiveDeps,
+  resolveLiveApproval,
+  runLiveTurn,
+  steerLiveSession,
+  wireApprovalPrompt,
+} from "./kss_harness_live.mjs";
 
 const PROTOCOL = 1;
 const DRIVER = process.env.KSS_HARNESS_DRIVER === "dsh" ? "dsh" : "scripted";
 const SIDECAR = process.env.KSS_SIDECAR_SOCKET || "";
 const here = dirname(fileURLToPath(import.meta.url));
 const profileDir = join(here, "../harness/kss-profile");
-
-const OVERLAY_JSON = JSON.stringify({
-  status: "succeeded",
-  claims: [{ text: "Harness research node completed a KSS workspace write.", confidence: 0.7 }],
-  evidence_refs: [],
-  artifact_refs: ["notes.md"],
-  open_questions: [],
-  warnings: [],
-});
 
 function rpc(payload) {
   if (!SIDECAR) {
@@ -56,20 +58,14 @@ function reply(id, body) {
   process.stdout.write(`${JSON.stringify({ id, ...body })}\n`);
 }
 
-async function desktopTurn(req) {
+function emitEvent(requestId, event) {
+  process.stdout.write(`${JSON.stringify({ type: "event", id: requestId, event })}\n`);
+}
+
+async function scriptedDesktopTurn(req) {
   const callId = String(req.call_id || `r9-desktop-${Date.now()}`);
   const toolName = String(req.tool || "get_orientation");
   const args = req.args && typeof req.args === "object" ? req.args : {};
-  if (DRIVER === "dsh") {
-    if (!dshCtx?.agents) {
-      return {
-        ok: false,
-        status: "unavailable",
-        error: "harness_session_unavailable",
-        hint: "dsh agents.create is not ready",
-      };
-    }
-  }
   if (!SIDECAR) {
     const text = `planned ${toolName}`;
     return {
@@ -122,14 +118,7 @@ async function desktopTurn(req) {
   };
 }
 
-async function researchTurn(req) {
-  if (DRIVER === "dsh" && !dshCtx?.agents) {
-    return {
-      ok: false,
-      status: "interrupted",
-      error: "harness_session_unavailable",
-    };
-  }
+async function scriptedResearchTurn(req) {
   const cwd = String(req.cwd || "");
   if (!cwd) {
     return { ok: false, status: "interrupted", error: "research cwd unset" };
@@ -148,10 +137,32 @@ async function researchTurn(req) {
 }
 
 let dshCtx = null;
+let liveDeps = null;
+let bootError = null;
+let credentialNextNonce = null;
 
 async function bootDsh() {
+  const stub = process.env.KSS_HARNESS_STUB_LLM === "1";
+  if (stub && !process.env.DEEPSEEK_API_KEY) {
+    process.env.DEEPSEEK_API_KEY = "kss-stub-placeholder";
+  }
+  try {
+    credentialNextNonce = await injectCredentialsFromSocket(
+      process.env.KSS_PI_AI_CREDENTIAL_SOCKET || "",
+      process.env.KSS_PI_AI_CREDENTIAL_NONCE || "",
+    );
+  } catch (err) {
+    process.stderr.write(
+      `[kss-harness-host] credential socket skipped: ${String(err?.message || err)}\n`,
+    );
+  }
   const bootMod = join(profileDir, "node_modules/@deepseek-ai/dsh/lib/profile-boot-BnJoK_kl.js");
+  const envMod = join(
+    profileDir,
+    "node_modules/@deepseek-ai/dsh-launch-environment/lib/index.js",
+  );
   const { runProfile } = await import(pathToFileURL(bootMod).href);
+  const { createLaunchEnvironmentSnapshot } = await import(pathToFileURL(envMod).href);
   const home = process.env.DSH_HOME;
   if (!home) {
     throw new Error("DSH_HOME is required for dsh driver");
@@ -160,34 +171,129 @@ async function bootDsh() {
     profile: "kss",
     patchFiles: [],
     args: [],
-    environment: process.env,
+    environment: createLaunchEnvironmentSnapshot([
+      { source: "process", values: process.env },
+    ]),
   });
   dshCtx = ctx;
+  liveDeps = await loadLiveDeps(profileDir);
+  wireApprovalPrompt(liveDeps);
+  if (stub) {
+    installStubLlm(ctx);
+  }
   return Boolean(ctx?.agents);
+}
+
+const bootPromise =
+  DRIVER === "dsh"
+    ? bootDsh().catch((err) => {
+        bootError = err;
+        process.stderr.write(
+          `[kss-harness-host] dsh boot failed: ${String(err?.message || err)}\n`,
+        );
+        return false;
+      })
+    : Promise.resolve(false);
+
+async function ensureDshReady() {
+  if (DRIVER !== "dsh") return null;
+  await bootPromise;
+  if (bootError || !dshCtx?.agents || !liveDeps) {
+    return {
+      ok: false,
+      status: "unavailable",
+      error: "harness_session_unavailable",
+      hint: "dsh agents.create is not ready",
+    };
+  }
+  return null;
+}
+
+async function desktopTurn(req, requestId) {
+  if (DRIVER === "dsh") {
+    const unavailable = await ensureDshReady();
+    if (unavailable) return unavailable;
+    return runLiveTurn(dshCtx, liveDeps, {
+      surface: "desktop",
+      sessionId: String(req.session_id || `desktop-${Date.now()}`),
+      input: String(req.input || ""),
+      cwd: String(req.cwd || process.cwd()),
+      provider: req.provider,
+      model: req.model,
+      onEvent: (event) => emitEvent(requestId, event),
+    });
+  }
+  return scriptedDesktopTurn(req);
+}
+
+async function researchTurn(req, requestId) {
+  if (DRIVER === "dsh") {
+    const unavailable = await ensureDshReady();
+    if (unavailable) {
+      return { ...unavailable, status: "interrupted" };
+    }
+    const cwd = String(req.cwd || "");
+    if (!cwd) {
+      return { ok: false, status: "interrupted", error: "research cwd unset" };
+    }
+    mkdirSync(cwd, { recursive: true });
+    const allowlist = Array.isArray(req.allowlist) ? req.allowlist.map(String) : [];
+    return runLiveTurn(dshCtx, liveDeps, {
+      surface: "research",
+      sessionId: String(req.session_id || req.attempt_id || `research-${Date.now()}`),
+      input: String(req.prompt || req.input || ""),
+      cwd,
+      provider: req.provider,
+      model: req.model,
+      allowlistTools: allowlist,
+      onEvent: (event) => emitEvent(requestId, event),
+    });
+  }
+  return scriptedResearchTurn(req);
 }
 
 async function handle(msg) {
   const id = msg.id;
   const cmd = msg.cmd;
   if (cmd === "ping") {
-    reply(id, { ok: true, driver: DRIVER, protocol: PROTOCOL });
+    reply(id, {
+      ok: true,
+      driver: DRIVER,
+      protocol: PROTOCOL,
+      agents: Boolean(dshCtx?.agents),
+    });
     return;
   }
   if (cmd === "desktop.turn") {
-    reply(id, await desktopTurn(msg));
+    reply(id, await desktopTurn(msg, id));
     return;
   }
   if (cmd === "research.turn") {
-    reply(id, await researchTurn(msg));
+    reply(id, await researchTurn(msg, id));
     return;
   }
-  if (cmd === "abort" || cmd === "steer" || cmd === "shutdown") {
-    if (cmd === "shutdown") {
-      reply(id, { ok: true });
-      process.exit(0);
+  if (cmd === "confirm") {
+    if (liveDeps) {
+      resolveLiveApproval(liveDeps, msg.call_id, Boolean(msg.approved));
     }
     reply(id, { ok: true });
     return;
+  }
+  if (cmd === "abort") {
+    abortLiveSession(String(msg.session_id || ""), "user");
+    reply(id, { ok: true });
+    return;
+  }
+  if (cmd === "steer") {
+    if (liveDeps) {
+      steerLiveSession(liveDeps, String(msg.session_id || ""), String(msg.input || ""));
+    }
+    reply(id, { ok: true });
+    return;
+  }
+  if (cmd === "shutdown") {
+    reply(id, { ok: true });
+    process.exit(0);
   }
   reply(id, { ok: false, error: `unknown_cmd:${cmd}` });
 }
@@ -197,8 +303,12 @@ process.stdout.write(
 );
 
 if (DRIVER === "dsh") {
-  bootDsh().catch((err) => {
-    process.stderr.write(`[kss-harness-host] dsh boot failed: ${err?.stack || err}\n`);
+  bootPromise.then((agents) => {
+    const ready = { type: "ready", agents: Boolean(agents && dshCtx?.agents) };
+    if (typeof credentialNextNonce === "string" && credentialNextNonce) {
+      ready.credential_next_nonce = credentialNextNonce;
+    }
+    process.stdout.write(`${JSON.stringify(ready)}\n`);
   });
 }
 
