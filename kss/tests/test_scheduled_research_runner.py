@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import csv
 import importlib.util
+import subprocess
+import sys
 from pathlib import Path
 
 
@@ -63,6 +65,53 @@ def test_scheduled_payloads_have_stable_idempotency_keys() -> None:
         "2026-07-16",
         "2026-07-17",
     ]
+
+
+def test_weekly_payload_degrades_when_calendar_unavailable() -> None:
+    """日历取不到时 weekly 也要能建出 payload,好让 run() 把 goal 标成 blocked。
+
+    原先这里是 `assert window is not None`,与函数签名的 `| None` 自相矛盾,导致
+    投资周报 job 每周崩在建 goal 之前(exit 1),连一条 blocked 记录都留不下。
+    """
+    degraded = runner._build_payload("weekly", "2026-07-17", None, None)
+
+    assert degraded["cadence"] == "weekly"
+    assert degraded["profile_id"] == "investment-weekly-v3"
+    assert degraded["inputs"]["date_range"] == "2026-07-17_to_2026-07-17"
+    assert "交易日历不可用" in degraded["objective"]
+    # 退化键必须区别于真实周窗口键,否则日历恢复后重跑会被误判成幂等命中。
+    real = runner._build_payload(
+        "weekly",
+        "2026-07-17",
+        ("2026-07-13", "2026-07-17"),
+        None,
+    )
+    assert degraded["client_request_id"] != real["client_request_id"]
+    # 日历缺失时不应捏造 trading_calendar 字段。
+    assert "trading_calendar" not in degraded["inputs"]
+
+
+def test_calendar_writer_imports_kss_when_executed_as_a_script(tmp_path: Path) -> None:
+    """以 `python scripts/persist_trading_calendar.py` 执行时必须能 import kss。
+
+    那种执行方式下 sys.path[0] 是 scripts/,仓库根不在路径里,``from kss.data...``
+    会 ModuleNotFoundError,而 persist_calendar 的 ``except Exception: return False``
+    把它吞成静默失败——日历因此从未写出,投资周报每周都拿不到交易日历。本测试在独立
+    子进程里跑(cwd 设在仓库外,排除靠当前目录巧合命中的情况)。
+    """
+    probe = (
+        "import runpy\n"
+        f"runpy.run_path({str(_CALENDAR_WRITER_PATH)!r}, run_name='__probe__')\n"
+        "import kss.data.tushare_client\n"
+        "print('IMPORT_OK')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+    assert "IMPORT_OK" in result.stdout, f"脚本方式执行时 kss 不可导入: {result.stderr[-400:]}"
 
 
 def test_runner_contains_no_legacy_key_environment_fallback() -> None:

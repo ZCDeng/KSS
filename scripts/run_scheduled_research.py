@@ -171,9 +171,20 @@ def _build_payload(
         client_request_id = f"scheduled:investment-daily-v1:{trade_date}"
         objective = f"投资分析日报 {trade_date}"
     else:
-        assert window is not None
-        start, end = window
         profile_id = "investment-weekly-v3"
+        if window is None:
+            # 交易日历取不到时 window 必为 None(_weekly_window 对空日历直接返 None),
+            # 而 run() 这时仍要先建 goal 才能把它标成 blocked——与 daily 的 preflight
+            # 同一条路径,为的是留记录并走幂等检查。原先这里 assert,既与本函数签名的
+            # `window: tuple[str, str] | None` 自相矛盾,又让整个 job 崩在建 goal 之前,
+            # 连一条 blocked 记录都留不下(实测 investment_analysis_weekly 每周 exit 1)。
+            # 退化成当日单点窗口:它生成的 client_request_id 与真实周窗口的不同,日历恢复
+            # 后重跑会正常建新 goal,不会撞上本次的幂等键。
+            start = end = trade_date
+            unresolved = "(周窗口未定:交易日历不可用)"
+        else:
+            start, end = window
+            unresolved = ""
         inputs = {
             "date_range": f"{start}_to_{end}",
             "as_of": end,
@@ -187,7 +198,7 @@ def _build_payload(
                 item for item in trading_calendar if start <= item <= end
             ]
         client_request_id = f"scheduled:investment-weekly-v3:{start}_{end}"
-        objective = f"投资分析周报 {start} 至 {end}"
+        objective = f"投资分析周报 {start} 至 {end}{unresolved}"
     return {
         "client_request_id": client_request_id,
         "profile_id": profile_id,

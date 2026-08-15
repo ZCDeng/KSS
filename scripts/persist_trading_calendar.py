@@ -13,9 +13,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import tempfile
 from datetime import date, timedelta
 from pathlib import Path
+
+# `python scripts/persist_trading_calendar.py` 下 sys.path[0] 是 scripts/,仓库根不在
+# 路径里,``from kss.data...`` 必然 ModuleNotFoundError,又被 persist_calendar 的
+# ``except Exception`` 吞成 return False——日历因此从未真正写出过,周报每周 blocked。
+# 与同目录 run_news_digest.py 同一写法补上仓库根。
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 def _iso_open_dates(frame: object) -> list[str]:
