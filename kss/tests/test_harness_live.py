@@ -15,6 +15,7 @@ sys.path.insert(0, str(_ROOT / "scripts"))
 
 from kss.agent.harness_kernel import (  # noqa: E402
     HarnessKernel,
+    _map_dsh_provider,
     prepare_dsh_home,
     stop_harness_kernel,
 )
@@ -216,3 +217,9 @@ def test_live_stub_research_overlay_json(stub_kernel: HarnessKernel) -> None:
 
     runner = AgentResearchTaskRunner.__new__(AgentResearchTaskRunner)
     assert runner._parse_result(body["assistant_text"]) is not None
+
+
+def test_kss_catalog_maps_to_official_deepseek() -> None:
+    assert _map_dsh_provider("deepseek") == "deepseek-official"
+    assert _map_dsh_provider("kss-primary") == "deepseek-official"
+    assert _map_dsh_provider("openai") == "openai"

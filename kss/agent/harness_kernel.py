@@ -88,6 +88,13 @@ def prepare_dsh_home(home: Path, profile_dir: Path | None = None) -> Path:
     return home
 
 
+def _map_dsh_provider(provider_id: str) -> str:
+    """Map KSS catalog ids onto dsh adapter routes."""
+    if provider_id in {"deepseek", "kss-primary"}:
+        return "deepseek-official"
+    return provider_id
+
+
 def _agent_options_payload() -> dict[str, str]:
     provider = os.getenv("KSS_HARNESS_PROVIDER", "").strip()
     model = os.getenv("KSS_HARNESS_MODEL", "").strip()
@@ -98,10 +105,10 @@ def _agent_options_payload() -> dict[str, str]:
         import kss_app_bridge as bridge
 
         primary = ProviderRouteStore(bridge.STATE_ROOT).load().primary
-        mapped = "openai" if primary.provider_id == "openai" else (
-            "deepseek" if primary.provider_id == "deepseek" else primary.provider_id
-        )
-        return {"provider": mapped, "model": primary.model_id}
+        return {
+            "provider": _map_dsh_provider(primary.provider_id),
+            "model": primary.model_id,
+        }
     except Exception:  # noqa: BLE001
         return {}
 
