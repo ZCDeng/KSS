@@ -5,7 +5,8 @@
 #   1. cron 不读 zshrc → 显式从 KSS .env 加载 TUSHARE_TOKEN(取龙头/快照需要),
 #      从 Hermes .env 加载 LLM 凭据(情绪判定走 OPENAI SDK)。
 #   2. Homebrew Python 绝对路径,避免 cron PATH 不一致。
-#   3. entry 先探活 seek 容器;不在则退出非零让 cron 监控接管,不空跑。
+#   3. entry 先探活 combosearch CLI(2026-08-15 接替下线的 seek);不可用则退出非零
+#      让 cron 监控接管,不空跑。
 #
 # 手动测试:
 #   bash scripts/run_news_digest_postclose.sh

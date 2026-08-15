@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """舆情热点 digest 生成入口(plan U10)。
 
-cron wrapper 调本脚本。**先探活 seek 容器**:不在则告警 + 退出非零(让 cron 系统监控
-接管),不空跑。seek 在 → 跑全链(采集→隔离→去重→集中度→受约束情绪/催化→关联标的→
+cron wrapper 调本脚本。**先探活采集后端**:不可用则告警 + 退出非零(让 cron 系统监控
+接管),不空跑。可用 → 跑全链(采集→隔离→去重→集中度→受约束情绪/催化→关联标的→
 渲染→归档),写 ``storage/news_digest/{date}_{scene}.md``。
+
+采集后端 2026-08-15 由 seek MCP(已下线)换成本机 ``combosearch`` CLI,见
+``kss.research.combosearch_client``。
 
 用法:
   python scripts/run_news_digest.py --scene 盘前
@@ -20,7 +23,7 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE.parent))  # 仓库根 → import kss.*
 sys.path.insert(0, str(_HERE))         # scripts → import kss_app_bridge
 
-from kss.research import seek_client  # noqa: E402
+from kss.research import combosearch_client  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -30,11 +33,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-mapping", action="store_true", help="不挂关联标的(两段形态)")
     args = parser.parse_args(argv)
 
-    # 探活:seek 容器不在 → 告警 + 退出非零,不空跑(R2 运营依赖)。
-    if not seek_client.is_alive():
+    # 探活:采集后端不可用 → 告警 + 退出非零,不空跑(R2 运营依赖)。
+    if not combosearch_client.is_alive():
         print(
-            f"[news-digest] seek 容器不可达({seek_client._endpoint()}),该场({args.scene})"
-            "降级跳过。请确认 seek Docker 容器在 cron 时刻在跑。",
+            f"[news-digest] combosearch CLI 不可用({combosearch_client._bin()}),"
+            f"该场({args.scene})降级跳过。装/修 CLI 后重试,或用 KSS_COMBOSEARCH_BIN 指定路径。",
             file=sys.stderr,
         )
         return 1
