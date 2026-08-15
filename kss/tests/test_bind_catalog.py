@@ -41,11 +41,29 @@ def test_search_overnight_apple() -> None:
     assert any(i.get("codes", {}).get("code") == "AAPL" for i in r["items"])
 
 
-def test_north_not_on_strip() -> None:
+def test_north_bindable_on_strip() -> None:
+    """KTD2：四槽模型下北向是可替换 strip 指标，picker 必须能搜到。
+
+    旧断言叫 test_north_not_on_strip，锁的是 R6「allowed_slots 门闩；北向禁
+    strip_metric」。该约束已被 2026-07-31 的 KTD2 明文废止（「解除北向禁 strip
+    以实现四槽语义……Governs R6」），同日 43b97b72 落地时把 north_money 加进了
+    HOT_METRICS，却漏改本文件——全仓其余三处相关断言当时都已翻面。
+    """
     cat = build_catalog(include_cn=False)
     r = search(SLOT_STRIP, "北向", catalog=cat)
     assert r["ok"] is True
-    assert r["items"] == []
+    assert r["items"], "北向是默认 strip 槽之一，picker 搜不到会导致用户无法改绑"
+    assert r["items"][0]["metric_id"] == "north_money"
+
+
+def test_default_strip_slots_all_findable_in_picker() -> None:
+    """四个默认 strip 槽都得能在 picker 里搜到，否则盘面显示了却改不了绑。"""
+    from kss.ui_surface.config import DEFAULT_STRIP_SLOTS
+
+    cat = build_catalog(include_cn=False)
+    for mid in DEFAULT_STRIP_SLOTS:
+        r = search(SLOT_STRIP, mid, catalog=cat)
+        assert r["items"], f"默认槽 {mid} 在 picker 中不可寻"
 
 
 def test_bad_slot() -> None:
