@@ -194,18 +194,16 @@ fi
 # Prefer explicit Apple HTTP TSA — bare --timestamp sometimes fails with
 # "The timestamp service is not available" when the default endpoint flakes.
 CODESIGN_TIMESTAMP="${KSS_CODESIGN_TIMESTAMP:-http://timestamp.apple.com/ts01}"
-# Nested Harness addons (koffi / node-pty / sharp + libvips) are Mach-O and
-# must be signed before the parent bundle is sealed.
+# Nested Harness natives (koffi, node-pty, sharp, ripgrep, spawn-helper)
+# are Mach-O and must be signed before the parent bundle is sealed.
+# Detect by magic bytes — spawn-helper is 0644, so -perm +111 misses it.
 while IFS= read -r native; do
   [ -n "$native" ] || continue
   echo "签名 Harness native: $native"
   codesign --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
     --sign "$SIGN_IDENTITY" "$native"
   codesign --verify --strict --verbose=2 "$native"
-done < <(
-  find "$APP_RESOURCES/harness" -type f -name '*.dylib' | sort
-  find "$APP_RESOURCES/harness" -type f -name '*.node' | sort
-)
+done < <(python3 "$ROOT_DIR/script/list_harness_macho.py" "$APP_RESOURCES/harness")
 codesign --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
   --entitlements "$NODE_ENTITLEMENTS" \
   --sign "$SIGN_IDENTITY" "$APP_RESOURCES/pi-ai-runtime/bin/node"
