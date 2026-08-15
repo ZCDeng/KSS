@@ -34,13 +34,32 @@ def _retrieved_at() -> str:
 
 
 def load_sources(path: str | Path | None = None) -> list[dict[str, Any]]:
-    """读源清单。文件不存在 → 空列表(容错,不抛)。"""
+    """读源清单。文件不存在 → 空列表(容错,不抛)。
+
+    兼容两种结构:U1 多赛道模型的 ``tracks[].sources[]``,以及更早的顶层
+    ``sources[]`` 扁平结构。yaml 2026-07-09 起改成分赛道,而这里一直只读顶层
+    ``sources``,导致此后恒返回空清单、采集全程空转——两种都认才不会再漏。
+    """
     p = Path(path) if path is not None else _DEFAULT_SOURCES
     try:
         raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     except FileNotFoundError:
         return []
-    sources = raw.get("sources") if isinstance(raw, dict) else None
+    if not isinstance(raw, dict):
+        return []
+
+    tracks = raw.get("tracks")
+    if isinstance(tracks, list):
+        out: list[dict[str, Any]] = []
+        for t in tracks:
+            if not isinstance(t, dict):
+                continue
+            for s in t.get("sources") or []:
+                if isinstance(s, dict):
+                    out.append(s)
+        return out
+
+    sources = raw.get("sources")
     return [s for s in (sources or []) if isinstance(s, dict)]
 
 
@@ -139,7 +158,8 @@ def collect_news(
         }
     """
     if reach is None:
-        from kss.research.seek_client import reach as _reach  # 延迟导入,避开 fastmcp 常驻开销
+        # seek MCP 2026-08-15 下线,默认改走 comboSearch CLI(同签名)。延迟导入,免常驻开销。
+        from kss.research.combosearch_client import reach as _reach
         reach = _reach
 
     sources = [s for s in load_sources(sources_path) if s.get("enabled", True)]

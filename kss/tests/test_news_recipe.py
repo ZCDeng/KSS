@@ -64,6 +64,48 @@ def _write_sources(tmp_path, sources) -> Path:
     return p
 
 
+def _write_tracks(tmp_path, tracks) -> Path:
+    p = tmp_path / "news_sources_tracks.yaml"
+    p.write_text(yaml.safe_dump({"tracks": tracks}, allow_unicode=True), encoding="utf-8")
+    return p
+
+
+# ---- 源清单加载:两种 yaml 结构都要认 ----
+
+def test_load_sources_reads_track_grouped_yaml(tmp_path):
+    """U1 起生产 yaml 是 tracks[].sources[];只读顶层 sources 会恒返回空清单。"""
+    path = _write_tracks(tmp_path, [
+        {"key": "ai", "name": "AI", "sources": [
+            {"key": "a1", "name": "源一", "tool": "bocha_web_search", "args": {"query": "x"}},
+            {"key": "a2", "name": "源二", "tool": "bocha_web_search", "args": {"query": "y"}},
+        ]},
+        {"key": "macro", "name": "宏观", "sources": [
+            {"key": "m1", "name": "源三", "tool": "reach_weibo_hot", "args": {}},
+        ]},
+    ])
+    got = collect.load_sources(path)
+    assert [s["key"] for s in got] == ["a1", "a2", "m1"]
+
+
+def test_load_sources_still_reads_flat_yaml(tmp_path):
+    """旧扁平结构不能因为兼容新结构而失效。"""
+    path = _write_sources(tmp_path, [
+        {"key": "weibo", "name": "微博", "tool": "reach_weibo_hot", "args": {}},
+    ])
+    assert [s["key"] for s in collect.load_sources(path)] == ["weibo"]
+
+
+def test_production_sources_yaml_is_not_empty():
+    """冒烟:仓库里真实的源清单必须能被读出来。
+
+    2026-07-09 yaml 改成分赛道后 load_sources 没跟上,采集空转了一个多月而测试全绿
+    ——因为测试只喂扁平结构。这条直接打真实配置,堵住同类回归。
+    """
+    got = collect.load_sources()
+    assert got, "生产 news_sources.yaml 读出空清单"
+    assert any(s.get("enabled", True) for s in got)
+
+
 def _fake_reach(responses):
     """responses: {tool: {"ok":..,"text":..} 或 Exception}。"""
     def reach(tool, **args):
