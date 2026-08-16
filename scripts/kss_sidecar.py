@@ -120,6 +120,7 @@ def _session_store() -> SessionStore:
 
 def _skill_manager() -> SkillManager:
     import kss_chat_loop as chat_loop
+    from kss.agent.skills import default_machine_skill_roots
 
     return SkillManager(
         bridge.PROJECT_ROOT,
@@ -127,6 +128,10 @@ def _skill_manager() -> SkillManager:
         available_tools=[
             str(spec.get("name") or "") for spec in chat_loop.TOOL_SPECS
         ],
+        # 本机技能目录(~/.claude/skills、~/.agents/skills):
+        # 之前只挂在 KSSAgentService 上,agent-skills 列表走的是这里——
+        # 漏挂导致 UI 永远看不到本机技能。
+        machine_roots=default_machine_skill_roots(),
     )
 
 

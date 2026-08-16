@@ -259,13 +259,16 @@ class SkillManager:
                 skill_id = self._skill_id(resolved, root)
                 trust = self._candidate_trust(skill_id, root)
                 required_tools = self._string_list(parsed.get("required_tools"))
+                # 本机技能的 required_tools 用的是外部工具词汇(Bash/Read 等),
+                # 不映射 KSS TOOL_SPECS——只对仓库/用户层做可用性门槛,
+                # 本机层由 adopt 信任门把关。
                 missing_tools = (
                     tuple(
                         tool
                         for tool in required_tools
                         if tool not in self.available_tools
                     )
-                    if self.available_tools is not None
+                    if self.available_tools is not None and root.kind != "machine"
                     else ()
                 )
                 candidates.append(

@@ -1267,6 +1267,40 @@ def test_agent_slash_run_external_mcp_persists_untrusted(monkeypatch, tmp_path):
     assert bad["status"] == "error"
 
 
+def test_agent_skills_list_includes_machine_skills_when_enabled(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    skill_dir = home / ".claude" / "skills" / "grill-me"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: grill-me\ndescription: 拷问一只票\n"
+        "required_tools: [Bash, Read]\n---\n\n# grill-me\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("KSS_SKILLS_MACHINE_DISCOVERY", "1")
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path / "repo")
+    (tmp_path / "repo").mkdir(exist_ok=True)
+
+    listed = json.loads(sc._handle_agent_json_command({
+        "cmd": "agent-skills", "action": "list",
+    }))
+    skills = json.loads(listed["stdout"])["data"]["skills"]
+    grill = next(item for item in skills if item["name"] == "grill-me")
+    assert grill["source"] == "machine"
+    # 外部工具词汇(Bash/Read)不映射 KSS TOOL_SPECS,不得误标不可用
+    assert grill["available"] is True
+    assert grill["enabled"] is False
+
+    adopted = json.loads(sc._handle_agent_json_command({
+        "cmd": "agent-skills", "action": "adopt", "skill_id": grill["id"],
+    }))
+    skills = json.loads(adopted["stdout"])["data"]["skills"]
+    grill = next(item for item in skills if item["id"] == grill["id"])
+    assert grill["enabled"] is True
+    assert grill["trust"] == "user_approved"
+
+
 def test_agent_attachment_import_list_remove(monkeypatch, tmp_path):
     from kss.agent.attachments import AttachmentStore
 

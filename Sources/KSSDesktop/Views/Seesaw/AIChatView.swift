@@ -1686,6 +1686,7 @@ struct AIChatView: View {
             fileRefChips
             slashCommandPanel
             slashParamHint
+            slashNoMatchHint
             atFileSuggestionPanel
             focusSessionSkillChips
 
@@ -3140,6 +3141,25 @@ struct AIChatView: View {
         input = ""
         Task { await store.runSlashTool(invocation) }
         return true
+    }
+
+    /// 输入了 /token 但一个都没匹配上:明确提示回车会按普通消息发送,
+    /// 不再让用户误以为命令已识别(实测反馈:/grill 落进模型对话)。
+    @ViewBuilder
+    private var slashNoMatchHint: some View {
+        if let token = activeSlashToken, !token.isEmpty, slashEntries.isEmpty {
+            HStack(spacing: 7) {
+                Image(systemName: "questionmark.circle")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("没有匹配 \"/\(token)\" 的命令、技能或工具——回车将按普通消息发送")
+                    .lineLimit(1)
+            }
+            .font(KSSFont.themed(11, .medium, theme: theme))
+            .foregroundStyle(theme.textSecondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: 9))
+        }
     }
 
     @ViewBuilder
