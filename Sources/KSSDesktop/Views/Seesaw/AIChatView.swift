@@ -1672,7 +1672,9 @@ struct AIChatView: View {
                 attachmentPickerButton
 
                 TextField(
-                    store.chatMessages.isEmpty ? "问问盘面、个股或一个研究问题…" : "继续追问…",
+                    store.isChatStreaming
+                        ? "追问会排队，本轮生成结束后处理…"
+                        : (store.chatMessages.isEmpty ? "问问盘面、个股或一个研究问题…" : "继续追问…"),
                     text: $input,
                     axis: .vertical
                 )
@@ -1712,14 +1714,11 @@ struct AIChatView: View {
                 .onPasteCommand(of: [.png, .tiff, .jpeg]) { _ in
                     handleComposerImagePaste()
                 }
+                // 与 32pt 图标同高:额外的垂直 padding 会让底对齐时文字中心
+                // 比图标中心高 4pt(实测反馈的"永远对不齐")。
                 .frame(minHeight: 32, alignment: .center)
-                .padding(.vertical, 4)
 
                 composerModelMenu
-
-                if store.isChatStreaming {
-                    queueShortcutHint
-                }
                 focusSendButton
             }
         }
@@ -2129,7 +2128,7 @@ struct AIChatView: View {
 
     private var focusSendButton: some View {
         // 提交/停止同一按钮的两个态：空闲=发送（↑），流式=停止（■）。
-        // 流式中排队走回车（见 queueShortcutHint）。
+        // 流式中排队走回车（占位文案提示"追问会排队"）。
         Button {
             if store.isChatStreaming {
                 store.stopChatGeneration()
@@ -2813,13 +2812,6 @@ struct AIChatView: View {
             && store.seesawProviderReadiness.isReadyForComposer
             && (!input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || (!store.isChatStreaming && !store.pendingAgentAttachments.isEmpty))
-    }
-
-    private var queueShortcutHint: some View {
-        Text("↩ 排队追问 · ⌥↩ 换行")
-            .font(KSSFont.themed(10.5, theme: theme))
-            .foregroundStyle(theme.textSecondary)
-            .lineLimit(1)
     }
 
     @ViewBuilder

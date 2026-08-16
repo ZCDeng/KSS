@@ -17,8 +17,10 @@ final class AgentQueueInteractionTests: XCTestCase {
         XCTAssertTrue(source.contains("store.enqueueAgentInput("))
         XCTAssertTrue(source.contains(#"? "follow_up""#))
 
-        // 队列可视化与停止控制保持在位。
-        XCTAssertTrue(source.contains("↩ 排队追问 · ⌥↩ 换行"))
+        // 队列可视化与停止控制保持在位;快捷键提示已删,排队语义由
+        // 流式占位文案表达(实测反馈:常驻提示毫无意义)。
+        XCTAssertFalse(source.contains("排队追问 · ⌥↩"))
+        XCTAssertTrue(source.contains("追问会排队，本轮生成结束后处理…"))
         XCTAssertTrue(source.contains("queuedInputPanel"))
         XCTAssertTrue(source.contains("恢复的输入不会自动执行"))
         XCTAssertTrue(source.contains("store.stopChatGeneration()"))
