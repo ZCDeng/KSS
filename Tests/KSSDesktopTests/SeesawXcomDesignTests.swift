@@ -7,7 +7,7 @@ final class SeesawXcomDesignTests: XCTestCase {
                 .deletingLastPathComponent()
                 .deletingLastPathComponent()
                 .deletingLastPathComponent()
-                .appending(path: "Sources/KSSDesktop/Views/AIChatView.swift")
+                .appending(path: "Sources/KSSDesktop/Views/Seesaw/AIChatView.swift")
             return try String(contentsOf: sourceURL, encoding: .utf8)
         }
     }
@@ -23,6 +23,21 @@ final class SeesawXcomDesignTests: XCTestCase {
         }
     }
 
+    func testComposerSubmitIsImeSafeAndUnifiedWithStop() throws {
+        let source = try source
+        // 回车经 onSubmit 发送：IME 组词确认的回车不触发提交；⌥↩ 原生换行。
+        // @file 悬浮面板打开时回车先选中引用，仍不绕过 onSubmit。
+        XCTAssertFalse(source.contains("onKeyPress(.return"))
+        XCTAssertTrue(source.contains("submitInput(mode: \"steering\")"))
+        XCTAssertTrue(source.contains("if atFilePanelVisible {"))
+        // 提交/停止是同一按钮的两个态，不再有并排的独立停止按钮。
+        XCTAssertFalse(source.contains("focusStopButton"))
+        XCTAssertFalse(source.contains("xcomStopButton"))
+        XCTAssertTrue(source.contains("store.isChatStreaming ? \"stop.fill\" : \"arrow.up\""))
+        // 消息悬停有显性复制入口。
+        XCTAssertTrue(source.contains("private func messageActionRow"))
+    }
+
     func testAllThemesUseSharedFocusShell() throws {
         let source = try source
         XCTAssertTrue(source.contains("focusSeesawShell(size: geo.size)"))
@@ -34,11 +49,11 @@ final class SeesawXcomDesignTests: XCTestCase {
 
     func testFocusShellKeepsAuxiliarySurfacesOutOfConversationColumn() throws {
         let source = try source
+        // legacy xcom/classic shell 已删除：Focus Layout 是唯一 body 路径。
+        XCTAssertFalse(source.contains("private func xcomSeesawShell"))
+        XCTAssertFalse(source.contains("private func classicSeesawShell"))
         let focusStart = try XCTUnwrap(source.range(of: "private func focusSeesawShell"))
-        let legacyStart = try XCTUnwrap(
-            source.range(of: "private func xcomSeesawShell", range: focusStart.upperBound..<source.endIndex)
-        )
-        let focus = String(source[focusStart.lowerBound..<legacyStart.lowerBound])
+        let focus = String(source[focusStart.lowerBound..<source.endIndex])
         XCTAssertTrue(focus.contains("focusSessionPalette"))
         XCTAssertTrue(focus.contains("focusSkillPalette"))
         XCTAssertTrue(focus.contains("focusContextPopover"))
@@ -49,10 +64,7 @@ final class SeesawXcomDesignTests: XCTestCase {
     func testFocusShellRendersEveryOverlayFromOneSharedSurface() throws {
         let source = try source
         let focusStart = try XCTUnwrap(source.range(of: "private func focusSeesawShell"))
-        let legacyStart = try XCTUnwrap(
-            source.range(of: "private func xcomSeesawShell", range: focusStart.upperBound..<source.endIndex)
-        )
-        let focus = String(source[focusStart.lowerBound..<legacyStart.lowerBound])
+        let focus = String(source[focusStart.lowerBound..<source.endIndex])
 
         XCTAssertTrue(focus.contains("focusOverlaySurface"))
         XCTAssertFalse(focus.contains(".popover(isPresented: overlayBinding(.sessions)"))
@@ -92,10 +104,15 @@ final class SeesawXcomDesignTests: XCTestCase {
 
     func testFocusEmptyStateUsesTaskRowsAndComposerOwnsModelStatus() throws {
         let source = try source
+        // 首页 doodle:空态顶部的 Seesaw 描边动效字标(Google 式产品气息)。
+        XCTAssertTrue(source.contains("SeesawWordmark()"))
+        // 新会话入口常驻 header 右侧,不再只藏在会话面板里。
+        XCTAssertTrue(source.contains("store.createAgentSession()"))
         XCTAssertTrue(source.contains("private var focusResearchTaskRows"))
         XCTAssertTrue(source.contains("researchTaskRow("))
         XCTAssertTrue(source.contains("$0.name == starter.skillId"))
         XCTAssertTrue(source.contains("private var composerInlineStatus"))
+        XCTAssertTrue(source.contains("if let pending = store.pendingWriteConfirm"))
         // FlowDown-style: send sits on the same row as TextField (no stacked control bar).
         XCTAssertTrue(source.contains("FlowDown-inspired input"))
         XCTAssertTrue(source.contains("focusSendButton"))
@@ -195,4 +212,19 @@ final class SeesawXcomDesignTests: XCTestCase {
         XCTAssertTrue(source.contains(".transition(seesawDetailTransition)"))
         XCTAssertTrue(source.contains(".animation(seesawDetailAnimation, value: store.selectedSection)"))
     }
+
+    func testResolveWriteConfirmUsesControlChannelWithoutBlockingReader() throws {
+        let storeURL = try XCTUnwrap(URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "Sources/KSSDesktop/Services/KSSStore.swift"))
+        let source = try String(contentsOf: storeURL, encoding: .utf8)
+        XCTAssertTrue(source.contains("control.confirm(runId: activeAgentRunId, callId: confirm.callId"))
+        XCTAssertTrue(source.contains("return false"))
+        let bridgeURL = storeURL.deletingLastPathComponent().appending(path: "BridgeClient.swift")
+        let bridge = try String(contentsOf: bridgeURL, encoding: .utf8)
+        XCTAssertTrue(bridge.contains("onConfirmRequired no longer blocks the reader"))
+    }
+
 }

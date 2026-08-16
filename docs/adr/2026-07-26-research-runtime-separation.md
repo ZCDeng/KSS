@@ -2,6 +2,9 @@
 
 ## Status
 
+Superseded-in-part by plan 2026-08-14-002: the **kernel owner** is DeepSeek Harness, not Python AgentRuntime. Research overlay (Profile / DAG / audit) still sits above the kernel.
+
+
 Accepted.
 
 ## Context

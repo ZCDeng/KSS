@@ -17,9 +17,14 @@ def test_mcp_registers_research_read_tools(monkeypatch):
             self.name = name
             self.tools: list[str] = []
 
-        def tool(self, fn):
-            self.tools.append(fn.__name__)
-            return fn
+        def tool(self, fn=None, **kwargs):
+            def deco(f):
+                self.tools.append(str(kwargs.get("name") or f.__name__))
+                return f
+
+            if callable(fn):
+                return deco(fn)
+            return deco
 
         def run(self):
             raise AssertionError("test should not run MCP server")

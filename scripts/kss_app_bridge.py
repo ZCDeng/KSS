@@ -52,9 +52,28 @@ ETF_PARQUET_MODULES = ("pyarrow", "fastparquet")
 BRIDGE_SCHEMA_VERSION = 1
 
 
+def _lossless_jsonable(value: Any) -> Any:
+    """Canonicalize values so dsh isJsonValue accepts the payload.
+
+    IEEE -0.0 round-trips through JSON.parse as JS -0, which dsh rejects as
+    non-lossless. NaN/Inf cannot be dumped with allow_nan=False.
+    """
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return None
+        if value == 0.0 and math.copysign(1.0, value) < 0:
+            return 0.0
+        return value
+    if isinstance(value, dict):
+        return {str(key): _lossless_jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_lossless_jsonable(item) for item in value]
+    return value
+
+
 def _envelope_json(payload: Any) -> str:
     """版本化信封 {schemaVersion, data} 的 JSON 行（U4/U5：subprocess 与 sidecar 共用）。"""
-    envelope = {"schemaVersion": BRIDGE_SCHEMA_VERSION, "data": payload}
+    envelope = {"schemaVersion": BRIDGE_SCHEMA_VERSION, "data": _lossless_jsonable(payload)}
     return json.dumps(envelope, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
 
 
@@ -102,6 +121,7 @@ def _sidecar_version_fingerprint(project_root: Path | None = None) -> str:
         key_files = [
             Path(__file__),
             root / "scripts" / "kss_sidecar.py",
+            root / "kss" / "agent" / "harness_kernel.py",
         ]
         for path in key_files:
             if path.exists():
@@ -6040,6 +6060,10 @@ COMMANDS = {
         "args": ["QUERY", "[MODE]", "[FORMAT]", "[ASSUMPTIONS_JSON]"],
     },
     "report": {"desc": "读 storage 下 markdown 报告", "args": ["PATH"]},
+    "workspace-files": {
+        "desc": "Seesaw @file 引用:工作区文件模糊搜索(只读白名单)",
+        "args": ["[QUERY]", "[LIMIT]"],
+    },
     "paper-summary": {"desc": "模拟盘跟踪汇总", "args": []},
     "resolve": {"desc": "文本/OCR → ts_code", "args": ["TEXT"]},
     "import": {"desc": "导入个股历史", "args": ["CODES"]},
@@ -7124,6 +7148,92 @@ def _persist_page_pull(symbol: str, provider: str, interval_minutes: int,
         pass
 
 
+# Seesaw @file 引用的可搜索根（root_base, 相对前缀）。storage 挂 STATE_ROOT，
+# docs 挂 PROJECT_ROOT；返回值保留相对前缀，sidecar 端按同一白名单再校验。
+WORKSPACE_FILE_ROOTS: tuple[tuple[str, str], ...] = (
+    ("state", "storage/reports"),
+    ("state", "storage/exports"),
+    ("state", "storage/ui_surface"),
+    ("project", "docs"),
+)
+_WORKSPACE_FILE_EXTS = {
+    ".md", ".txt", ".csv", ".json", ".yaml", ".yml", ".tsv", ".log",
+    ".py", ".swift", ".js", ".mjs", ".ts", ".html", ".toml",
+}
+_WORKSPACE_FILE_MAX_BYTES = 512 * 1024
+_WORKSPACE_SCAN_CAP = 20000
+
+
+def _workspace_root_base(kind: str) -> Path:
+    return STATE_ROOT if kind == "state" else PROJECT_ROOT
+
+
+def _workspace_match_score(query: str, name: str, rel: str) -> int:
+    """简单确定性打分：文件名子串 > 路径子串 > 子序列；无匹配返回 0."""
+    if not query:
+        return 1
+    q = query.lower()
+    name_l = name.lower()
+    rel_l = rel.lower()
+    if name_l.startswith(q):
+        return 100
+    if q in name_l:
+        return 80
+    if q in rel_l:
+        return 60
+    it = iter(rel_l)
+    if all(ch in it for ch in q):
+        return 30
+    return 0
+
+
+def workspace_files(query: str, *, limit: int = 30) -> dict[str, Any]:
+    """工作区文件模糊搜索（只读，白名单根，文本扩展名）."""
+    query = (query or "").strip()
+    hits: list[dict[str, Any]] = []
+    scanned = 0
+    for kind, prefix in WORKSPACE_FILE_ROOTS:
+        base = _workspace_root_base(kind)
+        root = base / prefix
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            scanned += 1
+            if scanned > _WORKSPACE_SCAN_CAP:
+                break
+            if not path.is_file():
+                continue
+            if any(part.startswith(".") for part in path.parts):
+                continue
+            if path.suffix.lower() not in _WORKSPACE_FILE_EXTS:
+                continue
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            if stat.st_size > _WORKSPACE_FILE_MAX_BYTES:
+                continue
+            rel = f"{prefix}/{path.relative_to(root).as_posix()}"
+            score = _workspace_match_score(query, path.name, rel)
+            if score <= 0:
+                continue
+            hits.append({
+                "path": rel,
+                "name": path.name,
+                "size": int(stat.st_size),
+                "mtime": int(stat.st_mtime),
+                "score": score,
+            })
+        if scanned > _WORKSPACE_SCAN_CAP:
+            break
+    hits.sort(key=lambda item: (-item["score"], -item["mtime"], item["path"]))
+    trimmed = [
+        {key: value for key, value in item.items() if key != "score"}
+        for item in hits[:limit]
+    ]
+    return {"query": query, "files": trimmed}
+
+
 def dispatch(command: str, args: list[str]) -> Any:
     """命令 → payload（传给 _json_dump 的对象）。subprocess(main) 与 sidecar 共用。
     参数错误 raise ValueError；下游可能 raise SystemExit（如 report 路径护栏）——
@@ -7151,6 +7261,14 @@ def dispatch(command: str, args: list[str]) -> Any:
         if not args:
             raise ValueError("report command requires PATH")
         return report_detail(args[0])
+    if command == "workspace-files":
+        limit = 30
+        if len(args) > 1:
+            try:
+                limit = max(1, min(100, int(args[1])))
+            except ValueError:
+                limit = 30
+        return workspace_files(args[0] if args else "", limit=limit)
     if command == "paper-summary":
         return _paper_summary()
     if command == "resolve":

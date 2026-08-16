@@ -97,10 +97,15 @@ class ProviderRoute:
 
 @dataclass(frozen=True)
 class ProviderRouteSet:
-    """Ordered routes; fallback is safe only before any model output."""
+    """Ordered routes; fallback is safe only before any model output.
+
+    ``vision`` 是独立的视觉模型槽：仅供 vision_analyze 等图像工具路由，
+    不参与聊天回退链（``ordered()`` 不包含它）。
+    """
 
     primary: ProviderRoute
     fallback: ProviderRoute | None = None
+    vision: ProviderRoute | None = None
 
     def ordered(self) -> tuple[ProviderRoute, ...]:
         if self.fallback is None:
@@ -111,6 +116,7 @@ class ProviderRouteSet:
         return {
             "primary": self.primary.as_dict(),
             "fallback": self.fallback.as_dict() if self.fallback else None,
+            "vision": self.vision.as_dict() if self.vision else None,
         }
 
 
@@ -162,6 +168,7 @@ class ProviderRouteStore:
                     raise ValueError("provider route root must be an object")
                 primary = value.get("primary")
                 fallback = value.get("fallback")
+                vision = value.get("vision")
                 if not isinstance(primary, Mapping):
                     raise ValueError("provider primary route is missing")
                 return ProviderRouteSet(
@@ -169,6 +176,11 @@ class ProviderRouteStore:
                     fallback=(
                         ProviderRoute.from_dict(fallback)
                         if isinstance(fallback, Mapping)
+                        else None
+                    ),
+                    vision=(
+                        ProviderRoute.from_dict(vision)
+                        if isinstance(vision, Mapping)
                         else None
                     ),
                 )
@@ -381,5 +393,7 @@ __all__ = [
     "ProviderModel",
     "ProviderRoute",
     "ProviderRouteSet",
+    "ProviderRouteStore",
     "legacy_routes_from_environment",
+    "routes_from_legacy_environment",
 ]

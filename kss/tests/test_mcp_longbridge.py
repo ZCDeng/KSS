@@ -23,9 +23,14 @@ def _load_kss_mcp(monkeypatch, *, live="0"):
             self.name = name
             self.tools: list[str] = []
 
-        def tool(self, fn):
-            self.tools.append(fn.__name__)
-            return fn
+        def tool(self, fn=None, **kwargs):
+            def deco(f):
+                self.tools.append(str(kwargs.get("name") or f.__name__))
+                return f
+
+            if callable(fn):
+                return deco(fn)
+            return deco
 
         def run(self):
             raise AssertionError("test should not run MCP server")
@@ -60,7 +65,7 @@ def test_longbridge_tools_funnel_through_bridge_command(monkeypatch):
     assert ("longbridge-quote", ["688008.SH"]) in seen
 
     kss_mcp.get_intraday_snapshot("688008.SH")
-    assert ("intraday-snapshot", ["688008.SH", "1"]) in seen
+    assert ("intraday-snapshot", ["688008.SH"]) in seen
 
 
 def test_real_fastmcp_registers_longbridge_read_tools(monkeypatch):

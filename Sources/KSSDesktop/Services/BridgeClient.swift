@@ -115,6 +115,11 @@ struct BridgeClient {
         try run(["report", path], as: ReportDetail.self)
     }
 
+    /// Seesaw @file 引用：工作区文件模糊搜索（只读白名单）。
+    func workspaceFiles(query: String, limit: Int = 30) throws -> WorkspaceFilesResponse {
+        try run(["workspace-files", query, String(limit)], as: WorkspaceFilesResponse.self)
+    }
+
     func perillaEnrichment(symbol: String) throws -> PerillaEnrichment {
         try run(["perilla-enrichment", symbol], as: PerillaEnrichment.self)
     }
@@ -651,6 +656,8 @@ struct BridgeClient {
         if let d = try? Data(contentsOf: bridgeFile) { data.append(d) }
         let sidecarFile = projectRoot.appending(path: "scripts/kss_sidecar.py")
         if let d = try? Data(contentsOf: sidecarFile) { data.append(d) }
+        let kernelFile = projectRoot.appending(path: "kss/agent/harness_kernel.py")
+        if let d = try? Data(contentsOf: kernelFile) { data.append(d) }
 
         let digest = SHA256.hash(data: data)
         let hex = digest.map { String(format: "%02x", $0) }.joined()
@@ -709,6 +716,7 @@ struct BridgeClient {
         env["KSS_STATE_ROOT"] = stateRoot.path
         env["KSS_PYTHON"] = python.path
         env["PYTHONDONTWRITEBYTECODE"] = "1"
+        env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONPYCACHEPREFIX"] = stateRoot.appending(path: ".cache/pycache").path
         for (key, value) in KeychainStore.sidecarEnvironment() { env[key] = value }
         if let broker = CredentialBrokerRegistry.broker(for: stateRoot) {
@@ -935,7 +943,11 @@ struct BridgeClient {
     func agentProviders(
         action: String = "list",
         primary: AgentProviderRoute? = nil,
-        fallback: AgentProviderRoute? = nil
+        fallback: AgentProviderRoute? = nil,
+        vision: AgentProviderRoute? = nil,
+        clearVision: Bool = false,
+        customProvider: [String: Any]? = nil,
+        customProviderId: String? = nil
     ) throws -> AgentProvidersResponse {
         var payload: [String: Any] = ["action": action]
         if action == "reload_credentials",
@@ -954,7 +966,35 @@ struct BridgeClient {
            let object = try? JSONSerialization.jsonObject(with: data) {
             payload["fallback"] = object
         }
+        // vision 键的存在性即语义：带 dict 覆盖，带 null 清除，缺省保持。
+        if let vision,
+           let data = try? encoder.encode(vision),
+           let object = try? JSONSerialization.jsonObject(with: data) {
+            payload["vision"] = object
+        } else if clearVision {
+            payload["vision"] = NSNull()
+        }
+        if let customProvider {
+            payload["provider"] = customProvider
+        }
+        if let customProviderId {
+            payload["provider_id"] = customProviderId
+        }
         return try agentCommand("agent-providers", payload: payload, as: AgentProvidersResponse.self)
+    }
+
+    /// Seesaw slash command:catalog 列只读工具;run 直连执行并落会话。
+    func agentSlash(
+        action: String,
+        sessionId: String? = nil,
+        name: String? = nil,
+        args: [String: String]? = nil
+    ) throws -> AgentSlashResponse {
+        var payload: [String: Any] = ["action": action]
+        if let sessionId { payload["session_id"] = sessionId }
+        if let name { payload["name"] = name }
+        if let args { payload["args"] = args }
+        return try agentCommand("agent-slash", payload: payload, as: AgentSlashResponse.self)
     }
 
     func agentAttachments(
@@ -1057,6 +1097,7 @@ struct BridgeClient {
     func agentTurn(sessionId: String, clientTurnId: String, input: String,
                    sourceQueueId: String? = nil,
                    attachmentIds: [String] = [],
+                   fileRefs: [String] = [],
                    liveContextScope: [String: String]? = nil,
                    onControlReady: @escaping (AgentControlChannel) -> Void,
                    onFrame: @escaping (AgentFrame) -> Void,
@@ -1071,6 +1112,7 @@ struct BridgeClient {
         ]
         if let sourceQueueId { payload["source_queue_id"] = sourceQueueId }
         if !attachmentIds.isEmpty { payload["attachment_ids"] = attachmentIds }
+        if !fileRefs.isEmpty { payload["file_refs"] = fileRefs }
         if let liveContextScope { payload["live_context_scope"] = liveContextScope }
         guard var request = try? JSONSerialization.data(withJSONObject: payload) else {
             onEnd("无法编码 Agent 请求"); return
@@ -1278,7 +1320,7 @@ struct BridgeClient {
         var buf = [UInt8](repeating: 0, count: 65536)
         var idleTicks = 0
         var streamError: String?
-        let maxIdleTicks = 300
+        var confirmSeen = false
         while true {
             let r = read(fd, &buf, buf.count)
             if r > 0 {
@@ -1292,8 +1334,10 @@ struct BridgeClient {
                     else { continue }
                     onFrame(frame)
                     if frame.type == "confirm_required" {
-                        let approved = onConfirmRequired(frame)
-                        control.confirm(runId: frame.runId, callId: frame.callId ?? "", approved: approved)
+                        // Chrome owns the answerer. Sending confirm here would auto-deny
+                        // because onConfirmRequired no longer blocks the reader.
+                        confirmSeen = true
+                        _ = onConfirmRequired(frame)
                     }
                     if Self.isAgentStreamTerminal(frame) {
                         onEnd(nil)
@@ -1313,12 +1357,20 @@ struct BridgeClient {
                 let e = errno
                 if e == EAGAIN || e == EWOULDBLOCK {
                     idleTicks += 1
-                    if idleTicks >= maxIdleTicks { onEnd("Agent 响应超时"); return }
+                    if idleTicks >= Self.agentStreamIdleBudget(confirmSeen: confirmSeen) {
+                        onEnd("Agent 响应超时"); return
+                    }
                     continue
                 }
                 onEnd("Agent 读取错误 errno=\(e)"); return
             }
         }
+    }
+
+    /// 审批等待期 sidecar 无帧可发（人未 tap 时最长 300s 才自动拒绝恢复出帧）。
+    /// 空闲预算必须盖过这段静默，否则读循环先断连，确认条一挂就杀回合。
+    static func agentStreamIdleBudget(confirmSeen: Bool) -> Int {
+        confirmSeen ? 360 : 300
     }
 
     private static func runResearchEventStream(
@@ -1381,21 +1433,9 @@ struct BridgeClient {
         isAgentDuplicateTerminal(frame) || frame.type == "agent_end"
     }
 
-    /// 在同连接写回 chat-turn-confirm{call_id, approved}（U5 人在环内闸）。
+    /// Legacy chat-turn adapter onto the same grant path as `AgentControlChannel.confirm`.
     private static func sendConfirm(fd: Int32, callId: String, approved: Bool) {
-        guard var line = try? JSONSerialization.data(withJSONObject: [
-            "cmd": "chat-turn-confirm", "call_id": callId, "approved": approved
-        ]) else { return }
-        line.append(0x0A)
-        let bytes = [UInt8](line)
-        var sent = 0
-        while sent < bytes.count {
-            let w = bytes.withUnsafeBytes { raw in
-                send(fd, raw.baseAddress!.advanced(by: sent), bytes.count - sent, 0)
-            }
-            if w <= 0 { return }
-            sent += w
-        }
+        AgentControlChannel(fd: fd).confirm(runId: nil, callId: callId, approved: approved)
     }
 
     final class AgentControlChannel {

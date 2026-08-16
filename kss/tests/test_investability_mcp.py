@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
+import importlib
 import re
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -16,8 +18,14 @@ _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 sys.path.insert(0, str(_SCRIPTS))
 
 import kss_app_bridge as b  # noqa: E402
+import kss_chat_loop as chat  # noqa: E402
 
 _MCP_SRC = (_SCRIPTS / "kss_mcp.py").read_text(encoding="utf-8")
+_R12 = (
+    "investability-label",
+    "investability-answer",
+    "investability-node-coverage",
+)
 
 
 @pytest.fixture()
@@ -106,8 +114,30 @@ def test_quota_declares_denominator_source(bridge) -> None:
 
 
 def _registered_tool_names() -> set[str]:
-    """从源码里抠出全部 @mcp.tool 注册的函数名(含实时分支内的)."""
-    return set(re.findall(r"@mcp\.tool\s*\ndef\s+(\w+)", _MCP_SRC))
+    """投影后的 MCP 工具名（KTD5：以 pack restrict 为准，不是手写表）。"""
+    class FakeFastMCP:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.tools: list[str] = []
+
+        def tool(self, fn=None, **kwargs):
+            def deco(f):
+                self.tools.append(str(kwargs.get("name") or f.__name__))
+                return f
+
+            if callable(fn):
+                return deco(fn)
+            return deco
+
+        def run(self) -> None:
+            raise AssertionError("test should not run MCP server")
+
+    mod = types.ModuleType("fastmcp")
+    mod.FastMCP = FakeFastMCP
+    sys.modules["fastmcp"] = mod
+    sys.modules.pop("kss_mcp", None)
+    kss_mcp = importlib.import_module("kss_mcp")
+    return set(kss_mcp.mcp.tools)
 
 
 def test_map_read_tools_registered() -> None:
@@ -130,28 +160,23 @@ def test_no_map_write_tool_anywhere() -> None:
         assert not re.match(
             r"^(set|write|update|delete|label|answer|confirm)_investability", name
         ), f"不该存在地图写工具: {name}"
-    for cmd in (
-        "investability-label",
-        "investability-answer",
-        "investability-node-coverage",
-    ):
+    names = _registered_tool_names()
+    for cmd in _R12:
+        assert cmd not in names, f"写命令不该出现在 MCP 面: {cmd}"
         assert cmd not in _MCP_SRC, f"写命令不该出现在 MCP 面: {cmd}"
 
 
 def test_write_commands_stay_in_write_gate(bridge) -> None:
     """三条写命令留在写命令集合里, 由既有的 paper-only 闸兜底."""
-    for cmd in (
-        "investability-label",
-        "investability-answer",
-        "investability-node-coverage",
-    ):
+    for cmd in _R12:
         assert cmd in bridge.WRITE_COMMANDS
 
 
 def test_tool_docstrings_flag_labels_as_human_prior() -> None:
     """工具说明写明标签是人工先验不是核实事实, 避免 agent 据此下合规结论."""
+    blob = "\n".join(str(spec.get("desc") or "") for spec in chat.TOOL_SPECS)
     for anchor in ("人工先验", "不得据此给买卖或合规结论"):
-        assert anchor in _MCP_SRC
+        assert anchor in blob
 
 
 # --------------------------------------------------------------------------- #
@@ -161,8 +186,6 @@ def test_tool_docstrings_flag_labels_as_human_prior() -> None:
 
 def _panel_tool_names() -> set[str]:
     """面板侧(kss_chat_loop.TOOL_SPECS)注册的工具名."""
-    import kss_chat_loop as chat  # noqa: PLC0415
-
     return {str(spec["name"]) for spec in chat.TOOL_SPECS}
 
 
@@ -183,10 +206,6 @@ def test_panel_has_no_map_write_tool() -> None:
     """对称的只是读面. 写面在面板侧同样缺席(plan KTD8/R25)."""
     import kss_chat_loop as chat  # noqa: PLC0415
 
-    write_commands = {
-        "investability-label",
-        "investability-answer",
-        "investability-node-coverage",
-    }
+    write_commands = set(_R12)
     for spec in chat.TOOL_SPECS:
         assert str(spec.get("command")) not in write_commands, spec["name"]

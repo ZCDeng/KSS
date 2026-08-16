@@ -126,3 +126,15 @@ def test_scheduled_job_collect_intraday_title_category(tmp_path):
     assert job["title"] == "分时收盘采集"
     assert job["category"] == "数据更新"
     assert job["script"] == "run_collect_intraday.sh"
+
+
+
+def test_envelope_json_canonicalizes_negative_zero_for_dsh() -> None:
+    """dsh isJsonValue rejects JS -0; Python json.dumps(-0.0) emits that."""
+    raw = b._envelope_json({"pct": -0.0, "ok": 0.0, "gap": float("nan")})
+    assert "-0.0" not in raw
+    assert "NaN" not in raw
+    payload = json.loads(raw)
+    assert payload["data"]["pct"] == 0.0
+    assert payload["data"]["ok"] == 0.0
+    assert payload["data"]["gap"] is None

@@ -2478,6 +2478,33 @@ struct AgentHydratedToolCall: Codable, Equatable {
 
 // MARK: - Provider catalog / attachment protocol
 
+/// Seesaw @file 引用：workspace-files 命令返回的一条文件命中。
+struct WorkspaceFileHit: Codable, Identifiable, Equatable {
+    var path: String
+    var name: String
+    var size: Int?
+    var mtime: Int?
+
+    var id: String { path }
+
+    /// 去掉文件名的目录部分，用于次行展示。
+    var directory: String {
+        guard let idx = path.lastIndex(of: "/") else { return "" }
+        return String(path[..<idx])
+    }
+}
+
+struct WorkspaceFilesResponse: Codable, Equatable {
+    var query: String?
+    var files: [WorkspaceFileHit]
+}
+
+/// 一档模型思考强度（来自 dsh resolveModelInfo 的 reasoning.efforts）。
+struct AgentReasoningEffort: Codable, Identifiable, Equatable {
+    var id: String
+    var name: String?
+}
+
 struct AgentModelDescriptor: Codable, Identifiable, Equatable {
     var id: String
     var name: String?
@@ -2487,6 +2514,10 @@ struct AgentModelDescriptor: Codable, Identifiable, Equatable {
     var supportsThinking: Bool?
     var supportsImages: Bool?
     var supportsTools: Bool?
+    var reasoningEfforts: [AgentReasoningEffort]?
+    var defaultReasoningEffort: String?
+    var inputModalities: [String]?
+    var modelDescription: String?
 
     enum CodingKeys: String, CodingKey {
         case id, name
@@ -2497,6 +2528,10 @@ struct AgentModelDescriptor: Codable, Identifiable, Equatable {
         case supportsThinking = "supports_thinking"
         case supportsImages = "supports_images"
         case supportsTools = "supports_tools"
+        case reasoningEfforts = "reasoning_efforts"
+        case defaultReasoningEffort = "default_reasoning_effort"
+        case inputModalities = "input_modalities"
+        case modelDescription = "description"
     }
 
     init(from decoder: Decoder) throws {
@@ -2511,6 +2546,10 @@ struct AgentModelDescriptor: Codable, Identifiable, Equatable {
         supportsThinking = try? c.decode(Bool.self, forKey: .supportsThinking)
         supportsImages = try? c.decode(Bool.self, forKey: .supportsImages)
         supportsTools = try? c.decode(Bool.self, forKey: .supportsTools)
+        reasoningEfforts = try? c.decode([AgentReasoningEffort].self, forKey: .reasoningEfforts)
+        defaultReasoningEffort = try? c.decode(String.self, forKey: .defaultReasoningEffort)
+        inputModalities = try? c.decode([String].self, forKey: .inputModalities)
+        modelDescription = try? c.decode(String.self, forKey: .modelDescription)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -2523,6 +2562,10 @@ struct AgentModelDescriptor: Codable, Identifiable, Equatable {
         try c.encodeIfPresent(supportsThinking, forKey: .supportsThinking)
         try c.encodeIfPresent(supportsImages, forKey: .supportsImages)
         try c.encodeIfPresent(supportsTools, forKey: .supportsTools)
+        try c.encodeIfPresent(reasoningEfforts, forKey: .reasoningEfforts)
+        try c.encodeIfPresent(defaultReasoningEffort, forKey: .defaultReasoningEffort)
+        try c.encodeIfPresent(inputModalities, forKey: .inputModalities)
+        try c.encodeIfPresent(modelDescription, forKey: .modelDescription)
     }
 }
 
@@ -2533,11 +2576,37 @@ struct AgentProviderDescriptor: Codable, Identifiable, Equatable {
     var authKind: String?
     var baseURL: String?
     var models: [AgentModelDescriptor]?
+    /// 目录来源（"harness" = dsh 模型注册表；"route" = 仅路由占位）。
+    var source: String?
+    /// 用户通过 DSH settings.yaml 添加的自定义 provider（可移除）。
+    var custom: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, authenticated, models
+        case id, name, authenticated, models, source, custom
         case authKind = "auth_kind"
         case baseURL = "base_url"
+    }
+}
+
+extension AgentProviderDescriptor {
+    /// legacy/孪生 id 归并到家族显示名;自定义 provider 用其 displayName。
+    static let kssFamilyNames: [String: String] = [
+        "deepseek-official": "DeepSeek",
+        "deepseek": "DeepSeek",
+        "kss-primary": "DeepSeek",
+        "openai": "OpenAI",
+        "kss-fallback": "OpenAI",
+        "openrouter": "OpenRouter",
+    ]
+
+    static func friendlyProviderName(id: String, fallback: String? = nil) -> String {
+        if let mapped = kssFamilyNames[id] { return mapped }
+        if let fallback, !fallback.isEmpty, fallback != id { return fallback }
+        return id
+    }
+
+    var displayName: String {
+        Self.friendlyProviderName(id: id, fallback: name)
     }
 }
 
@@ -2607,6 +2676,8 @@ struct AgentProvidersResponse: Codable, Equatable {
     var providers: [AgentProviderDescriptor]
     var primary: AgentProviderRoute?
     var fallback: AgentProviderRoute?
+    var vision: AgentProviderRoute?
+    var providerBackend: String?
     var status: String?
     var source: String?
     var ok: Bool?
@@ -2619,6 +2690,8 @@ struct AgentProvidersResponse: Codable, Equatable {
         providers: [AgentProviderDescriptor] = [],
         primary: AgentProviderRoute? = nil,
         fallback: AgentProviderRoute? = nil,
+        vision: AgentProviderRoute? = nil,
+        providerBackend: String? = nil,
         status: String? = nil,
         source: String? = nil,
         ok: Bool? = nil,
@@ -2630,6 +2703,8 @@ struct AgentProvidersResponse: Codable, Equatable {
         self.providers = providers
         self.primary = primary
         self.fallback = fallback
+        self.vision = vision
+        self.providerBackend = providerBackend
         self.status = status
         self.source = source
         self.ok = ok
@@ -2640,8 +2715,9 @@ struct AgentProvidersResponse: Codable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case providers, primary, fallback, status, source, ok, hint, candidates, error
+        case providers, primary, fallback, vision, status, source, ok, hint, candidates, error
         case latencyMs = "latency_ms"
+        case providerBackend = "provider_backend"
     }
 
     init(from decoder: Decoder) throws {
@@ -2649,6 +2725,8 @@ struct AgentProvidersResponse: Codable, Equatable {
         providers = (try? c.decode([AgentProviderDescriptor].self, forKey: .providers)) ?? []
         primary = try? c.decode(AgentProviderRoute.self, forKey: .primary)
         fallback = try? c.decode(AgentProviderRoute.self, forKey: .fallback)
+        vision = try? c.decode(AgentProviderRoute.self, forKey: .vision)
+        providerBackend = try? c.decode(String.self, forKey: .providerBackend)
         status = try? c.decode(String.self, forKey: .status)
         source = try? c.decode(String.self, forKey: .source)
         ok = try? c.decode(Bool.self, forKey: .ok)
@@ -3803,6 +3881,109 @@ struct AgentFrame: Decodable, Equatable {
 }
 
 /// 待人工确认的写操作（人在环内闸，U5）。modal 显 effect + args。
+// MARK: - Slash command(本地命令:plugins/MCP 工具 + 技能 + UI 命令)
+
+struct SlashToolParam: Codable, Equatable {
+    var key: String
+    var description: String?
+    var type: String?
+    var required: Bool?
+}
+
+/// 一个外部 MCP server 的工具(slash 直连;输出按不可信外部输入处理)。
+struct SlashMCPToolDescriptor: Codable, Identifiable, Equatable {
+    var server: String
+    var name: String
+    var description: String?
+    var params: [SlashToolParam]?
+
+    var id: String { "mcp:\(server):\(name)" }
+
+    /// slash 命令名(mcp:server:tool),与 sidecar run 路由一致。
+    var commandName: String { "mcp:\(server):\(name)" }
+
+    /// 位置参数顺序:required 在前(注册表已排序)。
+    var orderedKeys: [String] { (params ?? []).map(\.key) }
+}
+
+/// 一条可 slash 直连的只读工具(TOOL_SPECS 同源,即 kss-plugins/kss-mcp 目录)。
+struct SlashToolDescriptor: Codable, Identifiable, Equatable {
+    var name: String
+    var command: String?
+    var desc: String?
+    var order: [String]?
+    var params: [SlashToolParam]?
+
+    var id: String { name }
+}
+
+struct AgentSlashResponse: Codable, Equatable {
+    var tools: [SlashToolDescriptor]?
+    var mcpTools: [SlashMCPToolDescriptor]?
+    var mcpErrors: [String]?
+    var ok: Bool?
+    var userText: String?
+    var assistantText: String?
+    var error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case tools, ok, error
+        case mcpTools = "mcp_tools"
+        case mcpErrors = "mcp_errors"
+        case userText = "user_text"
+        case assistantText = "assistant_text"
+    }
+}
+
+/// "/get_stock 688008.SH mode=full" → 工具名 + 参数:
+/// 位置参数按 order 依次填,k=v 显式覆盖。
+struct SlashInvocation: Equatable {
+    let name: String
+    let args: [String: String]
+
+    static func parse(_ input: String, order: [String]) -> SlashInvocation? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("/"), trimmed.count > 1 else { return nil }
+        let tokens = trimmed.dropFirst().split(separator: " ").map(String.init)
+        guard let name = tokens.first, !name.isEmpty else { return nil }
+        var args: [String: String] = [:]
+        var positionalIndex = 0
+        for token in tokens.dropFirst() {
+            if let eq = token.firstIndex(of: "="), eq != token.startIndex {
+                args[String(token[..<eq])] = String(token[token.index(after: eq)...])
+            } else if positionalIndex < order.count {
+                args[order[positionalIndex]] = token
+                positionalIndex += 1
+            }
+        }
+        return SlashInvocation(name: name, args: args)
+    }
+}
+
+/// 写操作执行模式:逐次确认(默认,人在环)或自动允许。
+/// 自动模式只改变 UI 应答方式——确认仍走同一 control 通道与 sidecar
+/// grant/审计链路,内核死亡/超时/中止仍按拒绝收口(fail-closed 不变)。
+enum WriteApprovalMode: String, CaseIterable, Identifiable {
+    case ask
+    case auto
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .ask: return "逐次确认"
+        case .auto: return "自动允许"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .ask: return "每次写操作弹出确认（默认）"
+        case .auto: return "写操作自动允许，不再弹窗打断"
+        }
+    }
+}
+
 struct PendingWriteConfirm: Identifiable {
     let id = UUID()
     let callId: String

@@ -197,6 +197,14 @@ enum KeychainStore {
         return true
     }
 
+    /// 与 Python kss.agent.harness_settings.custom_provider_env_name 保持一致。
+    static func customProviderEnvName(_ providerId: String) -> String {
+        let token = providerId.uppercased().map { char -> Character in
+            char.isASCII && (("A"..."Z").contains(String(char)) || char.isNumber) ? char : "_"
+        }
+        return "KSS_PROVIDER_\(String(token))_API_KEY"
+    }
+
     static func providerCredentialIds() -> [String] {
         (UserDefaults.standard.stringArray(forKey: providerIndexDefaultsKey) ?? [])
             .filter {
@@ -228,8 +236,21 @@ enum KeychainStore {
         legacy: [String: String]
     ) -> [String: Any] {
         var credentials: [String: Any] = [:]
+        let builtinProviderIds: Set<String> = [
+            "kss-primary", "kss-fallback", "deepseek", "openai", "openrouter",
+        ]
         for (providerId, key) in scoped {
-            credentials[providerId] = ["type": "api_key", "key": key]
+            if builtinProviderIds.contains(providerId) {
+                credentials[providerId] = ["type": "api_key", "key": key]
+            } else {
+                // 自定义 provider：env 携带 apiKeyEnv 约定（KSS_PROVIDER_<ID>_API_KEY），
+                // 供 dsh 内核按 settings.yaml 的引用解析；密钥仍只经内存注入。
+                credentials[providerId] = [
+                    "type": "api_key",
+                    "key": key,
+                    "env": [customProviderEnvName(providerId): key],
+                ]
+            }
         }
         func put(_ providerId: String, _ key: String?) {
             guard credentials[providerId] == nil,

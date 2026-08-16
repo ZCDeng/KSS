@@ -32,6 +32,7 @@ INFO_PLIST="$APP_CONTENTS/Info.plist"
 ENTITLEMENTS="$ROOT_DIR/script/KSSDesktop.entitlements"
 NODE_ENTITLEMENTS="$ROOT_DIR/script/NodeHelper.entitlements"
 PI_AI_BUILD_ROOT="$ROOT_DIR/.build/pi-ai-helper"
+HARNESS_BUILD_ROOT="$ROOT_DIR/.build/harness-node"
 
 # ---- 签名身份解析（缺则大声失败）----
 SIGN_IDENTITY="${KSS_SIGN_IDENTITY:-}"
@@ -50,10 +51,24 @@ echo "签名身份：$SIGN_IDENTITY"
 
 cd "$ROOT_DIR"
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+# Sidecar is a detached daemon; quitting the app (or pkill of the GUI) does
+# not reap it. A wedged harness-runtime node behind a live socket will make
+# the next install look like a timeout with no new dsh session.
+SIDECAR_PID_FILE="$HOME/Library/Application Support/KSS/run/kss-sidecar.pid"
+if [ -f "$SIDECAR_PID_FILE" ]; then
+  SIDECAR_PID="$(tr -d "[:space:]" < "$SIDECAR_PID_FILE" || true)"
+  if [ -n "$SIDECAR_PID" ]; then
+    kill "$SIDECAR_PID" >/dev/null 2>&1 || true
+  fi
+fi
+pkill -f "kss_sidecar.py" >/dev/null 2>&1 || true
+pkill -f "kss_harness_host.mjs" >/dev/null 2>&1 || true
 # pi-ai is a signed, self-contained provider helper. Preparation pins both the
 # Node runtime archive checksum and npm dependency lock; release bundles never
 # fall back to a system Node installation.
 KSS_PI_AI_OUTPUT_ROOT="$PI_AI_BUILD_ROOT" "$ROOT_DIR/script/prepare_pi_ai_helper.sh"
+# Harness Node kernel: pinned Node + profile/plugins tree (npm ci in .build).
+KSS_HARNESS_OUTPUT_ROOT="$HARNESS_BUILD_ROOT" "$ROOT_DIR/script/prepare_harness_node.sh"
 # 强制 swiftpm 原生 build-system（与 build_and_run.sh 一致）：默认 build system
 # 产出 Contents/ 布局的资源包，运行时 Bundle.module 定位不到 →
 # resource_bundle_accessor.swift 启动即 SIGTRAP。native 落平铺资源包，布局可被找到。
@@ -135,13 +150,25 @@ done
 cp -R "$PI_AI_BUILD_ROOT/runtime" "$APP_RESOURCES/pi-ai-runtime"
 cp -R "$PI_AI_BUILD_ROOT/helper" "$APP_RESOURCES/pi-ai-helper"
 
+# ---- DeepSeek Harness Node kernel（同一 Node 指纹；profile + plugins，非 git 内 node_modules）----
+cp -R "$HARNESS_BUILD_ROOT/runtime" "$APP_RESOURCES/harness-runtime"
+mkdir -p "$APP_RESOURCES/harness"
+cp -R "$HARNESS_BUILD_ROOT/harness/kss-profile" "$APP_RESOURCES/harness/kss-profile"
+cp -R "$HARNESS_BUILD_ROOT/harness/kss-plugins" "$APP_RESOURCES/harness/kss-plugins"
+
 # ---- Agent skills 进 Resources（bundle-mode 只读发现面）----
 for skills_root in .claude/skills .agents/skills; do
   copy_resource_item "$skills_root" "$APP_RESOURCES/$(dirname "$skills_root")"
 done
-# 签名前硬清：任何事后写入（pyc / 误拷 storage）都会让 sealed resource 失效 → Gatekeeper 拒开
-find "$APP_RESOURCES" \( -name '.git' -o -name '__pycache__' -o -name '.pytest_cache' -o -name '.ruff_cache' -o -name '*.egg-info' -o -name '.cache' -o -name 'cache' -o -name 'caches' -o -name '.omx' -o -name '.codex' -o -name 'state' -o -name '.state' -o -name 'logs' \) \
-  -type d -prune -exec rm -rf {} + 2>/dev/null || true
+# 签名前硬清：任何事后写入（pyc / 误拷 storage）都会让 sealed resource 失效 → Gatekeeper 拒开。
+# 不进 node_modules：otel 等包用 logs/state 当源码目录，删掉会让 dsh 启动失败。
+"$ROOT_DIR/script/prune_signed_resources.sh" "$APP_RESOURCES"
+OTEL_LOGS="$APP_RESOURCES/harness/kss-profile/node_modules/@opentelemetry/otlp-transformer/build/src/logs"
+OTEL_STATE="$APP_RESOURCES/harness/kss-profile/node_modules/@opentelemetry/sdk-metrics/build/src/state"
+if [ ! -d "$OTEL_LOGS" ] || [ ! -d "$OTEL_STATE" ]; then
+  echo "ERROR: prune removed OpenTelemetry source dirs (logs/state); dsh cannot boot." >&2
+  exit 1
+fi
 find "$APP_RESOURCES" \( -name '*.py[cod]' -o -name '.DS_Store' -o -name '*.db' \) \
   -type f -delete 2>/dev/null || true
 # 禁止把可变状态打进包（ledger / mi_signals 等）
@@ -174,9 +201,27 @@ if find "$APP_RESOURCES/pi-ai-helper/node_modules" -type f -name '*.node' -print
   echo "ERROR: pi-ai helper contains unsupported native .node modules." >&2
   exit 1
 fi
+if [ ! -x "$APP_RESOURCES/harness-runtime/bin/node" ]; then
+  echo "ERROR: Harness Node runtime missing from bundle." >&2
+  exit 1
+fi
+if [ ! -f "$APP_RESOURCES/harness/kss-profile/node_modules/@deepseek-ai/dsh/lib/bin.js" ]; then
+  echo "ERROR: bundled Harness profile is missing the dsh entry used at launch." >&2
+  exit 1
+fi
 # Prefer explicit Apple HTTP TSA — bare --timestamp sometimes fails with
 # "The timestamp service is not available" when the default endpoint flakes.
 CODESIGN_TIMESTAMP="${KSS_CODESIGN_TIMESTAMP:-http://timestamp.apple.com/ts01}"
+# Nested Harness natives (koffi, node-pty, sharp, ripgrep, spawn-helper)
+# are Mach-O and must be signed before the parent bundle is sealed.
+# Detect by magic bytes — spawn-helper is 0644, so -perm +111 misses it.
+while IFS= read -r native; do
+  [ -n "$native" ] || continue
+  echo "签名 Harness native: $native"
+  codesign --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
+    --sign "$SIGN_IDENTITY" "$native"
+  codesign --verify --strict --verbose=2 "$native"
+done < <(python3 "$ROOT_DIR/script/list_harness_macho.py" "$APP_RESOURCES/harness")
 codesign --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
   --entitlements "$NODE_ENTITLEMENTS" \
   --sign "$SIGN_IDENTITY" "$APP_RESOURCES/pi-ai-runtime/bin/node"
@@ -184,6 +229,17 @@ codesign --verify --strict --verbose=2 "$APP_RESOURCES/pi-ai-runtime/bin/node"
 if ! codesign -d --entitlements :- "$APP_RESOURCES/pi-ai-runtime/bin/node" 2>&1 \
   | grep -q 'com.apple.security.cs.allow-jit'; then
   echo "ERROR: signed Node helper is missing allow-jit entitlement." >&2
+  exit 1
+fi
+# The Harness kernel runs dsh with this nested Node binary. Independent
+# availability from Python, but live writes still require a Node grant first.
+codesign --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
+  --entitlements "$NODE_ENTITLEMENTS" \
+  --sign "$SIGN_IDENTITY" "$APP_RESOURCES/harness-runtime/bin/node"
+codesign --verify --strict --verbose=2 "$APP_RESOURCES/harness-runtime/bin/node"
+if ! codesign -d --entitlements :- "$APP_RESOURCES/harness-runtime/bin/node" 2>&1 \
+  | grep -q 'com.apple.security.cs.allow-jit'; then
+  echo "ERROR: signed Harness Node is missing allow-jit entitlement." >&2
   exit 1
 fi
 # The scheduler helper is a nested executable.  It owns the ephemeral

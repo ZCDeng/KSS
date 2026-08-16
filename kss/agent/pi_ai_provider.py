@@ -1,8 +1,7 @@
 """pi-ai provider bridge backed by a long-lived, signed Node helper.
 
-The Python AgentRuntime remains the orchestration owner. This module delegates
-only provider/model/auth/stream concerns to pi-ai and preserves KSS's fallback
-invariant: another route may be tried only before any model output.
+DeepSeek Harness owns the agent loop (U8). This module remains the signed
+pi-ai provider helper: Keychain credentials, abort, and no keys in logs.
 """
 from __future__ import annotations
 

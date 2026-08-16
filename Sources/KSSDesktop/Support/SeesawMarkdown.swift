@@ -150,6 +150,14 @@ enum SeesawMarkdown {
         return blocks
     }
 
+    /// Incomplete streamed markup (`**bold` / unmatched ticks) must not go through
+    /// AttributedString — Apple's parser can swallow the rest of the paragraph.
+    static func inlineMarkupIsBalanced(_ text: String) -> Bool {
+        let boldMarks = text.components(separatedBy: "**").count - 1
+        guard boldMarks % 2 == 0 else { return false }
+        return text.filter { $0 == "`" }.count % 2 == 0
+    }
+
     private static func heading(in line: String) -> (level: Int, text: String)? {
         var level = 0
         for character in line {
@@ -302,12 +310,14 @@ struct SeesawMarkdownView: View {
                     tableRow(row, isHeader: false)
                 }
             }
+            .fixedSize(horizontal: true, vertical: true)
             .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: 8))
             .overlay {
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(theme.hairline)
             }
         }
+        .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -347,7 +357,8 @@ struct SeesawMarkdownView: View {
     private var foreground: Color { errorTint ?? theme.textPrimary }
 
     private func inlineText(_ text: String) -> Text {
-        if let attributed = try? AttributedString(
+        if SeesawMarkdown.inlineMarkupIsBalanced(text),
+           let attributed = try? AttributedString(
             markdown: text,
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         ) {

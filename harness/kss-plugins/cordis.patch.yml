@@ -1,0 +1,4 @@
+# KSS bundle: one insert over dsh-base. Whole-line replace; no deep merge.
+- insert:
+    - id: kss
+      name: "@kss/harness-plugins"

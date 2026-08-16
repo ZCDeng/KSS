@@ -10,7 +10,7 @@ KSS needs pi-ai provider catalogs, capability metadata, normalized thinking and 
 
 ## Decision
 
-Keep `kss/agent/` as the execution authority and run `@earendil-works/pi-ai` in a long-lived NDJSON helper.
+Keep pi-ai as a signed **provider** helper (Keychain, abort, no keys in logs). As of 2026-08-14 / U8, DeepSeek Harness is the agent-loop owner; Python AgentRuntime is not.
 
 - The release bundle pins Node 22.19.0 arm64 and pi-ai 0.82.1.
 - The helper supports request-scoped abort and never executes shell commands or arbitrary modules. Node is not launched with `--jitless`: Node 22's built-in undici HTTP stack requires WebAssembly for llhttp and otherwise crashes on the first real provider request. The nested executable is signed with the minimum `allow-jit` entitlement required by the hardened runtime.
@@ -26,6 +26,6 @@ Keep `kss/agent/` as the execution authority and run `@earendil-works/pi-ai` in 
 
 ## Rejected
 
-- Rewrite AgentRuntime in TypeScript — rejected because it would duplicate proven Python session, tool and research boundaries.
+- Rewrite AgentRuntime in TypeScript — rejected at the time; later superseded by adopting DeepSeek Harness as the loop owner while keeping pi-ai for provider/auth.
 - Require a system Node installation — rejected because personally delivered builds must behave consistently across machines.
 - Put keys in JSON, environment variables or protocol logs — rejected because Keychain is the existing security boundary.

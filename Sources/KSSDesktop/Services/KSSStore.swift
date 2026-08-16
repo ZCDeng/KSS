@@ -250,6 +250,27 @@ final class KSSStore: ObservableObject {
     @Published var agentGlobalPrimaryRoute: AgentProviderRoute?
     @Published var agentPrimaryRoute: AgentProviderRoute?
     @Published var agentFallbackRoute: AgentProviderRoute?
+    @Published var agentVisionRoute: AgentProviderRoute?
+    @Published var agentProviderBackend: String?
+    /// Seesaw @file 引用：待随下一轮发送的工作区文件（相对白名单根）。
+    @Published var pendingFileRefs: [String] = []
+    /// 写操作执行模式(全局,UserDefaults 持久化);默认逐次确认。
+    @Published var writeApprovalMode: WriteApprovalMode = .ask {
+        didSet {
+            UserDefaults.standard.set(
+                writeApprovalMode.rawValue,
+                forKey: Self.writeApprovalModeKey
+            )
+        }
+    }
+    /// 本轮自动允许的写操作计数与最近一条效果说明(composer 状态行展示)。
+    @Published private(set) var autoApprovedWriteCount = 0
+    @Published private(set) var lastAutoApprovedEffect: String?
+    /// slash 可直连的只读工具目录(TOOL_SPECS 同源)。
+    @Published var slashTools: [SlashToolDescriptor] = []
+    /// slash 可直连的外部 MCP 工具与目录错误提示。
+    @Published var slashMCPTools: [SlashMCPToolDescriptor] = []
+    @Published var slashMCPErrors: [String] = []
     @Published var agentProviderStatus: String?
     @Published var agentProviderTestOK: Bool?
     @Published var agentProviderTestError: String?
@@ -300,6 +321,7 @@ final class KSSStore: ObservableObject {
     private var researchEventEpoch: [String: UUID] = [:]
 
     private static let seesawVisibleModelRouteIDsKey = "kss.seesaw.visibleModelRoutes.v1"
+    private nonisolated static let writeApprovalModeKey = "kss.seesaw.writeApprovalMode.v1"
 
     let bridge: BridgeClient?
 
@@ -308,6 +330,7 @@ final class KSSStore: ObservableObject {
         self.seesawVisibleModelRouteIDs = Set(
             UserDefaults.standard.stringArray(forKey: Self.seesawVisibleModelRouteIDsKey) ?? []
         )
+        self.writeApprovalMode = Self.restoredWriteApprovalMode()
         restoreLastAgentSession()
         refreshLLMCredentialsStatus()
     }
@@ -317,7 +340,14 @@ final class KSSStore: ObservableObject {
         self.seesawVisibleModelRouteIDs = Set(
             UserDefaults.standard.stringArray(forKey: Self.seesawVisibleModelRouteIDsKey) ?? []
         )
+        self.writeApprovalMode = Self.restoredWriteApprovalMode()
         restoreLastAgentSession()
+    }
+
+    nonisolated static func restoredWriteApprovalMode() -> WriteApprovalMode {
+        WriteApprovalMode(
+            rawValue: UserDefaults.standard.string(forKey: Self.writeApprovalModeKey) ?? ""
+        ) ?? .ask
     }
 
     nonisolated static func seesawModelRouteID(providerID: String, modelID: String) -> String {
@@ -425,7 +455,8 @@ final class KSSStore: ObservableObject {
         guard let bridge else { errorMessage = "Cannot locate KSS project root"; return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let selectedAttachments = attachments ?? pendingAgentAttachments
-        guard (!trimmed.isEmpty || !selectedAttachments.isEmpty), !isChatStreaming else { return }   // 单活动轮（R11）
+        guard (!trimmed.isEmpty || !selectedAttachments.isEmpty || !pendingFileRefs.isEmpty),
+              !isChatStreaming else { return }   // 单活动轮（R11）
         if !agentProtocolUnavailable {
             sendAgentChat(
                 trimmed,
@@ -453,10 +484,13 @@ final class KSSStore: ObservableObject {
     ) {
         ensureAgentSession()
         guard let sessionId = selectedAgentSessionId else { return }
+        autoTitleSessionIfNeeded(sessionId, firstInput: trimmed)
+        let fileRefs = pendingFileRefs
         chatMessages.append(ChatMessage(role: .user, text: trimmed, attachments: attachments))
         let assistant = ChatMessage(role: .assistant, text: "", numbersUnverified: true)
         chatMessages.append(assistant)
         pendingAgentAttachments.removeAll()
+        pendingFileRefs.removeAll()
         agentAttachmentError = nil
         chatMessagesByAgentSession[sessionId] = chatMessages
         persistLastAgentSession(sessionId)
@@ -476,6 +510,8 @@ final class KSSStore: ObservableObject {
         agentLiveMarketContexts = []
         agentDuplicateHydrationKeys.removeAll()
         agentMessageStartCounts.removeAll()
+        autoApprovedWriteCount = 0
+        lastAutoApprovedEffect = nil
         let clientTurnId = UUID().uuidString
         // Do not warm Longbridge on every conversation open or historical
         // question. The sidecar receives an explicit scope only for a
@@ -488,6 +524,7 @@ final class KSSStore: ObservableObject {
                 input: trimmed,
                 sourceQueueId: sourceQueueId,
                 attachmentIds: attachments.map(\.id),
+                fileRefs: fileRefs,
                 liveContextScope: liveContextScope,
                 onControlReady: { control in
                     Task { @MainActor [weak self] in
@@ -502,22 +539,35 @@ final class KSSStore: ObservableObject {
                     }
                 },
                 onConfirmRequired: { frame in
-                    let gate = ChatConfirmGate()
+                    // Do not block the NDJSON reader: timeout/error frames must still land
+                    // while the inline 允许/拒绝 banner is up. Confirm goes out on the
+                    // control channel from resolveWriteConfirm.
                     DispatchQueue.main.async { [weak self] in
-                        guard let self, self.activeAgentStreamId == streamId
-                        else { gate.resolve(false); return }
-                        self.activeConfirmGate = gate
+                        guard let self, self.activeAgentStreamId == streamId else { return }
                         let ctx = self.chatMessages.last(where: { $0.role == .assistant })?.text ?? ""
                         let confirm = PendingWriteConfirm(
                             callId: frame.callId ?? "", tool: frame.tool ?? frame.name ?? "",
                             command: frame.command ?? "", effect: frame.effect ?? "执行写操作",
                             argsText: frame.argsText ?? "", contextLine: ctx)
+                        // 自动模式:确认仍走同一 control 通道与 sidecar grant/审计
+                        // 链路,只是不弹窗打断;通道缺失时回落弹窗(fail-closed)。
+                        if self.writeApprovalMode == .auto,
+                           !confirm.callId.isEmpty,
+                           let control = self.activeAgentControl {
+                            control.confirm(
+                                runId: self.activeAgentRunId,
+                                callId: confirm.callId,
+                                approved: true
+                            )
+                            self.recordAutoApprovedWrite(confirm)
+                            return
+                        }
                         self.pendingWriteConfirm = nil
                         DispatchQueue.main.async { [weak self] in
                             self?.pendingWriteConfirm = confirm
                         }
                     }
-                    return gate.wait()
+                    return false
                 },
                 onEnd: { err in
                     Task { @MainActor [weak self] in
@@ -581,11 +631,29 @@ final class KSSStore: ObservableObject {
         }
     }
 
-    /// 用户 tap 确认/拒绝（或 dismiss=拒）。解阻塞后台流式线程。
+    /// 用户 tap 确认/拒绝（或 dismiss=拒）。Agent 路径走 control channel，不阻塞读循环。
+    private func recordAutoApprovedWrite(_ confirm: PendingWriteConfirm) {
+        autoApprovedWriteCount += 1
+        lastAutoApprovedEffect = confirm.effect.isEmpty ? confirm.command : confirm.effect
+    }
+
     func resolveWriteConfirm(approved: Bool) {
+        let confirm = pendingWriteConfirm
         pendingWriteConfirm = nil
+        let hadGate = activeConfirmGate != nil
         activeConfirmGate?.resolve(approved)
         activeConfirmGate = nil
+        if let confirm, let control = activeAgentControl {
+            control.confirm(runId: activeAgentRunId, callId: confirm.callId, approved: approved)
+        } else if let confirm, !hadGate {
+            // Agent 路径下确认无处投递（连接已断/回合已收尾）。诚实入字幕，
+            // 不让「允许」静默变成什么都没发生。
+            if let idx = chatMessages.lastIndex(where: { $0.role == .assistant }) {
+                chatMessages[idx].text +=
+                    "\n\n_（确认「\(confirm.effect)」未能送达：连接已断开，本次写操作按拒绝处理）_"
+                chatMessages[idx].numbersUnverified = false
+            }
+        }
     }
 
     func stopChatGeneration() {
@@ -654,12 +722,14 @@ final class KSSStore: ObservableObject {
             }
         case "error":
             chatToolInProgress = nil
+            let message = frame.error ?? "未知错误"
             if chatMessages[idx].text.isEmpty {
-                chatMessages[idx].text = "出错了：\(frame.error ?? "未知错误")"
-                chatMessages[idx].isError = true
+                chatMessages[idx].text = "出错了：\(message)"
             } else {
-                errorMessage = frame.error
+                chatMessages[idx].text += "\n\n_（\(message)）_"
             }
+            chatMessages[idx].isError = true
+            chatMessages[idx].numbersUnverified = false
         default:
             break
         }
@@ -855,11 +925,17 @@ final class KSSStore: ObservableObject {
             }
         case "error":
             chatToolInProgress = nil
-            if let idx, chatMessages[idx].text.isEmpty {
-                chatMessages[idx].text = "出错了：\(frame.error ?? "未知错误")"
+            let message = frame.error ?? "未知错误"
+            if let idx {
+                if chatMessages[idx].text.isEmpty {
+                    chatMessages[idx].text = "出错了：\(message)"
+                } else {
+                    chatMessages[idx].text += "\n\n_（\(message)）_"
+                }
                 chatMessages[idx].isError = true
+                chatMessages[idx].numbersUnverified = false
             } else {
-                errorMessage = frame.error
+                errorMessage = message
             }
         default:
             break
@@ -1137,6 +1213,14 @@ final class KSSStore: ObservableObject {
             }
             return
         }
+        if error == nil,
+           let idx = chatMessages.firstIndex(where: { $0.id == assistantId }),
+           chatMessages[idx].text.isEmpty {
+            chatMessages[idx].text = "出错了：本回合没有生成回复。请点「新会话」后再试。"
+            chatMessages[idx].isError = true
+            chatMessages[idx].numbersUnverified = false
+            return
+        }
         guard let error else { return }
         if let idx = chatMessages.firstIndex(where: { $0.id == assistantId }),
            chatMessages[idx].text.isEmpty {
@@ -1161,7 +1245,12 @@ final class KSSStore: ObservableObject {
         let closer = (terminationReason?.lowercased() ?? "").contains("unable_to_complete")
             || (error?.contains("无法完成") ?? false)
             || (error?.lowercased().contains("coverage") ?? false)
-        return !userAborted && !isAbort && !isDuplicate && !closer
+        // Harness 超时/不可用时 legacy 路径会撞上同一个内核问题并重跑整轮，
+        // 把错误藏起来。这类错误留在字幕里，不回落。
+        let harnessFailure = ["harness", "timed out", "empty_completion"]
+            .contains { normalized.contains($0) }
+            || (terminationReason?.lowercased() ?? "").contains("harness_unavailable")
+        return !userAborted && !isAbort && !isDuplicate && !closer && !harnessFailure
             && error != nil && assistantEmpty && !assistantIsError
     }
 
@@ -1193,7 +1282,73 @@ final class KSSStore: ObservableObject {
         async let skills: Void = loadAgentSkills()
         async let memories: Void = loadAgentMemories()
         async let providers: Void = loadAgentProviders(reloadCredentials: true)
-        _ = await (sessions, skills, memories, providers)
+        async let slash: Void = loadSlashTools()
+        _ = await (sessions, skills, memories, providers, slash)
+    }
+
+    func loadSlashTools() async {
+        guard let bridge else { return }
+        let response = try? await Task.detached {
+            try bridge.agentSlash(action: "catalog")
+        }.value
+        slashTools = response?.tools ?? []
+        slashMCPTools = response?.mcpTools ?? []
+        slashMCPErrors = response?.mcpErrors ?? []
+    }
+
+    /// slash 选中未启用的本机/用户技能:一步"采用"(批准信任+启用)并加入本会话。
+    func adoptAndJoinSkill(_ skill: AgentSkill) {
+        guard let bridge else { return }
+        let sessionId = selectedAgentSessionId
+        Task {
+            let response = try? await Task.detached {
+                try bridge.agentSkills(action: "adopt", sessionId: sessionId, skillId: skill.id)
+            }.value
+            if let response {
+                agentSkills = response.skills
+                agentSkillDiagnostics = response.diagnostics ?? []
+            }
+            setAgentSkillInConversation(skill, selected: true)
+        }
+    }
+
+    /// slash 工具直连执行:sidecar 只读执行并把两条消息落进会话存储,
+    /// 这里同步上屏(重开会话时由存储 hydration 复现)。
+    func runSlashTool(_ invocation: SlashInvocation) async {
+        guard let bridge else { return }
+        guard !isChatStreaming else {
+            errorMessage = "生成中暂不可直连执行本地命令"
+            return
+        }
+        ensureAgentSession()
+        guard let sessionId = selectedAgentSessionId else { return }
+        autoTitleSessionIfNeeded(sessionId, firstInput: "/\(invocation.name)")
+        do {
+            let response = try await Task.detached {
+                try bridge.agentSlash(
+                    action: "run",
+                    sessionId: sessionId,
+                    name: invocation.name,
+                    args: invocation.args
+                )
+            }.value
+            if let error = response.error, !error.isEmpty {
+                errorMessage = error
+                return
+            }
+            chatMessages.append(ChatMessage(
+                role: .user,
+                text: response.userText ?? "/\(invocation.name)"
+            ))
+            chatMessages.append(ChatMessage(
+                role: .assistant,
+                text: response.assistantText ?? "",
+                numbersUnverified: false
+            ))
+            chatMessagesByAgentSession[sessionId] = chatMessages
+        } catch {
+            errorMessage = "本地命令失败:\(error.localizedDescription)"
+        }
     }
 
     func loadAgentProviders(reloadCredentials: Bool = false) async {
@@ -1204,18 +1359,59 @@ final class KSSStore: ObservableObject {
                     action: reloadCredentials ? "reload_credentials" : "list"
                 )
             }.value
-            agentProviders = response.providers
-            agentGlobalPrimaryRoute = response.primary
-            let sessionRoute = selectedAgentSessionId.flatMap { id in
-                agentSessions.first(where: { $0.sessionId == id })?.providerRoute
-            }
-            agentPrimaryRoute = sessionRoute ?? response.primary
-            agentFallbackRoute = response.fallback
-            agentProviderStatus = response.status
+            applyProvidersResponse(response)
         } catch {
             // Provider catalog is a protocol-v1 additive feature. An older
             // sidecar must not make the otherwise usable chat surface fail.
             agentProviders = []
+        }
+    }
+
+    private func applyProvidersResponse(_ response: AgentProvidersResponse) {
+        agentProviders = response.providers
+        agentGlobalPrimaryRoute = response.primary
+        let sessionRoute = selectedAgentSessionId.flatMap { id in
+            agentSessions.first(where: { $0.sessionId == id })?.providerRoute
+        }
+        agentPrimaryRoute = sessionRoute ?? response.primary
+        agentFallbackRoute = response.fallback
+        agentVisionRoute = response.vision
+        agentProviderBackend = response.providerBackend
+        agentProviderStatus = response.status
+    }
+
+    /// 当前路由可用的思考强度档位；无目录数据时回落 KSS 通用档位。
+    func reasoningEffortOptions(providerID: String?, modelID: String?) -> [AgentReasoningEffort] {
+        if let providerID, let modelID,
+           let provider = agentProviders.first(where: { $0.id == providerID }),
+           let model = provider.models?.first(where: { $0.id == modelID }),
+           let efforts = model.reasoningEfforts, !efforts.isEmpty {
+            return efforts
+        }
+        return [
+            AgentReasoningEffort(id: "off", name: "Off"),
+            AgentReasoningEffort(id: "low", name: "Low"),
+            AgentReasoningEffort(id: "medium", name: "Medium"),
+            AgentReasoningEffort(id: "high", name: "High"),
+            AgentReasoningEffort(id: "max", name: "Max"),
+        ]
+    }
+
+    func modelDescriptor(providerID: String?, modelID: String?) -> AgentModelDescriptor? {
+        guard let providerID, let modelID else { return nil }
+        return agentProviders.first(where: { $0.id == providerID })?
+            .models?.first(where: { $0.id == modelID })
+    }
+
+    /// 调整当前会话的思考强度（Codex 风格滑块）。有会话时写会话路由，
+    /// 否则写全局默认；流式中禁用由调用方守卫。
+    func setSessionThinkingLevel(_ level: String) {
+        guard var route = agentPrimaryRoute ?? agentGlobalPrimaryRoute else { return }
+        route.thinkingLevel = level
+        if selectedAgentSessionId != nil {
+            setAgentSessionProviderRoute(route)
+        } else {
+            setAgentGlobalDefaultRoute(route)
         }
     }
 
@@ -1403,15 +1599,22 @@ final class KSSStore: ObservableObject {
         do {
             let response = try await Task.detached { try bridge.agentSessions() }.value
             agentProtocolUnavailable = false
-            agentSessions = response.sessions.filter { !$0.archived }
-            let preferred = response.selectedSessionId ?? selectedAgentSessionId
-            let target = preferred.flatMap { candidate in
-                agentSessions.contains(where: { $0.sessionId == candidate }) ? candidate : nil
-            } ?? agentSessions.first?.sessionId
-            if let target {
-                openAgentSession(target)
-            } else {
-                createAgentSession()
+            var sessions = response.sessions.filter { !$0.archived }
+            // 默认打开新会话：启动时的空白会话保持为当前，服务器历史只进列表，
+            // 不再自动跳回上次线程。
+            if let current = selectedAgentSessionId,
+               !sessions.contains(where: { $0.sessionId == current }) {
+                let local = agentSessions.first(where: { $0.sessionId == current })
+                    ?? AgentSession(sessionId: current, title: "新会话")
+                sessions.insert(local, at: 0)
+            }
+            agentSessions = sessions
+            if selectedAgentSessionId == nil {
+                if let target = response.selectedSessionId ?? sessions.first?.sessionId {
+                    openAgentSession(target)
+                } else {
+                    createAgentSession()
+                }
             }
         } catch {
             agentProtocolUnavailable = true
@@ -1420,6 +1623,8 @@ final class KSSStore: ObservableObject {
     }
 
     func createAgentSession() {
+        stopChatGeneration()
+        activeAgentStreamId = nil
         let title = "新会话"
         let localId = "local-\(UUID().uuidString)"
         let session = AgentSession(sessionId: localId, title: title)
@@ -1443,6 +1648,8 @@ final class KSSStore: ObservableObject {
     func openAgentSession(_ sessionId: String) {
         // 切换前把当前会话消息写回缓存，避免切走丢未同步的本地态
         if let previous = selectedAgentSessionId, previous != sessionId {
+            stopChatGeneration()
+            activeAgentStreamId = nil
             chatMessagesByAgentSession[previous] = chatMessages
         }
         selectedAgentSessionId = sessionId
@@ -1585,6 +1792,124 @@ final class KSSStore: ObservableObject {
         }
     }
 
+    /// 视觉模型槽独立于聊天主/备路由：仅供 vision_analyze 等图像工具。
+    /// route == nil 表示清除。
+    func setAgentVisionRoute(_ route: AgentProviderRoute?) {
+        guard !isChatStreaming, let bridge else { return }
+        let primary = agentGlobalPrimaryRoute ?? agentPrimaryRoute
+        guard let primary else { return }
+        let fallback = agentFallbackRoute
+        Task {
+            do {
+                let response = try await Task.detached {
+                    try bridge.agentProviders(
+                        action: "set_route",
+                        primary: primary,
+                        fallback: fallback,
+                        vision: route,
+                        clearVision: route == nil
+                    )
+                }.value
+                applyProvidersResponse(response)
+            } catch {
+                self.agentProviderTestOK = false
+                self.agentProviderTestError = error.localizedDescription
+            }
+        }
+    }
+
+    /// 通过 DSH settings.yaml（llm-pi-ai 小节）添加自定义 OpenAI-compatible
+    /// provider。密钥先写 Keychain，再让 sidecar 写 settings 并重启内核。
+    /// 返回错误文案；nil 表示成功。
+    func addCustomProvider(
+        id: String,
+        displayName: String,
+        baseURL: String,
+        apiKey: String,
+        modelIDs: [String]
+    ) async -> String? {
+        guard let bridge else { return "Bridge 未连接" }
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedKey.isEmpty {
+            guard KeychainStore.writeProviderAPIKey(id, trimmedKey) else {
+                return "无法写入 macOS Keychain"
+            }
+        }
+        let spec: [String: Any] = [
+            "provider_id": id,
+            "display_name": displayName,
+            "base_url": baseURL,
+            "model_ids": modelIDs,
+        ]
+        do {
+            let response = try await Task.detached {
+                _ = try bridge.agentProviders(action: "reload_credentials")
+                return try bridge.agentProviders(
+                    action: "add_custom_provider",
+                    customProvider: spec
+                )
+            }.value
+            applyProvidersResponse(response)
+            return response.error
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// 移除自定义 provider（同时清掉它的 Keychain scoped key）。
+    func removeCustomProvider(_ providerID: String) async -> String? {
+        guard let bridge else { return "Bridge 未连接" }
+        _ = KeychainStore.writeProviderAPIKey(providerID, "")
+        do {
+            let response = try await Task.detached {
+                try bridge.agentProviders(
+                    action: "remove_custom_provider",
+                    customProviderId: providerID
+                )
+            }.value
+            applyProvidersResponse(response)
+            return response.error
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// @file 引用的模糊搜索（bridge workspace-files 只读命令）。
+    func searchWorkspaceFiles(query: String, limit: Int = 20) async -> [WorkspaceFileHit] {
+        guard let bridge else { return [] }
+        let response = try? await Task.detached {
+            try bridge.workspaceFiles(query: query, limit: limit)
+        }.value
+        return response?.files ?? []
+    }
+
+    func addPendingFileRef(_ path: String) {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              !pendingFileRefs.contains(trimmed),
+              pendingFileRefs.count < 4
+        else { return }
+        pendingFileRefs.append(trimmed)
+    }
+
+    func removePendingFileRef(_ path: String) {
+        pendingFileRefs.removeAll { $0 == path }
+    }
+
+    /// 把 workspace-files 返回的相对路径解析为本机绝对 URL（先状态根后仓库根）。
+    func resolveWorkspaceFileURL(_ relativePath: String) -> URL? {
+        guard let bridge else { return nil }
+        let trimmed = relativePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.hasPrefix("/"), !trimmed.contains("..") else { return nil }
+        for root in [bridge.stateRoot, bridge.projectRoot] {
+            let candidate = root.appendingPathComponent(trimmed)
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
     private func hydrateAgentQueue(_ inputs: [AgentQueuedInput]?) {
         agentQueuedInputs = (inputs ?? []).filter(\.isRestorable)
         agentSteeringCount = agentQueuedInputs.filter { $0.mode == "steering" }.count
@@ -1611,6 +1936,28 @@ final class KSSStore: ObservableObject {
                 self.errorMessage = "队列操作失败：\(error.localizedDescription)"
             }
         }
+    }
+
+    /// 首条消息落地时把默认标题替换为派生标题,让会话列表可辨识。
+    private func autoTitleSessionIfNeeded(_ sessionId: String, firstInput: String) {
+        guard let session = agentSessions.first(where: { $0.sessionId == sessionId }) else { return }
+        let current = session.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard current.isEmpty || current == "新会话" || current == sessionId else { return }
+        guard let derived = Self.derivedSessionTitle(from: firstInput) else { return }
+        renameAgentSession(sessionId, title: derived)
+    }
+
+    /// 从首条输入派生会话标题:首个非空行,截 18 字符,超长加省略号。
+    nonisolated static func derivedSessionTitle(from input: String) -> String? {
+        let firstLine = input
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty }
+        guard let line = firstLine, !line.isEmpty else { return nil }
+        if line.count > 18 {
+            return String(line.prefix(18)) + "…"
+        }
+        return line
     }
 
     func renameAgentSession(_ sessionId: String, title: String) {
@@ -1769,19 +2116,14 @@ final class KSSStore: ObservableObject {
 
     private func ensureAgentSession() {
         if selectedAgentSessionId != nil { return }
-        if let last = UserDefaults.standard.string(forKey: "kss.agent.lastSessionId"),
-           agentSessions.contains(where: { $0.sessionId == last }) {
-            openAgentSession(last)
-            return
-        }
-        let session = AgentSession(sessionId: "local-\(UUID().uuidString)", title: "本地会话")
-        agentSessions = [session]
+        let session = AgentSession(sessionId: "local-\(UUID().uuidString)", title: "新会话")
+        agentSessions.insert(session, at: 0)
         openAgentSession(session.sessionId)
     }
 
     private func restoreLastAgentSession() {
-        let last = UserDefaults.standard.string(forKey: "kss.agent.lastSessionId")
-        let session = AgentSession(sessionId: last ?? "local-\(UUID().uuidString)", title: "本地会话")
+        // 默认打开新会话：历史留在会话列表里，启动不自动续上一条线程。
+        let session = AgentSession(sessionId: "local-\(UUID().uuidString)", title: "新会话")
         agentSessions = [session]
         openAgentSession(session.sessionId)
     }
@@ -3643,10 +3985,15 @@ final class ChatConfirmGate: @unchecked Sendable {
     private var resolved = false
     private let lock = NSLock()
 
-    /// 后台线程调:阻塞至 resolve,返回是否批准。
-    func wait() -> Bool {
-        sem.wait()
+    /// 后台线程调:阻塞至 resolve,返回是否批准。超时按拒绝，避免读循环永久卡住。
+    func wait(timeout seconds: TimeInterval = 300) -> Bool {
+        let timedOut = sem.wait(timeout: .now() + seconds) == .timedOut
         lock.lock(); defer { lock.unlock() }
+        if timedOut && !resolved {
+            resolved = true
+            approved = false
+            return false
+        }
         return approved
     }
 

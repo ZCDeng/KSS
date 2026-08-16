@@ -422,3 +422,69 @@ def test_cn_hk_equity_research_is_chat_bundled_and_not_weekly() -> None:
     broken = next(s for s in missing if s.name == "cn-hk-equity-research")
     assert broken.missing_required_tools
     assert "run_equity_coverage" in broken.missing_required_tools or "resolve_listing" in broken.missing_required_tools
+
+
+def _write_machine_skill(root, folder, name, description="d"):
+    skill_dir = root / folder
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: {description}\n---\n\n# {name}\n",
+        encoding="utf-8",
+    )
+
+
+def test_machine_roots_discovered_and_adoptable(tmp_path):
+    from kss.agent.skills import SkillManager
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    machine = tmp_path / "home" / ".claude" / "skills"
+    _write_machine_skill(machine, "grill-me", "grill-me", "本机技能")
+
+    manager = SkillManager(repo, tmp_path / "state", machine_roots=[machine])
+    skills, _diags = manager.discover()
+    found = next(skill for skill in skills if skill.name == "grill-me")
+    assert found.source == "machine"
+    assert found.id.startswith("machine-skills/")
+    # 未采用:unreviewed + 不可用(不进 agent 可用集)
+    assert found.trust == "unreviewed"
+    assert found.enabled is False
+
+    manager.adopt_skill(found.id)
+    skills, _diags = manager.discover()
+    adopted = next(skill for skill in skills if skill.id == found.id)
+    assert adopted.trust == "user_approved"
+    assert adopted.enabled is True
+    assert adopted.active is True
+    # 采用后可注入
+    assert "grill-me" in manager.load_skill(found.id)
+
+
+def test_machine_skill_never_shadows_packaged(tmp_path):
+    from kss.agent.skills import SkillManager
+
+    repo = tmp_path / "repo"
+    _write_machine_skill(repo / ".claude" / "skills", "kss-review", "kss-review", "打包技能")
+    machine = tmp_path / "home" / ".agents" / "skills"
+    _write_machine_skill(machine, "kss-review", "kss-review", "本机同名技能")
+
+    manager = SkillManager(repo, tmp_path / "state", machine_roots=[machine])
+    manager_skills, _diags = manager.discover()
+    same_name = [skill for skill in manager_skills if skill.name == "kss-review"]
+    packaged = next(skill for skill in same_name if skill.source != "machine")
+    machine_skill = next(skill for skill in same_name if skill.source == "machine")
+    # 即便采用本机同名技能,winner 仍是打包版
+    manager.adopt_skill(machine_skill.id)
+    manager_skills, _diags = manager.discover()
+    packaged_after = next(s for s in manager_skills if s.id == packaged.id)
+    machine_after = next(s for s in manager_skills if s.id == machine_skill.id)
+    assert packaged_after.active is True
+    assert machine_after.active is False
+    assert machine_after.shadowed_by == packaged.id
+
+
+def test_default_machine_roots_gated_by_env(monkeypatch):
+    from kss.agent.skills import default_machine_skill_roots
+
+    monkeypatch.delenv("KSS_SKILLS_MACHINE_DISCOVERY", raising=False)
+    assert default_machine_skill_roots() == ()

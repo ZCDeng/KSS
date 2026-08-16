@@ -179,7 +179,7 @@ def investment_weekly_v3() -> ProfileSpec:
                     "max_steps": 8,
                     "timeout_seconds": 240,
                     "max_provider_tokens": 25_000,
-                    "read_only_agent": kind in agent_by_kind,
+                    "write_allowlist": [],
                 },
             )
             for kind, title, deps in task_kinds

@@ -152,6 +152,7 @@ class ResearchAgentSpec:
     timeout_seconds: int = 240
     can_submit_claims: bool = True
     can_verify_evidence: bool = False
+    write_allowlist: list[str] = field(default_factory=list)
 
     def to_wire(self) -> dict[str, Any]:
         return asdict(self)

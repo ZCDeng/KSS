@@ -10,6 +10,24 @@ from typing import Any
 
 from kss.agent.jsonl import append_jsonl, read_jsonl_repair_tail, utc_timestamp
 
+import os
+
+
+def default_machine_skill_roots() -> tuple[Path, ...]:
+    """本机技能目录(~/.claude/skills、~/.agents/skills)。
+
+    默认关闭,置 ``KSS_SKILLS_MACHINE_DISCOVERY=1`` 才生效——测试环境不受
+    开发机主目录里的几百个技能污染;生产 sidecar 入口显式开启。
+    """
+    if os.getenv("KSS_SKILLS_MACHINE_DISCOVERY", "").strip() not in {"1", "true", "yes"}:
+        return ()
+    home = Path.home()
+    candidates = (
+        home / ".claude" / "skills",
+        home / ".agents" / "skills",
+    )
+    return tuple(path for path in candidates if path.is_dir())
+
 _TRUST_VALUES = frozenset({"packaged", "user_approved", "unreviewed", "blocked"})
 
 
@@ -148,11 +166,15 @@ class SkillManager:
         state_root: str | Path | None = None,
         *,
         available_tools: Iterable[str] | None = None,
+        machine_roots: Iterable[str | Path] | None = None,
     ) -> None:
         """初始化.
 
         Args:
-            repo_root: 仓库根目录；只扫描 ``.claude/skills`` 和 ``.agents/skills``。
+            repo_root: 仓库根目录；扫描 ``.claude/skills`` 和 ``.agents/skills``。
+            machine_roots: 本机(用户主目录级)技能根,如 ``~/.claude/skills``、
+                ``~/.agents/skills``。本机技能默认 unreviewed 不可用,须经
+                ``adopt_skill``(批准信任+启用)后才进入可用集。
         """
         self.repo_root = Path(repo_root).resolve()
         self.state_root = (
@@ -163,10 +185,17 @@ class SkillManager:
             self.repo_root / ".agents" / "skills",
         ]
         self.user_root = self.state_root / "storage" / "agent" / "user_skills"
+        machine = tuple(
+            _SkillRoot(Path(root).expanduser().resolve(), "machine", 3 + index)
+            for index, root in enumerate(machine_roots or ())
+            if str(root).strip()
+        )
+        self.machine_roots = [item.path for item in machine]
         self._roots = (
             _SkillRoot(self.roots[0], "packaged", 0),
             _SkillRoot(self.roots[1], "packaged", 1),
             _SkillRoot(self.user_root, "user", 2),
+            *machine,
         )
         self.state_path = self.state_root / "storage" / "agent" / "skills_state.jsonl"
         self.available_tools = (
@@ -205,7 +234,12 @@ class SkillManager:
                 if not isinstance(name, str) or not self._valid_name(name):
                     diagnostics.append(SkillDiagnostic("invalid", f"技能名称不合法: {name}", path))
                     continue
-                source_default = "user" if root.kind == "user" else "project"
+                if root.kind == "user":
+                    source_default = "user"
+                elif root.kind == "machine":
+                    source_default = "machine"
+                else:
+                    source_default = "project"
                 source = self._metadata_text(parsed.get("source"), source_default)
                 protected = (
                     root.kind == "packaged"
@@ -225,13 +259,16 @@ class SkillManager:
                 skill_id = self._skill_id(resolved, root)
                 trust = self._candidate_trust(skill_id, root)
                 required_tools = self._string_list(parsed.get("required_tools"))
+                # 本机技能的 required_tools 用的是外部工具词汇(Bash/Read 等),
+                # 不映射 KSS TOOL_SPECS——只对仓库/用户层做可用性门槛,
+                # 本机层由 adopt 信任门把关。
                 missing_tools = (
                     tuple(
                         tool
                         for tool in required_tools
                         if tool not in self.available_tools
                     )
-                    if self.available_tools is not None
+                    if self.available_tools is not None and root.kind != "machine"
                     else ()
                 )
                 candidates.append(
@@ -276,14 +313,24 @@ class SkillManager:
         self._append_state("enabled", {"skill_id": skill_id, "enabled": enabled})
 
     def set_trust(self, skill_id: str, trust: str) -> None:
-        """审批或阻断用户 Skill；打包 Skill 的 packaged 身份不可伪造."""
+        """审批或阻断用户/本机 Skill；打包 Skill 的 packaged 身份不可伪造."""
         if trust not in _TRUST_VALUES - {"packaged"}:
             raise ValueError("trust 必须是 user_approved、unreviewed 或 blocked")
         skill = self._resolve_skill(skill_id, require_enabled=False)
-        if not self._is_relative_to(skill.path.resolve(), self.user_root.resolve()):
-            raise ValueError("只有用户 overlay Skill 可以修改信任状态")
+        resolved = skill.path.resolve()
+        mutable = self._is_relative_to(resolved, self.user_root.resolve()) or any(
+            self._is_relative_to(resolved, root.resolve())
+            for root in self.machine_roots
+        )
+        if not mutable:
+            raise ValueError("只有用户 overlay 或本机 Skill 可以修改信任状态")
         self._trust[skill.id] = trust
         self._append_state("trust", {"skill_id": skill.id, "trust": trust})
+
+    def adopt_skill(self, skill_id: str) -> None:
+        """采用一个本机/用户 Skill:批准信任并启用(slash 选中即用的一步式入口)."""
+        self.set_trust(skill_id, "user_approved")
+        self.set_enabled(skill_id, True)
 
     def pin_skill(self, session_id: str, skill_id: str) -> tuple[str, ...]:
         """将技能加入会话上下文，最多三个。"""
@@ -528,6 +575,10 @@ class SkillManager:
     def _skill_id(self, path: Path, root: _SkillRoot) -> str:
         if root.kind == "user":
             return f"user-skills/{path.relative_to(root.path.resolve()).as_posix()}"
+        if root.kind == "machine":
+            digest = hashlib.sha256(str(root.path).encode("utf-8")).hexdigest()[:8]
+            rel = path.relative_to(root.path.resolve()).as_posix()
+            return f"machine-skills/{digest}/{rel}"
         return path.relative_to(self.repo_root).as_posix()
 
     def _valid_name(self, name: str) -> bool:
@@ -584,12 +635,24 @@ class SkillManager:
             group = by_name[name]
             packaged = [item for item in group if item.root.kind == "packaged"]
             users = [item for item in group if item.root.kind == "user"]
+            machine = [item for item in group if item.root.kind == "machine"]
             protected = next((item for item in packaged if item.info.protected), None)
             approved = next(
                 (item for item in users if item.info.trust == "user_approved"),
                 None,
             )
-            winner = protected or approved or (packaged[0] if packaged else None)
+            # 本机技能优先级最低:仅当无打包/已批准 overlay 同名竞争者,
+            # 且本人已 adopt(user_approved)时才成为 winner。
+            approved_machine = next(
+                (item for item in machine if item.info.trust == "user_approved"),
+                None,
+            )
+            winner = (
+                protected
+                or approved
+                or (packaged[0] if packaged else None)
+                or approved_machine
+            )
             if protected and users:
                 for item in users:
                     diagnostics.append(
@@ -638,6 +701,8 @@ class SkillManager:
         return self._trust.get(skill_id, "unreviewed")
 
     def _source_layer(self, root: _SkillRoot, source: str, protected: bool) -> int:
+        if root.kind == "machine":
+            return 4
         if root.kind == "user":
             return 3
         if protected and source == "kss-bundled":

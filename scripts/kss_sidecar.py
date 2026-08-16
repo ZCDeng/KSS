@@ -41,6 +41,12 @@ from kss.agent import (  # noqa: E402
     RuntimeBusyError,
     SessionStore,
     SkillManager,
+    ToolCall,
+)
+from kss.agent.desktop_host import (  # noqa: E402
+    DesktopHarnessHost,
+    DesktopTurnRequest,
+    DesktopTurnResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,8 +57,12 @@ VERSION_PATH = SOCKET_PATH.parent / "kss-sidecar.version"
 
 # Swift 端 spawn 时把 stdout/stderr 重定向进文件(见 BridgeClient.ensureSidecarRunning);
 # 这里只需保证 root logger 在 INFO 级别有输出、走 stderr 即可落进那个文件。
+try:
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:  # noqa: BLE001
+    pass
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
-                     stream=sys.stderr)
+                     stream=sys.stderr, force=True)
 
 # ---------------------------------------------------------------------------
 # U3(plan 004)：chat-turn 长连 handler + 并发 reader 任务 = 写执行唯一点。
@@ -69,6 +79,7 @@ _AGENT_SERVICE: KSSAgentService | None = None
 _AGENT_SERVICE_ROOTS: tuple[Path, Path] | None = None
 _RESEARCH_SERVICE: Any | None = None
 _RESEARCH_SERVICE_ROOTS: tuple[Path, Path] | None = None
+_DESKTOP_HARNESS_HOST: DesktopHarnessHost | None = None
 
 
 def _agent_service() -> KSSAgentService:
@@ -109,6 +120,7 @@ def _session_store() -> SessionStore:
 
 def _skill_manager() -> SkillManager:
     import kss_chat_loop as chat_loop
+    from kss.agent.skills import default_machine_skill_roots
 
     return SkillManager(
         bridge.PROJECT_ROOT,
@@ -116,6 +128,10 @@ def _skill_manager() -> SkillManager:
         available_tools=[
             str(spec.get("name") or "") for spec in chat_loop.TOOL_SPECS
         ],
+        # 本机技能目录(~/.claude/skills、~/.agents/skills):
+        # 之前只挂在 KSSAgentService 上,agent-skills 列表走的是这里——
+        # 漏挂导致 UI 永远看不到本机技能。
+        machine_roots=default_machine_skill_roots(),
     )
 
 
@@ -145,18 +161,347 @@ def _execute_write(command: str, args: list[str]) -> dict:
         return {"error": "write_failed", "detail": f"{type(exc).__name__}: {exc}"}
 
 
+# Harness 工具 execute 的 callId 授权表。不是 chat-turn pending，不构成第二写主人（KTD2）。
+_HARNESS_GRANTS: dict[str, str] = {}
+_HARNESS_GRANT_SURFACES: dict[str, str] = {}
+
+
+def clear_harness_grants() -> None:
+    _HARNESS_GRANTS.clear()
+    _HARNESS_GRANT_SURFACES.clear()
+
+
+def _drop_grants(*, surface: str | None = None) -> None:
+    """作废授权。surface=None 清全部；桌面断连不得误伤研究 grant。"""
+    if surface is None:
+        clear_harness_grants()
+        return
+    for call_id, tagged in list(_HARNESS_GRANT_SURFACES.items()):
+        if tagged == surface:
+            _HARNESS_GRANTS.pop(call_id, None)
+            _HARNESS_GRANT_SURFACES.pop(call_id, None)
+
+
+def _normalize_grant_surface(surface: str | None) -> str:
+    return "research" if surface == "research" else "desktop"
+
+
+# 崩溃域：Node / Python / Swift 各自可不可用，但不各自拥有写权限。
+# Live 写 = Node grant 然后 Python dispatch。任一段死亡 ⇒ 失败关闭（KTD2 / R6 / U7）。
+_HARNESS_KERNEL_ALIVE = True
+_HARNESS_ANSWERER_ALIVE = True
+
+
+def harness_kernel_alive() -> bool:
+    return bool(_HARNESS_KERNEL_ALIVE)
+
+
+def harness_answerer_alive() -> bool:
+    return bool(_HARNESS_ANSWERER_ALIVE)
+
+
+def mark_harness_kernel_dead() -> None:
+    """Node 内核死亡：作废全部 pending grant，不得再 dispatch。"""
+    global _HARNESS_KERNEL_ALIVE
+    _HARNESS_KERNEL_ALIVE = False
+    clear_harness_grants()
+    host = globals().get("_DESKTOP_HARNESS_HOST")
+    if host is not None:
+        host.invalidate_all()
+
+
+def mark_harness_kernel_alive() -> None:
+    global _HARNESS_KERNEL_ALIVE
+    _HARNESS_KERNEL_ALIVE = True
+
+
+def mark_harness_answerer_dead() -> None:
+    """Swift/应答者断开：桌面待批写失败关闭。研究 pre-execute grant 不受影响。"""
+    global _HARNESS_ANSWERER_ALIVE
+    _HARNESS_ANSWERER_ALIVE = False
+    _drop_grants(surface="desktop")
+    host = globals().get("_DESKTOP_HARNESS_HOST")
+    if host is not None:
+        host.invalidate_all()
+
+
+def mark_harness_answerer_alive() -> None:
+    global _HARNESS_ANSWERER_ALIVE
+    _HARNESS_ANSWERER_ALIVE = True
+
+
+def reset_harness_crash_domains(*, kernel_alive: bool = True, answerer_alive: bool = True) -> None:
+    """测试/启动复位。授权只存在于进程内存，永不落盘。"""
+    global _HARNESS_KERNEL_ALIVE, _HARNESS_ANSWERER_ALIVE
+    _HARNESS_KERNEL_ALIVE = bool(kernel_alive)
+    _HARNESS_ANSWERER_ALIVE = bool(answerer_alive)
+    clear_harness_grants()
+    host = globals().get("_DESKTOP_HARNESS_HOST")
+    if host is not None and (not kernel_alive or not answerer_alive):
+        host.invalidate_all()
+
+
+def grant_harness_write(call_id: str, command: str, *, surface: str = "desktop") -> None:
+    """记录 Harness 已允许的一次 live 写 callId。无授权不得 dispatch。"""
+    if not harness_kernel_alive():
+        raise ValueError("harness kernel is not available")
+    tagged = _normalize_grant_surface(surface)
+    if tagged == "desktop" and not harness_answerer_alive():
+        raise ValueError("harness answerer is not available")
+    if not isinstance(call_id, str) or not call_id.strip():
+        raise ValueError("harness grant requires call_id")
+    if not isinstance(command, str) or not command.strip():
+        raise ValueError("harness grant requires command")
+    _HARNESS_GRANTS[call_id] = command
+    _HARNESS_GRANT_SURFACES[call_id] = tagged
+
+
+def _notify_harness_kernel(cmd: str, payload: dict[str, Any] | None = None) -> None:
+    """Forward confirm/abort/steer to the Node kernel without logging secrets."""
+    try:
+        from kss.agent.harness_kernel import get_harness_kernel
+
+        kernel = get_harness_kernel()
+        if kernel is None or not kernel.alive or kernel.driver != "dsh":
+            return
+        kernel.request(cmd, dict(payload or {}), timeout=5.0)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[harness] kernel %s notify failed: %s", cmd, exc)
+
+
+def revoke_harness_write(call_id: str) -> None:
+    """作废一个 callId 的授权。中止/断开后迟到允许不得 dispatch。"""
+    if isinstance(call_id, str) and call_id:
+        _HARNESS_GRANTS.pop(call_id, None)
+        _HARNESS_GRANT_SURFACES.pop(call_id, None)
+
+
+def execute_harness_tool(
+    *,
+    name: str,
+    args: dict[str, Any] | None,
+    call_id: str,
+    force_read: bool = False,
+    override_command: str | None = None,
+    override_positional: list[str] | None = None,
+) -> dict:
+    """Harness 插件 execute 的 RPC 意图入口。
+
+    读：``_make_read_only_call``（碰 WRITE_COMMANDS 即失败）。
+    写：仅当该 callId 当前已被 Harness allow，才 ``_execute_write``。
+    """
+    import kss_chat_loop as chat_loop  # 惰性：sidecar→chat_loop 单向
+
+    tool_args = args if isinstance(args, dict) else {}
+    registry = chat_loop.ToolRegistry()
+    if name not in {str(spec["name"]) for spec in chat_loop.TOOL_SPECS}:
+        return {"error": "unknown_tool", "name": name}
+
+    spec = registry.spec(name) or {}
+    spec_command = str(spec.get("command") or "")
+    try:
+        command, positional = registry.resolve(name, tool_args)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": "resolve_failed", "detail": f"{type(exc).__name__}: {exc}"}
+
+    if override_command is not None:
+        command = override_command
+        positional = list(override_positional or [])
+        if command in bridge.WRITE_COMMANDS and spec_command not in bridge.WRITE_COMMANDS:
+            return {
+                "error": "read_only_violation",
+                "hint": "read plugin cannot dispatch writes",
+            }
+
+    if force_read or command not in bridge.WRITE_COMMANDS:
+        try:
+            read_call = bridge._make_read_only_call(bridge.dispatch)
+            payload = read_call(command, positional)
+            return {"ok": True, "command": command, "result": payload}
+        except (PermissionError, ValueError, SystemExit) as exc:
+            return {
+                "error": "read_only_violation",
+                "detail": str(exc),
+                "command": command,
+            }
+
+    if not harness_kernel_alive():
+        clear_harness_grants()
+        return {
+            "error": "harness_unavailable",
+            "hint": "Node kernel is not available; live dispatch is fail-closed",
+        }
+    surface = _HARNESS_GRANT_SURFACES.get(call_id, "desktop")
+    if surface == "desktop" and not harness_answerer_alive():
+        _drop_grants(surface="desktop")
+        return {
+            "error": "harness_unavailable",
+            "hint": "desktop answerer is gone; live dispatch is fail-closed",
+        }
+
+    allowed = _HARNESS_GRANTS.get(call_id)
+    if allowed != command:
+        return {"error": "not_allowed", "hint": "Harness callId is not currently allowed"}
+    # 一次性窗口：消费 grant 后再 dispatch。进程在此崩溃 ⇒ 无静默成功，
+    # 同一 callId 不得在没有新的 Harness allow 时重试。
+    _HARNESS_GRANTS.pop(call_id, None)
+    _HARNESS_GRANT_SURFACES.pop(call_id, None)
+    return _execute_write(command, positional)
+
+
 def _reject_all(pending: dict, result: dict) -> None:
     """断连/SIGHUP/收尾:把所有未决 confirm 按拒收尾,防 loop 的 await 永挂(KTD-3/F3)。"""
-    for entry in list(pending.values()):
-        fut = entry["future"]
-        if not fut.done():
+    if result.get("error") == "disconnected":
+        mark_harness_answerer_dead()
+    for call_id, entry in list(pending.items()):
+        revoke_harness_write(str(call_id))
+        fut = entry.get("future")
+        if fut is not None and not fut.done():
             fut.set_result(dict(result))
     pending.clear()
 
 
+def _parse_confirm_message(msg: dict) -> tuple[Any, bool] | None:
+    """chat-turn-confirm 与 agent-control confirm 投影到同一 grant 路径。"""
+    if msg.get("cmd") == "chat-turn-confirm":
+        return msg.get("call_id"), bool(msg.get("approved"))
+    if msg.get("cmd") == "agent-control" and msg.get("action") == "confirm":
+        return msg.get("call_id"), bool(msg.get("approved"))
+    return None
+
+
+async def _settle_granted_write(entry: dict, *, approved: bool) -> dict:
+    """Chrome pending 只投影意图；dispatch 必须再过 execute_harness_tool 的 grant 检查。"""
+    call_id = str(entry.get("call_id") or "")
+    command = str(entry.get("command") or "")
+    if not approved:
+        revoke_harness_write(call_id)
+        return {"error": "denied", "hint": "用户拒绝该写操作"}
+    grant_harness_write(call_id, command)
+    return await asyncio.to_thread(
+        execute_harness_tool,
+        name=str(entry.get("tool_name") or entry.get("tool") or ""),
+        args=entry.get("tool_args") if isinstance(entry.get("tool_args"), dict) else {},
+        call_id=call_id,
+    )
+
+
+
+async def _watch_agent_confirm(call_id: str, host: DesktopHarnessHost) -> None:
+    """Fail-closed if chrome never answers a desktop write prompt."""
+    await asyncio.sleep(_CONFIRM_TIMEOUT)
+    if host.intent(call_id) is None:
+        return
+    host.invalidate(call_id)
+    _notify_harness_kernel("confirm", {"call_id": call_id, "approved": False})
+
+
+def _harness_kernel_boot_kwargs() -> dict[str, Any]:
+    return {
+        "driver": os.environ.get("KSS_HARNESS_DRIVER", "dsh"),
+        "sidecar_socket": str(SOCKET_PATH),
+        "dsh_home": Path(bridge.STATE_ROOT) / "harness" / "dsh-home",
+    }
+
+
+def reset_desktop_harness_host() -> None:
+    """Drop the cached host so the next turn binds a live Node session."""
+    global _DESKTOP_HARNESS_HOST
+    host = _DESKTOP_HARNESS_HOST
+    _DESKTOP_HARNESS_HOST = None
+    if host is not None:
+        try:
+            host.invalidate_all()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def revive_harness_kernel_after_timeout() -> None:
+    """Kill a wedged Node kernel and start a fresh one for the next desktop turn."""
+    from kss.agent.harness_kernel import ensure_harness_kernel, stop_harness_kernel
+
+    reset_desktop_harness_host()
+    try:
+        stop_harness_kernel()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        ensure_harness_kernel(**_harness_kernel_boot_kwargs())
+        mark_harness_kernel_alive()
+        logger.info("[harness] Node kernel restarted after turn timeout")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[harness] Node kernel restart failed: %s", exc)
+        mark_harness_kernel_dead()
+
+
+def _desktop_harness_host() -> DesktopHarnessHost:
+    """桌面 Harness 宿主。未注入会话时失败关闭，不把 Python loop 当主人。"""
+    global _DESKTOP_HARNESS_HOST
+    kernel = None
+    try:
+        from kss.agent.harness_kernel import get_harness_kernel
+        kernel = get_harness_kernel()
+    except Exception:  # noqa: BLE001
+        kernel = None
+    cached = _DESKTOP_HARNESS_HOST
+    if cached is not None:
+        session = getattr(cached, "_session", None)
+        session_kernel = getattr(session, "kernel", None)
+        if session_kernel is None:
+            if kernel is None or not kernel.alive:
+                return cached
+            reset_desktop_harness_host()
+        elif kernel is not None and kernel.alive and session_kernel is kernel:
+            return cached
+        else:
+            reset_desktop_harness_host()
+    session = None
+    if kernel is not None and kernel.alive:
+        session = kernel.desktop_session()
+    _DESKTOP_HARNESS_HOST = DesktopHarnessHost(
+        session=session,
+        grant_write=grant_harness_write,
+        revoke_grant=revoke_harness_write,
+    )
+    _DESKTOP_HARNESS_HOST.execute_tool = lambda **kwargs: execute_harness_tool(**kwargs)
+    return _DESKTOP_HARNESS_HOST
+
+
+def _project_session_event(event: dict[str, Any], host: DesktopHarnessHost) -> dict[str, Any] | None:
+    """Harness SessionEvent → 既有皮肤帧词汇。不发明第二份 transcript。"""
+    if not isinstance(event, dict):
+        return None
+    etype = str(event.get("type") or "")
+    if etype in {"approval_request", "approval/request"}:
+        call_id = str(event.get("call_id") or "")
+        projected = host.project_confirm(call_id)
+        projected["type"] = "confirm_required"
+        return projected
+    if etype in {"inbox_accepted", "inbox_rejected", "inbox_restored"}:
+        items = event.get("queued_inputs") or ([event["item"]] if event.get("item") else [])
+        operation = {
+            "inbox_accepted": "accepted",
+            "inbox_rejected": "rejected",
+            "inbox_restored": "restored",
+        }[etype]
+        payload = {
+            "type": "queue_update",
+            "operation": event.get("operation") or operation,
+            "queued_inputs": items,
+            **_queue_counts([_queue_item_wire(i) for i in items]),
+        }
+        if event.get("item") is not None:
+            payload["item"] = _queue_item_wire(event["item"])
+        if event.get("reason"):
+            payload["reason"] = event["reason"]
+        return payload
+    if etype == "chunk":
+        return {**event, "type": "message_delta", "delta": event.get("delta") or event.get("text")}
+    return event
+
+
 async def _confirm_reader(reader: asyncio.StreamReader, pending: dict) -> None:
-    """并发 reader 任务:收 chat-turn-confirm{call_id,approved},是 confirm 处理+写执行的唯一点。
-    StreamReader/StreamWriter 是同 fd 独立两半,与 emit 写并发无 fd 争用 → 无 Gap1 死锁。"""
+    """并发 reader：legacy chat-turn-confirm 适配到同一 Harness grant 路径。"""
     while True:
         try:
             line = await reader.readline()
@@ -169,76 +514,124 @@ async def _confirm_reader(reader: asyncio.StreamReader, pending: dict) -> None:
             msg = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if not isinstance(msg, dict) or msg.get("cmd") != "chat-turn-confirm":
+        if not isinstance(msg, dict):
             continue
-        call_id = msg.get("call_id")
-        approved = bool(msg.get("approved"))
-        logger.info("[chat] 收到 chat-turn-confirm call_id=%s approved=%s", call_id, approved)
-        entry = pending.pop(call_id, None)   # 单用途:取出即删,杜绝重放/串号(F1/B2)
+        parsed = _parse_confirm_message(msg)
+        if parsed is None:
+            continue
+        call_id, approved = parsed
+        logger.info("[chat] 收到 confirm call_id=%s approved=%s", call_id, approved)
+        entry = pending.pop(call_id, None)
         if entry is None:
             logger.warning("[chat] 丢弃不匹配/已消费 confirm call_id=%r", call_id)
             continue
         fut = entry["future"]
-        if fut.done():                       # 幂等:重复 approved 忽略
+        if fut.done():
             continue
-        if approved:
-            result = await asyncio.to_thread(_execute_write, entry["command"], entry["args"])
-        else:
-            result = {"error": "denied", "hint": "用户拒绝该写操作"}
+        result = await _settle_granted_write(entry, approved=approved)
         if not fut.done():
             fut.set_result(result)
 
 
 async def _handle_chat_turn(reader: asyncio.StreamReader,
                             writer: asyncio.StreamWriter, req: dict) -> None:
-    """长连聊天一轮:spawn loop 任务 + reader 任务(解 Gap1 死锁);emit 逐帧 drain。"""
-    import kss_chat_loop as chat_loop  # 惰性 import(sidecar→chat_loop 单向,KTD-2 红线)
+    """Legacy chrome adapter onto the Harness host. Python loop is not the owner."""
+    import kss_chat_loop as chat_loop  # catalog / effect labels only
 
+    write_lock = asyncio.Lock()
+    host = _desktop_harness_host()
     pending: dict[str, dict] = {}
-    write_lock = asyncio.Lock()              # 串行化 writer,emit 与帧不交错
+    confirm_seen = asyncio.Event()
 
     async def emit(ev: dict) -> None:
         async with write_lock:
             writer.write((json.dumps(ev, ensure_ascii=False) + "\n").encode("utf-8"))
-            await writer.drain()             # 每帧 drain(KTD-3 Gap2)
+            await writer.drain()
 
-    async def request_write(*, command: str, args: list, tool_name: str, tool_args: dict) -> dict:
-        """loop 发来的写意图。auto 任务直接执行(reader/handler 侧),否则 emit confirm 等人工 tap。
-        loop 只 await 本协程结果,不持 Future、不调 dispatch(KTD-4)。"""
-        if chat_loop.is_auto_task(command, args):
-            return await asyncio.to_thread(_execute_write, command, args)   # AUTO 免确认
-        call_id = uuid4().hex                 # handler 生成,loop 不能选值(F1)
-        fut = asyncio.get_running_loop().create_future()
-        pending[call_id] = {"future": fut, "command": command, "args": args}
-        logger.info("[chat] confirm_required 发出 call_id=%s command=%s", call_id, command)
-        await emit({"type": "confirm_required", "call_id": call_id,
-                    "tool": tool_name, "command": command, "args": tool_args,
-                    "argsText": json.dumps(tool_args, ensure_ascii=False),   # Swift modal 直接显
-                    "effect": chat_loop.write_effect_label(command, args)})   # 人话效果(U5)
-        t0 = time.monotonic()
-        try:
-            result = await asyncio.wait_for(fut, timeout=_CONFIRM_TIMEOUT)
-            logger.info("[chat] confirm 收到 call_id=%s 等待=%.1fs", call_id, time.monotonic() - t0)
-            return result
-        except asyncio.TimeoutError:          # 超时即拒(B3),删条目防后到 approved 复用
-            pending.pop(call_id, None)
-            logger.warning("[chat] confirm 超时 call_id=%s 等待=%.1fs", call_id, time.monotonic() - t0)
-            return {"error": "confirm_timeout", "hint": "确认超时,写按拒"}
+    async def emit_projected(event: dict) -> None:
+        projected = _project_session_event(event, host) or event
+        if projected.get("type") == "message_delta":
+            await emit({
+                "type": "chunk",
+                "text": projected.get("delta") or projected.get("text") or "",
+            })
+        if projected.get("type") == "confirm_required":
+            pending[str(projected.get("call_id") or "")] = {"call_id": projected.get("call_id")}
+            confirm_seen.set()
+        await emit(projected)
+
+    async def confirm_reader() -> None:
+        while True:
+            try:
+                line = await reader.readline()
+            except (ConnectionError, asyncio.IncompleteReadError):
+                line = b""
+            if not line:
+                host.abort("disconnected")
+                host.invalidate_all()
+                return
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(msg, dict):
+                continue
+            parsed = _parse_confirm_message(msg)
+            if parsed is None:
+                continue
+            call_id, approved = parsed
+            if host.resolve_approval(str(call_id), bool(approved)):
+                _notify_harness_kernel("confirm", {"call_id": str(call_id), "approved": bool(approved)})
 
     raw = req.get("messages") if isinstance(req, dict) else None
     messages = _prepare_messages(raw)
+    user_text = ""
+    for item in reversed(messages):
+        if item.get("role") == "user":
+            user_text = str(item.get("content") or "")
+            break
+    request = DesktopTurnRequest(
+        session_id="legacy-chat",
+        client_turn_id=uuid4().hex,
+        input=user_text,
+        run_id=uuid4().hex,
+    )
+    async def confirm_watchdog() -> None:
+        await confirm_seen.wait()
+        await asyncio.sleep(_CONFIRM_TIMEOUT)
+        host.invalidate_all()
 
-    reader_task = asyncio.create_task(_confirm_reader(reader, pending))
+    reader_task = asyncio.create_task(confirm_reader())
+    watchdog = asyncio.create_task(confirm_watchdog())
     try:
-        await chat_loop.run_turn(messages, emit, request_write)
-    except Exception as exc:  # noqa: BLE001  loop 意外异常 → error 帧,daemon 存活
-        logger.warning("[chat] run_turn 异常: %s", exc)
+        result = await host.run(request, emit_projected)
+        write_result = result.tool_results[0] if result.tool_results else None
+        if result.status == "unavailable":
+            err = result.error or "harness_session_unavailable"
+            if "timed out" in err.lower():
+                revive_harness_kernel_after_timeout()
+            await emit({
+                "type": "error",
+                "error": err,
+            })
+        await emit({
+            "type": "done",
+            "reason": result.status,
+            "writeResult": write_result,
+            "text": result.assistant_text,
+        })
+        _ = chat_loop.write_effect_label
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[chat] harness turn 异常: %s", exc)
         try:
             await emit({"type": "error", "error": f"{type(exc).__name__}: {exc}"})
+            await emit({"type": "done", "reason": "error"})
         except Exception:  # noqa: BLE001
             pass
     finally:
         reader_task.cancel()
+        watchdog.cancel()
+        host.invalidate_all()
         _reject_all(pending, {"error": "turn_ended"})
 
 
@@ -278,7 +671,7 @@ async def _write_runtime_event(writer: asyncio.StreamWriter, event: AgentEvent,
 
 def _validate_agent_turn_request(
     req: dict,
-) -> tuple[str, str, str, list[str]] | tuple[None, None, str, list[str]]:
+) -> tuple[str, str, str, list[str], list[str]] | tuple[None, None, str, list[str], list[str]]:
     allowed = {
         "cmd",
         "session_id",
@@ -287,25 +680,97 @@ def _validate_agent_turn_request(
         "source_queue_id",
         "attachment_ids",
         "live_context_scope",
+        "file_refs",
     }
     extra = set(req) - allowed
     if extra:
-        return None, None, f"agent-turn unexpected fields: {sorted(extra)}", []
+        return None, None, f"agent-turn unexpected fields: {sorted(extra)}", [], []
     session_id = req.get("session_id")
     client_turn_id = req.get("client_turn_id")
     text = req.get("input")
     if not isinstance(session_id, str) or not session_id:
-        return None, None, "agent-turn requires session_id", []
+        return None, None, "agent-turn requires session_id", [], []
     if not isinstance(client_turn_id, str) or not client_turn_id:
-        return None, None, "agent-turn requires client_turn_id", []
+        return None, None, "agent-turn requires client_turn_id", [], []
     if not isinstance(text, str):
-        return None, None, "agent-turn requires string input", []
+        return None, None, "agent-turn requires string input", [], []
     raw_attachment_ids = req.get("attachment_ids") or []
     if not isinstance(raw_attachment_ids, list) or any(
         not isinstance(item, str) for item in raw_attachment_ids
     ):
-        return None, None, "agent-turn attachment_ids must be a string array", []
-    return session_id, client_turn_id, text, raw_attachment_ids
+        return None, None, "agent-turn attachment_ids must be a string array", [], []
+    raw_file_refs = req.get("file_refs") or []
+    if not isinstance(raw_file_refs, list) or any(
+        not isinstance(item, str) for item in raw_file_refs
+    ):
+        return None, None, "agent-turn file_refs must be a string array", [], []
+    if len(raw_file_refs) > 8:
+        return None, None, "agent-turn file_refs supports at most 8 entries", [], []
+    return session_id, client_turn_id, text, raw_attachment_ids, raw_file_refs
+
+
+# @file 引用：与 bridge WORKSPACE_FILE_ROOTS 同一白名单（相对前缀 → 根）。
+_FILE_REF_PREFIXES: tuple[str, ...] = (
+    "storage/reports",
+    "storage/exports",
+    "storage/ui_surface",
+    "docs",
+)
+_FILE_REF_MAX_CHARS = 48_000
+_FILE_REF_MAX_COUNT = 4
+
+
+def _resolve_file_ref(ref: str) -> Path | None:
+    """把相对引用解析到白名单根内的真实文件；越界/缺失返回 None."""
+    candidate = Path(ref)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        return None
+    normalized = candidate.as_posix()
+    if not any(
+        normalized == prefix or normalized.startswith(prefix + "/")
+        for prefix in _FILE_REF_PREFIXES
+    ):
+        return None
+    for base in (Path(bridge.STATE_ROOT), Path(bridge.PROJECT_ROOT)):
+        resolved = (base / candidate).resolve()
+        try:
+            resolved.relative_to(base.resolve())
+        except ValueError:
+            continue
+        if resolved.is_file():
+            return resolved
+    return None
+
+
+def _inject_file_refs(text: str, refs: list[str]) -> str:
+    """dsh-at-file 语义：把引用文件内容直接附进提示词（fenced 块 + 截断说明）。
+
+    注入后的完整输入会经 followup 进入 dsh session log，满足
+    「model-visible means logged」；KSS 会话存储仍保留原始输入 + 引用元数据。
+    """
+    if not refs:
+        return text
+    blocks: list[str] = []
+    for ref in refs[:_FILE_REF_MAX_COUNT]:
+        resolved = _resolve_file_ref(ref)
+        if resolved is None:
+            blocks.append(f"[引用文件 {ref}]\n(不可用：文件不存在或超出可引用范围)")
+            continue
+        try:
+            content = resolved.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            blocks.append(f"[引用文件 {ref}]\n(读取失败：{exc})")
+            continue
+        truncated = False
+        if len(content) > _FILE_REF_MAX_CHARS:
+            content = content[:_FILE_REF_MAX_CHARS]
+            truncated = True
+        fence = "````"
+        note = "\n(内容超长已截断)" if truncated else ""
+        blocks.append(f"[引用文件 {ref}]{note}\n{fence}\n{content}\n{fence}")
+    if len(refs) > _FILE_REF_MAX_COUNT:
+        blocks.append(f"(另有 {len(refs) - _FILE_REF_MAX_COUNT} 个引用未注入：单轮最多 {_FILE_REF_MAX_COUNT} 个)")
+    return f"{text}\n\n" + "\n\n".join(blocks) if text.strip() else "\n\n".join(blocks)
 
 
 def _agent_wire_message(message: AgentMessage) -> dict[str, Any]:
@@ -411,11 +876,21 @@ def _providers_action_payload(req: dict[str, Any]) -> dict[str, Any]:
     elif action == "set_route":
         primary = req.get("primary")
         fallback = req.get("fallback")
+        vision = req.get("vision")
         if not isinstance(primary, dict):
             return {"status": "error", "error": "agent-providers set_route requires primary"}
         if fallback is not None and not isinstance(fallback, dict):
             return {"status": "error", "error": "agent-providers fallback must be an object"}
-        payload = service.set_provider_routes(primary=primary, fallback=fallback)
+        if vision is not None and not isinstance(vision, dict):
+            return {"status": "error", "error": "agent-providers vision must be an object"}
+        if "vision" in req:
+            # 显式携带 vision 键：dict 覆盖，null 清除。
+            payload = service.set_provider_routes(
+                primary=primary, fallback=fallback, vision=vision
+            )
+        else:
+            # 兼容旧客户端与测试桩：不带 vision 键时保持两参调用形状（存量不动）。
+            payload = service.set_provider_routes(primary=primary, fallback=fallback)
     elif action == "reload_credentials":
         socket_path = req.get("socket_path")
         nonce = req.get("nonce")
@@ -431,6 +906,28 @@ def _providers_action_payload(req: dict[str, Any]) -> dict[str, Any]:
         if fallback is not None and not isinstance(fallback, dict):
             return {"status": "error", "error": "agent-providers test fallback must be an object"}
         payload = service.test_provider_connection(primary=primary, fallback=fallback)
+    elif action == "add_custom_provider":
+        spec = req.get("provider")
+        if not isinstance(spec, dict):
+            return {"status": "error", "error": "agent-providers add_custom_provider requires provider"}
+        try:
+            profile = service.add_custom_provider(spec)
+        except ValueError as exc:
+            return {"status": "error", "error": str(exc)}
+        # 新 provider 的 apiKeyEnv 只在 Node 启动时经 credential broker 注入，
+        # 因此写完 settings 后重启内核让新路由与凭证同时生效。
+        revive_harness_kernel_after_timeout()
+        payload = service.provider_catalog(refresh=True)
+        payload["custom_provider"] = profile
+    elif action == "remove_custom_provider":
+        provider_id = req.get("provider_id")
+        if not isinstance(provider_id, str) or not provider_id:
+            return {"status": "error", "error": "agent-providers remove_custom_provider requires provider_id"}
+        removed = service.remove_custom_provider(provider_id)
+        if removed:
+            revive_harness_kernel_after_timeout()
+        payload = service.provider_catalog(refresh=True)
+        payload["removed"] = bool(removed)
     else:
         return {"status": "error", "error": f"unknown agent-providers action: {action}"}
     if not isinstance(payload.get("providers"), list):
@@ -1007,18 +1504,21 @@ async def _agent_control_reader(
     abort_token: Any,
     run_id: str,
     *,
-    service: KSSAgentService,
+    host: DesktopHarnessHost,
+    session_id: str,
     emit_control: Callable[[str, dict[str, Any]], Any],
 ) -> None:
-    """agent-turn 同连接控制 reader:支持 confirm/abort/steer/follow_up。"""
+    """agent-turn 同连接控制：confirm/abort/steer 映射 Harness grant、cancel、inbox。"""
     while True:
         try:
             line = await reader.readline()
         except (ConnectionError, asyncio.IncompleteReadError):
             line = b""
         if not line:
+            host.abort("disconnected")
             _reject_all(pending, {"error": "disconnected", "hint": "连接中断,写按拒收尾"})
             abort_token.abort("disconnected")
+            _notify_harness_kernel("abort", {"session_id": session_id, "cause": "parent"})
             return
         try:
             msg = json.loads(line)
@@ -1028,12 +1528,15 @@ async def _agent_control_reader(
             continue
         if msg.get("cmd") == "agent-control":
             action = msg.get("action")
-            if action == "abort" and msg.get("run_id") in (None, run_id):
-                abort_token.abort(str(msg.get("reason") or "client_abort"))
+            if action == "abort" and msg.get("run_id") in (None, "", run_id):
+                reason = str(msg.get("reason") or "client_abort")
+                host.abort(reason)
                 _reject_all(pending, {"error": "aborted", "hint": "用户中止本轮"})
+                abort_token.abort(reason)
+                _notify_harness_kernel("abort", {"session_id": session_id, "cause": "user"})
                 return
             if action in {"steer", "follow_up"}:
-                if msg.get("run_id") not in (None, run_id):
+                if msg.get("run_id") not in (None, "", run_id):
                     await _emit_queue_update(
                         emit_control,
                         operation="rejected",
@@ -1056,12 +1559,12 @@ async def _agent_control_reader(
                         reason="missing_input",
                     )
                     continue
-                ok, payload = await _service_queue_control(
-                    service,
-                    action=action,
-                    run_id=run_id,
+                ok, payload = host.enqueue(
+                    mode=action,
                     client_message_id=client_message_id,
                     input_text=input_text,
+                    session_id=session_id,
+                    run_id=run_id,
                     source_queue_id=msg.get("source_queue_id")
                     if isinstance(msg.get("source_queue_id"), str)
                     else None,
@@ -1075,9 +1578,10 @@ async def _agent_control_reader(
                     if isinstance(payload, dict)
                     else None
                 )
+                operation = payload.get("operation") if isinstance(payload, dict) else None
                 await _emit_queue_update(
                     emit_control,
-                    operation="accepted" if ok else "rejected",
+                    operation=operation or ("accepted" if ok else "rejected"),
                     item=item,
                     queued_inputs=queued_inputs,
                     reason=reason if not ok else None,
@@ -1096,23 +1600,23 @@ async def _agent_control_reader(
         if entry is None:
             logger.warning("[agent] 丢弃不匹配/已消费 confirm call_id=%r", call_id)
             continue
-        fut = entry["future"]
-        if fut.done():
+        resolved = host.resolve_approval(str(call_id), approved)
+        if not resolved:
+            logger.warning("[agent] 迟到允许无效 call_id=%r", call_id)
             continue
-        if approved:
-            result = await asyncio.to_thread(_execute_write, entry["command"], entry["args"])
-        else:
-            result = {"error": "denied", "hint": "用户拒绝该写操作"}
-        if not fut.done():
-            fut.set_result(result)
+        _notify_harness_kernel(
+            "confirm",
+            {"call_id": str(call_id), "approved": bool(approved), "session_id": session_id},
+        )
+        fut = entry.get("future")
+        if fut is not None and not fut.done():
+            fut.set_result({"ok": bool(approved)} if approved else {"error": "denied"})
 
 
 async def _handle_agent_turn(reader: asyncio.StreamReader,
                              writer: asyncio.StreamWriter, req: dict) -> None:
-    """Agent v1 transport: decode, stream Runtime events, and own the write gate."""
-    import kss_chat_loop as chat_loop
-
-    session_id, client_turn_id, user_text_or_error, attachment_ids = (
+    """Agent v1 传输：Harness SessionEvent 投影到既有皮肤帧；不把 Python loop 当主人。"""
+    session_id, client_turn_id, user_text_or_error, attachment_ids, file_refs = (
         _validate_agent_turn_request(req)
     )
     transport_run_id = uuid4().hex
@@ -1159,8 +1663,12 @@ async def _handle_agent_turn(reader: asyncio.StreamReader,
     pending: dict[str, dict] = {}
     writer_lock = asyncio.Lock()
     control_task: asyncio.Task | None = None
-    active_run_id: str | None = None
+    active_run_id: str | None = transport_run_id
     wire_sequence = 0
+    host = _desktop_harness_host()
+    host.execute_tool = lambda **kwargs: execute_harness_tool(**kwargs)
+    abort_token = host.abort_token
+    store = _session_store()
 
     async def write_agent_frame(
         event_type: str,
@@ -1194,70 +1702,206 @@ async def _handle_agent_turn(reader: asyncio.StreamReader,
             writer.write((json.dumps(frame, ensure_ascii=False) + "\n").encode("utf-8"))
             await writer.drain()
 
-    async def emit_runtime(event: AgentEvent) -> None:
-        nonlocal control_task, active_run_id
-        if active_run_id is None:
-            active_run_id = event.run_id
-            state = service.runtime.state(event.run_id)
-            token = state.abort_token if state is not None else None
-            if token is not None:
-                _AGENT_ABORTS[event.run_id] = token
-                control_task = asyncio.create_task(
-                    _agent_control_reader(
-                        reader,
-                        pending,
-                        token,
-                        event.run_id,
-                        service=service,
-                        emit_control=write_agent_frame,
-                    )
-                )
-        await write_agent_frame(event.type, event=event)
+    async def emit_projected(raw: dict[str, Any]) -> None:
+        projected = _project_session_event(raw, host)
+        if not projected:
+            return
+        event_type = str(projected.get("type") or "message_delta")
+        payload = {k: v for k, v in projected.items() if k != "type"}
+        if event_type == "confirm_required":
+            call_id = str(payload.get("call_id") or "")
+            if call_id and call_id not in pending:
+                pending[call_id] = {"call_id": call_id, "chrome": True}
+                asyncio.create_task(_watch_agent_confirm(call_id, host))
+        await write_agent_frame(event_type, payload)
 
-    async def request_write(*, command: str, args: list,
-                            tool_name: str, tool_args: dict,
-                            emit_event: Any) -> dict:
-        if chat_loop.is_auto_task(command, args):
-            return await asyncio.to_thread(_execute_write, command, args)
-        call_id = uuid4().hex
-        fut = asyncio.get_running_loop().create_future()
-        pending[call_id] = {"future": fut, "command": command, "args": args}
-        await emit_event("confirm_required", {
-            "call_id": call_id,
-            "tool": tool_name,
-            "command": command,
-            "args": tool_args,
-            "argsText": json.dumps(tool_args, ensure_ascii=False),
-            "effect": chat_loop.write_effect_label(command, args),
-        })
-        try:
-            return await asyncio.wait_for(fut, timeout=_CONFIRM_TIMEOUT)
-        except asyncio.TimeoutError:
-            pending.pop(call_id, None)
-            return {"error": "confirm_timeout", "hint": "确认超时,写按拒"}
+    _AGENT_ABORTS[transport_run_id] = abort_token
+    control_task = asyncio.create_task(
+        _agent_control_reader(
+            reader,
+            pending,
+            abort_token,
+            transport_run_id,
+            host=host,
+            session_id=session_id,
+            emit_control=write_agent_frame,
+        )
+    )
 
     try:
-        kwargs: dict[str, Any] = {}
-        source_queue_id = req.get("source_queue_id")
-        if isinstance(source_queue_id, str) and source_queue_id:
-            kwargs["source_queue_id"] = source_queue_id
-        from kss.equity_research.envelope import options_for_user_text
-        run_options = options_for_user_text(str(user_text_or_error or ""))
-        if run_options is not None:
-            kwargs["run_options"] = run_options
-        await _maybe_call(
-            _call_with_supported_kwargs(
-                service.run_turn,
-                session_id=session_id,
-                client_turn_id=client_turn_id,
-                input=user_text_or_error,
-                emit=emit_runtime,
-                request_write=request_write,
-                attachment_ids=attachment_ids,
-                live_context_scope=req.get("live_context_scope"),
-                **kwargs,
-            )
+        admission = store.try_start_run(
+            session_id,
+            run_id=transport_run_id,
+            client_turn_id=client_turn_id,
         )
+        if not admission.admitted:
+            payload = {
+                "existing_run_id": admission.run_id,
+                "client_turn_id": client_turn_id,
+            }
+            if admission.status == "running":
+                await write_agent_frame("agent_start", payload)
+                await write_agent_frame("agent_end", {
+                    **payload,
+                    "reason": "already_running",
+                    "termination_reason": "already_running",
+                })
+            elif admission.status == "completed":
+                await write_agent_frame("agent_start", payload)
+                await write_agent_frame("agent_end", {
+                    **payload,
+                    "reason": "duplicate_completed",
+                    "termination_reason": "duplicate_completed",
+                })
+            else:
+                await write_agent_frame("error", {
+                    **payload,
+                    "error": "interrupted or failed turns require a new client_turn_id",
+                    "is_error": True,
+                })
+                await write_agent_frame("agent_end", {
+                    **payload,
+                    "reason": "retry_requires_new_client_turn_id",
+                    "termination_reason": "retry_requires_new_client_turn_id",
+                })
+            return
+        source_queue_id = req.get("source_queue_id")
+        if not isinstance(source_queue_id, str) or not source_queue_id:
+            source_queue_id = None
+        user_message = AgentMessage(
+            id=uuid4().hex,
+            role="user",
+            content=str(user_text_or_error or ""),
+            timestamp=time.time(),
+            metadata={"file_refs": list(file_refs)} if file_refs else {},
+        )
+        store.append_message(
+            session_id,
+            user_message,
+            source_queue_id=source_queue_id,
+        )
+        harness_input = _inject_file_refs(str(user_text_or_error or ""), list(file_refs))
+        await write_agent_frame("agent_start", {"client_turn_id": client_turn_id})
+        route_getter = getattr(service, "session_provider_route", None)
+        try:
+            provider_route = route_getter(session_id) if callable(route_getter) else None
+        except Exception:  # noqa: BLE001
+            provider_route = None
+        request = DesktopTurnRequest(
+            session_id=session_id,
+            client_turn_id=client_turn_id,
+            input=harness_input,
+            run_id=transport_run_id,
+            attachment_ids=tuple(attachment_ids or ()),
+            source_queue_id=source_queue_id,
+            provider_route=provider_route if isinstance(provider_route, dict) else None,
+        )
+        mark_harness_kernel_alive()
+        mark_harness_answerer_alive()
+        started = time.monotonic()
+        logger.info("[agent-turn] start session=%s run=%s", session_id, transport_run_id)
+        result = await host.run(request, emit_projected)
+        if (
+            result.status == "completed"
+            and not (result.assistant_text or "").strip()
+            and not result.tool_results
+        ):
+            result = DesktopTurnResult(
+                status="unavailable",
+                error=result.error or "empty_completion",
+            )
+        logger.info(
+            "[agent-turn] end session=%s run=%s status=%s duration_ms=%d",
+            session_id,
+            transport_run_id,
+            result.status,
+            int((time.monotonic() - started) * 1000),
+        )
+        if result.status == "unavailable":
+            # 本回合失败关闭。不要把「未注入会话」锁成内核永久死亡，
+            # 否则会误伤同进程里的研究 grant。超时除外：whenIdle 卡住时必须
+            # 杀掉 Node，否则下一回合的 desktop.turn 会排在未读 stdin 后面。
+            err = result.error or "harness_session_unavailable"
+            if "timed out" in err.lower():
+                revive_harness_kernel_after_timeout()
+            await write_agent_frame("error", {
+                "error": err,
+                "is_error": True,
+            })
+            store.append_message(
+                session_id,
+                AgentMessage(
+                    id=uuid4().hex,
+                    role="assistant",
+                    content=f"出错了：{err}",
+                    timestamp=time.time(),
+                ),
+            )
+            store.finish_run(
+                session_id,
+                transport_run_id,
+                status="interrupted",
+                reason="harness_unavailable",
+            )
+            await write_agent_frame("agent_end", {
+                "reason": "harness_unavailable",
+                "termination_reason": "harness_unavailable",
+            })
+            return
+        assistant_text = result.assistant_text or ""
+        if assistant_text:
+            store.append_message(
+                session_id,
+                AgentMessage(
+                    id=uuid4().hex,
+                    role="assistant",
+                    content=assistant_text,
+                    timestamp=time.time(),
+                ),
+            )
+        for tool_result in result.tool_results:
+            store.append_message(
+                session_id,
+                AgentMessage(
+                    id=uuid4().hex,
+                    role="tool",
+                    content=json.dumps(tool_result, ensure_ascii=False),
+                    timestamp=time.time(),
+                    tool_calls=(
+                        ToolCall(
+                            id=uuid4().hex,
+                            name="run_task",
+                            arguments={},
+                            result=tool_result,
+                        ),
+                    ),
+                ),
+            )
+        aborted = abort_token.aborted or result.status == "aborted"
+        reason = abort_token.reason or result.error or ("client_abort" if aborted else "stop")
+        store.finish_run(
+            session_id,
+            transport_run_id,
+            status="aborted" if aborted else "completed",
+            reason=reason,
+        )
+        await write_agent_frame("agent_end", {
+            "reason": reason,
+            "termination_reason": reason,
+            "status": "aborted" if aborted else "completed",
+        })
+    except (KeyError, ValueError) as exc:
+        store.finish_run(
+            session_id,
+            transport_run_id,
+            status="failed",
+            reason="bad_request",
+        )
+        await write_agent_frame("error", {"error": str(exc), "is_error": True})
+        await write_agent_frame("agent_end", {
+            "reason": "bad_request",
+            "termination_reason": "bad_request",
+        })
     except RunAdmissionError as exc:
         rejected = _AgentFrameEmitter(writer, session_id, transport_run_id)
         payload = {
@@ -1267,43 +1911,19 @@ async def _handle_agent_turn(reader: asyncio.StreamReader,
         if exc.status == "running":
             reason = "already_running"
             await rejected.emit("agent_start", payload)
-            await rejected.emit(
-                "agent_end",
-                {
-                    **payload,
-                    "reason": reason,
-                    "termination_reason": reason,
-                },
-            )
+            await rejected.emit("agent_end", {**payload, "reason": reason, "termination_reason": reason})
         elif exc.status == "completed":
             reason = "duplicate_completed"
             await rejected.emit("agent_start", payload)
-            await rejected.emit(
-                "agent_end",
-                {
-                    **payload,
-                    "reason": reason,
-                    "termination_reason": reason,
-                },
-            )
+            await rejected.emit("agent_end", {**payload, "reason": reason, "termination_reason": reason})
         else:
             reason = "retry_requires_new_client_turn_id"
-            await rejected.emit(
-                "error",
-                {
-                    **payload,
-                    "error": "interrupted or failed turns require a new client_turn_id",
-                    "is_error": True,
-                },
-            )
-            await rejected.emit(
-                "agent_end",
-                {
-                    **payload,
-                    "reason": reason,
-                    "termination_reason": reason,
-                },
-            )
+            await rejected.emit("error", {
+                **payload,
+                "error": "interrupted or failed turns require a new client_turn_id",
+                "is_error": True,
+            })
+            await rejected.emit("agent_end", {**payload, "reason": reason, "termination_reason": reason})
     except RuntimeBusyError as exc:
         busy = _AgentFrameEmitter(writer, session_id, transport_run_id)
         payload = {
@@ -1317,6 +1937,7 @@ async def _handle_agent_turn(reader: asyncio.StreamReader,
     finally:
         if control_task is not None:
             control_task.cancel()
+        host.invalidate_all()
         _reject_all(pending, {"error": "turn_ended"})
         if active_run_id is not None:
             _AGENT_ABORTS.pop(active_run_id, None)
@@ -1336,10 +1957,266 @@ def _prepare_messages(raw) -> list[dict]:
     return out
 
 
+_VISION_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+_VISION_DEFAULT_BASE_URLS = {
+    "openai": "https://api.openai.com/v1",
+    "deepseek": "https://api.deepseek.com/v1",
+    "deepseek-official": "https://api.deepseek.com/v1",
+    "kss-primary": "https://api.deepseek.com/v1",
+}
+
+
+def _provider_api_key_env(provider_id: str) -> str:
+    """vision 路由 provider 的 apiKeyEnv（与 credential broker 注入约定一致）."""
+    if provider_id in {"deepseek", "deepseek-official", "kss-primary"}:
+        return "DEEPSEEK_API_KEY"
+    if provider_id == "openai":
+        return "OPENAI_API_KEY"
+    from kss.agent.harness_settings import custom_provider_env_name
+
+    return custom_provider_env_name(provider_id)
+
+
+def _vision_context_payload(req: dict) -> dict[str, Any]:
+    """vision_analyze 的非密钥上下文：文件绝对路径 + vision 路由 + apiKeyEnv."""
+    service = _agent_service()
+    try:
+        vision = service.route_store.load().vision
+    except Exception:  # noqa: BLE001
+        vision = None
+    if vision is None:
+        return {
+            "error": "vision_route_unconfigured",
+            "hint": "请在 Seesaw Models 页把一个支持图片的模型设为视觉模型",
+        }
+    file_path = None
+    media_type = None
+    attachment_id = req.get("attachment_id")
+    ref = req.get("path")
+    if isinstance(attachment_id, str) and attachment_id:
+        try:
+            record = service.attachments.load_record(attachment_id)
+        except Exception:  # noqa: BLE001
+            return {"error": "attachment_not_found", "attachment_id": attachment_id}
+        if record.kind != "image":
+            return {"error": "attachment_not_image", "kind": record.kind}
+        file_path = service.attachments.object_path(record.sha256)
+        media_type = record.mime_type
+    elif isinstance(ref, str) and ref:
+        resolved = _resolve_file_ref(ref)
+        if resolved is None or resolved.suffix.lower() not in _VISION_IMAGE_EXTS:
+            return {
+                "error": "path_not_allowed",
+                "hint": "仅允许 storage/reports、storage/exports、storage/ui_surface、docs 下的图片文件",
+            }
+        file_path = resolved
+    else:
+        return {"error": "vision_target_missing", "hint": "需要 attachment_id 或 path 其一"}
+    if file_path is None or not Path(file_path).is_file():
+        return {"error": "vision_file_missing"}
+    base_url = vision.base_url or _VISION_DEFAULT_BASE_URLS.get(vision.provider_id)
+    if not base_url:
+        try:
+            from kss.agent.harness_settings import list_custom_providers
+
+            profile = list_custom_providers(service._dsh_home()).get(vision.provider_id)
+            base_url = str(profile.get("baseURL")) if profile else None
+        except Exception:  # noqa: BLE001
+            base_url = None
+    if not base_url:
+        return {"error": "vision_base_url_missing", "provider_id": vision.provider_id}
+    return {
+        "ok": True,
+        "file_path": str(file_path),
+        "media_type": media_type,
+        "route": {
+            "provider_id": vision.provider_id,
+            "model_id": vision.model_id,
+            "base_url": base_url,
+            "api_key_env": _provider_api_key_env(vision.provider_id),
+        },
+    }
+
+
+def _slash_action_payload(req: dict) -> dict[str, Any]:
+    """Seesaw slash command：本地工具目录与直连执行（只读、不经模型回合）。
+
+    与 dsh「human command 不占模型回合」语义一致：TOOL_SPECS 同时驱动
+    kss-plugins 与 kss-mcp，此处即"本地 plugins/MCP"的统一目录。写工具
+    一律拒绝——写操作必须回到对话内 agent + 确认链路。
+    """
+    import kss_chat_loop as chat_loop
+
+    action = str(req.get("action") or "catalog")
+    if action == "catalog":
+        tools: list[dict[str, Any]] = []
+        for spec in chat_loop.TOOL_SPECS:
+            command = str(spec.get("command") or "")
+            if command in bridge.WRITE_COMMANDS:
+                continue
+            params = spec.get("params") or {}
+            tools.append({
+                "name": str(spec.get("name") or ""),
+                "command": command,
+                "desc": str(spec.get("desc") or ""),
+                "order": [str(key) for key in (spec.get("order") or [])],
+                "params": [
+                    {
+                        "key": str(key),
+                        "description": str((value or {}).get("description") or ""),
+                    }
+                    for key, value in params.items()
+                ],
+            })
+        mcp_tools: list[dict[str, Any]] = []
+        mcp_errors: list[str] = []
+        try:
+            from kss.agent import mcp_registry
+
+            mcp_tools, mcp_errors = mcp_registry.list_mcp_tools(
+                bridge.STATE_ROOT,
+                bridge.PROJECT_ROOT,
+                refresh=bool(req.get("refresh")),
+            )
+        except Exception as exc:  # noqa: BLE001 - 外部 MCP 不可用不拖垮本地目录
+            mcp_errors = [f"registry: {type(exc).__name__}: {exc}"]
+        return {"tools": tools, "mcp_tools": mcp_tools, "mcp_errors": mcp_errors}
+    if action == "run":
+        session_id = req.get("session_id")
+        name = req.get("name")
+        raw_args = req.get("args")
+        if not isinstance(session_id, str) or not session_id:
+            return {"status": "error", "error": "agent-slash run requires session_id"}
+        if not isinstance(name, str) or not name:
+            return {"status": "error", "error": "agent-slash run requires name"}
+        args = (
+            {str(key): str(value) for key, value in raw_args.items()}
+            if isinstance(raw_args, dict)
+            else {}
+        )
+        if name.startswith("mcp:"):
+            parts = name.split(":", 2)
+            if len(parts) != 3 or not parts[1] or not parts[2]:
+                return {"status": "error", "error": "mcp 命令格式应为 mcp:server:tool"}
+            from kss.agent import mcp_registry
+
+            server, tool = parts[1], parts[2]
+            result = mcp_registry.call_mcp_tool(
+                bridge.STATE_ROOT, bridge.PROJECT_ROOT, server, tool, args,
+            )
+            rendered_args = " ".join(
+                f"{key}={value}" for key, value in args.items() if str(value).strip()
+            )
+            user_text = f"/{name}" + (f" {rendered_args}" if rendered_args else "")
+            pretty = json.dumps(result, ensure_ascii=False, indent=2)
+            if len(pretty) > 6000:
+                pretty = pretty[:6000] + "\n…(截断)"
+            assistant_text = (
+                f"外部 MCP `{server} · {tool}`（不可信外部输出，未经模型，"
+                f"数字须自行核对）：\n\n```json\n{pretty}\n```"
+            )
+            store = _session_store()
+            if store.open_session(session_id) is None:
+                store.create_session(session_id=session_id, metadata={"title": session_id})
+            store.append_message(session_id, AgentMessage(
+                id=uuid4().hex,
+                role="user",
+                content=user_text,
+                timestamp=time.time(),
+                metadata={"slash_command": name},
+            ))
+            store.append_message(session_id, AgentMessage(
+                id=uuid4().hex,
+                role="assistant",
+                content=assistant_text,
+                timestamp=time.time(),
+                metadata={
+                    "slash_command": name,
+                    "provenance": "external_mcp_untrusted",
+                },
+            ))
+            ok = not (isinstance(result, dict) and result.get("error"))
+            return {
+                "ok": ok,
+                "user_text": user_text,
+                "assistant_text": assistant_text,
+                "result": result,
+            }
+        registry = chat_loop.ToolRegistry()
+        spec = registry.spec(name)
+        if spec is None:
+            return {"status": "error", "error": f"unknown_tool:{name}"}
+        if str(spec.get("command") or "") in bridge.WRITE_COMMANDS:
+            return {
+                "status": "error",
+                "error": "slash 仅支持只读工具；写操作请在对话中由 agent 走确认链路",
+            }
+        result = execute_harness_tool(
+            name=name,
+            args=args,
+            call_id=f"slash-{uuid4().hex}",
+            force_read=True,
+        )
+        rendered_args = " ".join(
+            f"{key}={value}" for key, value in args.items() if str(value).strip()
+        )
+        user_text = f"/{name}" + (f" {rendered_args}" if rendered_args else "")
+        pretty = json.dumps(result, ensure_ascii=False, indent=2)
+        if len(pretty) > 6000:
+            pretty = pretty[:6000] + "\n…(截断)"
+        assistant_text = (
+            f"本地直连 `/{name}`（未经模型）：\n\n```json\n{pretty}\n```"
+        )
+        store = _session_store()
+        if store.open_session(session_id) is None:
+            store.create_session(session_id=session_id, metadata={"title": session_id})
+        store.append_message(session_id, AgentMessage(
+            id=uuid4().hex,
+            role="user",
+            content=user_text,
+            timestamp=time.time(),
+            metadata={"slash_command": name},
+        ))
+        store.append_message(session_id, AgentMessage(
+            id=uuid4().hex,
+            role="assistant",
+            content=assistant_text,
+            timestamp=time.time(),
+            metadata={"slash_command": name, "provenance": "local_direct"},
+        ))
+        ok = not (isinstance(result, dict) and result.get("error"))
+        return {
+            "ok": ok,
+            "user_text": user_text,
+            "assistant_text": assistant_text,
+            "result": result,
+        }
+    return {"status": "error", "error": f"unknown agent-slash action: {action}"}
+
+
 def _handle_agent_json_command(req: dict) -> str | None:
     """Agent v1 非流式 JSON 命令；返回标准 sidecar response。"""
     cmd = req.get("cmd")
     try:
+        if cmd == "agent-slash":
+            return _sidecar_ok(_slash_action_payload(req))
+        if cmd == "harness-vision-context":
+            return _sidecar_ok(_vision_context_payload(req))
+        if cmd == "harness-tool-grant":
+            grant_harness_write(
+                str(req.get("call_id") or ""),
+                str(req.get("command") or ""),
+                surface=str(req.get("surface") or "research"),
+            )
+            return _sidecar_ok({"ok": True, "call_id": req.get("call_id")})
+        if cmd == "harness-tool-execute":
+            raw_args = req.get("args")
+            return _sidecar_ok(execute_harness_tool(
+                name=str(req.get("name") or ""),
+                args=raw_args if isinstance(raw_args, dict) else {},
+                call_id=str(req.get("call_id") or ""),
+                force_read=bool(req.get("force_read")),
+            ))
         if cmd == "agent-research":
             return _sidecar_ok(_research_action_payload(req))
         if cmd == "agent-artifacts":
@@ -1429,6 +2306,18 @@ def _handle_agent_json_command(req: dict) -> str | None:
                     return _sidecar_err("agent-skills enable requires skill_id")
                 enabled = bool(req.get("enabled", True))
                 manager.set_enabled(skill_id, enabled)
+                session_id = req.get("session_id")
+                return _sidecar_ok(_skill_response(
+                    manager, session_id if isinstance(session_id, str) else None,
+                ))
+            if action == "adopt":
+                skill_id = req.get("skill_id")
+                if not isinstance(skill_id, str):
+                    return _sidecar_err("agent-skills adopt requires skill_id")
+                try:
+                    manager.adopt_skill(skill_id)
+                except ValueError as exc:
+                    return _sidecar_err(str(exc))
                 session_id = req.get("session_id")
                 return _sidecar_ok(_skill_response(
                     manager, session_id if isinstance(session_id, str) else None,
@@ -1657,8 +2546,29 @@ async def _serve() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, lambda: stop.done() or stop.set_result(None))
 
+    try:
+        from kss.agent.harness_kernel import ensure_harness_kernel
+        kwargs = _harness_kernel_boot_kwargs()
+        ensure_harness_kernel(**kwargs)
+        mark_harness_kernel_alive()
+        logger.info("[harness] Node kernel started driver=%s", kwargs["driver"])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[harness] Node kernel not started: %s", exc)
+        try:
+            from kss.agent.harness_kernel import get_harness_kernel
+            kernel = get_harness_kernel()
+        except Exception:  # noqa: BLE001
+            kernel = None
+        if kernel is None or not kernel.alive:
+            mark_harness_kernel_dead()
+
     async with server:
         await stop
+    try:
+        from kss.agent.harness_kernel import stop_harness_kernel
+        stop_harness_kernel()
+    except Exception:  # noqa: BLE001
+        pass
     if _AGENT_SERVICE is not None:
         _AGENT_SERVICE.close()
     # 清理：socket/pid/version 文件一起移除，避免 orphan 文件。
@@ -1668,6 +2578,8 @@ async def _serve() -> None:
 
 
 if __name__ == "__main__":
+    # 生产 sidecar 才开启本机技能发现(测试导入本模块不受开发机主目录污染)。
+    os.environ.setdefault("KSS_SKILLS_MACHINE_DISCOVERY", "1")
     # Leave the GUI app's session so quitting KSSDesktop does not SIGHUP this
     # daemon into a half-dead re-exec. Intentional reloads still use kill(pid,
     # SIGHUP), which is delivered by pid, not by session.

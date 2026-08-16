@@ -41,6 +41,7 @@ from .report_models import (
     ReportSection,
 )
 from .repository import ResearchRepository, dumps, loads, new_id, utc_now
+from .allowlist import is_write_capable_research_node
 from .runner import AgentResearchTaskRunner
 
 TERMINAL_GOAL = {"completed", "cancelled", "failed", "blocked", "budget_limited", "insufficient_evidence", "needs_refresh"}
@@ -55,7 +56,9 @@ class ResearchService:
     """Synchronous facade used by `agent-research` and `agent-artifacts`.
 
     Single-agent goals stay sequential. The opt-in multi-agent pilot may run at
-    most two independent read-only nodes from the same goal concurrently.
+    most two independent empty-allowlist nodes from the same goal concurrently.
+    Write-capable nodes in a layer stay serial. execution_slot remains the
+    cross-process mutex and is not the R11 classifier.
     Protected compile/audit nodes always remain deterministic and sequential.
     """
 
@@ -149,6 +152,10 @@ class ResearchService:
             task_id = task_ids[task.kind]
             task_payload = dict(task.payload)
             agent = agent_specs.get(str(task.agent_id or ""))
+            write_allowlist = list(task_payload.get("write_allowlist") or [])
+            if agent is not None:
+                write_allowlist = list(agent.write_allowlist or write_allowlist)
+            task_payload["write_allowlist"] = write_allowlist
             if execution_mode == "multi_agent_pilot" and agent is not None:
                 task_payload.update(
                     {
@@ -163,6 +170,7 @@ class ResearchService:
                         "max_provider_tokens": agent.max_tokens,
                         "can_submit_claims": agent.can_submit_claims,
                         "can_verify_evidence": agent.can_verify_evidence,
+                        "write_allowlist": write_allowlist,
                     }
                 )
             tasks.append({
@@ -1468,8 +1476,8 @@ class ResearchService:
         payload = task.get("payload") or {}
         return bool(
             task.get("agent_id")
-            and payload.get("read_only_agent")
             and not payload.get("protected")
+            and not is_write_capable_research_node(task)
         )
 
     def _run_task(
@@ -1580,7 +1588,9 @@ class ResearchService:
                 current_goal_status = (self.repo.get_goal(goal_id) or {}).get(
                     "status"
                 )
-                if current_goal_status == "paused":
+                if str(result.get("harness_status") or "") == "interrupted":
+                    status = "interrupted"
+                elif current_goal_status == "paused":
                     status = "interrupted"
                 elif current_goal_status == "cancelled":
                     status = "cancelled"
