@@ -104,6 +104,10 @@ final class SeesawXcomDesignTests: XCTestCase {
 
     func testFocusEmptyStateUsesTaskRowsAndComposerOwnsModelStatus() throws {
         let source = try source
+        // 首页 doodle:空态顶部的 Seesaw 描边动效字标(Google 式产品气息)。
+        XCTAssertTrue(source.contains("SeesawWordmark()"))
+        // 新会话入口常驻 header 右侧,不再只藏在会话面板里。
+        XCTAssertTrue(source.contains("store.createAgentSession()"))
         XCTAssertTrue(source.contains("private var focusResearchTaskRows"))
         XCTAssertTrue(source.contains("researchTaskRow("))
         XCTAssertTrue(source.contains("$0.name == starter.skillId"))

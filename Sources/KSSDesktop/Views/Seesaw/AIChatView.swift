@@ -380,6 +380,20 @@ struct AIChatView: View {
 
             Spacer(minLength: 8)
 
+            if !isInModelsWorkspace {
+                Button {
+                    store.createAgentSession()
+                } label: {
+                    Label("新会话", systemImage: "square.and.pencil")
+                        .labelStyle(.iconOnly)
+                        .frame(width: 36, height: 36)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(theme.accent)
+                .help("新会话")
+            }
+
             if isInModelsWorkspace {
                 Button { seesawPage = .conversation } label: {
                     Label("返回对话", systemImage: "chevron.left")
@@ -1414,7 +1428,13 @@ struct AIChatView: View {
     private var focusEmptyConversation: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                Spacer(minLength: 76)
+                Spacer(minLength: 48)
+
+                // Google doodle 式首页动效:Seesaw 笔画描边字标,循环重播。
+                SeesawWordmark()
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.bottom, 36)
+                    .accessibilityHidden(true)
 
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Image(systemName: "sparkle")
