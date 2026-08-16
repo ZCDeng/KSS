@@ -1984,6 +1984,9 @@ struct AIChatView: View {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        // Menu 控件自带内边距,只给内部 label 定尺寸时控件盒子会比相邻
+        // 32pt 按钮高——底对齐后图标下沉。约束加在 Menu 本体上。
+        .frame(width: 32, height: 32)
         .help(sessionSkills.isEmpty
               ? "使用技能(本会话最多 3 个)"
               : "本会话技能 \(sessionSkills.count)/3")
