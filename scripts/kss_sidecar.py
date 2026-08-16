@@ -2063,7 +2063,19 @@ def _slash_action_payload(req: dict) -> dict[str, Any]:
                     for key, value in params.items()
                 ],
             })
-        return {"tools": tools}
+        mcp_tools: list[dict[str, Any]] = []
+        mcp_errors: list[str] = []
+        try:
+            from kss.agent import mcp_registry
+
+            mcp_tools, mcp_errors = mcp_registry.list_mcp_tools(
+                bridge.STATE_ROOT,
+                bridge.PROJECT_ROOT,
+                refresh=bool(req.get("refresh")),
+            )
+        except Exception as exc:  # noqa: BLE001 - 外部 MCP 不可用不拖垮本地目录
+            mcp_errors = [f"registry: {type(exc).__name__}: {exc}"]
+        return {"tools": tools, "mcp_tools": mcp_tools, "mcp_errors": mcp_errors}
     if action == "run":
         session_id = req.get("session_id")
         name = req.get("name")
@@ -2077,6 +2089,54 @@ def _slash_action_payload(req: dict) -> dict[str, Any]:
             if isinstance(raw_args, dict)
             else {}
         )
+        if name.startswith("mcp:"):
+            parts = name.split(":", 2)
+            if len(parts) != 3 or not parts[1] or not parts[2]:
+                return {"status": "error", "error": "mcp 命令格式应为 mcp:server:tool"}
+            from kss.agent import mcp_registry
+
+            server, tool = parts[1], parts[2]
+            result = mcp_registry.call_mcp_tool(
+                bridge.STATE_ROOT, bridge.PROJECT_ROOT, server, tool, args,
+            )
+            rendered_args = " ".join(
+                f"{key}={value}" for key, value in args.items() if str(value).strip()
+            )
+            user_text = f"/{name}" + (f" {rendered_args}" if rendered_args else "")
+            pretty = json.dumps(result, ensure_ascii=False, indent=2)
+            if len(pretty) > 6000:
+                pretty = pretty[:6000] + "\n…(截断)"
+            assistant_text = (
+                f"外部 MCP `{server} · {tool}`（不可信外部输出，未经模型，"
+                f"数字须自行核对）：\n\n```json\n{pretty}\n```"
+            )
+            store = _session_store()
+            if store.open_session(session_id) is None:
+                store.create_session(session_id=session_id, metadata={"title": session_id})
+            store.append_message(session_id, AgentMessage(
+                id=uuid4().hex,
+                role="user",
+                content=user_text,
+                timestamp=time.time(),
+                metadata={"slash_command": name},
+            ))
+            store.append_message(session_id, AgentMessage(
+                id=uuid4().hex,
+                role="assistant",
+                content=assistant_text,
+                timestamp=time.time(),
+                metadata={
+                    "slash_command": name,
+                    "provenance": "external_mcp_untrusted",
+                },
+            ))
+            ok = not (isinstance(result, dict) and result.get("error"))
+            return {
+                "ok": ok,
+                "user_text": user_text,
+                "assistant_text": assistant_text,
+                "result": result,
+            }
         registry = chat_loop.ToolRegistry()
         spec = registry.spec(name)
         if spec is None:
@@ -2241,6 +2301,18 @@ def _handle_agent_json_command(req: dict) -> str | None:
                     return _sidecar_err("agent-skills enable requires skill_id")
                 enabled = bool(req.get("enabled", True))
                 manager.set_enabled(skill_id, enabled)
+                session_id = req.get("session_id")
+                return _sidecar_ok(_skill_response(
+                    manager, session_id if isinstance(session_id, str) else None,
+                ))
+            if action == "adopt":
+                skill_id = req.get("skill_id")
+                if not isinstance(skill_id, str):
+                    return _sidecar_err("agent-skills adopt requires skill_id")
+                try:
+                    manager.adopt_skill(skill_id)
+                except ValueError as exc:
+                    return _sidecar_err(str(exc))
                 session_id = req.get("session_id")
                 return _sidecar_ok(_skill_response(
                     manager, session_id if isinstance(session_id, str) else None,
@@ -2501,6 +2573,8 @@ async def _serve() -> None:
 
 
 if __name__ == "__main__":
+    # 生产 sidecar 才开启本机技能发现(测试导入本模块不受开发机主目录污染)。
+    os.environ.setdefault("KSS_SKILLS_MACHINE_DISCOVERY", "1")
     # Leave the GUI app's session so quitting KSSDesktop does not SIGHUP this
     # daemon into a half-dead re-exec. Intentional reloads still use kill(pid,
     # SIGHUP), which is delivered by pid, not by session.

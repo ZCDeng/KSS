@@ -1214,6 +1214,59 @@ def test_agent_slash_rejects_write_and_unknown_tools(monkeypatch, tmp_path):
     assert unknown["error"].startswith("unknown_tool")
 
 
+def test_agent_slash_catalog_includes_external_mcp(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+    from kss.agent import mcp_registry
+
+    monkeypatch.setattr(
+        mcp_registry, "list_mcp_tools",
+        lambda state, project, refresh=False: (
+            [{"server": "exa", "name": "web_search",
+              "description": "搜索", "params": [
+                  {"key": "query", "description": "", "type": "string", "required": True},
+              ]}],
+            ["tushare: TimeoutError: boom"],
+        ),
+    )
+    payload = sc._slash_action_payload({"action": "catalog"})
+    assert payload["mcp_tools"][0]["server"] == "exa"
+    assert payload["mcp_errors"] == ["tushare: TimeoutError: boom"]
+
+
+def test_agent_slash_run_external_mcp_persists_untrusted(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+    from kss.agent import mcp_registry
+
+    captured = {}
+
+    def fake_call(state, project, server, tool, args):
+        captured.update({"server": server, "tool": tool, "args": dict(args)})
+        return {"ok": True, "result": {"hits": 3}}
+
+    monkeypatch.setattr(mcp_registry, "call_mcp_tool", fake_call)
+    payload = sc._slash_action_payload({
+        "action": "run",
+        "session_id": "mcp-s1",
+        "name": "mcp:exa:web_search",
+        "args": {"query": "北证50"},
+    })
+    assert payload["ok"] is True, payload
+    assert captured == {"server": "exa", "tool": "web_search", "args": {"query": "北证50"}}
+    assert "不可信外部输出" in payload["assistant_text"]
+
+    store = sc.SessionStore(tmp_path)
+    messages = store.read_messages("mcp-s1")
+    assert messages[0].content == "/mcp:exa:web_search query=北证50"
+    assert messages[1].metadata["provenance"] == "external_mcp_untrusted"
+
+    bad = sc._slash_action_payload({
+        "action": "run", "session_id": "mcp-s1", "name": "mcp:exa", "args": {},
+    })
+    assert bad["status"] == "error"
+
+
 def test_agent_attachment_import_list_remove(monkeypatch, tmp_path):
     from kss.agent.attachments import AttachmentStore
 

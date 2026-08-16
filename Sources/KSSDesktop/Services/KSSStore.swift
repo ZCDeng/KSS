@@ -268,6 +268,9 @@ final class KSSStore: ObservableObject {
     @Published private(set) var lastAutoApprovedEffect: String?
     /// slash 可直连的只读工具目录(TOOL_SPECS 同源)。
     @Published var slashTools: [SlashToolDescriptor] = []
+    /// slash 可直连的外部 MCP 工具与目录错误提示。
+    @Published var slashMCPTools: [SlashMCPToolDescriptor] = []
+    @Published var slashMCPErrors: [String] = []
     @Published var agentProviderStatus: String?
     @Published var agentProviderTestOK: Bool?
     @Published var agentProviderTestError: String?
@@ -1289,6 +1292,24 @@ final class KSSStore: ObservableObject {
             try bridge.agentSlash(action: "catalog")
         }.value
         slashTools = response?.tools ?? []
+        slashMCPTools = response?.mcpTools ?? []
+        slashMCPErrors = response?.mcpErrors ?? []
+    }
+
+    /// slash 选中未启用的本机/用户技能:一步"采用"(批准信任+启用)并加入本会话。
+    func adoptAndJoinSkill(_ skill: AgentSkill) {
+        guard let bridge else { return }
+        let sessionId = selectedAgentSessionId
+        Task {
+            let response = try? await Task.detached {
+                try bridge.agentSkills(action: "adopt", sessionId: sessionId, skillId: skill.id)
+            }.value
+            if let response {
+                agentSkills = response.skills
+                agentSkillDiagnostics = response.diagnostics ?? []
+            }
+            setAgentSkillInConversation(skill, selected: true)
+        }
     }
 
     /// slash 工具直连执行:sidecar 只读执行并把两条消息落进会话存储,

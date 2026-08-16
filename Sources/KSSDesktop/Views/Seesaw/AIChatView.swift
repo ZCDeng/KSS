@@ -2927,6 +2927,7 @@ struct AIChatView: View {
         case uiCommand(String)
         case skill(AgentSkill)
         case tool(SlashToolDescriptor)
+        case mcpTool(SlashMCPToolDescriptor)
     }
 
     private struct SlashEntry: Identifiable {
@@ -2953,6 +2954,25 @@ struct AIChatView: View {
         return body
     }
 
+    /// slash 可选技能:全部可用技能(含未启用的本机技能,选中即采用)。
+    /// 排序:本会话 > 已启用 > 项目来源 > 名称。
+    private var slashSkillCandidates: [AgentSkill] {
+        store.agentSkills
+            .filter { $0.available != false && $0.shadowedBy == nil }
+            .sorted { lhs, rhs in
+                let lhsIn = store.pinnedAgentSkillIds.contains(lhs.id)
+                let rhsIn = store.pinnedAgentSkillIds.contains(rhs.id)
+                if lhsIn != rhsIn { return lhsIn }
+                let lhsEnabled = lhs.enabled == true
+                let rhsEnabled = rhs.enabled == true
+                if lhsEnabled != rhsEnabled { return lhsEnabled }
+                let lhsMachine = lhs.source == "machine"
+                let rhsMachine = rhs.source == "machine"
+                if lhsMachine != rhsMachine { return rhsMachine }
+                return lhs.name.localizedCompare(rhs.name) == .orderedAscending
+            }
+    }
+
     private var slashEntries: [SlashEntry] {
         let token = (activeSlashToken ?? "").lowercased()
         func matches(_ candidates: String?...) -> Bool {
@@ -2960,6 +2980,8 @@ struct AIChatView: View {
                 ($0 ?? "").lowercased().contains(token)
             }
         }
+        // 空 token 时按组限量,保证四组都露头;输入过滤后放开。
+        let groupCap = token.isEmpty ? 6 : Int.max
         var entries: [SlashEntry] = []
         for command in Self.slashUICommands where matches(command.title, command.subtitle) {
             entries.append(SlashEntry(
@@ -2970,17 +2992,34 @@ struct AIChatView: View {
                 kind: .uiCommand(command.id)
             ))
         }
-        for skill in usableSkills where matches(skill.name) {
+        var skillCount = 0
+        for skill in slashSkillCandidates where matches(skill.name, skill.description) {
+            guard skillCount < groupCap else { break }
+            skillCount += 1
             let joined = store.pinnedAgentSkillIds.contains(skill.id)
+            let machine = skill.source == "machine"
+            let subtitle: String
+            if joined {
+                subtitle = "技能 · 已在本会话"
+            } else if skill.enabled == true {
+                subtitle = "技能 · 加入本会话"
+            } else {
+                subtitle = machine
+                    ? "本机技能 · 未启用,选中即采用"
+                    : "技能 · 未启用,选中即启用"
+            }
             entries.append(SlashEntry(
                 id: "skill-\(skill.id)",
                 title: skill.name,
-                subtitle: joined ? "技能 · 已在本会话" : "技能 · 加入本会话",
-                badge: "技能",
+                subtitle: subtitle,
+                badge: machine ? "本机" : "技能",
                 kind: .skill(skill)
             ))
         }
+        var toolCount = 0
         for tool in store.slashTools where matches(tool.name, tool.desc) {
+            guard toolCount < groupCap else { break }
+            toolCount += 1
             entries.append(SlashEntry(
                 id: "tool-\(tool.name)",
                 title: "/\(tool.name)",
@@ -2989,7 +3028,20 @@ struct AIChatView: View {
                 kind: .tool(tool)
             ))
         }
-        return Array(entries.prefix(24))
+        var mcpCount = 0
+        for tool in store.slashMCPTools
+        where matches(tool.server, tool.name, tool.description) {
+            guard mcpCount < groupCap else { break }
+            mcpCount += 1
+            entries.append(SlashEntry(
+                id: "mcp-\(tool.id)",
+                title: "\(tool.server) · \(tool.name)",
+                subtitle: tool.description ?? "外部 MCP 工具(输出不可信,须核对)",
+                badge: "MCP",
+                kind: .mcpTool(tool)
+            ))
+        }
+        return Array(entries.prefix(40))
     }
 
     private var slashPanelVisible: Bool {
@@ -3009,7 +3061,10 @@ struct AIChatView: View {
             runSlashUICommand(id)
         case .skill(let skill):
             input = ""
-            if !store.pinnedAgentSkillIds.contains(skill.id) {
+            if skill.enabled != true {
+                // 未启用(常见于本机技能):一步采用 = 批准信任 + 启用 + 加入会话。
+                store.adoptAndJoinSkill(skill)
+            } else if !store.pinnedAgentSkillIds.contains(skill.id) {
                 store.setAgentSkillInConversation(skill, selected: true)
             }
             if let starter = skillStarters.first(where: {
@@ -3018,6 +3073,18 @@ struct AIChatView: View {
                 input = starter.prompt
             }
             isComposerFocused = true
+        case .mcpTool(let tool):
+            if tool.orderedKeys.isEmpty {
+                input = ""
+                Task {
+                    await store.runSlashTool(
+                        SlashInvocation(name: tool.commandName, args: [:])
+                    )
+                }
+            } else {
+                input = "/\(tool.commandName) "
+                isComposerFocused = true
+            }
         case .tool(let tool):
             if (tool.order ?? []).isEmpty {
                 input = ""
@@ -3059,6 +3126,14 @@ struct AIChatView: View {
             runSlashUICommand(command.id)
             return true
         }
+        if name.hasPrefix("mcp:") {
+            guard let tool = store.slashMCPTools.first(where: { $0.commandName == name }),
+                  let invocation = SlashInvocation.parse(trimmed, order: tool.orderedKeys)
+            else { return false }
+            input = ""
+            Task { await store.runSlashTool(invocation) }
+            return true
+        }
         guard let tool = store.slashTools.first(where: { $0.name == name }),
               let invocation = SlashInvocation.parse(trimmed, order: tool.order ?? [])
         else { return false }
@@ -3090,14 +3165,25 @@ struct AIChatView: View {
     private var activeSlashParamHint: String? {
         guard input.hasPrefix("/"), input.contains(" ") else { return nil }
         let name = String(input.dropFirst().split(separator: " ").first ?? "")
-        guard let tool = store.slashTools.first(where: { $0.name == name }),
-              let params = tool.params, !params.isEmpty
-        else { return nil }
+        let params: [SlashToolParam]
+        if name.hasPrefix("mcp:") {
+            guard let tool = store.slashMCPTools.first(where: { $0.commandName == name }),
+                  let mcpParams = tool.params, !mcpParams.isEmpty
+            else { return nil }
+            params = mcpParams
+        } else {
+            guard let tool = store.slashTools.first(where: { $0.name == name }),
+                  let toolParams = tool.params, !toolParams.isEmpty
+            else { return nil }
+            params = toolParams
+        }
         let parts = params.map { param -> String in
+            var label = param.key
+            if param.required == true { label += "*" }
             if let description = param.description, !description.isEmpty {
-                return "\(param.key)(\(description))"
+                label += "(\(description))"
             }
-            return param.key
+            return label
         }
         return "/\(name) 参数:" + parts.joined(separator: " · ") + " —— 位置参数或 key=value"
     }

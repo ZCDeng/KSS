@@ -36,7 +36,7 @@ from kss.agent.session_store import (
     RunAdmissionError,
     SessionStore,
 )
-from kss.agent.skills import SkillManager, SkillResourceError
+from kss.agent.skills import SkillManager, SkillResourceError, default_machine_skill_roots
 from kss.agent.types import (
     AgentContentBlock,
     AgentEvent,
@@ -129,7 +129,11 @@ class KSSAgentService:
         self.state_root = Path(state_root)
         self.project_root = Path(project_root)
         self.sessions = SessionStore(self.state_root)
-        self.skills = SkillManager(self.project_root, self.state_root)
+        self.skills = SkillManager(
+            self.project_root,
+            self.state_root,
+            machine_roots=default_machine_skill_roots(),
+        )
         self.memories = MemoryStore(self.state_root)
         self.attachments = AttachmentStore(self.state_root)
         self.route_store = ProviderRouteStore(self.state_root)

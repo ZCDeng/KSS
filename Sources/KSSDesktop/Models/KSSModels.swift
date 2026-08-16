@@ -3886,6 +3886,24 @@ struct AgentFrame: Decodable, Equatable {
 struct SlashToolParam: Codable, Equatable {
     var key: String
     var description: String?
+    var type: String?
+    var required: Bool?
+}
+
+/// 一个外部 MCP server 的工具(slash 直连;输出按不可信外部输入处理)。
+struct SlashMCPToolDescriptor: Codable, Identifiable, Equatable {
+    var server: String
+    var name: String
+    var description: String?
+    var params: [SlashToolParam]?
+
+    var id: String { "mcp:\(server):\(name)" }
+
+    /// slash 命令名(mcp:server:tool),与 sidecar run 路由一致。
+    var commandName: String { "mcp:\(server):\(name)" }
+
+    /// 位置参数顺序:required 在前(注册表已排序)。
+    var orderedKeys: [String] { (params ?? []).map(\.key) }
 }
 
 /// 一条可 slash 直连的只读工具(TOOL_SPECS 同源,即 kss-plugins/kss-mcp 目录)。
@@ -3901,6 +3919,8 @@ struct SlashToolDescriptor: Codable, Identifiable, Equatable {
 
 struct AgentSlashResponse: Codable, Equatable {
     var tools: [SlashToolDescriptor]?
+    var mcpTools: [SlashMCPToolDescriptor]?
+    var mcpErrors: [String]?
     var ok: Bool?
     var userText: String?
     var assistantText: String?
@@ -3908,6 +3928,8 @@ struct AgentSlashResponse: Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case tools, ok, error
+        case mcpTools = "mcp_tools"
+        case mcpErrors = "mcp_errors"
         case userText = "user_text"
         case assistantText = "assistant_text"
     }

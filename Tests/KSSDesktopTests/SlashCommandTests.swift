@@ -33,6 +33,29 @@ final class SlashCommandTests: XCTestCase {
         XCTAssertNil(SlashInvocation.parse("   ", order: []))
     }
 
+    func testParseMCPCompositeNameWithMixedArgs() {
+        let invocation = SlashInvocation.parse(
+            "/mcp:exa:web_search 北证50 limit=5",
+            order: ["query", "limit"]
+        )
+        XCTAssertEqual(invocation?.name, "mcp:exa:web_search")
+        XCTAssertEqual(invocation?.args, ["query": "北证50", "limit": "5"])
+    }
+
+    func testMCPDescriptorCommandNameAndOrder() {
+        let tool = SlashMCPToolDescriptor(
+            server: "exa",
+            name: "web_search",
+            description: nil,
+            params: [
+                SlashToolParam(key: "query", description: nil, type: "string", required: true),
+                SlashToolParam(key: "limit", description: nil, type: "integer", required: false),
+            ]
+        )
+        XCTAssertEqual(tool.commandName, "mcp:exa:web_search")
+        XCTAssertEqual(tool.orderedKeys, ["query", "limit"])
+    }
+
     func testParseIgnoresExtraPositionalBeyondOrder() {
         let invocation = SlashInvocation.parse(
             "/get_snapshot extra tokens",
