@@ -69,6 +69,9 @@ def _unmap_harness_provider(provider_id: str) -> str:
 # set_provider_routes 的哨兵：未显式传 vision 时保持存储值不变。
 _KEEP_VISION = object()
 
+# pi-ai 孪生路由 → 对应官方适配器：官方在场时孪生路由从目录里抑制。
+_SUPPRESSED_TWIN_ROUTES = {"deepseek": "deepseek-official"}
+
 
 @dataclass(frozen=True)
 class DuplicateTurn:
@@ -262,9 +265,7 @@ class KSSAgentService:
             return {
                 "provider_backend": "harness",
                 "status": "ready",
-                "providers": self._merge_route_descriptors(
-                    routes=routes, providers=providers
-                ),
+                "providers": providers,
                 "models": models,
                 "primary": routes.primary.as_dict(),
                 "fallback": routes.fallback.as_dict() if routes.fallback else None,
@@ -328,13 +329,19 @@ class KSSAgentService:
             else frozenset()
         )
         custom_ids = self.custom_provider_ids()
+        raw_providers = [
+            entry for entry in (body.get("providers") or [])
+            if isinstance(entry, dict) and str(entry.get("id") or "")
+        ]
+        present_ids = {str(entry.get("id")) for entry in raw_providers}
         providers: list[dict[str, Any]] = []
         models: list[dict[str, Any]] = []
-        for provider in body.get("providers") or []:
-            if not isinstance(provider, dict):
-                continue
+        for provider in raw_providers:
             pid = str(provider.get("id") or "")
-            if not pid:
+            # pi-ai 孪生路由带的是过时内建目录(如 deepseek-chat 一代)。
+            # 官方适配器在场时抑制之,避免「DeepSeek 出现多次+旧模型」。
+            twin_of = _SUPPRESSED_TWIN_ROUTES.get(pid)
+            if twin_of and twin_of in present_ids:
                 continue
             provider_models: list[dict[str, Any]] = []
             for model in provider.get("models") or []:
@@ -408,38 +415,6 @@ class KSSAgentService:
         )
         self._harness_catalog_cache = (now, snapshot)
         return snapshot
-
-    def _merge_route_descriptors(
-        self,
-        *,
-        routes: ProviderRouteSet,
-        providers: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """确保当前路由指向的 provider 在目录里可见（legacy id 也给占位条目）."""
-        try:
-            from kss.agent.harness_kernel import _map_dsh_provider
-        except Exception:  # noqa: BLE001
-            def _map_dsh_provider(value: str) -> str:  # type: ignore[misc]
-                return value
-        merged = [dict(entry) for entry in providers]
-        known = {str(entry.get("id")) for entry in merged}
-        for route in (*routes.ordered(), routes.vision):
-            if route is None:
-                continue
-            mapped = _map_dsh_provider(route.provider_id)
-            if mapped in known or route.provider_id in known:
-                continue
-            known.add(route.provider_id)
-            merged.append({
-                "id": route.provider_id,
-                "name": route.provider_id,
-                "auth_kind": "api_key",
-                "base_url": route.base_url,
-                "authenticated": False,
-                "models": [],
-                "source": "route",
-            })
-        return merged
 
     def session_provider_route(self, session_id: str) -> dict[str, Any] | None:
         """会话生效的非密钥路由（含全局回落快照），供 harness 回合下发."""

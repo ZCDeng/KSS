@@ -51,7 +51,8 @@ struct AIChatView: View {
     @State private var atFileSelection = 0
     @State private var atFileSearchTask: Task<Void, Never>?
     @State private var workbenchTab = "overview"
-    @State private var showSessionPane = true
+    // 实测反馈:默认收起,页面更干净;header 按钮可展开。
+    @State private var showSessionPane = false
     @FocusState private var isComposerFocused: Bool
     @State private var hoveredMessageId: UUID?
     @State private var copiedMessageId: UUID?
@@ -81,7 +82,7 @@ struct AIChatView: View {
             case .liveMarket: return "实时市场"
             case .evidence: return "Evidence & Artifacts"
             case .skills: return "Skills"
-            case .context: return "Context & Memory"
+            case .context: return "记忆"
             }
         }
     }
@@ -111,7 +112,7 @@ struct AIChatView: View {
             KSSStore.seesawModelRouteID(providerID: provider.id, modelID: model.id)
         }
 
-        var label: String { "\(provider.name ?? provider.id) · \(model.name ?? model.id)" }
+        var label: String { "\(provider.displayName) · \(model.name ?? model.id)" }
     }
 
     private let skillStarters: [SkillStarter] = [
@@ -548,16 +549,14 @@ struct AIChatView: View {
                         .foregroundStyle(theme.accent)
                 }
 
-                inspectorSection(.context, systemImage: "circle.dotted.circle", opens: .context) {
-                    Text(contextUsageShort)
-                        .foregroundStyle(theme.textSecondary)
-                    Text(providerComposerLabel)
-                        .foregroundStyle(theme.textSecondary)
+                inspectorSection(.context, systemImage: "brain", opens: .context) {
                     if !store.agentSourceRecalls.isEmpty {
                         Text("本轮召回 \(store.agentSourceRecalls.count) 条记忆")
                             .foregroundStyle(theme.textSecondary)
                     }
-                    Button("查看上下文与记忆…") { toggleOverlay(.context) }
+                    Text("长期记忆:跨会话可复用的事实,发送时自动召回进上下文。")
+                        .foregroundStyle(theme.textSecondary)
+                    Button("管理记忆…") { toggleOverlay(.context) }
                         .buttonStyle(.borderless)
                         .foregroundStyle(theme.accent)
                 }
@@ -648,7 +647,7 @@ struct AIChatView: View {
                             .foregroundStyle(theme.textSecondary)
                     } else {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 205), spacing: 12)], spacing: 12) {
-                            ForEach(store.agentProviders) { provider in
+                            ForEach(sortedCatalogProviders) { provider in
                                 providerCatalogCard(provider)
                             }
                         }
@@ -702,9 +701,9 @@ struct AIChatView: View {
             }
 
             Menu {
-                ForEach(store.agentProviders.filter(providerHasCredential)) { provider in
+                ForEach(sortedCatalogProviders.filter(providerHasCredential)) { provider in
                     if let models = provider.models, !models.isEmpty {
-                        Section(provider.name ?? provider.id) {
+                        Section(provider.displayName) {
                             ForEach(models.filter { store.isSeesawModelVisible(providerID: provider.id, modelID: $0.id) }) { model in
                                 Button(model.name ?? model.id) {
                                     selectSessionRoute(provider: provider, model: model)
@@ -762,11 +761,34 @@ struct AIChatView: View {
 
     private func routeDisplayName(_ route: AgentProviderRoute?) -> String {
         guard let route else { return "尚未配置" }
-        let label = [route.providerId, route.modelId]
-            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let provider = route.providerId?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let friendly = provider.flatMap { id in
+            id.isEmpty ? nil : AgentProviderDescriptor.friendlyProviderName(id: id)
+        }
+        let label = [friendly, route.modelId?.trimmingCharacters(in: .whitespacesAndNewlines)]
+            .compactMap { $0 }
             .filter { !$0.isEmpty }
             .joined(separator: " · ")
         return label.isEmpty ? "尚未配置" : label
+    }
+
+    /// 目录排序:有凭证在前;DeepSeek 官方 > 自定义 > 其他。
+    private var sortedCatalogProviders: [AgentProviderDescriptor] {
+        store.agentProviders.sorted { providerSortKey($0) < providerSortKey($1) }
+    }
+
+    private func providerSortKey(_ provider: AgentProviderDescriptor) -> (Int, Int, String) {
+        let credential = providerHasCredential(provider) ? 0 : 1
+        let family: Int
+        if provider.id == "deepseek-official" {
+            family = 0
+        } else if provider.custom == true {
+            family = 1
+        } else {
+            family = 2
+        }
+        return (credential, family, provider.id)
     }
 
     private func providerCatalogCard(_ provider: AgentProviderDescriptor) -> some View {
@@ -778,7 +800,7 @@ struct AIChatView: View {
                 HStack(spacing: 8) {
                     Circle().fill(provider.authenticated == true ? theme.accent : theme.textSecondary.opacity(0.45))
                         .frame(width: 8, height: 8)
-                    Text(provider.name ?? provider.id)
+                    Text(provider.displayName)
                         .font(KSSFont.themed(13, .bold, theme: theme))
                     Spacer()
                     if isCurrent { Text("当前") .font(KSSFont.themed(10.5, .semibold, theme: theme)).foregroundStyle(theme.accent) }
@@ -796,7 +818,7 @@ struct AIChatView: View {
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(theme.hairline))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("配置 \(provider.name ?? provider.id)")
+        .accessibilityLabel("配置 \(provider.displayName)")
     }
 
     private func providerConnectionLabel(_ provider: AgentProviderDescriptor) -> String {
@@ -816,7 +838,8 @@ struct AIChatView: View {
     private func seesawProviderDetail(_ providerID: String) -> some View {
         let provider = store.agentProviders.first(where: { $0.id == providerID })
         let models = provider?.models ?? []
-        let title = provider?.name ?? providerID
+        let title = provider?.displayName
+            ?? AgentProviderDescriptor.friendlyProviderName(id: providerID)
         let isCurrent = providerID == store.agentPrimaryRoute?.providerId
 
         return ScrollView {
@@ -1445,8 +1468,11 @@ struct AIChatView: View {
                             .id("tool-progress")
                     }
                 }
+                // 与 composer/空态同一列宽(composerColumnWidth),左右边缘对齐。
+                .frame(maxWidth: SeesawXcomChrome.composerColumnWidth)
                 .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
                 .padding(.vertical, 22)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
             .onChange(of: store.chatMessages.last?.text) { _, _ in
                 if let last = store.chatMessages.last {
@@ -1481,7 +1507,7 @@ struct AIChatView: View {
                 }
                 .padding(.horizontal, 15)
                 .padding(.vertical, 12)
-                .frame(maxWidth: SeesawXcomChrome.feedColumnWidth * 0.68, alignment: .trailing)
+                .frame(maxWidth: SeesawXcomChrome.composerColumnWidth * 0.75, alignment: .trailing)
                 .background(
                     theme.accent,
                     in: UnevenRoundedRectangle(
@@ -1641,15 +1667,7 @@ struct AIChatView: View {
             focusSessionSkillChips
 
             HStack(alignment: .bottom, spacing: 8) {
-                Button { toggleOverlay(.skills) } label: {
-                    Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(theme.textSecondary)
-                        .frame(width: 32, height: 32)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .help("Skills")
+                composerSkillMenu
 
                 attachmentPickerButton
 
@@ -1807,7 +1825,7 @@ struct AIChatView: View {
                 }
             }
             .foregroundStyle(theme.textSecondary)
-            .frame(width: composerThinkingLevel == "off" ? 28 : 38, height: 28)
+            .frame(width: composerThinkingLevel == "off" ? 32 : 42, height: 32)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1932,6 +1950,56 @@ struct AIChatView: View {
         .buttonStyle(.plain)
         .disabled(store.isChatStreaming)
         .background(isCurrent ? theme.accentSoft : .clear, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// 使用技能(轻量菜单):勾选=已加入本会话,点击即切换;配置走底部"管理技能…"。
+    /// 使用与配置分离——菜单不再打开管理面板本身。
+    private var composerSkillMenu: some View {
+        Menu {
+            if usableSkills.isEmpty {
+                Button("去启用技能…") { toggleOverlay(.skills) }
+            } else {
+                ForEach(usableSkills) { skill in
+                    let selected = store.pinnedAgentSkillIds.contains(skill.id)
+                    Button {
+                        store.setAgentSkillInConversation(skill, selected: !selected)
+                    } label: {
+                        if selected {
+                            Label(skill.name, systemImage: "checkmark")
+                        } else {
+                            Text(skill.name)
+                        }
+                    }
+                    .disabled(store.isChatStreaming
+                              || (!selected && sessionSkills.count >= 3))
+                }
+                Divider()
+                Button("管理技能…") { toggleOverlay(.skills) }
+            }
+        } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(sessionSkills.isEmpty ? theme.textSecondary : theme.accent)
+                .frame(width: 32, height: 32)
+                .contentShape(Circle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .help(sessionSkills.isEmpty
+              ? "使用技能(本会话最多 3 个)"
+              : "本会话技能 \(sessionSkills.count)/3")
+    }
+
+    /// 可直接使用的技能:已启用且可用;排序先本会话再其余。
+    private var usableSkills: [AgentSkill] {
+        store.agentSkills
+            .filter { $0.enabled != false && $0.available != false }
+            .sorted { lhs, rhs in
+                let lhsIn = store.pinnedAgentSkillIds.contains(lhs.id)
+                let rhsIn = store.pinnedAgentSkillIds.contains(rhs.id)
+                if lhsIn != rhsIn { return lhsIn }
+                return lhs.name.localizedCompare(rhs.name) == .orderedAscending
+            }
     }
 
     @ViewBuilder
@@ -2421,7 +2489,7 @@ struct AIChatView: View {
 
     private var focusContextPopover: some View {
         VStack(spacing: 0) {
-            focusPanelHeader(title: "上下文") {
+            focusPanelHeader(title: "记忆与上下文") {
                 Task { await store.loadAgentMemories(query: memorySearch) }
                 store.recallAgentSources(query: memorySearch)
             }
@@ -2709,11 +2777,12 @@ struct AIChatView: View {
         case .missingCredential:
             return "还没有可用的 API Key。打开模型页面安全保存并测试连接。"
         case .brokerLoading:
-            return "正在读取本机凭据与模型目录…"
+            // 短暂过渡态,不值得占用 composer 打扰输入。
+            return nil
         case .configuredUntested:
-            // A saved Keychain record is usable even before an explicit test;
-            // communicate the state without blocking a normal first send.
-            return "模型已配置，建议先运行一次连接测试。"
+            // 已配置即可直接发送;连接测试是可选动作,不再常驻提示
+            // (实测反馈:永远出现"检查模型"严重干扰)。
+            return nil
         case let .failed(reason):
             return "模型连接失败：\(reason)。打开模型页面查看 Provider、模型与端点。"
         }
@@ -2962,7 +3031,7 @@ struct AIChatView: View {
                 .labelStyle(.iconOnly)
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(theme.textSecondary)
-                .frame(width: 30, height: 30)
+                .frame(width: 32, height: 32)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)

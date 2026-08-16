@@ -2588,6 +2588,28 @@ struct AgentProviderDescriptor: Codable, Identifiable, Equatable {
     }
 }
 
+extension AgentProviderDescriptor {
+    /// legacy/孪生 id 归并到家族显示名;自定义 provider 用其 displayName。
+    static let kssFamilyNames: [String: String] = [
+        "deepseek-official": "DeepSeek",
+        "deepseek": "DeepSeek",
+        "kss-primary": "DeepSeek",
+        "openai": "OpenAI",
+        "kss-fallback": "OpenAI",
+        "openrouter": "OpenRouter",
+    ]
+
+    static func friendlyProviderName(id: String, fallback: String? = nil) -> String {
+        if let mapped = kssFamilyNames[id] { return mapped }
+        if let fallback, !fallback.isEmpty, fallback != id { return fallback }
+        return id
+    }
+
+    var displayName: String {
+        Self.friendlyProviderName(id: id, fallback: name)
+    }
+}
+
 struct AgentProviderRoute: Codable, Equatable {
     var providerId: String?
     var modelId: String?

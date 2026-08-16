@@ -458,6 +458,7 @@ final class KSSStore: ObservableObject {
     ) {
         ensureAgentSession()
         guard let sessionId = selectedAgentSessionId else { return }
+        autoTitleSessionIfNeeded(sessionId, firstInput: trimmed)
         let fileRefs = pendingFileRefs
         chatMessages.append(ChatMessage(role: .user, text: trimmed, attachments: attachments))
         let assistant = ChatMessage(role: .assistant, text: "", numbersUnverified: true)
@@ -1823,6 +1824,28 @@ final class KSSStore: ObservableObject {
                 self.errorMessage = "队列操作失败：\(error.localizedDescription)"
             }
         }
+    }
+
+    /// 首条消息落地时把默认标题替换为派生标题,让会话列表可辨识。
+    private func autoTitleSessionIfNeeded(_ sessionId: String, firstInput: String) {
+        guard let session = agentSessions.first(where: { $0.sessionId == sessionId }) else { return }
+        let current = session.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard current.isEmpty || current == "新会话" || current == sessionId else { return }
+        guard let derived = Self.derivedSessionTitle(from: firstInput) else { return }
+        renameAgentSession(sessionId, title: derived)
+    }
+
+    /// 从首条输入派生会话标题:首个非空行,截 18 字符,超长加省略号。
+    nonisolated static func derivedSessionTitle(from input: String) -> String? {
+        let firstLine = input
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty }
+        guard let line = firstLine, !line.isEmpty else { return nil }
+        if line.count > 18 {
+            return String(line.prefix(18)) + "…"
+        }
+        return line
     }
 
     func renameAgentSession(_ sessionId: String, title: String) {

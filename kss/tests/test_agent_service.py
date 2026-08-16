@@ -1063,3 +1063,56 @@ def test_custom_provider_rejects_bad_input(tmp_path, monkeypatch):
             "base_url": "https://x.example/v1",
             "model_ids": [],
         })
+
+
+def test_harness_catalog_suppresses_twin_routes_and_placeholders(tmp_path, monkeypatch):
+    """官方适配器在场时抑制 pi-ai 孪生路由;legacy 路由 id 不再生成占位卡."""
+    service = KSSAgentService(tmp_path, tmp_path)
+
+    class FakeKernel:
+        alive = True
+        driver = "dsh"
+
+        def list_models(self, **kwargs):
+            def entry(pid, name, models):
+                return {
+                    "id": pid,
+                    "name": name,
+                    "models": [{
+                        "model_id": model,
+                        "name": model,
+                        "input_modalities": ["text"],
+                        "reasoning_efforts": [],
+                    } for model in models],
+                }
+            return {
+                "ok": True,
+                "providers": [
+                    entry("deepseek-official", "DeepSeek",
+                          ["deepseek-v4-flash", "deepseek-v4-pro"]),
+                    entry("deepseek", "deepseek",
+                          ["deepseek-chat", "deepseek-reasoner"]),
+                    entry("openai", "openai", ["gpt-5.2"]),
+                ],
+                "default_selection": None,
+            }
+
+        def set_default_model(self, **kwargs):
+            return {"ok": True}
+
+    monkeypatch.setattr(
+        "kss.agent.harness_kernel.get_harness_kernel", lambda: FakeKernel()
+    )
+    # legacy 路由 id 指向 kss-primary:目录里不应出现同名占位卡
+    service.set_provider_routes(
+        primary={"provider_id": "kss-primary", "model_id": "deepseek-v4-pro"},
+    )
+    catalog = service.provider_catalog(refresh=True)
+    provider_ids = [entry["id"] for entry in catalog["providers"]]
+    assert provider_ids == ["deepseek-official", "openai"]
+    model_ids = [model["model_id"] for model in catalog["models"]]
+    assert "deepseek-chat" not in model_ids
+    assert "deepseek-reasoner" not in model_ids
+    assert {"deepseek-v4-flash", "deepseek-v4-pro", "gpt-5.2"} <= set(model_ids)
+    # 路由本身照常返回(展示层做友好名),只是不再造占位 provider 卡
+    assert catalog["primary"]["provider_id"] == "kss-primary"
