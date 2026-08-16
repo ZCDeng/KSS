@@ -937,6 +937,211 @@ def test_agent_provider_catalog_and_route_actions(monkeypatch, tmp_path):
     assert tested_payload["candidates"][0]["hint"] == "stream ok"
 
 
+def test_agent_provider_set_route_accepts_vision(monkeypatch, tmp_path):
+    class VisionService:
+        def set_provider_routes(self, *, primary, fallback=None, vision=None):
+            assert primary["model_id"] == "deepseek-v4-pro"
+            assert vision == {"provider_id": "openai", "model_id": "gpt-vision"}
+            return {
+                "status": "ready",
+                "models": [],
+                "providers": [],
+                "primary": primary,
+                "fallback": fallback,
+                "vision": vision,
+            }
+
+    monkeypatch.setattr(sc, "_AGENT_SERVICE", VisionService())
+    monkeypatch.setattr(sc, "_AGENT_SERVICE_ROOTS", (tmp_path, tmp_path))
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+
+    updated = json.loads(sc._handle_agent_json_command({
+        "cmd": "agent-providers",
+        "action": "set_route",
+        "primary": {"provider_id": "deepseek", "model_id": "deepseek-v4-pro"},
+        "vision": {"provider_id": "openai", "model_id": "gpt-vision"},
+    }))
+    payload = json.loads(updated["stdout"])["data"]
+    assert payload["vision"]["model_id"] == "gpt-vision"
+
+
+def test_agent_provider_set_route_rejects_non_object_vision(monkeypatch, tmp_path):
+    class IdleService:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(sc, "_AGENT_SERVICE", IdleService())
+    monkeypatch.setattr(sc, "_AGENT_SERVICE_ROOTS", (tmp_path, tmp_path))
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+    result = sc._providers_action_payload({
+        "action": "set_route",
+        "primary": {"provider_id": "deepseek", "model_id": "deepseek-v4-pro"},
+        "vision": "gpt-vision",
+    })
+    assert result["status"] == "error"
+    assert "vision" in result["error"]
+
+
+def test_agent_turn_passes_session_provider_route(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    host, _session = _install_desktop_session(monkeypatch)
+
+    async def go():
+        reader, writer = _mk_reader(), FakeWriter()
+        await sc._handle_agent_turn(reader, writer, {
+            "cmd": "agent-turn",
+            "session_id": "route-s1",
+            "client_turn_id": "route-c1",
+            "input": "路由",
+        })
+        assert host.last_requests, "desktop turn should run"
+        request = host.last_requests[-1]
+        assert isinstance(request.provider_route, dict)
+        assert request.provider_route.get("provider_id")
+        assert request.provider_route.get("model_id")
+        assert "thinking_level" in request.provider_route
+
+    asyncio.run(go())
+
+
+def test_agent_turn_injects_file_refs_into_harness_input(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+    report = tmp_path / "storage" / "reports" / "demo" / "scan.md"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text("# 扫描结论\n北证50 走强。", encoding="utf-8")
+    host, _session = _install_desktop_session(monkeypatch)
+
+    async def go():
+        reader, writer = _mk_reader(), FakeWriter()
+        await sc._handle_agent_turn(reader, writer, {
+            "cmd": "agent-turn",
+            "session_id": "ref-s1",
+            "client_turn_id": "ref-c1",
+            "input": "看下这份报告",
+            "file_refs": ["storage/reports/demo/scan.md", "../etc/passwd"],
+        })
+        request = host.last_requests[-1]
+        assert request.input.startswith("看下这份报告")
+        assert "[引用文件 storage/reports/demo/scan.md]" in request.input
+        assert "北证50 走强" in request.input
+        assert "(不可用：文件不存在或超出可引用范围)" in request.input
+        # KSS 会话存储保留原始输入与引用元数据，不混入注入正文
+        store = sc.SessionStore(tmp_path)
+        user = store.read_messages("ref-s1")[0]
+        assert user.content == "看下这份报告"
+        assert user.metadata["file_refs"] == [
+            "storage/reports/demo/scan.md", "../etc/passwd",
+        ]
+
+    asyncio.run(go())
+
+
+def test_agent_turn_rejects_bad_file_refs(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    _install_desktop_session(monkeypatch)
+
+    async def go():
+        writer = FakeWriter()
+        await sc._handle_agent_turn(_mk_reader(), writer, {
+            "cmd": "agent-turn",
+            "session_id": "ref-s2",
+            "client_turn_id": "ref-c2",
+            "input": "x",
+            "file_refs": [1, 2],
+        })
+        frames = writer.frames()
+        assert frames[0]["type"] == "error"
+        assert "file_refs" in frames[0]["error"]
+
+    asyncio.run(go())
+
+
+def test_vision_context_requires_configured_route(monkeypatch, tmp_path):
+    from kss.agent.service import KSSAgentService
+
+    service = KSSAgentService(tmp_path, tmp_path)
+    monkeypatch.setattr(sc, "_AGENT_SERVICE", service)
+    monkeypatch.setattr(sc, "_AGENT_SERVICE_ROOTS", (tmp_path, tmp_path))
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+
+    payload = sc._vision_context_payload({"path": "storage/reports/x.png"})
+    assert payload["error"] == "vision_route_unconfigured"
+
+
+def test_vision_context_resolves_path_route_and_env(monkeypatch, tmp_path):
+    from kss.agent.service import KSSAgentService
+
+    service = KSSAgentService(tmp_path, tmp_path)
+    monkeypatch.setattr(sc, "_AGENT_SERVICE", service)
+    monkeypatch.setattr(sc, "_AGENT_SERVICE_ROOTS", (tmp_path, tmp_path))
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        "kss.agent.harness_kernel.get_harness_kernel", lambda: None
+    )
+    service.set_provider_routes(
+        primary={"provider_id": "deepseek", "model_id": "deepseek-v4-pro"},
+        vision={"provider_id": "acme-gateway", "model_id": "acme-vision",
+                "base_url": "https://gateway.acme.example/v1",
+                "supports_images": True},
+    )
+    image = tmp_path / "storage" / "reports" / "shot.png"
+    image.parent.mkdir(parents=True, exist_ok=True)
+    image.write_bytes(b"\x89PNG fake")
+
+    payload = sc._vision_context_payload({"path": "storage/reports/shot.png"})
+    assert payload["ok"] is True
+    assert payload["file_path"] == str(image.resolve())
+    route = payload["route"]
+    assert route["model_id"] == "acme-vision"
+    assert route["base_url"] == "https://gateway.acme.example/v1"
+    assert route["api_key_env"] == "KSS_PROVIDER_ACME_GATEWAY_API_KEY"
+
+    # 非白名单路径与非图片扩展都拒绝
+    assert sc._vision_context_payload({"path": "../secrets.png"})["error"] == "path_not_allowed"
+    assert sc._vision_context_payload({"path": "storage/reports/a.md"})["error"] == "path_not_allowed"
+    assert sc._vision_context_payload({})["error"] == "vision_target_missing"
+
+
+def test_vision_context_resolves_attachment(monkeypatch, tmp_path):
+    from kss.agent.service import KSSAgentService
+
+    service = KSSAgentService(tmp_path, tmp_path)
+    monkeypatch.setattr(sc, "_AGENT_SERVICE", service)
+    monkeypatch.setattr(sc, "_AGENT_SERVICE_ROOTS", (tmp_path, tmp_path))
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        "kss.agent.harness_kernel.get_harness_kernel", lambda: None
+    )
+    service.set_provider_routes(
+        primary={"provider_id": "deepseek", "model_id": "deepseek-v4-pro"},
+        vision={"provider_id": "openai", "model_id": "gpt-vision",
+                "supports_images": True},
+    )
+    # 1x1 PNG（最小合法头），attachments._detect_type 需要真实图片魔数
+    png = (
+        b"\x89PNG\r\n\x1a\n" + bytes.fromhex(
+            "0000000d49484452000000010000000108060000001f15c489"
+            "0000000a49444154789c636000000200015d0a2db40000000049454e44ae426082"
+        )
+    )
+    source = tmp_path / "shot.png"
+    source.write_bytes(png)
+    record = service.import_attachment(str(source))
+
+    payload = sc._vision_context_payload({"attachment_id": record.id})
+    assert payload["ok"] is True, payload
+    assert payload["media_type"] == "image/png"
+    assert Path(payload["file_path"]).is_file()
+    assert payload["route"]["api_key_env"] == "OPENAI_API_KEY"
+    assert payload["route"]["base_url"] == "https://api.openai.com/v1"
+
+
 def test_agent_attachment_import_list_remove(monkeypatch, tmp_path):
     from kss.agent.attachments import AttachmentStore
 
@@ -981,3 +1186,55 @@ def test_agent_attachment_import_list_remove(monkeypatch, tmp_path):
         "attachment_id": attachment_id,
     }))
     assert json.loads(removed["stdout"])["data"]["attachments"] == []
+
+
+
+def test_agent_turn_timeout_revives_kernel(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    revived: list[bool] = []
+    monkeypatch.setattr(sc, "revive_harness_kernel_after_timeout", lambda: revived.append(True))
+
+    class TimeoutSession:
+        async def run(self, request, host):
+            from kss.agent.desktop_host import DesktopTurnResult
+            return DesktopTurnResult(
+                status="unavailable",
+                error="harness kernel timed out on desktop.turn",
+            )
+
+    _install_desktop_session(monkeypatch, session=TimeoutSession())
+
+    async def go():
+        reader, writer = _mk_reader(), FakeWriter()
+        await sc._handle_agent_turn(reader, writer, {
+            "cmd": "agent-turn", "session_id": "s1", "client_turn_id": "c1", "input": "上手",
+        })
+        frames = writer.frames()
+        assert any("timed out" in str(f.get("error") or "") for f in frames)
+        assert revived == [True]
+
+    asyncio.run(go())
+
+
+def test_agent_turn_empty_completion_emits_error_and_persists(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+
+    class EmptySession:
+        async def run(self, request, host):
+            from kss.agent.desktop_host import DesktopTurnResult
+            return DesktopTurnResult(status="completed", assistant_text="")
+
+    _install_desktop_session(monkeypatch, session=EmptySession())
+
+    async def go():
+        reader, writer = _mk_reader(), FakeWriter()
+        await sc._handle_agent_turn(reader, writer, {
+            "cmd": "agent-turn", "session_id": "s1", "client_turn_id": "c-empty", "input": "上手",
+        })
+        frames = writer.frames()
+        assert any(f.get("error") == "empty_completion" for f in frames)
+        assert frames[-1]["reason"] == "harness_unavailable"
+        texts = [m.content for m in sc._agent_service().sessions.read_messages("s1")]
+        assert any("empty_completion" in str(t) for t in texts)
+
+    asyncio.run(go())

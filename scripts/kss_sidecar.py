@@ -46,6 +46,7 @@ from kss.agent import (  # noqa: E402
 from kss.agent.desktop_host import (  # noqa: E402
     DesktopHarnessHost,
     DesktopTurnRequest,
+    DesktopTurnResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,8 +57,12 @@ VERSION_PATH = SOCKET_PATH.parent / "kss-sidecar.version"
 
 # Swift 端 spawn 时把 stdout/stderr 重定向进文件(见 BridgeClient.ensureSidecarRunning);
 # 这里只需保证 root logger 在 INFO 级别有输出、走 stderr 即可落进那个文件。
+try:
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:  # noqa: BLE001
+    pass
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
-                     stream=sys.stderr)
+                     stream=sys.stderr, force=True)
 
 # ---------------------------------------------------------------------------
 # U3(plan 004)：chat-turn 长连 handler + 并发 reader 任务 = 写执行唯一点。
@@ -376,24 +381,84 @@ async def _settle_granted_write(entry: dict, *, approved: bool) -> dict:
     )
 
 
+
+async def _watch_agent_confirm(call_id: str, host: DesktopHarnessHost) -> None:
+    """Fail-closed if chrome never answers a desktop write prompt."""
+    await asyncio.sleep(_CONFIRM_TIMEOUT)
+    if host.intent(call_id) is None:
+        return
+    host.invalidate(call_id)
+    _notify_harness_kernel("confirm", {"call_id": call_id, "approved": False})
+
+
+def _harness_kernel_boot_kwargs() -> dict[str, Any]:
+    return {
+        "driver": os.environ.get("KSS_HARNESS_DRIVER", "dsh"),
+        "sidecar_socket": str(SOCKET_PATH),
+        "dsh_home": Path(bridge.STATE_ROOT) / "harness" / "dsh-home",
+    }
+
+
+def reset_desktop_harness_host() -> None:
+    """Drop the cached host so the next turn binds a live Node session."""
+    global _DESKTOP_HARNESS_HOST
+    host = _DESKTOP_HARNESS_HOST
+    _DESKTOP_HARNESS_HOST = None
+    if host is not None:
+        try:
+            host.invalidate_all()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def revive_harness_kernel_after_timeout() -> None:
+    """Kill a wedged Node kernel and start a fresh one for the next desktop turn."""
+    from kss.agent.harness_kernel import ensure_harness_kernel, stop_harness_kernel
+
+    reset_desktop_harness_host()
+    try:
+        stop_harness_kernel()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        ensure_harness_kernel(**_harness_kernel_boot_kwargs())
+        mark_harness_kernel_alive()
+        logger.info("[harness] Node kernel restarted after turn timeout")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[harness] Node kernel restart failed: %s", exc)
+        mark_harness_kernel_dead()
+
+
 def _desktop_harness_host() -> DesktopHarnessHost:
     """桌面 Harness 宿主。未注入会话时失败关闭，不把 Python loop 当主人。"""
     global _DESKTOP_HARNESS_HOST
-    if _DESKTOP_HARNESS_HOST is None:
-        session = None
-        try:
-            from kss.agent.harness_kernel import get_harness_kernel
-            kernel = get_harness_kernel()
-            if kernel is not None and kernel.alive:
-                session = kernel.desktop_session()
-        except Exception:  # noqa: BLE001
-            session = None
-        _DESKTOP_HARNESS_HOST = DesktopHarnessHost(
-            session=session,
-            grant_write=grant_harness_write,
-            revoke_grant=revoke_harness_write,
-        )
-        _DESKTOP_HARNESS_HOST.execute_tool = lambda **kwargs: execute_harness_tool(**kwargs)
+    kernel = None
+    try:
+        from kss.agent.harness_kernel import get_harness_kernel
+        kernel = get_harness_kernel()
+    except Exception:  # noqa: BLE001
+        kernel = None
+    cached = _DESKTOP_HARNESS_HOST
+    if cached is not None:
+        session = getattr(cached, "_session", None)
+        session_kernel = getattr(session, "kernel", None)
+        if session_kernel is None:
+            if kernel is None or not kernel.alive:
+                return cached
+            reset_desktop_harness_host()
+        elif kernel is not None and kernel.alive and session_kernel is kernel:
+            return cached
+        else:
+            reset_desktop_harness_host()
+    session = None
+    if kernel is not None and kernel.alive:
+        session = kernel.desktop_session()
+    _DESKTOP_HARNESS_HOST = DesktopHarnessHost(
+        session=session,
+        grant_write=grant_harness_write,
+        revoke_grant=revoke_harness_write,
+    )
+    _DESKTOP_HARNESS_HOST.execute_tool = lambda **kwargs: execute_harness_tool(**kwargs)
     return _DESKTOP_HARNESS_HOST
 
 
@@ -537,9 +602,12 @@ async def _handle_chat_turn(reader: asyncio.StreamReader,
         result = await host.run(request, emit_projected)
         write_result = result.tool_results[0] if result.tool_results else None
         if result.status == "unavailable":
+            err = result.error or "harness_session_unavailable"
+            if "timed out" in err.lower():
+                revive_harness_kernel_after_timeout()
             await emit({
                 "type": "error",
-                "error": result.error or "harness_session_unavailable",
+                "error": err,
             })
         await emit({
             "type": "done",
@@ -598,7 +666,7 @@ async def _write_runtime_event(writer: asyncio.StreamWriter, event: AgentEvent,
 
 def _validate_agent_turn_request(
     req: dict,
-) -> tuple[str, str, str, list[str]] | tuple[None, None, str, list[str]]:
+) -> tuple[str, str, str, list[str], list[str]] | tuple[None, None, str, list[str], list[str]]:
     allowed = {
         "cmd",
         "session_id",
@@ -607,25 +675,97 @@ def _validate_agent_turn_request(
         "source_queue_id",
         "attachment_ids",
         "live_context_scope",
+        "file_refs",
     }
     extra = set(req) - allowed
     if extra:
-        return None, None, f"agent-turn unexpected fields: {sorted(extra)}", []
+        return None, None, f"agent-turn unexpected fields: {sorted(extra)}", [], []
     session_id = req.get("session_id")
     client_turn_id = req.get("client_turn_id")
     text = req.get("input")
     if not isinstance(session_id, str) or not session_id:
-        return None, None, "agent-turn requires session_id", []
+        return None, None, "agent-turn requires session_id", [], []
     if not isinstance(client_turn_id, str) or not client_turn_id:
-        return None, None, "agent-turn requires client_turn_id", []
+        return None, None, "agent-turn requires client_turn_id", [], []
     if not isinstance(text, str):
-        return None, None, "agent-turn requires string input", []
+        return None, None, "agent-turn requires string input", [], []
     raw_attachment_ids = req.get("attachment_ids") or []
     if not isinstance(raw_attachment_ids, list) or any(
         not isinstance(item, str) for item in raw_attachment_ids
     ):
-        return None, None, "agent-turn attachment_ids must be a string array", []
-    return session_id, client_turn_id, text, raw_attachment_ids
+        return None, None, "agent-turn attachment_ids must be a string array", [], []
+    raw_file_refs = req.get("file_refs") or []
+    if not isinstance(raw_file_refs, list) or any(
+        not isinstance(item, str) for item in raw_file_refs
+    ):
+        return None, None, "agent-turn file_refs must be a string array", [], []
+    if len(raw_file_refs) > 8:
+        return None, None, "agent-turn file_refs supports at most 8 entries", [], []
+    return session_id, client_turn_id, text, raw_attachment_ids, raw_file_refs
+
+
+# @file 引用：与 bridge WORKSPACE_FILE_ROOTS 同一白名单（相对前缀 → 根）。
+_FILE_REF_PREFIXES: tuple[str, ...] = (
+    "storage/reports",
+    "storage/exports",
+    "storage/ui_surface",
+    "docs",
+)
+_FILE_REF_MAX_CHARS = 48_000
+_FILE_REF_MAX_COUNT = 4
+
+
+def _resolve_file_ref(ref: str) -> Path | None:
+    """把相对引用解析到白名单根内的真实文件；越界/缺失返回 None."""
+    candidate = Path(ref)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        return None
+    normalized = candidate.as_posix()
+    if not any(
+        normalized == prefix or normalized.startswith(prefix + "/")
+        for prefix in _FILE_REF_PREFIXES
+    ):
+        return None
+    for base in (Path(bridge.STATE_ROOT), Path(bridge.PROJECT_ROOT)):
+        resolved = (base / candidate).resolve()
+        try:
+            resolved.relative_to(base.resolve())
+        except ValueError:
+            continue
+        if resolved.is_file():
+            return resolved
+    return None
+
+
+def _inject_file_refs(text: str, refs: list[str]) -> str:
+    """dsh-at-file 语义：把引用文件内容直接附进提示词（fenced 块 + 截断说明）。
+
+    注入后的完整输入会经 followup 进入 dsh session log，满足
+    「model-visible means logged」；KSS 会话存储仍保留原始输入 + 引用元数据。
+    """
+    if not refs:
+        return text
+    blocks: list[str] = []
+    for ref in refs[:_FILE_REF_MAX_COUNT]:
+        resolved = _resolve_file_ref(ref)
+        if resolved is None:
+            blocks.append(f"[引用文件 {ref}]\n(不可用：文件不存在或超出可引用范围)")
+            continue
+        try:
+            content = resolved.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            blocks.append(f"[引用文件 {ref}]\n(读取失败：{exc})")
+            continue
+        truncated = False
+        if len(content) > _FILE_REF_MAX_CHARS:
+            content = content[:_FILE_REF_MAX_CHARS]
+            truncated = True
+        fence = "````"
+        note = "\n(内容超长已截断)" if truncated else ""
+        blocks.append(f"[引用文件 {ref}]{note}\n{fence}\n{content}\n{fence}")
+    if len(refs) > _FILE_REF_MAX_COUNT:
+        blocks.append(f"(另有 {len(refs) - _FILE_REF_MAX_COUNT} 个引用未注入：单轮最多 {_FILE_REF_MAX_COUNT} 个)")
+    return f"{text}\n\n" + "\n\n".join(blocks) if text.strip() else "\n\n".join(blocks)
 
 
 def _agent_wire_message(message: AgentMessage) -> dict[str, Any]:
@@ -731,11 +871,21 @@ def _providers_action_payload(req: dict[str, Any]) -> dict[str, Any]:
     elif action == "set_route":
         primary = req.get("primary")
         fallback = req.get("fallback")
+        vision = req.get("vision")
         if not isinstance(primary, dict):
             return {"status": "error", "error": "agent-providers set_route requires primary"}
         if fallback is not None and not isinstance(fallback, dict):
             return {"status": "error", "error": "agent-providers fallback must be an object"}
-        payload = service.set_provider_routes(primary=primary, fallback=fallback)
+        if vision is not None and not isinstance(vision, dict):
+            return {"status": "error", "error": "agent-providers vision must be an object"}
+        if "vision" in req:
+            # 显式携带 vision 键：dict 覆盖，null 清除。
+            payload = service.set_provider_routes(
+                primary=primary, fallback=fallback, vision=vision
+            )
+        else:
+            # 兼容旧客户端与测试桩：不带 vision 键时保持两参调用形状（存量不动）。
+            payload = service.set_provider_routes(primary=primary, fallback=fallback)
     elif action == "reload_credentials":
         socket_path = req.get("socket_path")
         nonce = req.get("nonce")
@@ -751,6 +901,28 @@ def _providers_action_payload(req: dict[str, Any]) -> dict[str, Any]:
         if fallback is not None and not isinstance(fallback, dict):
             return {"status": "error", "error": "agent-providers test fallback must be an object"}
         payload = service.test_provider_connection(primary=primary, fallback=fallback)
+    elif action == "add_custom_provider":
+        spec = req.get("provider")
+        if not isinstance(spec, dict):
+            return {"status": "error", "error": "agent-providers add_custom_provider requires provider"}
+        try:
+            profile = service.add_custom_provider(spec)
+        except ValueError as exc:
+            return {"status": "error", "error": str(exc)}
+        # 新 provider 的 apiKeyEnv 只在 Node 启动时经 credential broker 注入，
+        # 因此写完 settings 后重启内核让新路由与凭证同时生效。
+        revive_harness_kernel_after_timeout()
+        payload = service.provider_catalog(refresh=True)
+        payload["custom_provider"] = profile
+    elif action == "remove_custom_provider":
+        provider_id = req.get("provider_id")
+        if not isinstance(provider_id, str) or not provider_id:
+            return {"status": "error", "error": "agent-providers remove_custom_provider requires provider_id"}
+        removed = service.remove_custom_provider(provider_id)
+        if removed:
+            revive_harness_kernel_after_timeout()
+        payload = service.provider_catalog(refresh=True)
+        payload["removed"] = bool(removed)
     else:
         return {"status": "error", "error": f"unknown agent-providers action: {action}"}
     if not isinstance(payload.get("providers"), list):
@@ -1439,7 +1611,7 @@ async def _agent_control_reader(
 async def _handle_agent_turn(reader: asyncio.StreamReader,
                              writer: asyncio.StreamWriter, req: dict) -> None:
     """Agent v1 传输：Harness SessionEvent 投影到既有皮肤帧；不把 Python loop 当主人。"""
-    session_id, client_turn_id, user_text_or_error, attachment_ids = (
+    session_id, client_turn_id, user_text_or_error, attachment_ids, file_refs = (
         _validate_agent_turn_request(req)
     )
     transport_run_id = uuid4().hex
@@ -1535,6 +1707,7 @@ async def _handle_agent_turn(reader: asyncio.StreamReader,
             call_id = str(payload.get("call_id") or "")
             if call_id and call_id not in pending:
                 pending[call_id] = {"call_id": call_id, "chrome": True}
+                asyncio.create_task(_watch_agent_confirm(call_id, host))
         await write_agent_frame(event_type, payload)
 
     _AGENT_ABORTS[transport_run_id] = abort_token
@@ -1595,31 +1768,70 @@ async def _handle_agent_turn(reader: asyncio.StreamReader,
             role="user",
             content=str(user_text_or_error or ""),
             timestamp=time.time(),
+            metadata={"file_refs": list(file_refs)} if file_refs else {},
         )
         store.append_message(
             session_id,
             user_message,
             source_queue_id=source_queue_id,
         )
+        harness_input = _inject_file_refs(str(user_text_or_error or ""), list(file_refs))
         await write_agent_frame("agent_start", {"client_turn_id": client_turn_id})
+        route_getter = getattr(service, "session_provider_route", None)
+        try:
+            provider_route = route_getter(session_id) if callable(route_getter) else None
+        except Exception:  # noqa: BLE001
+            provider_route = None
         request = DesktopTurnRequest(
             session_id=session_id,
             client_turn_id=client_turn_id,
-            input=str(user_text_or_error or ""),
+            input=harness_input,
             run_id=transport_run_id,
             attachment_ids=tuple(attachment_ids or ()),
             source_queue_id=source_queue_id,
+            provider_route=provider_route if isinstance(provider_route, dict) else None,
         )
         mark_harness_kernel_alive()
         mark_harness_answerer_alive()
+        started = time.monotonic()
+        logger.info("[agent-turn] start session=%s run=%s", session_id, transport_run_id)
         result = await host.run(request, emit_projected)
+        if (
+            result.status == "completed"
+            and not (result.assistant_text or "").strip()
+            and not result.tool_results
+        ):
+            result = DesktopTurnResult(
+                status="unavailable",
+                error=result.error or "empty_completion",
+            )
+        logger.info(
+            "[agent-turn] end session=%s run=%s status=%s duration_ms=%d",
+            session_id,
+            transport_run_id,
+            result.status,
+            int((time.monotonic() - started) * 1000),
+        )
         if result.status == "unavailable":
             # 本回合失败关闭。不要把「未注入会话」锁成内核永久死亡，
-            # 否则会误伤同进程里的研究 grant。Node 子进程退出由 U8 监督器标死。
+            # 否则会误伤同进程里的研究 grant。超时除外：whenIdle 卡住时必须
+            # 杀掉 Node，否则下一回合的 desktop.turn 会排在未读 stdin 后面。
+            err = result.error or "harness_session_unavailable"
+            if "timed out" in err.lower():
+                revive_harness_kernel_after_timeout()
             await write_agent_frame("error", {
-                "error": result.error or "harness_session_unavailable",
+                "error": err,
                 "is_error": True,
             })
+            store.append_message(
+                session_id,
+                AgentMessage(
+                    id=uuid4().hex,
+                    role="assistant",
+                    content=f"出错了：{err}",
+                    timestamp=time.time(),
+                ),
+            )
             store.finish_run(
                 session_id,
                 transport_run_id,
@@ -1740,10 +1952,93 @@ def _prepare_messages(raw) -> list[dict]:
     return out
 
 
+_VISION_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+_VISION_DEFAULT_BASE_URLS = {
+    "openai": "https://api.openai.com/v1",
+    "deepseek": "https://api.deepseek.com/v1",
+    "deepseek-official": "https://api.deepseek.com/v1",
+    "kss-primary": "https://api.deepseek.com/v1",
+}
+
+
+def _provider_api_key_env(provider_id: str) -> str:
+    """vision 路由 provider 的 apiKeyEnv（与 credential broker 注入约定一致）."""
+    if provider_id in {"deepseek", "deepseek-official", "kss-primary"}:
+        return "DEEPSEEK_API_KEY"
+    if provider_id == "openai":
+        return "OPENAI_API_KEY"
+    from kss.agent.harness_settings import custom_provider_env_name
+
+    return custom_provider_env_name(provider_id)
+
+
+def _vision_context_payload(req: dict) -> dict[str, Any]:
+    """vision_analyze 的非密钥上下文：文件绝对路径 + vision 路由 + apiKeyEnv."""
+    service = _agent_service()
+    try:
+        vision = service.route_store.load().vision
+    except Exception:  # noqa: BLE001
+        vision = None
+    if vision is None:
+        return {
+            "error": "vision_route_unconfigured",
+            "hint": "请在 Seesaw Models 页把一个支持图片的模型设为视觉模型",
+        }
+    file_path = None
+    media_type = None
+    attachment_id = req.get("attachment_id")
+    ref = req.get("path")
+    if isinstance(attachment_id, str) and attachment_id:
+        try:
+            record = service.attachments.load_record(attachment_id)
+        except Exception:  # noqa: BLE001
+            return {"error": "attachment_not_found", "attachment_id": attachment_id}
+        if record.kind != "image":
+            return {"error": "attachment_not_image", "kind": record.kind}
+        file_path = service.attachments.object_path(record.sha256)
+        media_type = record.mime_type
+    elif isinstance(ref, str) and ref:
+        resolved = _resolve_file_ref(ref)
+        if resolved is None or resolved.suffix.lower() not in _VISION_IMAGE_EXTS:
+            return {
+                "error": "path_not_allowed",
+                "hint": "仅允许 storage/reports、storage/exports、storage/ui_surface、docs 下的图片文件",
+            }
+        file_path = resolved
+    else:
+        return {"error": "vision_target_missing", "hint": "需要 attachment_id 或 path 其一"}
+    if file_path is None or not Path(file_path).is_file():
+        return {"error": "vision_file_missing"}
+    base_url = vision.base_url or _VISION_DEFAULT_BASE_URLS.get(vision.provider_id)
+    if not base_url:
+        try:
+            from kss.agent.harness_settings import list_custom_providers
+
+            profile = list_custom_providers(service._dsh_home()).get(vision.provider_id)
+            base_url = str(profile.get("baseURL")) if profile else None
+        except Exception:  # noqa: BLE001
+            base_url = None
+    if not base_url:
+        return {"error": "vision_base_url_missing", "provider_id": vision.provider_id}
+    return {
+        "ok": True,
+        "file_path": str(file_path),
+        "media_type": media_type,
+        "route": {
+            "provider_id": vision.provider_id,
+            "model_id": vision.model_id,
+            "base_url": base_url,
+            "api_key_env": _provider_api_key_env(vision.provider_id),
+        },
+    }
+
+
 def _handle_agent_json_command(req: dict) -> str | None:
     """Agent v1 非流式 JSON 命令；返回标准 sidecar response。"""
     cmd = req.get("cmd")
     try:
+        if cmd == "harness-vision-context":
+            return _sidecar_ok(_vision_context_payload(req))
         if cmd == "harness-tool-grant":
             grant_harness_write(
                 str(req.get("call_id") or ""),
@@ -2078,18 +2373,19 @@ async def _serve() -> None:
 
     try:
         from kss.agent.harness_kernel import ensure_harness_kernel
-        driver = os.environ.get("KSS_HARNESS_DRIVER", "dsh")
-        dsh_home = Path(bridge.STATE_ROOT) / "harness" / "dsh-home"
-        ensure_harness_kernel(
-            driver=driver,
-            sidecar_socket=str(SOCKET_PATH),
-            dsh_home=dsh_home,
-        )
+        kwargs = _harness_kernel_boot_kwargs()
+        ensure_harness_kernel(**kwargs)
         mark_harness_kernel_alive()
-        logger.info("[harness] Node kernel started driver=%s", driver)
+        logger.info("[harness] Node kernel started driver=%s", kwargs["driver"])
     except Exception as exc:  # noqa: BLE001
         logger.warning("[harness] Node kernel not started: %s", exc)
-        mark_harness_kernel_dead()
+        try:
+            from kss.agent.harness_kernel import get_harness_kernel
+            kernel = get_harness_kernel()
+        except Exception:  # noqa: BLE001
+            kernel = None
+        if kernel is None or not kernel.alive:
+            mark_harness_kernel_dead()
 
     async with server:
         await stop

@@ -5,6 +5,7 @@ U7：签名 Harness Node 树 + 三崩溃域失败关闭（脚本内容断言；�
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -105,6 +106,52 @@ def test_signed_package_copies_harness_tree_and_codesigns_dsh_node() -> None:
         _REPO / "script" / "NodeHelper.entitlements"
     ).read_text(encoding="utf-8")
     assert 'harness/kss-profile/node_modules/@deepseek-ai/dsh/lib/bin.js' in script
+    assert 'script/prune_signed_resources.sh' in script
+    assert "-name node_modules" in (_REPO / 'script' / 'prune_signed_resources.sh').read_text(encoding='utf-8')
+    assert "ERROR: prune removed OpenTelemetry source dirs" in script
+
+
+
+
+def test_signed_resource_prune_keeps_otel_logs_dir(tmp_path: Path) -> None:
+    """Packaging must not delete node_modules dirs named logs/ or state/."""
+    helper = _REPO / "script" / "prune_signed_resources.sh"
+    resources = tmp_path / "Resources"
+    otel_logs = (
+        resources
+        / "harness"
+        / "kss-profile"
+        / "node_modules"
+        / "@opentelemetry"
+        / "otlp-transformer"
+        / "build"
+        / "src"
+        / "logs"
+    )
+    otel_state = (
+        resources
+        / "harness"
+        / "kss-profile"
+        / "node_modules"
+        / "@opentelemetry"
+        / "sdk-metrics"
+        / "build"
+        / "src"
+        / "state"
+    )
+    stray_logs = resources / "scripts" / "logs"
+    otel_logs.mkdir(parents=True)
+    (otel_logs / "protobuf.js").write_text("keep\n", encoding="utf-8")
+    otel_state.mkdir(parents=True)
+    (otel_state / "MeterProvider.js").write_text("keep\n", encoding="utf-8")
+    stray_logs.mkdir(parents=True)
+    (stray_logs / "sidecar.log").write_text("drop\n", encoding="utf-8")
+
+    subprocess.check_call(["bash", str(helper), str(resources)])
+
+    assert (otel_logs / "protobuf.js").is_file()
+    assert (otel_state / "MeterProvider.js").is_file()
+    assert not stray_logs.exists()
 
 
 def test_harness_node_modules_stay_out_of_git() -> None:
@@ -218,3 +265,24 @@ def test_live_kill_switch_still_blocks_granted_dispatch(
     )
     assert dispatched == []
     assert out.get("error") == "not_live"
+
+
+
+def test_sign_and_build_stops_detached_sidecar() -> None:
+    script = _script_text()
+    assert 'pkill -x "$APP_NAME"' in script
+    assert 'pkill -f "kss_sidecar.py"' in script
+    assert 'pkill -f "kss_harness_host.mjs"' in script
+    assert "kss-sidecar.pid" in script
+
+
+
+def test_sidecar_kernel_boot_log_does_not_use_undefined_driver() -> None:
+    """Boot logging must use the kwargs driver; a bare `driver` NameError marks Harness dead."""
+    text = (_REPO / "scripts" / "kss_sidecar.py").read_text(encoding="utf-8")
+    assert 'logger.info("[harness] Node kernel started driver=%s", driver)' not in text
+    assert 'logger.info("[harness] Node kernel started driver=%s", kwargs["driver"])' in text
+    serve = text[text.index("async def _serve()"):]
+    boot = serve.split("async with server:", 1)[0]
+    assert "mark_harness_kernel_dead()" in boot
+    assert "kernel.alive" in boot

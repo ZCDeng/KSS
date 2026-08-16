@@ -17,9 +17,11 @@ import {
   abortLiveSession,
   injectCredentialsFromSocket,
   installStubLlm,
+  listHarnessModels,
   loadLiveDeps,
   resolveLiveApproval,
   runLiveTurn,
+  saveDefaultModelSelection,
   steerLiveSession,
   wireApprovalPrompt,
 } from "./kss_harness_live.mjs";
@@ -220,6 +222,7 @@ async function desktopTurn(req, requestId) {
       cwd: String(req.cwd || process.cwd()),
       provider: req.provider,
       model: req.model,
+      reasoningEffort: req.reasoning_effort,
       onEvent: (event) => emitEvent(requestId, event),
     });
   }
@@ -245,6 +248,7 @@ async function researchTurn(req, requestId) {
       cwd,
       provider: req.provider,
       model: req.model,
+      reasoningEffort: req.reasoning_effort,
       allowlistTools: allowlist,
       onEvent: (event) => emitEvent(requestId, event),
     });
@@ -270,6 +274,45 @@ async function handle(msg) {
   }
   if (cmd === "research.turn") {
     reply(id, await researchTurn(msg, id));
+    return;
+  }
+  if (cmd === "models.list") {
+    if (DRIVER !== "dsh") {
+      reply(id, { ok: true, providers: [], default_selection: null });
+      return;
+    }
+    const unavailable = await ensureDshReady();
+    if (unavailable) {
+      reply(id, unavailable);
+      return;
+    }
+    try {
+      reply(id, { ok: true, ...(await listHarnessModels(dshCtx)) });
+    } catch (err) {
+      reply(id, { ok: false, error: String(err?.message || err) });
+    }
+    return;
+  }
+  if (cmd === "models.set_default") {
+    if (DRIVER !== "dsh") {
+      reply(id, { ok: false, error: "models.set_default requires dsh driver" });
+      return;
+    }
+    const unavailable = await ensureDshReady();
+    if (unavailable) {
+      reply(id, unavailable);
+      return;
+    }
+    try {
+      const saved = await saveDefaultModelSelection(dshCtx, {
+        provider: msg.provider,
+        model: msg.model,
+        reasoningEffort: msg.reasoning_effort,
+      });
+      reply(id, { ok: true, ...saved });
+    } catch (err) {
+      reply(id, { ok: false, error: String(err?.message || err) });
+    }
     return;
   }
   if (cmd === "confirm") {

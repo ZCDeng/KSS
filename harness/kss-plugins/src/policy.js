@@ -252,7 +252,17 @@ export function applyKssApprovalPolicy(ctx, options = {}) {
         }
       }
       outcome = await new Promise((resolve) => {
-        pendingDesktop.set(callId, resolve);
+        const waitMs = Number(process.env.KSS_HARNESS_APPROVAL_TIMEOUT_MS);
+        const budget = Number.isFinite(waitMs) && waitMs > 0 ? waitMs : 300_000;
+        pendingDesktop.set(callId, (value) => {
+          pendingDesktop.delete(callId);
+          resolve(value);
+        });
+        setTimeout(() => {
+          if (!pendingDesktop.has(callId)) return;
+          pendingDesktop.delete(callId);
+          resolve("rejected");
+        }, budget);
       });
     }
     if (outcome === "allowed-once") {

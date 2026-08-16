@@ -7,7 +7,7 @@ final class AgentSkillDrawerTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appending(path: "Sources/KSSDesktop/Views/AIChatView.swift")
+            .appending(path: "Sources/KSSDesktop/Views/Seesaw/AIChatView.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
         let drawerStart = try XCTUnwrap(source.range(of: "private func focusSkillRow"))
         let drawerEnd = try XCTUnwrap(
@@ -28,7 +28,7 @@ final class AgentSkillDrawerTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appending(path: "Sources/KSSDesktop/Views/AIChatView.swift")
+            .appending(path: "Sources/KSSDesktop/Views/Seesaw/AIChatView.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
         let skillsStart = try XCTUnwrap(source.range(of: "private var focusSkillPalette"))
@@ -59,7 +59,7 @@ final class AgentSkillDrawerTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appending(path: "Sources/KSSDesktop/Views/AIChatView.swift")
+            .appending(path: "Sources/KSSDesktop/Views/Seesaw/AIChatView.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
         let skillsStart = try XCTUnwrap(source.range(of: "private var focusSkillPalette"))
         let contextStart = try XCTUnwrap(

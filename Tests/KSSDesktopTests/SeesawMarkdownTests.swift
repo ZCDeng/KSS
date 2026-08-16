@@ -59,6 +59,13 @@ final class SeesawMarkdownTests: XCTestCase {
         XCTAssertLessThan(SeesawMarkdownLayout.tableFontSize, 13)
     }
 
+    func testUnbalancedInlineMarkupIsRejectedDuringStreaming() {
+        XCTAssertTrue(SeesawMarkdown.inlineMarkupIsBalanced("上手信息已拉齐。这是 **KSS Desktop**。"))
+        XCTAssertFalse(SeesawMarkdown.inlineMarkupIsBalanced("上手信息已拉齐。这是 **KSS Desktop"))
+        XCTAssertFalse(SeesawMarkdown.inlineMarkupIsBalanced("路径 `/Applications/KSSDesktop.app"))
+        XCTAssertTrue(SeesawMarkdown.inlineMarkupIsBalanced("路径 `/tmp` 可用"))
+    }
+
     func testTranscriptTablesStayNativeWithoutWebViewFallback() {
         // Tables must parse natively so assistant height tracks content.
         let blocks = SeesawMarkdown.parse("""

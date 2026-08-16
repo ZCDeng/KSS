@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createConnection } from "node:net";
 import { loadPackCatalog, packToolMeta } from "./catalog.js";
 import { apply as applyPolicy } from "./policy.js";
+import { runVisionAnalysis } from "./vision.js";
 
 export const name = "kss";
 export const inject = ["tools", "approval"];
@@ -71,12 +72,74 @@ function rpc(payload) {
   });
 }
 
+function jsonSafe(value) {
+  return JSON.parse(
+    JSON.stringify(value, (_key, item) => {
+      if (typeof item === "number" && (!Number.isFinite(item) || Object.is(item, -0))) {
+        return item === item ? 0 : null;
+      }
+      return item;
+    }),
+  );
+}
+
 function renderJson(_args, value) {
   return [{ type: "text", text: JSON.stringify(value) }];
 }
 
+function registerVisionTool(ctx) {
+  ctx.tools.register(
+    defineTool({
+      name: "vision_analyze",
+      description:
+        "分析图片附件或工作区图片（截图/K线/报表照片）：经独立视觉模型返回 OCR 文本、版面区域与语义描述的结构化 JSON。输出是模型推断（untrusted），金融数字必须与工具数据核对后才能引用。",
+      parameters: {
+        attachment_id: {
+          type: "string",
+          description: "Seesaw 附件 id（与 path 二选一）",
+        },
+        path: {
+          type: "string",
+          description: "workspace 白名单内图片相对路径（与 attachment_id 二选一）",
+        },
+        intent: {
+          type: "string",
+          description: "想从图片得到什么，如：提取表格数字 / 识别K线形态",
+        },
+      },
+      output: {
+        schema: { type: "json" },
+        render: renderJson,
+      },
+      isConcurrencySafe: () => true,
+      async execute(args) {
+        const context = await rpc({
+          cmd: "harness-vision-context",
+          attachment_id: String(args?.attachment_id || ""),
+          path: String(args?.path || ""),
+        });
+        if (!context || context.ok !== true) {
+          return jsonSafe({
+            error: context?.error || "vision_context_unavailable",
+            hint: context?.hint,
+          });
+        }
+        return jsonSafe(
+          await runVisionAnalysis({
+            route: context.route,
+            filePath: context.file_path,
+            mediaType: context.media_type,
+            intent: String(args?.intent || ""),
+          }),
+        );
+      },
+    }),
+  );
+}
+
 export function apply(ctx) {
   applyPolicy(ctx);
+  registerVisionTool(ctx);
   for (const entry of loadPackCatalog()) {
     ctx.tools.register(
       defineTool({
@@ -99,12 +162,12 @@ export function apply(ctx) {
           const stdout = resp?.stdout;
           if (typeof stdout === "string") {
             try {
-              return JSON.parse(stdout);
+              return jsonSafe(JSON.parse(stdout));
             } catch {
               return { error: "bad_sidecar_stdout", stdout };
             }
           }
-          return resp;
+          return jsonSafe(resp);
         },
       }),
     );

@@ -51,6 +51,18 @@ echo "签名身份：$SIGN_IDENTITY"
 
 cd "$ROOT_DIR"
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+# Sidecar is a detached daemon; quitting the app (or pkill of the GUI) does
+# not reap it. A wedged harness-runtime node behind a live socket will make
+# the next install look like a timeout with no new dsh session.
+SIDECAR_PID_FILE="$HOME/Library/Application Support/KSS/run/kss-sidecar.pid"
+if [ -f "$SIDECAR_PID_FILE" ]; then
+  SIDECAR_PID="$(tr -d "[:space:]" < "$SIDECAR_PID_FILE" || true)"
+  if [ -n "$SIDECAR_PID" ]; then
+    kill "$SIDECAR_PID" >/dev/null 2>&1 || true
+  fi
+fi
+pkill -f "kss_sidecar.py" >/dev/null 2>&1 || true
+pkill -f "kss_harness_host.mjs" >/dev/null 2>&1 || true
 # pi-ai is a signed, self-contained provider helper. Preparation pins both the
 # Node runtime archive checksum and npm dependency lock; release bundles never
 # fall back to a system Node installation.
@@ -148,9 +160,15 @@ cp -R "$HARNESS_BUILD_ROOT/harness/kss-plugins" "$APP_RESOURCES/harness/kss-plug
 for skills_root in .claude/skills .agents/skills; do
   copy_resource_item "$skills_root" "$APP_RESOURCES/$(dirname "$skills_root")"
 done
-# 签名前硬清：任何事后写入（pyc / 误拷 storage）都会让 sealed resource 失效 → Gatekeeper 拒开
-find "$APP_RESOURCES" \( -name '.git' -o -name '__pycache__' -o -name '.pytest_cache' -o -name '.ruff_cache' -o -name '*.egg-info' -o -name '.cache' -o -name 'cache' -o -name 'caches' -o -name '.omx' -o -name '.codex' -o -name 'state' -o -name '.state' -o -name 'logs' \) \
-  -type d -prune -exec rm -rf {} + 2>/dev/null || true
+# 签名前硬清：任何事后写入（pyc / 误拷 storage）都会让 sealed resource 失效 → Gatekeeper 拒开。
+# 不进 node_modules：otel 等包用 logs/state 当源码目录，删掉会让 dsh 启动失败。
+"$ROOT_DIR/script/prune_signed_resources.sh" "$APP_RESOURCES"
+OTEL_LOGS="$APP_RESOURCES/harness/kss-profile/node_modules/@opentelemetry/otlp-transformer/build/src/logs"
+OTEL_STATE="$APP_RESOURCES/harness/kss-profile/node_modules/@opentelemetry/sdk-metrics/build/src/state"
+if [ ! -d "$OTEL_LOGS" ] || [ ! -d "$OTEL_STATE" ]; then
+  echo "ERROR: prune removed OpenTelemetry source dirs (logs/state); dsh cannot boot." >&2
+  exit 1
+fi
 find "$APP_RESOURCES" \( -name '*.py[cod]' -o -name '.DS_Store' -o -name '*.db' \) \
   -type f -delete 2>/dev/null || true
 # 禁止把可变状态打进包（ledger / mi_signals 等）

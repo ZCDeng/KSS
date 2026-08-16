@@ -2478,6 +2478,33 @@ struct AgentHydratedToolCall: Codable, Equatable {
 
 // MARK: - Provider catalog / attachment protocol
 
+/// Seesaw @file 引用：workspace-files 命令返回的一条文件命中。
+struct WorkspaceFileHit: Codable, Identifiable, Equatable {
+    var path: String
+    var name: String
+    var size: Int?
+    var mtime: Int?
+
+    var id: String { path }
+
+    /// 去掉文件名的目录部分，用于次行展示。
+    var directory: String {
+        guard let idx = path.lastIndex(of: "/") else { return "" }
+        return String(path[..<idx])
+    }
+}
+
+struct WorkspaceFilesResponse: Codable, Equatable {
+    var query: String?
+    var files: [WorkspaceFileHit]
+}
+
+/// 一档模型思考强度（来自 dsh resolveModelInfo 的 reasoning.efforts）。
+struct AgentReasoningEffort: Codable, Identifiable, Equatable {
+    var id: String
+    var name: String?
+}
+
 struct AgentModelDescriptor: Codable, Identifiable, Equatable {
     var id: String
     var name: String?
@@ -2487,6 +2514,10 @@ struct AgentModelDescriptor: Codable, Identifiable, Equatable {
     var supportsThinking: Bool?
     var supportsImages: Bool?
     var supportsTools: Bool?
+    var reasoningEfforts: [AgentReasoningEffort]?
+    var defaultReasoningEffort: String?
+    var inputModalities: [String]?
+    var modelDescription: String?
 
     enum CodingKeys: String, CodingKey {
         case id, name
@@ -2497,6 +2528,10 @@ struct AgentModelDescriptor: Codable, Identifiable, Equatable {
         case supportsThinking = "supports_thinking"
         case supportsImages = "supports_images"
         case supportsTools = "supports_tools"
+        case reasoningEfforts = "reasoning_efforts"
+        case defaultReasoningEffort = "default_reasoning_effort"
+        case inputModalities = "input_modalities"
+        case modelDescription = "description"
     }
 
     init(from decoder: Decoder) throws {
@@ -2511,6 +2546,10 @@ struct AgentModelDescriptor: Codable, Identifiable, Equatable {
         supportsThinking = try? c.decode(Bool.self, forKey: .supportsThinking)
         supportsImages = try? c.decode(Bool.self, forKey: .supportsImages)
         supportsTools = try? c.decode(Bool.self, forKey: .supportsTools)
+        reasoningEfforts = try? c.decode([AgentReasoningEffort].self, forKey: .reasoningEfforts)
+        defaultReasoningEffort = try? c.decode(String.self, forKey: .defaultReasoningEffort)
+        inputModalities = try? c.decode([String].self, forKey: .inputModalities)
+        modelDescription = try? c.decode(String.self, forKey: .modelDescription)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -2523,6 +2562,10 @@ struct AgentModelDescriptor: Codable, Identifiable, Equatable {
         try c.encodeIfPresent(supportsThinking, forKey: .supportsThinking)
         try c.encodeIfPresent(supportsImages, forKey: .supportsImages)
         try c.encodeIfPresent(supportsTools, forKey: .supportsTools)
+        try c.encodeIfPresent(reasoningEfforts, forKey: .reasoningEfforts)
+        try c.encodeIfPresent(defaultReasoningEffort, forKey: .defaultReasoningEffort)
+        try c.encodeIfPresent(inputModalities, forKey: .inputModalities)
+        try c.encodeIfPresent(modelDescription, forKey: .modelDescription)
     }
 }
 
@@ -2533,9 +2576,13 @@ struct AgentProviderDescriptor: Codable, Identifiable, Equatable {
     var authKind: String?
     var baseURL: String?
     var models: [AgentModelDescriptor]?
+    /// 目录来源（"harness" = dsh 模型注册表；"route" = 仅路由占位）。
+    var source: String?
+    /// 用户通过 DSH settings.yaml 添加的自定义 provider（可移除）。
+    var custom: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, authenticated, models
+        case id, name, authenticated, models, source, custom
         case authKind = "auth_kind"
         case baseURL = "base_url"
     }
@@ -2607,6 +2654,8 @@ struct AgentProvidersResponse: Codable, Equatable {
     var providers: [AgentProviderDescriptor]
     var primary: AgentProviderRoute?
     var fallback: AgentProviderRoute?
+    var vision: AgentProviderRoute?
+    var providerBackend: String?
     var status: String?
     var source: String?
     var ok: Bool?
@@ -2619,6 +2668,8 @@ struct AgentProvidersResponse: Codable, Equatable {
         providers: [AgentProviderDescriptor] = [],
         primary: AgentProviderRoute? = nil,
         fallback: AgentProviderRoute? = nil,
+        vision: AgentProviderRoute? = nil,
+        providerBackend: String? = nil,
         status: String? = nil,
         source: String? = nil,
         ok: Bool? = nil,
@@ -2630,6 +2681,8 @@ struct AgentProvidersResponse: Codable, Equatable {
         self.providers = providers
         self.primary = primary
         self.fallback = fallback
+        self.vision = vision
+        self.providerBackend = providerBackend
         self.status = status
         self.source = source
         self.ok = ok
@@ -2640,8 +2693,9 @@ struct AgentProvidersResponse: Codable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case providers, primary, fallback, status, source, ok, hint, candidates, error
+        case providers, primary, fallback, vision, status, source, ok, hint, candidates, error
         case latencyMs = "latency_ms"
+        case providerBackend = "provider_backend"
     }
 
     init(from decoder: Decoder) throws {
@@ -2649,6 +2703,8 @@ struct AgentProvidersResponse: Codable, Equatable {
         providers = (try? c.decode([AgentProviderDescriptor].self, forKey: .providers)) ?? []
         primary = try? c.decode(AgentProviderRoute.self, forKey: .primary)
         fallback = try? c.decode(AgentProviderRoute.self, forKey: .fallback)
+        vision = try? c.decode(AgentProviderRoute.self, forKey: .vision)
+        providerBackend = try? c.decode(String.self, forKey: .providerBackend)
         status = try? c.decode(String.self, forKey: .status)
         source = try? c.decode(String.self, forKey: .source)
         ok = try? c.decode(Bool.self, forKey: .ok)

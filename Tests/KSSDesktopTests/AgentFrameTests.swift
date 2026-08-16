@@ -544,6 +544,89 @@ final class AgentFrameTests: XCTestCase {
         XCTAssertEqual(store.agentQueuedInputs.first?.mode, "steering")
     }
 
+    func testHarnessTimeoutErrorStaysInTranscriptInsteadOfModal() throws {
+        let store = KSSStore(testBridge: nil)
+        store.chatMessages = [
+            ChatMessage(role: .user, text: "上手"),
+            ChatMessage(role: .assistant, text: "先看仓库结构", numbersUnverified: true),
+        ]
+        let assistantId = try XCTUnwrap(store.chatMessages.last?.id)
+        XCTAssertTrue(store.applyAgentFrame(try decodeFrame("""
+        {"type":"error","error":"harness kernel timed out on desktop.turn","is_error":true}
+        """), assistantId: assistantId))
+        XCTAssertNil(store.errorMessage)
+        XCTAssertTrue(store.chatMessages[1].isError)
+        XCTAssertTrue(store.chatMessages[1].text.contains("timed out"))
+        XCTAssertFalse(store.chatMessages[1].numbersUnverified)
+    }
+
+    func testLaunchOpensFreshSessionInsteadOfRestoringLast() {
+        UserDefaults.standard.set("local-OLD-SESSION", forKey: "kss.agent.lastSessionId")
+        defer { UserDefaults.standard.removeObject(forKey: "kss.agent.lastSessionId") }
+        let store = KSSStore(testBridge: nil)
+        XCTAssertNotEqual(store.selectedAgentSessionId, "local-OLD-SESSION")
+        XCTAssertEqual(store.agentSessions.first?.title, "新会话")
+    }
+
+    func testAgentStreamIdleBudgetOutlivesApprovalSilence() {
+        // 审批挂起时 sidecar 最长 300s 无帧（人未 tap → 自动拒绝后才恢复）。
+        XCTAssertEqual(BridgeClient.agentStreamIdleBudget(confirmSeen: false), 300)
+        XCTAssertGreaterThan(BridgeClient.agentStreamIdleBudget(confirmSeen: true), 300)
+    }
+
+    func testUndeliverableConfirmSurfacesInTranscript() {
+        let store = KSSStore(testBridge: nil)
+        store.chatMessages = [
+            ChatMessage(role: .user, text: "跑一下更新"),
+            ChatMessage(role: .assistant, text: "准备执行", numbersUnverified: true),
+        ]
+        store.pendingWriteConfirm = PendingWriteConfirm(
+            callId: "c1", tool: "bash", command: "bash",
+            effect: "执行写操作:bash", argsText: "{}", contextLine: "")
+        // Agent 路径、control 已断：允许 tap 不得静默丢失。
+        store.resolveWriteConfirm(approved: true)
+        XCTAssertNil(store.pendingWriteConfirm)
+        XCTAssertTrue(store.chatMessages[1].text.contains("未能送达"))
+    }
+
+    func testHarnessFailuresNeverFallBackToLegacyChat() {
+        // legacy 路径撞同一个内核问题并重跑整轮，还把错误藏起来。
+        XCTAssertFalse(KSSStore.shouldFallbackToLegacyAgent(
+            error: "harness kernel timed out on desktop.turn",
+            terminationReason: "harness_unavailable",
+            userAborted: false,
+            assistantEmpty: true,
+            assistantIsError: false))
+        XCTAssertFalse(KSSStore.shouldFallbackToLegacyAgent(
+            error: "empty_completion",
+            terminationReason: "harness_unavailable",
+            userAborted: false,
+            assistantEmpty: true,
+            assistantIsError: false))
+        // 非 harness 类错误仍允许回落。
+        XCTAssertTrue(KSSStore.shouldFallbackToLegacyAgent(
+            error: "无法连接 Agent sidecar",
+            terminationReason: nil,
+            userAborted: false,
+            assistantEmpty: true,
+            assistantIsError: false))
+    }
+
+    func testEmptyCompletionErrorStaysInTranscriptInsteadOfModal() throws {
+        let store = KSSStore(testBridge: nil)
+        store.chatMessages = [
+            ChatMessage(role: .user, text: "上手"),
+            ChatMessage(role: .assistant, text: "", numbersUnverified: true),
+        ]
+        let assistantId = try XCTUnwrap(store.chatMessages.last?.id)
+        XCTAssertTrue(store.applyAgentFrame(try decodeFrame("""
+        {"type":"error","error":"empty_completion","is_error":true}
+        """), assistantId: assistantId))
+        XCTAssertNil(store.errorMessage)
+        XCTAssertTrue(store.chatMessages[1].isError)
+        XCTAssertTrue(store.chatMessages[1].text.contains("empty_completion"))
+    }
+
     private func decodeFrame(_ json: String) throws -> AgentFrame {
         try JSONDecoder().decode(AgentFrame.self, from: Data(json.utf8))
     }

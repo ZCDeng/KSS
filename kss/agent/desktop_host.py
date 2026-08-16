@@ -38,6 +38,8 @@ class DesktopTurnRequest:
     run_id: str
     attachment_ids: tuple[str, ...] = ()
     source_queue_id: str | None = None
+    # 会话级 provider 路由（非密钥），None 时回落全局 primary。
+    provider_route: dict[str, Any] | None = None
 
 
 @dataclass

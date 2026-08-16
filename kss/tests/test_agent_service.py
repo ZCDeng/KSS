@@ -882,3 +882,184 @@ def test_coverage_midflight_explainer_is_follow_up_not_steer(monkeypatch, tmp_pa
         assert result.status == "completed"
 
     asyncio.run(scenario())
+
+
+def test_provider_catalog_merges_harness_models(tmp_path, monkeypatch):
+    """dsh 内核在场时目录来自 harness：能力位/思考档位/默认选择透传."""
+    service = KSSAgentService(tmp_path, tmp_path)
+
+    class FakeKernel:
+        alive = True
+        driver = "dsh"
+
+        def list_models(self, **kwargs):
+            return {
+                "ok": True,
+                "providers": [{
+                    "id": "deepseek-official",
+                    "name": "DeepSeek",
+                    "models": [{
+                        "model_id": "deepseek-v4-pro",
+                        "name": "DeepSeek-V4-Pro",
+                        "input_modalities": ["text"],
+                        "context_window": 1_000_000,
+                        "default_max_tokens": 256_000,
+                        "reasoning_efforts": [
+                            {"id": "off", "name": "Off"},
+                            {"id": "high", "name": "High"},
+                            {"id": "max", "name": "Max"},
+                        ],
+                        "default_reasoning_effort": "high",
+                    }],
+                }],
+                "default_selection": {
+                    "provider": "deepseek-official",
+                    "model": "deepseek-v4-flash",
+                    "reasoning_effort": None,
+                },
+            }
+
+    monkeypatch.setattr(
+        "kss.agent.harness_kernel.get_harness_kernel", lambda: FakeKernel()
+    )
+    catalog = service.provider_catalog()
+    assert catalog["provider_backend"] == "harness"
+    assert catalog["status"] == "ready"
+    model = catalog["models"][0]
+    assert model["provider_id"] == "deepseek-official"
+    assert model["supports_thinking"] is True
+    assert model["supports_images"] is False
+    assert [entry["id"] for entry in model["reasoning_efforts"]] == ["off", "high", "max"]
+    assert model["default_reasoning_effort"] == "high"
+    assert catalog["harness_default_selection"]["model"] == "deepseek-v4-flash"
+    assert "vision" in catalog
+    provider_ids = [entry["id"] for entry in catalog["providers"]]
+    assert "deepseek-official" in provider_ids
+
+
+def test_provider_catalog_falls_back_without_kernel(tmp_path, monkeypatch):
+    service = KSSAgentService(tmp_path, tmp_path)
+    monkeypatch.setattr(
+        "kss.agent.harness_kernel.get_harness_kernel", lambda: None
+    )
+    catalog = service.provider_catalog()
+    assert catalog["provider_backend"] in {"pi-ai", "legacy"}
+    assert "vision" in catalog
+
+
+def test_vision_route_round_trips_and_reaches_set_route(tmp_path, monkeypatch):
+    from kss.agent.provider_route import ProviderRouteStore
+
+    service = KSSAgentService(tmp_path, tmp_path)
+    monkeypatch.setattr(
+        "kss.agent.harness_kernel.get_harness_kernel", lambda: None
+    )
+    service.set_provider_routes(
+        primary={"provider_id": "deepseek", "model_id": "deepseek-v4-pro",
+                 "thinking_level": "high"},
+        vision={"provider_id": "openai", "model_id": "gpt-vision",
+                "supports_images": True},
+    )
+    loaded = ProviderRouteStore(tmp_path).load()
+    assert loaded.primary.model_id == "deepseek-v4-pro"
+    assert loaded.primary.thinking_level == "high"
+    assert loaded.vision is not None
+    assert loaded.vision.model_id == "gpt-vision"
+    assert loaded.vision.supports_images is True
+    # vision 不进聊天回退链
+    assert [route.model_id for route in loaded.ordered()] == ["deepseek-v4-pro"]
+
+
+def test_session_provider_route_snapshots_global_default(tmp_path, monkeypatch):
+    service = KSSAgentService(tmp_path, tmp_path)
+    route = service.session_provider_route("session-without-state")
+    assert isinstance(route, dict)
+    assert route["provider_id"]
+    assert route["model_id"]
+    assert "thinking_level" in route
+
+
+def test_set_route_without_vision_keeps_stored_vision(tmp_path, monkeypatch):
+    from kss.agent.provider_route import ProviderRouteStore
+
+    service = KSSAgentService(tmp_path, tmp_path)
+    monkeypatch.setattr(
+        "kss.agent.harness_kernel.get_harness_kernel", lambda: None
+    )
+    service.set_provider_routes(
+        primary={"provider_id": "deepseek", "model_id": "deepseek-v4-pro"},
+        vision={"provider_id": "openai", "model_id": "gpt-vision"},
+    )
+    # 不带 vision 的调用（例如仅改默认模型）不得清掉视觉槽
+    service.set_provider_routes(
+        primary={"provider_id": "deepseek", "model_id": "deepseek-v4-flash"},
+    )
+    loaded = ProviderRouteStore(tmp_path).load()
+    assert loaded.primary.model_id == "deepseek-v4-flash"
+    assert loaded.vision is not None and loaded.vision.model_id == "gpt-vision"
+    # 显式 None 清除
+    service.set_provider_routes(
+        primary={"provider_id": "deepseek", "model_id": "deepseek-v4-flash"},
+        vision=None,
+    )
+    assert ProviderRouteStore(tmp_path).load().vision is None
+
+
+def test_custom_provider_settings_round_trip(tmp_path, monkeypatch):
+    import yaml
+
+    from kss.agent import harness_settings
+
+    service = KSSAgentService(tmp_path, tmp_path)
+    monkeypatch.delenv("DSH_HOME", raising=False)
+    profile = service.add_custom_provider({
+        "provider_id": "acme-gateway",
+        "display_name": "Acme Gateway",
+        "base_url": "https://gateway.acme.example/v1",
+        "model_ids": ["acme-large", "acme-think"],
+    })
+    assert profile["apiKeyEnv"] == "KSS_PROVIDER_ACME_GATEWAY_API_KEY"
+    settings_file = tmp_path / "harness" / "dsh-home" / "settings.yaml"
+    document = yaml.safe_load(settings_file.read_text(encoding="utf-8"))
+    providers = document["llm-pi-ai"]["providers"]
+    # 内建 providers 必须保留（settings 小节是整体替换语义）
+    assert providers["openai"]["apiKeyEnv"] == "OPENAI_API_KEY"
+    assert providers["deepseek"]["apiKeyEnv"] == "DEEPSEEK_API_KEY"
+    assert providers["acme-gateway"]["baseURL"] == "https://gateway.acme.example/v1"
+    assert [m["id"] for m in providers["acme-gateway"]["models"]] == [
+        "acme-large", "acme-think",
+    ]
+    assert service.custom_provider_ids() == frozenset({"acme-gateway"})
+
+    assert service.remove_custom_provider("acme-gateway") is True
+    document = yaml.safe_load(settings_file.read_text(encoding="utf-8"))
+    assert "acme-gateway" not in document["llm-pi-ai"]["providers"]
+    assert document["kss-custom-providers"] == []
+    # 内建不可移除
+    assert service.remove_custom_provider("deepseek") is False
+    assert harness_settings.list_custom_providers(tmp_path / "harness" / "dsh-home") == {}
+
+
+def test_custom_provider_rejects_bad_input(tmp_path, monkeypatch):
+    import pytest as _pytest
+
+    service = KSSAgentService(tmp_path, tmp_path)
+    monkeypatch.delenv("DSH_HOME", raising=False)
+    with _pytest.raises(ValueError):
+        service.add_custom_provider({
+            "provider_id": "openai",
+            "base_url": "https://x.example/v1",
+            "model_ids": ["m"],
+        })
+    with _pytest.raises(ValueError):
+        service.add_custom_provider({
+            "provider_id": "ok-id",
+            "base_url": "http://insecure.example/v1",
+            "model_ids": ["m"],
+        })
+    with _pytest.raises(ValueError):
+        service.add_custom_provider({
+            "provider_id": "ok-id",
+            "base_url": "https://x.example/v1",
+            "model_ids": [],
+        })

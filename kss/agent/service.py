@@ -51,6 +51,25 @@ EmitEvent = Callable[[AgentEvent], Awaitable[None]]
 RequestWrite = Callable[..., Awaitable[dict[str, Any]]]
 
 
+def _fallback_positive(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _unmap_harness_provider(provider_id: str) -> str:
+    """dsh 路由 id 还原为 KSS 目录 id（用于凭证在位判断）."""
+    if provider_id == "deepseek-official":
+        return "deepseek"
+    return provider_id
+
+
+# set_provider_routes 的哨兵：未显式传 vision 时保持存储值不变。
+_KEEP_VISION = object()
+
+
 @dataclass(frozen=True)
 class DuplicateTurn:
     """Durable idempotency decision for a client turn key."""
@@ -237,6 +256,22 @@ class KSSAgentService:
         provider_id: str | None = None,
     ) -> dict[str, Any]:
         routes = self.route_store.load()
+        harness = self._harness_catalog(refresh=refresh)
+        if harness is not None:
+            providers, models, default_selection = harness
+            return {
+                "provider_backend": "harness",
+                "status": "ready",
+                "providers": self._merge_route_descriptors(
+                    routes=routes, providers=providers
+                ),
+                "models": models,
+                "primary": routes.primary.as_dict(),
+                "fallback": routes.fallback.as_dict() if routes.fallback else None,
+                "vision": routes.vision.as_dict() if routes.vision else None,
+                "harness_default_selection": default_selection,
+                "error": None,
+            }
         models: list[dict[str, Any]] = []
         status = "legacy"
         error: str | None = self._provider_start_error
@@ -264,8 +299,170 @@ class KSSAgentService:
             "models": models,
             "primary": routes.primary.as_dict(),
             "fallback": routes.fallback.as_dict() if routes.fallback else None,
+            "vision": routes.vision.as_dict() if routes.vision else None,
             "error": error,
         }
+
+    def _harness_catalog(
+        self, *, refresh: bool
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None] | None:
+        """从常驻 dsh 内核拉模型目录；60s 缓存，内核不可用时返回 None."""
+        now = time.monotonic()
+        cached = getattr(self, "_harness_catalog_cache", None)
+        if not refresh and cached is not None and now - cached[0] < 60.0:
+            return cached[1]
+        try:
+            from kss.agent.harness_kernel import get_harness_kernel
+
+            kernel = get_harness_kernel()
+            if kernel is None or not kernel.alive or kernel.driver != "dsh":
+                return None
+            body = kernel.list_models()
+        except Exception:  # noqa: BLE001
+            return None
+        if not isinstance(body, dict) or body.get("ok") is not True:
+            return None
+        authenticated = (
+            self.provider.authenticated_provider_ids
+            if isinstance(self.provider, PiAIProvider)
+            else frozenset()
+        )
+        custom_ids = self.custom_provider_ids()
+        providers: list[dict[str, Any]] = []
+        models: list[dict[str, Any]] = []
+        for provider in body.get("providers") or []:
+            if not isinstance(provider, dict):
+                continue
+            pid = str(provider.get("id") or "")
+            if not pid:
+                continue
+            provider_models: list[dict[str, Any]] = []
+            for model in provider.get("models") or []:
+                if not isinstance(model, dict):
+                    continue
+                model_id = str(model.get("model_id") or "")
+                if not model_id:
+                    continue
+                efforts = [
+                    {
+                        "id": str(item.get("id") or ""),
+                        "name": str(item.get("name") or item.get("id") or ""),
+                    }
+                    for item in (model.get("reasoning_efforts") or [])
+                    if isinstance(item, dict) and str(item.get("id") or "")
+                ]
+                modalities = [
+                    str(entry)
+                    for entry in (model.get("input_modalities") or ["text"])
+                    if str(entry)
+                ] or ["text"]
+                wire = {
+                    "provider_id": pid,
+                    "model_id": model_id,
+                    "name": str(model.get("name") or model_id),
+                    "api": "harness",
+                    "context_window": _fallback_positive(
+                        model.get("context_window"), 32_000
+                    ),
+                    "max_output_tokens": _fallback_positive(
+                        model.get("default_max_tokens"), 8_000
+                    ),
+                    "supports_images": "image" in modalities,
+                    "supports_tools": True,
+                    "supports_thinking": any(
+                        entry["id"] not in {"", "off"} for entry in efforts
+                    ),
+                    "input_modalities": modalities,
+                    "reasoning_efforts": efforts,
+                    "default_reasoning_effort": (
+                        str(model.get("default_reasoning_effort"))
+                        if model.get("default_reasoning_effort")
+                        else None
+                    ),
+                    "description": (
+                        str(model.get("description"))
+                        if model.get("description")
+                        else None
+                    ),
+                }
+                provider_models.append(wire)
+                models.append(wire)
+            providers.append({
+                "id": pid,
+                "name": str(provider.get("name") or pid),
+                "auth_kind": "api_key",
+                "base_url": None,
+                "authenticated": (
+                    pid in authenticated
+                    or _unmap_harness_provider(pid) in authenticated
+                ),
+                "models": provider_models,
+                "source": "harness",
+                "custom": pid in custom_ids,
+            })
+        default_selection = body.get("default_selection")
+        snapshot = (
+            providers,
+            models,
+            default_selection if isinstance(default_selection, dict) else None,
+        )
+        self._harness_catalog_cache = (now, snapshot)
+        return snapshot
+
+    def _merge_route_descriptors(
+        self,
+        *,
+        routes: ProviderRouteSet,
+        providers: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """确保当前路由指向的 provider 在目录里可见（legacy id 也给占位条目）."""
+        try:
+            from kss.agent.harness_kernel import _map_dsh_provider
+        except Exception:  # noqa: BLE001
+            def _map_dsh_provider(value: str) -> str:  # type: ignore[misc]
+                return value
+        merged = [dict(entry) for entry in providers]
+        known = {str(entry.get("id")) for entry in merged}
+        for route in (*routes.ordered(), routes.vision):
+            if route is None:
+                continue
+            mapped = _map_dsh_provider(route.provider_id)
+            if mapped in known or route.provider_id in known:
+                continue
+            known.add(route.provider_id)
+            merged.append({
+                "id": route.provider_id,
+                "name": route.provider_id,
+                "auth_kind": "api_key",
+                "base_url": route.base_url,
+                "authenticated": False,
+                "models": [],
+                "source": "route",
+            })
+        return merged
+
+    def session_provider_route(self, session_id: str) -> dict[str, Any] | None:
+        """会话生效的非密钥路由（含全局回落快照），供 harness 回合下发."""
+        try:
+            return self._session_primary_route(session_id).as_dict()
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _push_harness_default_model(self, route: ProviderRoute) -> None:
+        """Best-effort：把全局 primary 同步为 dsh 默认模型（settings 持久化）."""
+        try:
+            from kss.agent.harness_kernel import _map_dsh_provider, get_harness_kernel
+
+            kernel = get_harness_kernel()
+            if kernel is None or not kernel.alive or kernel.driver != "dsh":
+                return
+            kernel.set_default_model(
+                provider=_map_dsh_provider(route.provider_id),
+                model=route.model_id,
+                reasoning_effort=route.thinking_level or None,
+            )
+        except Exception:  # noqa: BLE001
+            return
 
     def _provider_descriptors(
         self,
@@ -314,14 +511,67 @@ class KSSAgentService:
         *,
         primary: Mapping[str, Any],
         fallback: Mapping[str, Any] | None = None,
+        vision: Any = _KEEP_VISION,
     ) -> dict[str, Any]:
+        """保存路由。``vision`` 缺省保持现值；显式 None 清除；dict 覆盖."""
+        if vision is _KEEP_VISION:
+            try:
+                resolved_vision = self.route_store.load().vision
+            except Exception:  # noqa: BLE001
+                resolved_vision = None
+        elif isinstance(vision, Mapping):
+            resolved_vision = ProviderRoute.from_dict(vision)
+        else:
+            resolved_vision = None
         routes = ProviderRouteSet(
             primary=ProviderRoute.from_dict(primary),
             fallback=ProviderRoute.from_dict(fallback) if fallback else None,
+            vision=resolved_vision,
         )
         self.route_store.save(routes)
         self.model = routes.primary.model_id
+        self._push_harness_default_model(routes.primary)
         return self.provider_catalog()
+
+    def _dsh_home(self) -> Path:
+        configured = os.getenv("DSH_HOME", "").strip()
+        if configured:
+            return Path(configured)
+        return self.state_root / "harness" / "dsh-home"
+
+    def add_custom_provider(self, spec: Mapping[str, Any]) -> dict[str, Any]:
+        """把自定义 OpenAI-compatible provider 写入 dsh settings.yaml."""
+        from kss.agent import harness_settings
+
+        raw_models = spec.get("model_ids") or spec.get("models") or []
+        model_ids = [str(item) for item in raw_models if str(item).strip()]
+        profile = harness_settings.add_custom_provider(
+            self._dsh_home(),
+            provider_id=str(spec.get("provider_id") or spec.get("id") or ""),
+            base_url=str(spec.get("base_url") or spec.get("baseURL") or ""),
+            model_ids=model_ids,
+            display_name=str(spec.get("display_name") or spec.get("name") or ""),
+        )
+        self._harness_catalog_cache = None
+        return profile
+
+    def remove_custom_provider(self, provider_id: str) -> bool:
+        from kss.agent import harness_settings
+
+        removed = harness_settings.remove_custom_provider(
+            self._dsh_home(), provider_id
+        )
+        if removed:
+            self._harness_catalog_cache = None
+        return removed
+
+    def custom_provider_ids(self) -> frozenset[str]:
+        try:
+            from kss.agent import harness_settings
+
+            return frozenset(harness_settings.list_custom_providers(self._dsh_home()))
+        except Exception:  # noqa: BLE001
+            return frozenset()
 
     def reload_provider_credentials(
         self,

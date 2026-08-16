@@ -12,7 +12,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 from uuid import uuid4
 
 from kss.agent.desktop_host import DesktopHarnessHost, DesktopTurnRequest, DesktopTurnResult
@@ -21,6 +21,11 @@ from kss.research.harness_driver import ResearchHarnessDriver, ResearchTurnReque
 _REPO = Path(__file__).resolve().parents[2]
 _PROTOCOL = 1
 _DEFAULT_TIMEOUT = 30.0
+# Match sidecar `_CONFIRM_TIMEOUT`: a desktop write prompt must not burn the
+# 180s turn budget while the operator is still looking at 允许/拒绝.
+# 必须大于 policy.js KSS_HARNESS_APPROVAL_TIMEOUT_MS(默认 300s)与 sidecar 的
+# _CONFIRM_TIMEOUT(300s)：让「超时自动拒绝」先落地、模型收尾，而不是先杀内核。
+_APPROVAL_HOLD_SECONDS = 330.0
 
 _KERNEL: HarnessKernel | None = None
 _KERNEL_LOCK = threading.Lock()
@@ -95,20 +100,45 @@ def _map_dsh_provider(provider_id: str) -> str:
     return provider_id
 
 
-def _agent_options_payload() -> dict[str, str]:
+def _agent_options_payload(route: Mapping[str, Any] | None = None) -> dict[str, str]:
+    """Resolve provider/model/reasoning effort for one harness turn.
+
+    优先级：环境覆盖 > 调用方显式路由（会话级） > 全局 primary 路由。
+    reasoning_effort 直接透传 KSS ``thinking_level`` 取值，由 Node host 按
+    模型实际支持的档位收敛（clamp），避免 UNSUPPORTED_REASONING_EFFORT。
+    """
     provider = os.getenv("KSS_HARNESS_PROVIDER", "").strip()
     model = os.getenv("KSS_HARNESS_MODEL", "").strip()
     if provider and model:
-        return {"provider": provider, "model": model}
+        payload = {"provider": provider, "model": model}
+        effort = os.getenv("KSS_HARNESS_REASONING_EFFORT", "").strip()
+        if effort:
+            payload["reasoning_effort"] = effort
+        return payload
+    if isinstance(route, Mapping):
+        provider_id = str(route.get("provider_id") or "").strip()
+        model_id = str(route.get("model_id") or "").strip()
+        if provider_id and model_id:
+            payload = {
+                "provider": _map_dsh_provider(provider_id),
+                "model": model_id,
+            }
+            effort = str(route.get("thinking_level") or "").strip()
+            if effort:
+                payload["reasoning_effort"] = effort
+            return payload
     try:
         from kss.agent.provider_route import ProviderRouteStore
         import kss_app_bridge as bridge
 
         primary = ProviderRouteStore(bridge.STATE_ROOT).load().primary
-        return {
+        payload = {
             "provider": _map_dsh_provider(primary.provider_id),
             "model": primary.model_id,
         }
+        if primary.thinking_level:
+            payload["reasoning_effort"] = primary.thinking_level
+        return payload
     except Exception:  # noqa: BLE001
         return {}
 
@@ -197,6 +227,8 @@ class HarnessKernel:
         self._err.start()
         hello = self._wait_hello()
         self._hello = hello
+        if self.driver == "dsh":
+            self._require_dsh_agents()
         return hello
 
     def close(self) -> None:
@@ -217,6 +249,23 @@ class HarnessKernel:
             proc.kill()
         self._proc = None
 
+    def abandon_wedged_turn(self, session_id: str = "") -> None:
+        """Abort a stuck whenIdle turn and kill Node so stdin is not left unread."""
+        proc = self._proc
+        if proc is not None and proc.stdin is not None and proc.poll() is None:
+            try:
+                proc.stdin.write(
+                    json.dumps(
+                        {"id": uuid4().hex, "cmd": "abort", "session_id": session_id},
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+                proc.stdin.flush()
+            except OSError:
+                pass
+        self.close()
+
     def request(
         self,
         cmd: str,
@@ -224,11 +273,25 @@ class HarnessKernel:
         *,
         timeout: float = _DEFAULT_TIMEOUT,
         on_event: Any = None,
+        approval_timeout: float | None = None,
     ) -> dict[str, Any]:
         if not self.alive:
             raise RuntimeError("harness kernel is not available")
         msg_id = uuid4().hex
-        waiter: dict[str, Any] = {"event": threading.Event(), "body": None, "on_event": on_event}
+        approval_until = 0.0
+        hold = _APPROVAL_HOLD_SECONDS if approval_timeout is None else float(approval_timeout)
+
+        def wrapped_on_event(event: Any) -> None:
+            nonlocal approval_until
+            if isinstance(event, dict) and str(event.get("type") or "") in {
+                "approval_request",
+                "approval/request",
+            }:
+                approval_until = time.monotonic() + hold
+            if on_event is not None:
+                on_event(event)
+
+        waiter: dict[str, Any] = {"event": threading.Event(), "body": None, "on_event": wrapped_on_event}
         with self._lock:
             self._pending[msg_id] = waiter
         line = json.dumps({"id": msg_id, "cmd": cmd, **dict(payload or {})}, ensure_ascii=False)
@@ -239,17 +302,42 @@ class HarnessKernel:
         except OSError as exc:
             self._alive = False
             raise RuntimeError("harness kernel is not available") from exc
-        if not waiter["event"].wait(timeout):
-            with self._lock:
-                self._pending.pop(msg_id, None)
-            raise TimeoutError(f"harness kernel timed out on {cmd}")
-        body = waiter["body"]
-        if not isinstance(body, dict):
-            raise RuntimeError("harness kernel returned no payload")
-        return body
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = max(deadline, approval_until) - time.monotonic()
+            if remaining <= 0:
+                break
+            if waiter["event"].wait(min(0.25, remaining)):
+                body = waiter["body"]
+                if not isinstance(body, dict):
+                    raise RuntimeError("harness kernel returned no payload")
+                return body
+        with self._lock:
+            self._pending.pop(msg_id, None)
+        if cmd in {"desktop.turn", "research.turn"}:
+            self.abandon_wedged_turn(str((payload or {}).get("session_id") or ""))
+        raise TimeoutError(f"harness kernel timed out on {cmd}")
 
     def desktop_session(self) -> NodeDesktopSession:
         return NodeDesktopSession(self)
+
+    def list_models(self, *, timeout: float = 20.0) -> dict[str, Any]:
+        """查询 dsh 模型目录：providers/models/reasoning efforts + 默认选择。"""
+        return self.request("models.list", {}, timeout=timeout)
+
+    def set_default_model(
+        self,
+        *,
+        provider: str,
+        model: str,
+        reasoning_effort: str | None = None,
+        timeout: float = 10.0,
+    ) -> dict[str, Any]:
+        """把默认模型选择写回 dsh settings（agent-default-model 命名空间）。"""
+        payload: dict[str, Any] = {"provider": provider, "model": model}
+        if reasoning_effort:
+            payload["reasoning_effort"] = reasoning_effort
+        return self.request("models.set_default", payload, timeout=timeout)
 
     def research_session(self) -> NodeResearchSession:
         return NodeResearchSession(self)
@@ -263,6 +351,24 @@ class HarnessKernel:
                 raise RuntimeError("harness kernel exited during hello")
             time.sleep(0.02)
         raise TimeoutError("harness kernel hello timed out")
+
+    def _wait_ready(self) -> dict[str, Any]:
+        timeout = max(self.startup_timeout, 30.0)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self._ready is not None:
+                return self._ready
+            if self._proc is not None and self._proc.poll() is not None:
+                raise RuntimeError("harness kernel exited during dsh boot")
+            time.sleep(0.02)
+        raise TimeoutError("harness kernel dsh ready timed out")
+
+    def _require_dsh_agents(self) -> dict[str, Any]:
+        ready = self._wait_ready()
+        if ready.get("agents"):
+            return ready
+        detail = " | ".join(self._stderr_tail[-8:]) or "dsh agents.create is not ready"
+        raise RuntimeError(detail)
 
     def _read_stdout(self) -> None:
         proc = self._proc
@@ -338,12 +444,16 @@ class NodeDesktopSession:
             "input": request.input,
             "run_id": request.run_id,
         }
-        payload.update(_agent_options_payload())
+        payload.update(_agent_options_payload(request.provider_route))
         if self.kernel.driver != "dsh":
             payload["tool"] = "get_orientation"
         timeout = 180.0 if self.kernel.driver == "dsh" else _DEFAULT_TIMEOUT
         loop = asyncio.get_running_loop()
+        # 去重键是 id(event)。id 只在对象存活期间唯一：若不持有引用，dict 被 GC 后
+        # 地址复用会让新事件误判为「已见过」而被静默丢弃（表现为 UI 流式冻结、
+        # confirm_required 丢失）。seen_refs 持有引用保证 id 不复用。
         seen: set[int] = set()
+        seen_refs: list[dict[str, Any]] = []
 
         async def handle_event(event: dict[str, Any]) -> None:
             if event.get("type") in {"approval_request", "approval/request"}:
@@ -363,6 +473,7 @@ class NodeDesktopSession:
             if marker in seen:
                 return
             seen.add(marker)
+            seen_refs.append(event)
             asyncio.run_coroutine_threadsafe(handle_event(event), loop)
 
         try:
@@ -373,6 +484,12 @@ class NodeDesktopSession:
                 timeout=timeout,
                 on_event=on_event,
             )
+        except TimeoutError as exc:
+            if get_harness_kernel() is self.kernel:
+                stop_harness_kernel()
+            elif self.kernel.alive:
+                self.kernel.abandon_wedged_turn(request.session_id)
+            return DesktopTurnResult(status="unavailable", error=str(exc) or "harness_session_unavailable")
         except Exception as exc:  # noqa: BLE001
             return DesktopTurnResult(status="unavailable", error=str(exc) or "harness_session_unavailable")
         if self.kernel.driver != "dsh":
@@ -398,11 +515,19 @@ class NodeDesktopSession:
             first = tool_results[0] if tool_results else {}
             if isinstance(first, dict) and first.get("ok") is True:
                 assistant = f"KSS {first.get('command') or 'get_orientation'} ok"
+        error = (
+            None
+            if body.get("ok") is not False
+            else str(body.get("error") or "harness_session_unavailable")
+        )
+        if status == "completed" and not assistant.strip() and not tool_results:
+            status = "unavailable"
+            error = error or str(body.get("error") or "empty_completion")
         return DesktopTurnResult(
             status=status if status in {"completed", "aborted", "unavailable"} else "completed",
             assistant_text=assistant,
             tool_results=tool_results,
-            error=None if body.get("ok") is not False else str(body.get("error") or "harness_session_unavailable"),
+            error=error,
         )
 
 
