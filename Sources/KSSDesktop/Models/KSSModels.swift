@@ -3881,6 +3881,30 @@ struct AgentFrame: Decodable, Equatable {
 }
 
 /// 待人工确认的写操作（人在环内闸，U5）。modal 显 effect + args。
+/// 写操作执行模式:逐次确认(默认,人在环)或自动允许。
+/// 自动模式只改变 UI 应答方式——确认仍走同一 control 通道与 sidecar
+/// grant/审计链路,内核死亡/超时/中止仍按拒绝收口(fail-closed 不变)。
+enum WriteApprovalMode: String, CaseIterable, Identifiable {
+    case ask
+    case auto
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .ask: return "逐次确认"
+        case .auto: return "自动允许"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .ask: return "每次写操作弹出确认（默认）"
+        case .auto: return "写操作自动允许，不再弹窗打断"
+        }
+    }
+}
+
 struct PendingWriteConfirm: Identifiable {
     let id = UUID()
     let callId: String

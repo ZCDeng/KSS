@@ -1718,6 +1718,7 @@ struct AIChatView: View {
                 // 比图标中心高 4pt(实测反馈的"永远对不齐")。
                 .frame(minHeight: 32, alignment: .center)
 
+                composerApprovalMenu
                 composerModelMenu
                 focusSendButton
             }
@@ -1780,6 +1781,25 @@ struct AIChatView: View {
             .background(theme.accentSoft, in: RoundedRectangle(cornerRadius: 9))
             .accessibilityLabel("写操作待确认")
         }
+        if store.writeApprovalMode == .auto, store.autoApprovedWriteCount > 0 {
+            HStack(spacing: 7) {
+                Image(systemName: "bolt.shield")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("自动模式已允许 \(store.autoApprovedWriteCount) 次写操作"
+                     + (store.lastAutoApprovedEffect.map { "（最近：\($0)）" } ?? ""))
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Button("改为逐次确认") { store.writeApprovalMode = .ask }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(theme.accent)
+            }
+            .font(KSSFont.themed(11.5, .medium, theme: theme))
+            .foregroundStyle(Color.orange)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
+            .accessibilityLabel("自动模式已允许 \(store.autoApprovedWriteCount) 次写操作")
+        }
         if let issue = providerIssueDescription {
             HStack(spacing: 7) {
                 Image(systemName: store.seesawProviderReadiness == .configuredUntested
@@ -1806,6 +1826,32 @@ struct AIChatView: View {
                 in: RoundedRectangle(cornerRadius: 9)
             )
         }
+    }
+
+    /// 执行模式切换:逐次确认(默认) / 自动允许。自动模式下确认仍走完整
+    /// grant/审计链路,只是不再弹窗打断(实测反馈:确认窗口很烦人)。
+    private var composerApprovalMenu: some View {
+        Menu {
+            Picker("执行模式", selection: $store.writeApprovalMode) {
+                ForEach(WriteApprovalMode.allCases) { mode in
+                    Text("\(mode.displayName) — \(mode.detail)").tag(mode)
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Image(systemName: store.writeApprovalMode == .auto ? "bolt.shield.fill" : "shield")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(store.writeApprovalMode == .auto ? Color.orange : theme.textSecondary)
+                .frame(width: 32, height: 32)
+                .contentShape(Circle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: 32, height: 32)
+        .help(store.writeApprovalMode == .auto
+              ? "执行模式:自动允许写操作（点击切换）"
+              : "执行模式:写操作逐次确认（点击切换）")
     }
 
     /// Codex 风格「模型 + 思考强度」入口（dsh-reasoning-effort 交互复刻）：

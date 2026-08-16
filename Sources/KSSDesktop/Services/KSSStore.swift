@@ -254,6 +254,18 @@ final class KSSStore: ObservableObject {
     @Published var agentProviderBackend: String?
     /// Seesaw @file 引用：待随下一轮发送的工作区文件（相对白名单根）。
     @Published var pendingFileRefs: [String] = []
+    /// 写操作执行模式(全局,UserDefaults 持久化);默认逐次确认。
+    @Published var writeApprovalMode: WriteApprovalMode = .ask {
+        didSet {
+            UserDefaults.standard.set(
+                writeApprovalMode.rawValue,
+                forKey: Self.writeApprovalModeKey
+            )
+        }
+    }
+    /// 本轮自动允许的写操作计数与最近一条效果说明(composer 状态行展示)。
+    @Published private(set) var autoApprovedWriteCount = 0
+    @Published private(set) var lastAutoApprovedEffect: String?
     @Published var agentProviderStatus: String?
     @Published var agentProviderTestOK: Bool?
     @Published var agentProviderTestError: String?
@@ -304,6 +316,7 @@ final class KSSStore: ObservableObject {
     private var researchEventEpoch: [String: UUID] = [:]
 
     private static let seesawVisibleModelRouteIDsKey = "kss.seesaw.visibleModelRoutes.v1"
+    private nonisolated static let writeApprovalModeKey = "kss.seesaw.writeApprovalMode.v1"
 
     let bridge: BridgeClient?
 
@@ -312,6 +325,7 @@ final class KSSStore: ObservableObject {
         self.seesawVisibleModelRouteIDs = Set(
             UserDefaults.standard.stringArray(forKey: Self.seesawVisibleModelRouteIDsKey) ?? []
         )
+        self.writeApprovalMode = Self.restoredWriteApprovalMode()
         restoreLastAgentSession()
         refreshLLMCredentialsStatus()
     }
@@ -321,7 +335,14 @@ final class KSSStore: ObservableObject {
         self.seesawVisibleModelRouteIDs = Set(
             UserDefaults.standard.stringArray(forKey: Self.seesawVisibleModelRouteIDsKey) ?? []
         )
+        self.writeApprovalMode = Self.restoredWriteApprovalMode()
         restoreLastAgentSession()
+    }
+
+    nonisolated static func restoredWriteApprovalMode() -> WriteApprovalMode {
+        WriteApprovalMode(
+            rawValue: UserDefaults.standard.string(forKey: Self.writeApprovalModeKey) ?? ""
+        ) ?? .ask
     }
 
     nonisolated static func seesawModelRouteID(providerID: String, modelID: String) -> String {
@@ -484,6 +505,8 @@ final class KSSStore: ObservableObject {
         agentLiveMarketContexts = []
         agentDuplicateHydrationKeys.removeAll()
         agentMessageStartCounts.removeAll()
+        autoApprovedWriteCount = 0
+        lastAutoApprovedEffect = nil
         let clientTurnId = UUID().uuidString
         // Do not warm Longbridge on every conversation open or historical
         // question. The sidecar receives an explicit scope only for a
@@ -521,6 +544,19 @@ final class KSSStore: ObservableObject {
                             callId: frame.callId ?? "", tool: frame.tool ?? frame.name ?? "",
                             command: frame.command ?? "", effect: frame.effect ?? "执行写操作",
                             argsText: frame.argsText ?? "", contextLine: ctx)
+                        // 自动模式:确认仍走同一 control 通道与 sidecar grant/审计
+                        // 链路,只是不弹窗打断;通道缺失时回落弹窗(fail-closed)。
+                        if self.writeApprovalMode == .auto,
+                           !confirm.callId.isEmpty,
+                           let control = self.activeAgentControl {
+                            control.confirm(
+                                runId: self.activeAgentRunId,
+                                callId: confirm.callId,
+                                approved: true
+                            )
+                            self.recordAutoApprovedWrite(confirm)
+                            return
+                        }
                         self.pendingWriteConfirm = nil
                         DispatchQueue.main.async { [weak self] in
                             self?.pendingWriteConfirm = confirm
@@ -591,6 +627,11 @@ final class KSSStore: ObservableObject {
     }
 
     /// 用户 tap 确认/拒绝（或 dismiss=拒）。Agent 路径走 control channel，不阻塞读循环。
+    private func recordAutoApprovedWrite(_ confirm: PendingWriteConfirm) {
+        autoApprovedWriteCount += 1
+        lastAutoApprovedEffect = confirm.effect.isEmpty ? confirm.command : confirm.effect
+    }
+
     func resolveWriteConfirm(approved: Bool) {
         let confirm = pendingWriteConfirm
         pendingWriteConfirm = nil
