@@ -50,6 +50,7 @@ struct AIChatView: View {
     @State private var atFileResults: [WorkspaceFileHit] = []
     @State private var atFileSelection = 0
     @State private var atFileSearchTask: Task<Void, Never>?
+    @State private var slashSelection = 0
     @State private var workbenchTab = "overview"
     // 实测反馈:默认收起,页面更干净;header 按钮可展开。
     @State private var showSessionPane = false
@@ -1683,6 +1684,8 @@ struct AIChatView: View {
             queuedInputPanel
             pendingAttachmentStrip
             fileRefChips
+            slashCommandPanel
+            slashParamHint
             atFileSuggestionPanel
             focusSessionSkillChips
 
@@ -1694,7 +1697,9 @@ struct AIChatView: View {
                 TextField(
                     store.isChatStreaming
                         ? "追问会排队，本轮生成结束后处理…"
-                        : (store.chatMessages.isEmpty ? "问问盘面、个股或一个研究问题…" : "继续追问…"),
+                        : (store.chatMessages.isEmpty
+                            ? "问问盘面、个股，或输入 / 调用命令、@ 引用文件…"
+                            : "继续追问…"),
                     text: $input,
                     axis: .vertical
                 )
@@ -1704,29 +1709,52 @@ struct AIChatView: View {
                 .focused($isComposerFocused)
                 .lineLimit(1...6)
                 .onSubmit {
-                    if atFilePanelVisible {
+                    if slashPanelVisible {
+                        applyHighlightedSlashEntry()
+                    } else if atFilePanelVisible {
                         applyHighlightedAtFile()
+                    } else if handleSlashSubmitIfNeeded() {
+                        // 本地命令已直连分发,不进模型回合。
                     } else {
                         submitInput(mode: "steering")
                     }
                 }
-                .onChange(of: input) { _, _ in scheduleAtFileSearch() }
+                .onChange(of: input) { _, _ in
+                    scheduleAtFileSearch()
+                    slashSelection = 0
+                }
                 .onKeyPress(.downArrow) {
+                    if slashPanelVisible {
+                        slashSelection = min(slashSelection + 1, max(slashEntries.count - 1, 0))
+                        return .handled
+                    }
                     guard atFilePanelVisible else { return .ignored }
                     atFileSelection = min(atFileSelection + 1, max(atFileResults.count - 1, 0))
                     return .handled
                 }
                 .onKeyPress(.upArrow) {
+                    if slashPanelVisible {
+                        slashSelection = max(slashSelection - 1, 0)
+                        return .handled
+                    }
                     guard atFilePanelVisible else { return .ignored }
                     atFileSelection = max(atFileSelection - 1, 0)
                     return .handled
                 }
                 .onKeyPress(.escape) {
+                    if slashPanelVisible {
+                        input = ""
+                        return .handled
+                    }
                     guard atFilePanelVisible else { return .ignored }
                     atFileResults = []
                     return .handled
                 }
                 .onKeyPress(.tab) {
+                    if slashPanelVisible {
+                        applyHighlightedSlashEntry()
+                        return .handled
+                    }
                     guard atFilePanelVisible else { return .ignored }
                     applyHighlightedAtFile()
                     return .handled
@@ -2891,6 +2919,254 @@ struct AIChatView: View {
             return Text(attr)
         }
         return Text(s)
+    }
+
+    // MARK: - Slash command(本地命令:UI 命令 + 技能 + plugins/MCP 工具)
+
+    private enum SlashEntryKind {
+        case uiCommand(String)
+        case skill(AgentSkill)
+        case tool(SlashToolDescriptor)
+    }
+
+    private struct SlashEntry: Identifiable {
+        let id: String
+        let title: String
+        let subtitle: String
+        let badge: String
+        let kind: SlashEntryKind
+    }
+
+    private static let slashUICommands: [(id: String, title: String, subtitle: String)] = [
+        ("new", "new", "开一个新会话"),
+        ("model", "model", "打开模型中心"),
+        ("skills", "skills", "打开技能管理面板"),
+        ("memory", "memory", "查看记忆与上下文"),
+        ("files", "files", "打开右侧文件工作台"),
+    ]
+
+    /// 输入形如 "/xxx"(尚无空格)时的过滤 token;nil = 不在 slash 选择态。
+    private var activeSlashToken: String? {
+        guard input.hasPrefix("/") else { return nil }
+        let body = String(input.dropFirst())
+        guard !body.contains(where: { $0 == " " || $0.isNewline }) else { return nil }
+        return body
+    }
+
+    private var slashEntries: [SlashEntry] {
+        let token = (activeSlashToken ?? "").lowercased()
+        func matches(_ candidates: String?...) -> Bool {
+            token.isEmpty || candidates.contains {
+                ($0 ?? "").lowercased().contains(token)
+            }
+        }
+        var entries: [SlashEntry] = []
+        for command in Self.slashUICommands where matches(command.title, command.subtitle) {
+            entries.append(SlashEntry(
+                id: "cmd-\(command.id)",
+                title: "/\(command.title)",
+                subtitle: command.subtitle,
+                badge: "命令",
+                kind: .uiCommand(command.id)
+            ))
+        }
+        for skill in usableSkills where matches(skill.name) {
+            let joined = store.pinnedAgentSkillIds.contains(skill.id)
+            entries.append(SlashEntry(
+                id: "skill-\(skill.id)",
+                title: skill.name,
+                subtitle: joined ? "技能 · 已在本会话" : "技能 · 加入本会话",
+                badge: "技能",
+                kind: .skill(skill)
+            ))
+        }
+        for tool in store.slashTools where matches(tool.name, tool.desc) {
+            entries.append(SlashEntry(
+                id: "tool-\(tool.name)",
+                title: "/\(tool.name)",
+                subtitle: tool.desc ?? "",
+                badge: "工具",
+                kind: .tool(tool)
+            ))
+        }
+        return Array(entries.prefix(24))
+    }
+
+    private var slashPanelVisible: Bool {
+        activeSlashToken != nil && !slashEntries.isEmpty
+    }
+
+    private func applyHighlightedSlashEntry() {
+        let entries = slashEntries
+        guard slashPanelVisible, entries.indices.contains(slashSelection) else { return }
+        applySlashEntry(entries[slashSelection])
+    }
+
+    private func applySlashEntry(_ entry: SlashEntry) {
+        switch entry.kind {
+        case .uiCommand(let id):
+            input = ""
+            runSlashUICommand(id)
+        case .skill(let skill):
+            input = ""
+            if !store.pinnedAgentSkillIds.contains(skill.id) {
+                store.setAgentSkillInConversation(skill, selected: true)
+            }
+            if let starter = skillStarters.first(where: {
+                $0.skillId == skill.id || $0.skillId == skill.name
+            }) {
+                input = starter.prompt
+            }
+            isComposerFocused = true
+        case .tool(let tool):
+            if (tool.order ?? []).isEmpty {
+                input = ""
+                Task { await store.runSlashTool(SlashInvocation(name: tool.name, args: [:])) }
+            } else {
+                // 有参工具:补全命令名,参数提示行引导续填,回车执行。
+                input = "/\(tool.name) "
+                isComposerFocused = true
+            }
+        }
+    }
+
+    private func runSlashUICommand(_ id: String) {
+        switch id {
+        case "new":
+            store.createAgentSession()
+        case "model":
+            seesawPage = .models
+        case "skills":
+            toggleOverlay(.skills)
+        case "memory":
+            toggleOverlay(.context)
+        case "files":
+            workbenchTab = "files"
+            showInspectorDrawer = true
+        default:
+            break
+        }
+    }
+
+    /// 回车时的 slash 分发:UI 命令/已知工具直连,未知 "/xxx" 按普通消息放行。
+    private func handleSlashSubmitIfNeeded() -> Bool {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("/"), trimmed.count > 1 else { return false }
+        let name = String(trimmed.dropFirst().split(separator: " ").first ?? "")
+        guard !name.isEmpty else { return false }
+        if let command = Self.slashUICommands.first(where: { $0.title == name }) {
+            input = ""
+            runSlashUICommand(command.id)
+            return true
+        }
+        guard let tool = store.slashTools.first(where: { $0.name == name }),
+              let invocation = SlashInvocation.parse(trimmed, order: tool.order ?? [])
+        else { return false }
+        input = ""
+        Task { await store.runSlashTool(invocation) }
+        return true
+    }
+
+    @ViewBuilder
+    private var slashParamHint: some View {
+        if let hint = activeSlashParamHint {
+            HStack(spacing: 7) {
+                Image(systemName: "terminal")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(hint)
+                    .lineLimit(2)
+                Spacer(minLength: 4)
+                Text("⏎ 执行")
+                    .font(KSSFont.themed(10, .semibold, theme: theme))
+            }
+            .font(KSSFont.themed(11, .medium, theme: theme))
+            .foregroundStyle(theme.textSecondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: 9))
+        }
+    }
+
+    private var activeSlashParamHint: String? {
+        guard input.hasPrefix("/"), input.contains(" ") else { return nil }
+        let name = String(input.dropFirst().split(separator: " ").first ?? "")
+        guard let tool = store.slashTools.first(where: { $0.name == name }),
+              let params = tool.params, !params.isEmpty
+        else { return nil }
+        let parts = params.map { param -> String in
+            if let description = param.description, !description.isEmpty {
+                return "\(param.key)(\(description))"
+            }
+            return param.key
+        }
+        return "/\(name) 参数:" + parts.joined(separator: " · ") + " —— 位置参数或 key=value"
+    }
+
+    @ViewBuilder
+    private var slashCommandPanel: some View {
+        if slashPanelVisible {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Label("本地命令 · 技能 · 工具(plugins/MCP)", systemImage: "command")
+                        .font(KSSFont.themed(10.5, .semibold, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                    Spacer()
+                    Text("↑↓ 选择 · ⏎ 执行 · Esc 清除")
+                        .font(KSSFont.themed(9.5, theme: theme))
+                        .foregroundStyle(theme.textSecondary.opacity(0.8))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                Divider().overlay(theme.hairline)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(slashEntries.enumerated()), id: \.element.id) { index, entry in
+                            Button {
+                                applySlashEntry(entry)
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Text(entry.badge)
+                                        .font(KSSFont.themed(9, .bold, theme: theme))
+                                        .foregroundStyle(theme.accent)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(theme.accentSoft, in: Capsule())
+                                        .frame(width: 44)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(entry.title)
+                                            .font(KSSFont.themed(12, .semibold, theme: theme))
+                                            .foregroundStyle(theme.textPrimary)
+                                            .lineLimit(1)
+                                        if !entry.subtitle.isEmpty {
+                                            Text(entry.subtitle)
+                                                .font(KSSFont.themed(10.5, theme: theme))
+                                                .foregroundStyle(theme.textSecondary)
+                                                .lineLimit(1)
+                                        }
+                                    }
+                                    Spacer(minLength: 0)
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(
+                                    index == slashSelection ? theme.accentSoft : .clear,
+                                    in: RoundedRectangle(cornerRadius: 7)
+                                )
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .onHover { hovering in
+                                if hovering { slashSelection = index }
+                            }
+                        }
+                    }
+                    .padding(4)
+                }
+                .frame(maxHeight: 260)
+            }
+            .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 11))
+            .overlay(RoundedRectangle(cornerRadius: 11).stroke(theme.hairline))
+        }
     }
 
     // MARK: - @file 引用（dsh-at-file 复刻）

@@ -983,6 +983,20 @@ struct BridgeClient {
         return try agentCommand("agent-providers", payload: payload, as: AgentProvidersResponse.self)
     }
 
+    /// Seesaw slash command:catalog 列只读工具;run 直连执行并落会话。
+    func agentSlash(
+        action: String,
+        sessionId: String? = nil,
+        name: String? = nil,
+        args: [String: String]? = nil
+    ) throws -> AgentSlashResponse {
+        var payload: [String: Any] = ["action": action]
+        if let sessionId { payload["session_id"] = sessionId }
+        if let name { payload["name"] = name }
+        if let args { payload["args"] = args }
+        return try agentCommand("agent-slash", payload: payload, as: AgentSlashResponse.self)
+    }
+
     func agentAttachments(
         action: String,
         sessionId: String,

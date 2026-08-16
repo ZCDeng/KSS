@@ -3881,6 +3881,63 @@ struct AgentFrame: Decodable, Equatable {
 }
 
 /// 待人工确认的写操作（人在环内闸，U5）。modal 显 effect + args。
+// MARK: - Slash command(本地命令:plugins/MCP 工具 + 技能 + UI 命令)
+
+struct SlashToolParam: Codable, Equatable {
+    var key: String
+    var description: String?
+}
+
+/// 一条可 slash 直连的只读工具(TOOL_SPECS 同源,即 kss-plugins/kss-mcp 目录)。
+struct SlashToolDescriptor: Codable, Identifiable, Equatable {
+    var name: String
+    var command: String?
+    var desc: String?
+    var order: [String]?
+    var params: [SlashToolParam]?
+
+    var id: String { name }
+}
+
+struct AgentSlashResponse: Codable, Equatable {
+    var tools: [SlashToolDescriptor]?
+    var ok: Bool?
+    var userText: String?
+    var assistantText: String?
+    var error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case tools, ok, error
+        case userText = "user_text"
+        case assistantText = "assistant_text"
+    }
+}
+
+/// "/get_stock 688008.SH mode=full" → 工具名 + 参数:
+/// 位置参数按 order 依次填,k=v 显式覆盖。
+struct SlashInvocation: Equatable {
+    let name: String
+    let args: [String: String]
+
+    static func parse(_ input: String, order: [String]) -> SlashInvocation? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("/"), trimmed.count > 1 else { return nil }
+        let tokens = trimmed.dropFirst().split(separator: " ").map(String.init)
+        guard let name = tokens.first, !name.isEmpty else { return nil }
+        var args: [String: String] = [:]
+        var positionalIndex = 0
+        for token in tokens.dropFirst() {
+            if let eq = token.firstIndex(of: "="), eq != token.startIndex {
+                args[String(token[..<eq])] = String(token[token.index(after: eq)...])
+            } else if positionalIndex < order.count {
+                args[order[positionalIndex]] = token
+                positionalIndex += 1
+            }
+        }
+        return SlashInvocation(name: name, args: args)
+    }
+}
+
 /// 写操作执行模式:逐次确认(默认,人在环)或自动允许。
 /// 自动模式只改变 UI 应答方式——确认仍走同一 control 通道与 sidecar
 /// grant/审计链路,内核死亡/超时/中止仍按拒绝收口(fail-closed 不变)。

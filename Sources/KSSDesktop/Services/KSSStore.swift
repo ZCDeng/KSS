@@ -266,6 +266,8 @@ final class KSSStore: ObservableObject {
     /// 本轮自动允许的写操作计数与最近一条效果说明(composer 状态行展示)。
     @Published private(set) var autoApprovedWriteCount = 0
     @Published private(set) var lastAutoApprovedEffect: String?
+    /// slash 可直连的只读工具目录(TOOL_SPECS 同源)。
+    @Published var slashTools: [SlashToolDescriptor] = []
     @Published var agentProviderStatus: String?
     @Published var agentProviderTestOK: Bool?
     @Published var agentProviderTestError: String?
@@ -1277,7 +1279,55 @@ final class KSSStore: ObservableObject {
         async let skills: Void = loadAgentSkills()
         async let memories: Void = loadAgentMemories()
         async let providers: Void = loadAgentProviders(reloadCredentials: true)
-        _ = await (sessions, skills, memories, providers)
+        async let slash: Void = loadSlashTools()
+        _ = await (sessions, skills, memories, providers, slash)
+    }
+
+    func loadSlashTools() async {
+        guard let bridge else { return }
+        let response = try? await Task.detached {
+            try bridge.agentSlash(action: "catalog")
+        }.value
+        slashTools = response?.tools ?? []
+    }
+
+    /// slash 工具直连执行:sidecar 只读执行并把两条消息落进会话存储,
+    /// 这里同步上屏(重开会话时由存储 hydration 复现)。
+    func runSlashTool(_ invocation: SlashInvocation) async {
+        guard let bridge else { return }
+        guard !isChatStreaming else {
+            errorMessage = "生成中暂不可直连执行本地命令"
+            return
+        }
+        ensureAgentSession()
+        guard let sessionId = selectedAgentSessionId else { return }
+        autoTitleSessionIfNeeded(sessionId, firstInput: "/\(invocation.name)")
+        do {
+            let response = try await Task.detached {
+                try bridge.agentSlash(
+                    action: "run",
+                    sessionId: sessionId,
+                    name: invocation.name,
+                    args: invocation.args
+                )
+            }.value
+            if let error = response.error, !error.isEmpty {
+                errorMessage = error
+                return
+            }
+            chatMessages.append(ChatMessage(
+                role: .user,
+                text: response.userText ?? "/\(invocation.name)"
+            ))
+            chatMessages.append(ChatMessage(
+                role: .assistant,
+                text: response.assistantText ?? "",
+                numbersUnverified: false
+            ))
+            chatMessagesByAgentSession[sessionId] = chatMessages
+        } catch {
+            errorMessage = "本地命令失败:\(error.localizedDescription)"
+        }
     }
 
     func loadAgentProviders(reloadCredentials: Bool = false) async {

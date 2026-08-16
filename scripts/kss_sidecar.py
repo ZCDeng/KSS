@@ -2033,10 +2033,108 @@ def _vision_context_payload(req: dict) -> dict[str, Any]:
     }
 
 
+def _slash_action_payload(req: dict) -> dict[str, Any]:
+    """Seesaw slash command：本地工具目录与直连执行（只读、不经模型回合）。
+
+    与 dsh「human command 不占模型回合」语义一致：TOOL_SPECS 同时驱动
+    kss-plugins 与 kss-mcp，此处即"本地 plugins/MCP"的统一目录。写工具
+    一律拒绝——写操作必须回到对话内 agent + 确认链路。
+    """
+    import kss_chat_loop as chat_loop
+
+    action = str(req.get("action") or "catalog")
+    if action == "catalog":
+        tools: list[dict[str, Any]] = []
+        for spec in chat_loop.TOOL_SPECS:
+            command = str(spec.get("command") or "")
+            if command in bridge.WRITE_COMMANDS:
+                continue
+            params = spec.get("params") or {}
+            tools.append({
+                "name": str(spec.get("name") or ""),
+                "command": command,
+                "desc": str(spec.get("desc") or ""),
+                "order": [str(key) for key in (spec.get("order") or [])],
+                "params": [
+                    {
+                        "key": str(key),
+                        "description": str((value or {}).get("description") or ""),
+                    }
+                    for key, value in params.items()
+                ],
+            })
+        return {"tools": tools}
+    if action == "run":
+        session_id = req.get("session_id")
+        name = req.get("name")
+        raw_args = req.get("args")
+        if not isinstance(session_id, str) or not session_id:
+            return {"status": "error", "error": "agent-slash run requires session_id"}
+        if not isinstance(name, str) or not name:
+            return {"status": "error", "error": "agent-slash run requires name"}
+        args = (
+            {str(key): str(value) for key, value in raw_args.items()}
+            if isinstance(raw_args, dict)
+            else {}
+        )
+        registry = chat_loop.ToolRegistry()
+        spec = registry.spec(name)
+        if spec is None:
+            return {"status": "error", "error": f"unknown_tool:{name}"}
+        if str(spec.get("command") or "") in bridge.WRITE_COMMANDS:
+            return {
+                "status": "error",
+                "error": "slash 仅支持只读工具；写操作请在对话中由 agent 走确认链路",
+            }
+        result = execute_harness_tool(
+            name=name,
+            args=args,
+            call_id=f"slash-{uuid4().hex}",
+            force_read=True,
+        )
+        rendered_args = " ".join(
+            f"{key}={value}" for key, value in args.items() if str(value).strip()
+        )
+        user_text = f"/{name}" + (f" {rendered_args}" if rendered_args else "")
+        pretty = json.dumps(result, ensure_ascii=False, indent=2)
+        if len(pretty) > 6000:
+            pretty = pretty[:6000] + "\n…(截断)"
+        assistant_text = (
+            f"本地直连 `/{name}`（未经模型）：\n\n```json\n{pretty}\n```"
+        )
+        store = _session_store()
+        if store.open_session(session_id) is None:
+            store.create_session(session_id=session_id, metadata={"title": session_id})
+        store.append_message(session_id, AgentMessage(
+            id=uuid4().hex,
+            role="user",
+            content=user_text,
+            timestamp=time.time(),
+            metadata={"slash_command": name},
+        ))
+        store.append_message(session_id, AgentMessage(
+            id=uuid4().hex,
+            role="assistant",
+            content=assistant_text,
+            timestamp=time.time(),
+            metadata={"slash_command": name, "provenance": "local_direct"},
+        ))
+        ok = not (isinstance(result, dict) and result.get("error"))
+        return {
+            "ok": ok,
+            "user_text": user_text,
+            "assistant_text": assistant_text,
+            "result": result,
+        }
+    return {"status": "error", "error": f"unknown agent-slash action: {action}"}
+
+
 def _handle_agent_json_command(req: dict) -> str | None:
     """Agent v1 非流式 JSON 命令；返回标准 sidecar response。"""
     cmd = req.get("cmd")
     try:
+        if cmd == "agent-slash":
+            return _sidecar_ok(_slash_action_payload(req))
         if cmd == "harness-vision-context":
             return _sidecar_ok(_vision_context_payload(req))
         if cmd == "harness-tool-grant":

@@ -1142,6 +1142,78 @@ def test_vision_context_resolves_attachment(monkeypatch, tmp_path):
     assert payload["route"]["base_url"] == "https://api.openai.com/v1"
 
 
+def test_agent_slash_catalog_lists_read_only_tools(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+    payload = sc._slash_action_payload({"action": "catalog"})
+    names = [tool["name"] for tool in payload["tools"]]
+    assert "get_orientation" in names
+    assert "get_snapshot" in names
+    # 写工具不进 slash 目录
+    import kss_chat_loop as chat_loop
+
+    write_names = {
+        str(spec["name"]) for spec in chat_loop.TOOL_SPECS
+        if str(spec.get("command") or "") in bridge.WRITE_COMMANDS
+    }
+    assert write_names.isdisjoint(names)
+    stock = next(tool for tool in payload["tools"] if tool["name"] == "get_stock")
+    assert stock["order"] == ["symbol"]
+
+
+def test_agent_slash_run_executes_and_persists(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "dispatch", lambda c, a: {"ok": True, "cmd": c, "args": a})
+
+    payload = sc._slash_action_payload({
+        "action": "run",
+        "session_id": "slash-s1",
+        "name": "get_stock",
+        "args": {"symbol": "688008.SH"},
+    })
+    assert payload["ok"] is True, payload
+    assert payload["user_text"] == "/get_stock symbol=688008.SH"
+    assert "本地直连 `/get_stock`" in payload["assistant_text"]
+    assert "688008.SH" in payload["assistant_text"]
+
+    store = sc.SessionStore(tmp_path)
+    messages = store.read_messages("slash-s1")
+    assert [m.role for m in messages] == ["user", "assistant"]
+    assert messages[0].metadata["slash_command"] == "get_stock"
+    assert messages[1].metadata["provenance"] == "local_direct"
+
+
+def test_agent_slash_rejects_write_and_unknown_tools(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "PROJECT_ROOT", tmp_path)
+    import kss_chat_loop as chat_loop
+
+    write_spec = next(
+        (spec for spec in chat_loop.TOOL_SPECS
+         if str(spec.get("command") or "") in bridge.WRITE_COMMANDS),
+        None,
+    )
+    if write_spec is not None:
+        rejected = sc._slash_action_payload({
+            "action": "run",
+            "session_id": "slash-s2",
+            "name": str(write_spec["name"]),
+            "args": {},
+        })
+        assert rejected["status"] == "error"
+        assert "只读" in rejected["error"]
+
+    unknown = sc._slash_action_payload({
+        "action": "run",
+        "session_id": "slash-s2",
+        "name": "not_a_tool",
+        "args": {},
+    })
+    assert unknown["status"] == "error"
+    assert unknown["error"].startswith("unknown_tool")
+
+
 def test_agent_attachment_import_list_remove(monkeypatch, tmp_path):
     from kss.agent.attachments import AttachmentStore
 
