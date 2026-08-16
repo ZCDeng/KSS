@@ -1154,17 +1154,31 @@ struct IndexBoardSection: View {
     @State private var busy = false
     @State private var errorText: String?
     @State private var bindDraft: SurfaceBindDraft?
-    @State private var filter = ""
     @State private var listLoading = false
     @State private var catalogItems: [SurfaceCatalogItem] = []
 
+    /// bridge 取不到 catalog 时的离线兜底。可绑真源是 bind_catalog 的 index_board
+    /// 槽，这里只保证子进程起不来时列表不空。
+    ///
+    /// 原先多一项 399005.SZ 中小板指：refresh_market_strip 的 INDEX_BOARD 不抓它，
+    /// 绑上去 effective_index_board_quotes 只能给出 close=nil 的骨架行，已去掉。
     private static let defaultChoices: [(id: String, title: String)] = [
         ("000001.SH", "上证指数"), ("399001.SZ", "深证成指"), ("399006.SZ", "创业板指"),
         ("000688.SH", "科创50"), ("000698.SH", "科创100"), ("000680.SH", "科创综指"),
         ("000300.SH", "沪深300"), ("000016.SH", "上证50"), ("000905.SH", "中证500"),
         ("000852.SH", "中证1000"), ("000510.SH", "中证A500"), ("932000.CSI", "中证2000"),
-        ("899050.BJ", "北证50"), ("399005.SZ", "中小板指"),
+        ("899050.BJ", "北证50"),
     ]
+
+    /// catalog 优先，拿不到才回落硬编码。
+    private var choices: [(id: String, title: String)] {
+        let fromCatalog = catalogItems.compactMap { item -> (id: String, title: String)? in
+            let code = item.displayCode
+            guard !code.isEmpty else { return nil }
+            return (id: code, title: item.displayName)
+        }
+        return fromCatalog.isEmpty ? Self.defaultChoices : fromCatalog
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1185,11 +1199,11 @@ struct IndexBoardSection: View {
                     onListTabAppear: { loadCatalog() },
                     listContent: { _ in
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("选择后进入真值确认；不会直接写入。")
+                            Text(listLoading ? "正在载入可绑目录…" : "选择后进入真值确认；不会直接写入。")
                                 .font(KSSFont.themed(11, theme: theme))
                                 .foregroundStyle(theme.textSecondary)
                             DashboardSimpleChoiceList(
-                                choices: Self.defaultChoices,
+                                choices: choices,
                                 selectedId: nil
                             ) { code in
                                 draftAppend(code: code)
@@ -1216,7 +1230,7 @@ struct IndexBoardSection: View {
     }
 
     private func draftAppend(code: String) {
-        let title = Self.defaultChoices.first(where: { $0.id == code })?.title ?? code
+        let title = choices.first(where: { $0.id == code })?.title ?? code
         // 全量覆盖：当前 codes + 新 code
         var codes = indices.map { $0.code.uppercased() }
         if !codes.contains(code.uppercased()) {
@@ -1252,6 +1266,7 @@ struct IndexBoardSection: View {
     private func loadCatalog() {
         guard let bridge else { return }
         listLoading = true
+        errorText = nil
         Task {
             do {
                 let resp = try await Task.detached {
@@ -1259,10 +1274,19 @@ struct IndexBoardSection: View {
                 }.value
                 await MainActor.run {
                     listLoading = false
-                    catalogItems = resp.items ?? []
+                    let items = resp.items ?? []
+                    catalogItems = items
+                    // 空目录说明 bind_catalog 的 index_board 槽没东西（2026-07-31
+                    // 那次回归就是这样），列表会回落硬编码——说出来，别装没事。
+                    if items.isEmpty {
+                        errorText = "可绑目录为空，已回落内置名单；请重建 bind_catalog"
+                    }
                 }
             } catch {
-                await MainActor.run { listLoading = false }
+                await MainActor.run {
+                    listLoading = false
+                    errorText = "载入可绑目录失败：\(error.localizedDescription)"
+                }
             }
         }
     }

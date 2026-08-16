@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable
 from typing import Any
@@ -29,6 +30,8 @@ from kss.ui_surface.resolve import (
     candidate_overnight,
     resolve_metric_props,
 )
+
+logger = logging.getLogger(__name__)
 
 ProbeFn = Callable[[str, str | None], dict[str, Any]]
 
@@ -609,7 +612,9 @@ def interpret_index_board(
             names = it.get("names") or []
             name = names[0] if names else code
         if not code:
-            # 默认板名称兜底
+            # 默认板名称兜底。正常情况下走不到这里：bind_catalog 的 index_board
+            # 目录已覆盖这 13 码及其别名。走到了就说明 catalog 缺项或物化坏了
+            # （2026-07-31~08-15 这段兜底一直在悄悄顶着空目录），所以要吵。
             _DEFAULT_NAMES = {
                 "上证指数": "000001.SH", "上证": "000001.SH",
                 "深证成指": "399001.SZ", "深成指": "399001.SZ",
@@ -624,6 +629,11 @@ def interpret_index_board(
             for k, v in sorted(_DEFAULT_NAMES.items(), key=lambda x: -len(x[0])):
                 if k in rest or k in t:
                     code, name = v, k
+                    logger.warning(
+                        "nl_interpret: index_board「%s」catalog 未命中，走硬编码兜底 "
+                        "→ %s；检查 bind_catalog 目录是否为空",
+                        k, v,
+                    )
                     break
         if not code:
             return {

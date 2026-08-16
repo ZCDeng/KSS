@@ -9,9 +9,10 @@
 #   - **不** echo 任何 token 相关值（长度 / 来源 / 等）
 #   token 由采集器从 $KSS_STATE_ROOT/secrets/tushare_token（0600，git-ignored）读
 #   （_resolve_token，KTD4）。
-#   本 wrapper 注入/引用的 env：KSS_STATE_ROOT、no_proxy/NO_PROXY（代理兜底，非凭据），
-#   以及 6387d339 起经 kss_load_credential 装入的 LONGBRIDGE_APP_KEY /
-#   LONGBRIDGE_APP_SECRET / LONGBRIDGE_ACCESS_TOKEN 三件套（值不落 wrapper 正文）。
+#   本 wrapper 注入/引用的 env：KSS_STATE_ROOT，以及 6387d339 起经 kss_load_credential
+#   装入的 LONGBRIDGE_APP_KEY / LONGBRIDGE_APP_SECRET / LONGBRIDGE_ACCESS_TOKEN
+#   三件套（值不落 wrapper 正文）。代理兜底不在这层——见 af997646，唯一归属地是
+#   TushareClient._bypass_system_proxy()。
 #
 # KSS_STATE_ROOT 由 plist EnvironmentVariables 注入（不在此硬编码 state root；调和
 # 静态 wrapper 约定与 bundle 双根）。WorkingDirectory / 解释器走 PROJECT_ROOT（code root）.
@@ -39,13 +40,6 @@ else
 fi
 
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') collect_intraday 开始 ====="
-
-# 代理兜底：cron 时刻 Clash（127.0.0.1:7890）可能抖断，Tushare trade_cal 走
-# HTTP 明文会被代理拦截导致 calendar_unknown 失败。显式把 tushare 域名加进
-# no_proxy，确保即使系统代理开着也直连。TushareClient._bypass_system_proxy()
-# 也会在 Python 侧做同样的事，但 launchd 注入的环境变量在 shell 层更可靠。
-export no_proxy="api.tushare.pro,api.waditu.com,${no_proxy:-}"
-export NO_PROXY="$no_proxy"
 
 # auto 路由优先 longbridge：cron 无 App 注入 env，须从 Keychain 装凭据（否则永远 auth_failed → 东财）。
 # 东财为 fallback；Tushare 仅 trade_cal。不 echo 任何密钥。

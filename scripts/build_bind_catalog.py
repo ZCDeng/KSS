@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""生成 STATE_ROOT/storage/ui_surface/bind_catalog_v1.json。"""
+"""生成 STATE_ROOT/storage/ui_surface/bind_catalog_v{CATALOG_VERSION}.json。
+
+文件名跟着 bind_catalog.CATALOG_VERSION 走：bump 版本后旧文件自然失效、不再被读。
+"""
 
 from __future__ import annotations
 
