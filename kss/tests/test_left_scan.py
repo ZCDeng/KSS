@@ -57,16 +57,20 @@ def test_html_fragment_strips_document_chrome_and_scripts() -> None:
     assert "<html" not in fragment.lower()
 
 
-def test_wrap_report_html_keeps_kami_styles() -> None:
+def test_wrap_report_html_uses_sector_review_body() -> None:
     html = wrap_report_html(
-        "<h2>扫描</h2><p>一段话</p>",
+        "<h2>今日左侧机会扫描（2026-08-17）</h2><h3>一、盘面</h3><p>一段话</p>",
         trade_date=date(2026, 8, 17),
         source_name="2026-08-17-左侧机会扫描.html",
     )
-    assert "kss-report report-daily report-left-scan" in html
-    assert "左侧机会扫描 · 2026-08-17" in html
-    assert ".kss-report.report-daily" in html
-    assert "2026-08-17-左侧机会扫描.html" in html
+    assert "kss-report" not in html
+    assert "<style>" not in html
+    assert html.startswith("<p><b>左侧机会扫描 · 2026-08-17</b></p>")
+    assert "<p><b>一、盘面</b></p>" in html
+    assert "<h2>" not in html
+    assert "<h3>" not in html
+    assert "<p>一段话</p>" in html
+    assert "<p><i>来源 · 2026-08-17-左侧机会扫描.html</i></p>" in html
 
 
 def test_ingest_left_scan_is_idempotent_and_listable(tmp_path: Path) -> None:

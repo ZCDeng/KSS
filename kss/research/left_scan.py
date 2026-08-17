@@ -10,61 +10,12 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Iterable
 
-from kss.research.report_html import DAILY_CSS
-
 DATE_RE = re.compile(r"(?P<date>\d{4}-\d{2}-\d{2})")
 SKIP_NAME_RE = re.compile(r"skill", re.IGNORECASE)
+HEADING_RE = re.compile(r"<h([1-6])\b[^>]*>(.*?)</h\1>", re.IGNORECASE | re.DOTALL)
 PDF_MIME = "application/pdf"
 HTML_MIMES = {"text/html", "application/xhtml+xml"}
 GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
-
-LEFT_SCAN_CSS = (
-    DAILY_CSS
-    + """
-    .kss-report.report-daily.report-left-scan .left-scan-body {
-      display: grid;
-      gap: 18px;
-    }
-    .kss-report.report-daily.report-left-scan .left-scan-body h2 {
-      color: var(--ink);
-      font-size: 22px;
-      font-weight: 700;
-      letter-spacing: -.02em;
-      line-height: 1.25;
-    }
-    .kss-report.report-daily.report-left-scan .left-scan-body h3 {
-      margin-top: 8px;
-      color: var(--navy);
-      font-size: 16px;
-      font-weight: 700;
-    }
-    .kss-report.report-daily.report-left-scan .left-scan-body p {
-      color: var(--ink-soft);
-    }
-    .kss-report.report-daily.report-left-scan table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13.5px;
-      line-height: 1.45;
-    }
-    .kss-report.report-daily.report-left-scan th,
-    .kss-report.report-daily.report-left-scan td {
-      border: 1px solid var(--line);
-      padding: 7px 8px;
-      text-align: left;
-      vertical-align: top;
-    }
-    .kss-report.report-daily.report-left-scan th {
-      background: var(--blue-soft);
-      color: var(--ink);
-      font-weight: 650;
-    }
-    .kss-report.report-daily.report-left-scan .daily-source {
-      color: var(--ink-faint);
-      font-size: 12px;
-    }
-"""
-)
 
 
 class LeftScanError(ValueError):
@@ -210,33 +161,36 @@ def convert_to_fragment(name: str, mime: str, data: bytes) -> str:
     raise LeftScanError(f"unsupported_scan_type:{mime or lowered}")
 
 
+def _plain_heading(inner: str) -> str:
+    return re.sub(r"<[^>]+>", "", inner).strip()
+
+
+def restyle_as_review_body(fragment: str, *, trade_date: date) -> str:
+    """Map scan headings onto the 板块复盘 commentary body: bold section labels."""
+    title = f"左侧机会扫描 · {trade_date.isoformat()}"
+    body = fragment.strip()
+    first = HEADING_RE.match(body)
+    if first and ("左侧机会扫描" in _plain_heading(first.group(2)) or first.group(1) in {"1", "2"}):
+        body = body[first.end():].lstrip()
+
+    def _heading(match: re.Match[str]) -> str:
+        text = _plain_heading(match.group(2))
+        if not text:
+            return ""
+        return f"<p><b>{html.escape(text)}</b></p>"
+
+    body = HEADING_RE.sub(_heading, body)
+    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+    return f"<p><b>{html.escape(title)}</b></p>\n\n{body}" if body else f"<p><b>{html.escape(title)}</b></p>"
+
+
 def wrap_report_html(
     fragment: str,
     *,
     trade_date: date,
     source_name: str,
 ) -> str:
-    title = f"左侧机会扫描 · {trade_date.isoformat()}"
-    return (
-        "<!DOCTYPE html>\n"
-        '<html lang="zh-CN">\n'
-        "<head>\n"
-        '<meta charset="utf-8"/>\n'
-        f"<title>{html.escape(title)}</title>\n"
-        f"<style>{LEFT_SCAN_CSS}</style>\n"
-        "</head>\n"
-        "<body>\n"
-        '<article class="kss-report report-daily report-left-scan">\n'
-        '<div class="daily-sheet">\n'
-        '<header class="daily-hero">\n'
-        '<div class="daily-kicker">投资分析日报</div>\n'
-        f'<h1>{html.escape("左侧机会扫描")}</h1>\n'
-        f'<p class="daily-chip-label">{html.escape(trade_date.isoformat())}</p>\n'
-        "</header>\n"
-        f'<div class="left-scan-body">\n{fragment}\n</div>\n'
-        f'<p class="daily-source">来源 · {html.escape(source_name)}</p>\n'
-        "</div>\n"
-        "</article>\n"
-        "</body>\n"
-        "</html>\n"
-    )
+    """Emit a Kami commentary fragment, same body contract as 板块复盘投顾点评."""
+    body = restyle_as_review_body(fragment, trade_date=trade_date)
+    source = f"<p><i>来源 · {html.escape(source_name)}</i></p>"
+    return f"{body}\n\n{source}\n"
