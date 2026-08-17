@@ -1215,6 +1215,30 @@ struct ScheduledJob: Codable, Identifiable, Hashable {
         if lastStatus == "failed" { return .failed }
         return .ok
     }
+
+    var suffix: String {
+        let prefix = "com.zcdeng.kss."
+        if label.hasPrefix(prefix) {
+            return String(label.dropFirst(prefix.count))
+        }
+        return label
+    }
+}
+
+/// 盘后事件链（picks → MI → indicator → review），任务台只展示状态，不复制重跑按钮。
+enum RunbookEODChain {
+    static let suffixes: [String] = [
+        "update_data_daily_eod",
+        "formal_daily_picks",
+        "mi_signal_pack",
+        "indicator_signal_pack",
+        "formal_daily_review",
+    ]
+
+    static func jobs(from all: [ScheduledJob]) -> [ScheduledJob] {
+        let bySuffix = Dictionary(uniqueKeysWithValues: all.map { ($0.suffix, $0) })
+        return suffixes.compactMap { bySuffix[$0] }
+    }
 }
 
 /// cron-list 响应：任务列表 + 清单派生的分类排序（U4 下发，U5 任务页读 categoryOrder）。
@@ -1756,6 +1780,31 @@ enum KSSTask: String, CaseIterable, Identifiable {
         }
     }
 
+    /// 任务台「今日作业」清单。正式 cron 脚本不在此列，去设置 → 定时任务重跑。
+    static let workbenchTasks: [KSSTask] = [
+        .previewPicks, .generatePicks, .paperSummary,
+        .logmvBacktest, .radarArchiveAnalysis, .updateCsData,
+    ]
+
+    var workbenchBlurb: String {
+        switch self {
+        case .previewPicks:
+            return "用当日因子跑一遍推荐，不写入正式选股档案。"
+        case .generatePicks:
+            return "把当前推荐写入当日档案。盘后正式选股仍由定时任务跑。"
+        case .paperSummary:
+            return "刷新纸交易跟踪摘要，不触发日终结算。"
+        case .logmvBacktest:
+            return "用最近 160 日窗口跑 log_mv 轻量回测。"
+        case .radarArchiveAnalysis:
+            return "对资讯雷达归档做一次分析，不改采集任务。"
+        case .updateCsData:
+            return "立刻同步股票池日线。早盘/盘后定时更新仍在定时任务里。"
+        default:
+            return "在设置 → 定时任务中管理这条管道。"
+        }
+    }
+
     var arguments: [String] {
         switch self {
         case .logmvBacktest:
@@ -1831,9 +1880,11 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     static let pinned: [WorkspaceSection] = [.dashboard]
 
     /// 不上侧栏的 section：代码、视图、路由均完整保留。两种排除原因不同——
-    /// 暂停类（如曾经的舆情 digest）是"未达预期，等改进方案定了再恢复，从本数组移除即重新显示"；
+    /// 暂停类（主题、AI复盘）是"未达预期，等改进方案定了再恢复，从本数组移除即重新显示"；
     /// 任务/架构/Seesaw/设置 属于永久挪走类（改到工具栏/侧边栏页脚），不预期再回到侧边栏导航列表。
-    static let hidden: [WorkspaceSection] = [.themes, .runbook, .architecture, .aiChat, .settings]
+    /// AI复盘下线时后台任务一律不停：formal_daily_review / sector_review_daily /
+    /// hotspot_rotation_daily 仍喂盯盘、个股档案、Seesaw 与投资分析。
+    static let hidden: [WorkspaceSection] = [.themes, .reviews, .runbook, .architecture, .aiChat, .settings]
 
     /// 可被用户拖拽重排的 section（enum 原序，去掉置顶项与隐藏项）。
     static var reorderable: [WorkspaceSection] {
@@ -1933,7 +1984,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
         case .telegram: return "Telegram"
         case .research: return "外部研究"
         case .yupi: return "资讯雷达"
-        case .tasks: return "任务"
+        case .tasks: return "定时任务"
         case .logs: return "日志"
         }
     }

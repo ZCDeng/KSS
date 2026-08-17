@@ -104,6 +104,10 @@ final class SettingsTabTests: XCTestCase {
         XCTAssertEqual(SettingsTab.operations.defaultCategory, .tasks)
     }
 
+    func testTasksCategoryLabelIsScheduleNotWorkbench() {
+        XCTAssertEqual(SettingsCategory.tasks.label, "定时任务")
+    }
+
     func testCategoryOrderIsStable() {
         XCTAssertEqual(
             SettingsCategory.allCases.map(\.rawValue),

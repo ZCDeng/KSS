@@ -2205,7 +2205,7 @@ struct AIChatView: View {
     @ViewBuilder
     private var focusResearchCandidate: some View {
         if let candidate = store.researchCandidate {
-            Button { store.selectedSection = .runbook } label: {
+            Button { store.openRunbook(focusingResearch: true) } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "scope")
                         .foregroundStyle(theme.accent)

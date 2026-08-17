@@ -1,44 +1,38 @@
 import SwiftUI
 import AppKit
 
+enum ResearchDetailTab: String, CaseIterable, Identifiable {
+    case progress = "进展"
+    case artifacts = "产物"
+    case audit = "审计"
+    var id: String { rawValue }
+}
+
 struct ResearchWorkbenchView: View {
     @Environment(\.kssTheme) private var theme
     @ObservedObject var store: KSSStore
-    @State private var showingCreate = false
-    @State private var objective = ""
-    @State private var profileId = "investment-weekly-v3"
-    @State private var dateRange = ""
-    @State private var asOf = ""
-    @State private var useMultiAgentPilot = false
+    @State private var detailTab: ResearchDetailTab = .progress
     @State private var selectedArtifact: ResearchArtifact?
     @State private var artifactToPublish: ResearchArtifact?
     @State private var publishDestination: String?
 
+    private var isXcom: Bool { XcomListChrome.isXcom(theme.system) }
+
     var body: some View {
-        HStack(spacing: 0) {
-            goalList
-                .frame(width: 280)
-            Divider()
-            Group {
-                if let goal = store.selectedResearchGoal {
-                    goalDetail(goal)
-                } else if store.isLoadingResearch {
-                    ProgressView("正在读取研究目标…")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    ContentUnavailableView(
-                        "尚未选择研究目标",
-                        systemImage: "scope",
-                        description: Text("新建一个目标，或从左侧打开已有研究。"))
-                }
+        Group {
+            if let goal = store.selectedResearchGoal {
+                goalDetail(goal)
+            } else if store.isLoadingResearch {
+                ProgressView("正在读取研究目标…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ContentUnavailableView(
+                    "尚未选择研究目标",
+                    systemImage: "scope",
+                    description: Text("从左侧打开已有研究，或新建一个目标。"))
             }
         }
-        .background(theme.surface.opacity(0.45), in: RoundedRectangle(cornerRadius: 14))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(theme.hairline.opacity(0.7), lineWidth: 1)
-        )
-        .sheet(isPresented: $showingCreate) { createSheet }
+        .background(theme.canvas)
         .confirmationDialog(
             "发布研究产物？",
             isPresented: Binding(
@@ -61,109 +55,9 @@ struct ResearchWorkbenchView: View {
         } message: { _ in
             Text("发布会写入正式产物记录。请先检查预览与审计状态。")
         }
-    }
-
-    private var goalList: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("研究目标")
-                    .font(KSSFont.themed(15, .bold, theme: theme))
-                Spacer()
-                Button {
-                    Task { await store.loadResearchGoals() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.borderless)
-                .help("刷新研究目标")
-                Button {
-                    prepareCreateForm()
-                    showingCreate = true
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .buttonStyle(.borderless)
-                .help("新建研究目标")
-            }
-            .padding(14)
-
-            Divider()
-            if let candidate = store.researchCandidate {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Seesaw 建议")
-                        .font(KSSFont.themed(11, .bold, theme: theme))
-                        .foregroundStyle(theme.accent)
-                    Text(candidate.objective)
-                        .font(KSSFont.themed(12.5, .semibold, theme: theme))
-                        .foregroundStyle(theme.textPrimary)
-                        .lineLimit(4)
-                    Button("创建为研究目标") {
-                        Task {
-                            await store.createResearchGoal(
-                                objective: candidate.objective,
-                                profileId: candidate.profileId ?? "investment-weekly-v3",
-                                executionMode: "single")
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                }
-                .padding(12)
-                Divider()
-            }
-            if store.researchGoals.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "scope")
-                        .font(.system(size: 24))
-                        .foregroundStyle(theme.textSecondary)
-                    Text("暂无深度研究")
-                        .font(KSSFont.themed(13, .semibold, theme: theme))
-                    Button("新建目标") {
-                        prepareCreateForm()
-                        showingCreate = true
-                    }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 4) {
-                        ForEach(store.researchGoals) { goal in
-                            Button {
-                                selectedArtifact = nil
-                                Task { await store.openResearchGoal(goal.goalId) }
-                            } label: {
-                                VStack(alignment: .leading, spacing: 7) {
-                                    Text(goal.objective)
-                                        .font(KSSFont.themed(13, .semibold, theme: theme))
-                                        .foregroundStyle(theme.textPrimary)
-                                        .lineLimit(3)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                    HStack {
-                                        ResearchStatusLabel(status: goal.status)
-                                        Spacer()
-                                        if let progress = goal.progress {
-                                            Text("\(Int(progress * 100))%")
-                                                .font(KSSFont.themed(11, .medium, theme: theme))
-                                                .foregroundStyle(theme.textSecondary)
-                                        }
-                                    }
-                                }
-                                .padding(10)
-                                .background(
-                                    store.selectedResearchGoalId == goal.goalId
-                                        ? theme.accent.opacity(0.12)
-                                        : Color.clear,
-                                    in: RoundedRectangle(cornerRadius: 9)
-                                )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(8)
-                }
-            }
+        .onChange(of: store.selectedResearchGoalId) { _, _ in
+            detailTab = .progress
+            selectedArtifact = nil
         }
     }
 
@@ -245,157 +139,182 @@ struct ResearchWorkbenchView: View {
                     }
                 }
 
-                if !goal.criteria.isEmpty {
-                    section("验收条件", systemImage: "checklist") {
-                        VStack(spacing: 8) {
-                            ForEach(goal.criteria) { criterion in
-                                HStack(alignment: .top, spacing: 9) {
-                                    Image(systemName: criterion.status == "met"
-                                          ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(criterion.status == "met"
-                                                         ? theme.accent : theme.textSecondary)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(criterion.title)
-                                        if let detail = criterion.detail {
-                                            Text(detail)
+                researchTabBar
+
+                switch detailTab {
+                case .progress:
+                    if !goal.criteria.isEmpty {
+                        section("验收条件", systemImage: "checklist") {
+                            VStack(spacing: 8) {
+                                ForEach(goal.criteria) { criterion in
+                                    HStack(alignment: .top, spacing: 9) {
+                                        Image(systemName: criterion.status == "met"
+                                              ? "checkmark.circle.fill" : "circle")
+                                            .foregroundStyle(criterion.status == "met"
+                                                             ? theme.accent : theme.textSecondary)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(criterion.title)
+                                            if let detail = criterion.detail {
+                                                Text(detail)
+                                                    .font(KSSFont.themed(11.5, theme: theme))
+                                                    .foregroundStyle(theme.textSecondary)
+                                            }
+                                        }
+                                        Spacer()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if !goal.tasks.isEmpty {
+                        section("任务", systemImage: "square.stack.3d.up") {
+                            VStack(spacing: 8) {
+                                ForEach(goal.tasks) { task in
+                                    HStack {
+                                        ResearchStatusLabel(status: task.status)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(task.title)
+                                            if let agentId = task.agentId, !agentId.isEmpty {
+                                                Text(agentId)
+                                                    .font(KSSFont.themed(10.5, .medium, theme: theme))
+                                                    .foregroundStyle(theme.textSecondary)
+                                            }
+                                        }
+                                        Spacer()
+                                        if ["failed", "incomplete", "interrupted", "blocked"]
+                                            .contains(task.status.lowercased()) {
+                                            Button("重试") {
+                                                Task { await store.performResearchAction("retry_task", taskId: task.taskId) }
+                                            }
+                                            .buttonStyle(.bordered)
+                                            .controlSize(.small)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if goal.executionMode == "multi_agent_pilot",
+                       !goal.researchAgents.isEmpty {
+                        section("研究角色", systemImage: "person.3.sequence.fill") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(goal.researchAgents) { agent in
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        HStack {
+                                            Text(agent.title)
+                                                .fontWeight(.semibold)
+                                            Text(agent.agentId)
+                                                .foregroundStyle(theme.textSecondary)
+                                            Spacer()
+                                            if let tasks = agent.tasks {
+                                                Text("\(agent.succeeded ?? 0)/\(tasks) 任务")
+                                                    .foregroundStyle(theme.textSecondary)
+                                            }
+                                        }
+                                        if let focus = agent.focus ?? agent.role {
+                                            Text(focus)
                                                 .font(KSSFont.themed(11.5, theme: theme))
                                                 .foregroundStyle(theme.textSecondary)
                                         }
                                     }
-                                    Spacer()
                                 }
                             }
                         }
                     }
-                }
-
-                if !goal.tasks.isEmpty {
-                    section("任务", systemImage: "square.stack.3d.up") {
-                        VStack(spacing: 8) {
-                            ForEach(goal.tasks) { task in
-                                HStack {
-                                    ResearchStatusLabel(status: task.status)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(task.title)
-                                        if let agentId = task.agentId, !agentId.isEmpty {
-                                            Text(agentId)
-                                                .font(KSSFont.themed(10.5, .medium, theme: theme))
+                    timeline(goalId: goal.goalId)
+                case .artifacts:
+                    if goal.artifacts.isEmpty {
+                        Text("还没有研究产物。")
+                            .font(KSSFont.themed(13, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                    } else {
+                        artifacts(goal.artifacts)
+                    }
+                case .audit:
+                    if !goal.evidence.isEmpty {
+                        section("证据", systemImage: "doc.text.magnifyingglass") {
+                            VStack(spacing: 9) {
+                                ForEach(goal.evidence) { evidence in
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        HStack {
+                                            Text(evidence.title).fontWeight(.semibold)
+                                            Spacer()
+                                            if evidence.verified == true {
+                                                Label("已验证", systemImage: "checkmark.seal.fill")
+                                                    .foregroundStyle(theme.accent)
+                                            }
+                                            Text(evidence.source ?? "未知来源")
                                                 .foregroundStyle(theme.textSecondary)
                                         }
-                                    }
-                                    Spacer()
-                                    if ["failed", "incomplete", "interrupted", "blocked"]
-                                        .contains(task.status.lowercased()) {
-                                        Button("重试") {
-                                            Task { await store.performResearchAction("retry_task", taskId: task.taskId) }
+                                        HStack(spacing: 12) {
+                                            if let tier = evidence.sourceTier {
+                                                Text("来源等级：\(tier)")
+                                            }
+                                            if let asOf = evidence.dataAsOf {
+                                                Text("数据时点：\(asOf)")
+                                            }
                                         }
-                                        .buttonStyle(.bordered)
-                                        .controlSize(.small)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if goal.executionMode == "multi_agent_pilot",
-                   !goal.researchAgents.isEmpty {
-                    section("研究角色", systemImage: "person.3.sequence.fill") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(goal.researchAgents) { agent in
-                                VStack(alignment: .leading, spacing: 3) {
-                                    HStack {
-                                        Text(agent.title)
-                                            .fontWeight(.semibold)
-                                        Text(agent.agentId)
-                                            .foregroundStyle(theme.textSecondary)
-                                        Spacer()
-                                        if let tasks = agent.tasks {
-                                            Text("\(agent.succeeded ?? 0)/\(tasks) 任务")
-                                                .foregroundStyle(theme.textSecondary)
-                                        }
-                                    }
-                                    if let focus = agent.focus ?? agent.role {
-                                        Text(focus)
-                                            .font(KSSFont.themed(11.5, theme: theme))
-                                            .foregroundStyle(theme.textSecondary)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                timeline(goalId: goal.goalId)
-
-                if !goal.evidence.isEmpty {
-                    section("证据", systemImage: "doc.text.magnifyingglass") {
-                        VStack(spacing: 9) {
-                            ForEach(goal.evidence) { evidence in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    HStack {
-                                        Text(evidence.title).fontWeight(.semibold)
-                                        Spacer()
-                                        if evidence.verified == true {
-                                            Label("已验证", systemImage: "checkmark.seal.fill")
-                                                .foregroundStyle(theme.accent)
-                                        }
-                                        Text(evidence.source ?? "未知来源")
-                                            .foregroundStyle(theme.textSecondary)
-                                    }
-                                    HStack(spacing: 12) {
-                                        if let tier = evidence.sourceTier {
-                                            Text("来源等级：\(tier)")
-                                        }
-                                        if let asOf = evidence.dataAsOf {
-                                            Text("数据时点：\(asOf)")
-                                        }
-                                    }
-                                    .font(KSSFont.themed(10.5, theme: theme))
-                                    .foregroundStyle(theme.textSecondary)
-                                    if let snippet = evidence.snippet {
-                                        Text(snippet)
-                                            .font(KSSFont.themed(12, theme: theme))
-                                            .foregroundStyle(theme.textSecondary)
-                                            .lineLimit(3)
-                                    }
-                                    if let url = evidence.url {
-                                        Text(url)
-                                            .font(KSSFont.themed(10.5, theme: theme))
-                                            .foregroundStyle(theme.accent)
-                                            .textSelection(.enabled)
-                                    }
-                                }
-                                .padding(.vertical, 4)
-                            }
-                        }
-                    }
-                }
-
-                if !goal.artifacts.isEmpty {
-                    artifacts(goal.artifacts)
-                }
-
-                if !goal.audit.isEmpty {
-                    section("审计", systemImage: "checkmark.shield") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(goal.audit) { entry in
-                                HStack(alignment: .top) {
-                                    Text(entry.timestamp ?? "—")
+                                        .font(KSSFont.themed(10.5, theme: theme))
                                         .foregroundStyle(theme.textSecondary)
-                                        .frame(width: 150, alignment: .leading)
-                                    Text(entry.message ?? entry.type)
-                                    Spacer()
-                                    if let status = entry.status {
-                                        ResearchStatusLabel(status: status)
+                                        if let snippet = evidence.snippet {
+                                            Text(snippet)
+                                                .font(KSSFont.themed(12, theme: theme))
+                                                .foregroundStyle(theme.textSecondary)
+                                                .lineLimit(3)
+                                        }
+                                        if let url = evidence.url {
+                                            Text(url)
+                                                .font(KSSFont.themed(10.5, theme: theme))
+                                                .foregroundStyle(theme.accent)
+                                                .textSelection(.enabled)
+                                        }
+                                    }
+                                    .padding(.vertical, 4)
+                                }
+                            }
+                        }
+                    }
+                    if !goal.audit.isEmpty {
+                        section("审计", systemImage: "checkmark.shield") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(goal.audit) { entry in
+                                    HStack(alignment: .top) {
+                                        Text(entry.timestamp ?? "—")
+                                            .foregroundStyle(theme.textSecondary)
+                                            .frame(width: 150, alignment: .leading)
+                                        Text(entry.message ?? entry.type)
+                                        Spacer()
+                                        if let status = entry.status {
+                                            ResearchStatusLabel(status: status)
+                                        }
                                     }
                                 }
                             }
                         }
+                    }
+                    if goal.evidence.isEmpty && goal.audit.isEmpty {
+                        Text("还没有审计记录。")
+                            .font(KSSFont.themed(13, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
                     }
                 }
             }
             .padding(18)
+        }
+    }
+
+    @ViewBuilder
+    private var researchTabBar: some View {
+        if isXcom {
+            XcomUnderlineTabBar(
+                options: ResearchDetailTab.allCases.map { ($0, $0.rawValue) },
+                selection: $detailTab,
+                stretch: true)
+        } else {
+            KSSSegmentedControl(
+                options: ResearchDetailTab.allCases.map { ($0, $0.rawValue) },
+                selection: $detailTab,
+                stretch: true)
         }
     }
 
@@ -541,7 +460,49 @@ struct ResearchWorkbenchView: View {
         .kssCard(padding: 14)
     }
 
-    private var createSheet: some View {
+    private func chooseDraftDestination(for artifact: ResearchArtifact) {
+        let panel = NSSavePanel()
+        panel.title = "导出研究草稿"
+        panel.nameFieldStringValue = artifact.logicalName
+        panel.canCreateDirectories = true
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            // NSSavePanel already owns the user's replace confirmation.
+            Task {
+                _ = await store.exportResearchDraft(
+                    artifact,
+                    destination: url.path,
+                    overwrite: true)
+            }
+        }
+    }
+
+    private func choosePublishDestination(for artifact: ResearchArtifact) {
+        let panel = NSSavePanel()
+        panel.title = "正式发布研究产物"
+        panel.nameFieldStringValue = artifact.logicalName
+        panel.canCreateDirectories = true
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            publishDestination = url.path
+            artifactToPublish = artifact
+        }
+    }
+}
+
+struct ResearchCreateGoalSheet: View {
+    @Environment(\.kssTheme) private var theme
+    @ObservedObject var store: KSSStore
+    @Binding var isPresented: Bool
+    var onCreated: ((String) -> Void)? = nil
+
+    @State private var objective = ""
+    @State private var profileId = "investment-weekly-v3"
+    @State private var dateRange = ""
+    @State private var asOf = ""
+    @State private var useMultiAgentPilot = false
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("新建深度研究")
                 .font(KSSFont.themed(20, .bold, theme: theme))
@@ -588,14 +549,13 @@ struct ResearchWorkbenchView: View {
             .toggleStyle(.switch)
             HStack {
                 Spacer()
-                Button("取消") { showingCreate = false }
+                Button("取消") { isPresented = false }
                 Button("创建目标") {
                     let text = objective
                     let inputs = profileId == "investment-weekly-v3"
                         ? ["date_range": dateRange, "as_of": asOf]
                         : [:]
-                    objective = ""
-                    showingCreate = false
+                    isPresented = false
                     Task {
                         await store.createResearchGoal(
                             objective: text,
@@ -604,6 +564,9 @@ struct ResearchWorkbenchView: View {
                                 ? "multi_agent_pilot"
                                 : "single",
                             inputs: inputs)
+                        if let goalId = store.selectedResearchGoalId {
+                            onCreated?(goalId)
+                        }
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -625,41 +588,16 @@ struct ResearchWorkbenchView: View {
         }
         .padding(22)
         .frame(width: 520)
-    }
-
-    private func prepareCreateForm() {
-        let defaults = KSSStore.defaultResearchInputs()
-        dateRange = defaults["date_range"] ?? ""
-        asOf = defaults["as_of"] ?? ""
-        useMultiAgentPilot = false
-    }
-
-    private func chooseDraftDestination(for artifact: ResearchArtifact) {
-        let panel = NSSavePanel()
-        panel.title = "导出研究草稿"
-        panel.nameFieldStringValue = artifact.logicalName
-        panel.canCreateDirectories = true
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-            // NSSavePanel already owns the user's replace confirmation.
-            Task {
-                _ = await store.exportResearchDraft(
-                    artifact,
-                    destination: url.path,
-                    overwrite: true)
+        .onAppear {
+            let defaults = KSSStore.defaultResearchInputs()
+            dateRange = defaults["date_range"] ?? ""
+            asOf = defaults["as_of"] ?? ""
+            if objective.isEmpty, let candidate = store.researchCandidate?.objective {
+                objective = candidate
             }
-        }
-    }
-
-    private func choosePublishDestination(for artifact: ResearchArtifact) {
-        let panel = NSSavePanel()
-        panel.title = "正式发布研究产物"
-        panel.nameFieldStringValue = artifact.logicalName
-        panel.canCreateDirectories = true
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-            publishDestination = url.path
-            artifactToPublish = artifact
+            if let profile = store.researchCandidate?.profileId, !profile.isEmpty {
+                profileId = profile
+            }
         }
     }
 }

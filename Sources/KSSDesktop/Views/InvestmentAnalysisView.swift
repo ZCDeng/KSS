@@ -95,7 +95,7 @@ struct InvestmentAnalysisView: View {
             if store.selectedResearchGoalId != nil {
                 Button("查看研究过程") {
                     corpusImportMessage = nil
-                    store.selectedSection = .runbook
+                    store.openRunbook(focusingResearch: true)
                 }
             }
         } message: {
@@ -158,7 +158,7 @@ struct InvestmentAnalysisView: View {
         if let report = selected {
             if let goal = selectedGoal {
                 InvestmentAnalysisDetail(goal: goal, report: report, stateRoot: store.bridge?.stateRoot, onOpenResearch: {
-                    store.selectedSection = .runbook
+                    store.openRunbook(focusingResearch: true)
                 }, onImportCorpus: { showCorpusImporter = true })
             } else if store.isLoadingResearch {
                 ProgressView("正在打开报告…").frame(maxWidth: .infinity, maxHeight: .infinity)

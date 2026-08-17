@@ -232,13 +232,8 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHeader("纸交易跟踪", caption: "log_mv 策略纸面累计表现")
             TrackingSummaryCard(tracking: snapshot.tracking)
-            HStack(spacing: 10) {
-                CountCard(icon: "doc.text.magnifyingglass", count: snapshot.reviews.count, unit: "篇", label: "AI复盘") {
-                    onOpenSection(.reviews)
-                }
-                CountCard(icon: "chart.xyaxis.line", count: snapshot.backtests.count, unit: "份", label: "AI回测") {
-                    onOpenSection(.backtests)
-                }
+            CountCard(icon: "chart.xyaxis.line", count: snapshot.backtests.count, unit: "份", label: "AI回测") {
+                onOpenSection(.backtests)
             }
         }
     }
@@ -2153,7 +2148,7 @@ struct IndexStackColumnView: View {
     }
 }
 
-/// 计数卡：复盘 / 回测这类「只看数量、点击跳转」的内容，不占大版面。
+/// 计数卡：回测这类「只看数量、点击跳转」的内容，不占大版面。
 struct CountCard: View {
     @Environment(\.kssTheme) private var theme
     var icon: String

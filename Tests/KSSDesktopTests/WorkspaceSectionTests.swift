@@ -19,18 +19,22 @@ final class WorkspaceSectionTests: XCTestCase {
     func testSettingsIsHidden() {
         XCTAssertTrue(WorkspaceSection.hidden.contains(.settings))
         XCTAssertTrue(WorkspaceSection.hidden.contains(.themes))
+        XCTAssertTrue(WorkspaceSection.hidden.contains(.reviews))
     }
 
     func testOrderedNeverIncludesSettings() {
         XCTAssertFalse(WorkspaceSection.ordered(from: "").contains(.settings))
         XCTAssertFalse(WorkspaceSection.ordered(from: "Settings,Dashboard").contains(.settings))
         XCTAssertFalse(WorkspaceSection.ordered(from: "Themes,Dashboard").contains(.themes))
+        XCTAssertFalse(WorkspaceSection.ordered(from: "").contains(.reviews))
+        XCTAssertFalse(WorkspaceSection.ordered(from: "Reviews,Dashboard").contains(.reviews))
     }
 
     func testRoundTripThroughOrderedNeverReintroducesSettings() {
         let ordered = WorkspaceSection.ordered(from: "")
         let encoded = WorkspaceSection.encode(ordered)
         XCTAssertFalse(encoded.contains("Settings"))
+        XCTAssertFalse(encoded.contains("Reviews"))
     }
 
     func testInvestmentAnalysisKeepsCadenceTabsAtTheTopOfTheArchiveColumn() throws {

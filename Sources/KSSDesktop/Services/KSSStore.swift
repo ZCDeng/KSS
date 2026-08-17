@@ -17,6 +17,14 @@ final class KSSStore: ObservableObject {
     /// actions. This is deliberately separate from Settings routing so model
     /// credentials never reappear as a global Settings category.
     @Published var seesawDestination: SeesawDestination?
+    /// 从投资分析 / Seesaw 跳进任务台时，打开深度研究详情而不是今日作业。
+    @Published var runbookRevealResearch = false
+
+    /// 打开任务台。`focusingResearch` 为真时落到当前研究目标（或新建建议）。
+    func openRunbook(focusingResearch: Bool = false) {
+        runbookRevealResearch = focusingResearch
+        selectedSection = .runbook
+    }
 
     /// 打开设置并落到具体分类（同时投影经典 tab，调用点统一走这里）。
     func openSettings(category: SettingsCategory) {

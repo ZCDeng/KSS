@@ -456,7 +456,7 @@ struct SeesawRunsTab: View {
                 }
 
                 Button {
-                    store.selectedSection = .runbook
+                    store.openRunbook(focusingResearch: true)
                 } label: {
                     Label("打开 Runbook 工作台", systemImage: "arrow.up.right.square")
                         .font(KSSFont.themed(11.5, .semibold, theme: theme))

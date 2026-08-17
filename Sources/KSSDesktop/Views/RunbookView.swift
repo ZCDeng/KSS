@@ -1,5 +1,19 @@
 import SwiftUI
 
+enum RunbookItem: Hashable, Identifiable {
+    case today(KSSTask)
+    case research(String)
+    case pipeline
+
+    var id: String {
+        switch self {
+        case .today(let task): return "today-\(task.rawValue)"
+        case .research(let goalId): return "research-\(goalId)"
+        case .pipeline: return "pipeline"
+        }
+    }
+}
+
 struct RunbookView: View {
     @Environment(\.kssTheme) private var theme
     @ObservedObject var store: KSSStore
@@ -7,88 +21,394 @@ struct RunbookView: View {
     var isRunning: Bool
     var results: [TaskRunResult]
     var onRun: (KSSTask) -> Void
-    @State private var mode: Mode = .local
 
-    enum Mode: String, CaseIterable, Identifiable {
-        case local = "本地任务"
-        case research = "深度研究"
-        var id: String { rawValue }
-    }
+    @State private var selection: RunbookItem = .today(.previewPicks)
+    @State private var showingCreateResearch = false
+    @State private var hoveredListID: String?
 
-    private var quickTasks: [KSSTask] {
-        KSSTask.allCases.filter { $0.lane == "轻量" }
-    }
-
-    private var fullTasks: [KSSTask] {
-        KSSTask.allCases.filter { $0.lane == "正式" }
-    }
+    private var isXcom: Bool { XcomListChrome.isXcom(theme.system) }
 
     var body: some View {
-        GeometryReader { geo in
-            let w = min(geo.size.width - 48, 1080)
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .bottom) {
-                    PageTitle(
-                        "任务台",
-                        subtitle: mode == .local
-                            ? "本地数据 / 正式脚本运行台"
-                            : "可暂停、可审计的长期研究目标")
-                    Spacer()
-                    Picker("任务类型", selection: $mode) {
-                        ForEach(Mode.allCases) { item in
-                            Text(item.rawValue).tag(item)
+        HStack(alignment: .top, spacing: 0) {
+            listColumn
+                .frame(width: XcomListChrome.listColumnWidth(theme.system))
+                .frame(maxHeight: .infinity, alignment: .top)
+            Divider().overlay(theme.hairline)
+            detailPane
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(theme.canvas)
+        .sheet(isPresented: $showingCreateResearch) {
+            ResearchCreateGoalSheet(store: store, isPresented: $showingCreateResearch) { goalId in
+                selection = .research(goalId)
+            }
+        }
+        .task {
+            if store.researchGoals.isEmpty {
+                await store.loadResearchGoals()
+            }
+            if store.scheduledJobs.isEmpty {
+                await store.loadScheduledJobs()
+            }
+            applyIncomingSelection()
+        }
+        .onChange(of: store.researchCandidate?.objective) { _, _ in
+            applyIncomingSelection()
+        }
+        .onChange(of: store.selectedResearchGoalId) { _, goalId in
+            if case .research = selection, let goalId {
+                selection = .research(goalId)
+            }
+        }
+    }
+
+    private func applyIncomingSelection() {
+        let reveal = store.runbookRevealResearch
+        if reveal { store.runbookRevealResearch = false }
+        if store.researchCandidate != nil {
+            showingCreateResearch = true
+            return
+        }
+        if reveal, let goalId = store.selectedResearchGoalId, !goalId.isEmpty {
+            selection = .research(goalId)
+            Task { await store.openResearchGoal(goalId) }
+        }
+    }
+
+    private var listColumn: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 8) {
+                Text("任务台")
+                    .font(KSSFont.themed(15, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                Spacer(minLength: 8)
+                pythonChip
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+
+            Divider().overlay(theme.hairline)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    listSection("今日作业") {
+                        ForEach(KSSTask.workbenchTasks) { task in
+                            listRow(
+                                id: RunbookItem.today(task).id,
+                                title: task.title,
+                                subtitle: nil,
+                                selected: selection == .today(task)
+                            ) {
+                                selection = .today(task)
+                            }
                         }
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .frame(width: 260)
-                }
 
-                if mode == .local {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 16) {
-                            PythonEnvironmentBanner(environment: pythonEnvironment)
+                    listSection("深度研究") {
+                        HStack {
+                            Spacer()
+                            Button {
+                                Task { await store.loadResearchGoals() }
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("刷新研究目标")
+                            Button {
+                                showingCreateResearch = true
+                            } label: {
+                                Image(systemName: "plus")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("新建研究目标")
+                        }
+                        .padding(.horizontal, 4)
 
-                            SectionHeader("轻量任务")
-                            TaskGrid(tasks: quickTasks, isRunning: isRunning, onRun: onRun)
+                        if let candidate = store.researchCandidate {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Seesaw 建议")
+                                    .font(KSSFont.themed(11, .bold, theme: theme))
+                                    .foregroundStyle(theme.accent)
+                                Text(candidate.objective)
+                                    .font(KSSFont.themed(12.5, .semibold, theme: theme))
+                                    .foregroundStyle(theme.textPrimary)
+                                    .lineLimit(4)
+                                Button("创建为研究目标") {
+                                    showingCreateResearch = true
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
+                        }
 
-                            SectionHeader("正式任务")
-                            TaskGrid(tasks: fullTasks, isRunning: isRunning, onRun: onRun)
-
-                            SectionHeader("任务记录")
-                            if results.isEmpty {
-                                Text("暂无任务运行记录")
-                                    .font(KSSFont.themed(13.5, theme: theme))
-                                    .foregroundStyle(theme.textSecondary)
-                            } else {
-                                VStack(spacing: 10) {
-                                    ForEach(results) { result in
-                                        TaskResultCard(result: result)
-                                    }
+                        if store.researchGoals.isEmpty {
+                            Text("暂无深度研究")
+                                .font(KSSFont.themed(12.5, theme: theme))
+                                .foregroundStyle(theme.textSecondary)
+                                .padding(.horizontal, 4)
+                        } else {
+                            ForEach(store.researchGoals) { goal in
+                                listRow(
+                                    id: RunbookItem.research(goal.goalId).id,
+                                    title: goal.objective,
+                                    subtitle: goal.progress.map { "\(Int($0 * 100))%" },
+                                    selected: selection == .research(goal.goalId)
+                                ) {
+                                    selection = .research(goal.goalId)
+                                    Task { await store.openResearchGoal(goal.goalId) }
                                 }
                             }
                         }
-                        .padding(.bottom, 24)
                     }
-                    .scrollContentBackground(.hidden)
-                } else {
-                    ResearchWorkbenchView(store: store)
+
+                    listSection("今日管线") {
+                        let chain = RunbookEODChain.jobs(from: store.scheduledJobs)
+                        let stale = store.scheduledJobs.filter(\.stale).count
+                        let failed = store.scheduledJobs.filter { $0.health == .failed }.count
+                        let subtitle: String = {
+                            if chain.isEmpty { return "正在读取定时任务" }
+                            let done = chain.filter { $0.health == .ok || $0.health == .running }.count
+                            var parts = ["EOD \(done)/\(chain.count)"]
+                            if stale > 0 { parts.append("漏跑 \(stale)") }
+                            if failed > 0 { parts.append("失败 \(failed)") }
+                            return parts.joined(separator: " · ")
+                        }()
+                        listRow(
+                            id: RunbookItem.pipeline.id,
+                            title: "盘后事件链",
+                            subtitle: subtitle,
+                            selected: selection == .pipeline
+                        ) {
+                            selection = .pipeline
+                        }
+                    }
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 12)
             }
-            .frame(width: w, alignment: .leading)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .padding(.vertical, 24)
         }
         .background(theme.canvas)
-        .task(id: mode) {
-            if mode == .research, store.researchGoals.isEmpty {
-                await store.loadResearchGoals()
-            }
+    }
+
+    @ViewBuilder
+    private var detailPane: some View {
+        switch selection {
+        case .today(let task):
+            TodayJobDetail(
+                task: task,
+                result: results.first { $0.taskId == task.rawValue },
+                isThisRunning: isRunning && store.activeFormalTaskId == task.rawValue,
+                isBusy: isRunning,
+                onRun: { onRun(task) },
+                onOpenLogs: { store.openSettings(category: .logs) }
+            )
+        case .research:
+            ResearchWorkbenchView(store: store)
+        case .pipeline:
+            PipelineStatusDetail(
+                jobs: RunbookEODChain.jobs(from: store.scheduledJobs),
+                staleCount: store.scheduledJobs.filter(\.stale).count,
+                onOpenSchedule: { store.openSettings(category: .tasks) },
+                onOpenLogs: { store.openSettings(category: .logs) }
+            )
         }
-        .onAppear {
-            if store.researchCandidate != nil {
-                mode = .research
+    }
+
+    private var pythonChip: some View {
+        let usable = pythonEnvironment?.usable == true
+        return HStack(spacing: 5) {
+            Circle()
+                .fill(usable ? theme.accent : theme.ma5)
+                .frame(width: 7, height: 7)
+            Text(usable ? "Python 就绪" : "Python 不可用")
+                .font(KSSFont.themed(11, .semibold, theme: theme))
+                .foregroundStyle(usable ? theme.textSecondary : theme.ma5)
+        }
+        .help(pythonEnvironment?.selected ?? "缺少正式解释器")
+    }
+
+    private func listSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(KSSFont.themed(11, .bold, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+                .padding(.horizontal, 6)
+            content()
+        }
+    }
+
+    private func listRow(
+        id: String,
+        title: String,
+        subtitle: String?,
+        selected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(KSSFont.themed(13, .semibold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                    .lineLimit(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(KSSFont.themed(11, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
+                }
             }
+            .padding(10)
+            .background(
+                XcomListChrome.listSelectionFill(
+                    isOn: selected,
+                    isHovered: isXcom && hoveredListID == id,
+                    theme: theme
+                ),
+                in: RoundedRectangle(cornerRadius: 9)
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            guard isXcom else { return }
+            hoveredListID = hovering ? id : (hoveredListID == id ? nil : hoveredListID)
+        }
+    }
+}
+
+struct TodayJobDetail: View {
+    @Environment(\.kssTheme) private var theme
+    var task: KSSTask
+    var result: TaskRunResult?
+    var isThisRunning: Bool
+    var isBusy: Bool
+    var onRun: () -> Void
+    var onOpenLogs: () -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(task.title)
+                            .font(KSSFont.themed(XcomListChrome.detailTitlePointSize(theme.system), .bold, theme: theme))
+                            .foregroundStyle(theme.textPrimary)
+                        Text(task.workbenchBlurb)
+                            .font(KSSFont.themed(13.5, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                    Spacer()
+                    Button(action: onRun) {
+                        if isThisRunning {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Label("运行", systemImage: "play.fill")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isBusy)
+                    .help(isBusy && !isThisRunning ? "已有任务在跑" : "运行此作业")
+                }
+
+                if let result {
+                    TaskResultCard(result: result, compact: true)
+                } else {
+                    Text("还没有运行记录。点运行后摘要会出现在这里。")
+                        .font(KSSFont.themed(13, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                }
+
+                Button("打开完整日志", action: onOpenLogs)
+                    .buttonStyle(.borderless)
+                    .font(KSSFont.themed(12.5, theme: theme))
+            }
+            .padding(24)
+            .frame(maxWidth: 720, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(theme.canvas)
+    }
+}
+
+struct PipelineStatusDetail: View {
+    @Environment(\.kssTheme) private var theme
+    var jobs: [ScheduledJob]
+    var staleCount: Int
+    var onOpenSchedule: () -> Void
+    var onOpenLogs: () -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("盘后事件链")
+                        .font(KSSFont.themed(XcomListChrome.detailTitlePointSize(theme.system), .bold, theme: theme))
+                    Text("选股 → MI → 指标 → 复盘。任务台只看状态；启停、改排期、重跑都在设置 → 定时任务。")
+                        .font(KSSFont.themed(13.5, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                }
+
+                if jobs.isEmpty {
+                    Text("尚未读到定时任务。打开设置 → 定时任务可同步 LaunchAgent。")
+                        .font(KSSFont.themed(13, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(jobs) { job in
+                            HStack {
+                                Text(job.title)
+                                    .font(KSSFont.themed(13.5, .semibold, theme: theme))
+                                Spacer()
+                                Text(job.schedule)
+                                    .font(KSSFont.themed(11.5, theme: theme))
+                                    .foregroundStyle(theme.textSecondary)
+                                pipelineBadge(job.health)
+                            }
+                            .padding(.vertical, 6)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .kssCard(padding: 14)
+                }
+
+                if staleCount > 0 {
+                    Text("另有 \(staleCount) 条定时任务漏跑，去设置里一键补跑。")
+                        .font(KSSFont.themed(12.5, theme: theme))
+                        .foregroundStyle(theme.ma5)
+                }
+
+                HStack(spacing: 12) {
+                    Button("管理排期", action: onOpenSchedule)
+                        .buttonStyle(.borderedProminent)
+                    Button("查看日志", action: onOpenLogs)
+                        .buttonStyle(.bordered)
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: 720, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(theme.canvas)
+    }
+
+    private func pipelineBadge(_ health: ScheduledJob.Health) -> StatusBadge {
+        switch health {
+        case .running:
+            return StatusBadge(icon: "arrow.triangle.2.circlepath", text: "运行中", tint: theme.accent, emphasized: true)
+        case .needsInstall:
+            return StatusBadge(icon: "arrow.down.doc.fill", text: "需同步", tint: theme.ma5, emphasized: true)
+        case .stale:
+            return StatusBadge(icon: "exclamationmark.triangle.fill", text: "漏跑", tint: theme.ma5, emphasized: true)
+        case .failed:
+            return StatusBadge(icon: "xmark.octagon.fill", text: "失败", tint: theme.up, emphasized: true)
+        case .disabled:
+            return StatusBadge(icon: "pause.circle.fill", text: "停用", tint: theme.textSecondary)
+        case .ok:
+            return StatusBadge(icon: "checkmark.circle.fill", text: "正常", tint: theme.accent, emphasized: true)
         }
     }
 }
@@ -527,70 +847,11 @@ struct ScheduleEditorView: View {
     }
 }
 
-struct PythonEnvironmentBanner: View {
-    @Environment(\.kssTheme) private var theme
-    var environment: PythonEnvironment?
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: environment?.usable == true ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                .font(KSSFont.themed(18, theme: theme))
-                .foregroundStyle(environment?.usable == true ? theme.accent : theme.ma5)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(environment?.usable == true ? "正式 Python 环境就绪" : "正式 Python 环境不可用")
-                    .font(KSSFont.themed(15, .bold, theme: theme))
-                    .foregroundStyle(theme.textPrimary)
-                Text(environment?.selected ?? "缺少 pandas / lightgbm / tushare / akshare 解释器")
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(theme.textSecondary)
-                    .lineLimit(1)
-            }
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .kssCard(padding: 14)
-    }
-}
-
-struct TaskGrid: View {
-    @Environment(\.kssTheme) private var theme
-    var tasks: [KSSTask]
-    var isRunning: Bool
-    var onRun: (KSSTask) -> Void
-
-    var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
-            ForEach(tasks) { task in
-                Button {
-                    onRun(task)
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: task.systemImage)
-                            .font(.title3)
-                            .foregroundStyle(theme.accent)
-                            .frame(width: 24)
-                        Text(task.title)
-                            .font(KSSFont.themed(14, .bold, theme: theme))
-                            .lineLimit(1)
-                        Spacer()
-                        if isRunning {
-                            ProgressView()
-                                .controlSize(.small)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
-                    .kssCard(padding: 14)
-                }
-                .buttonStyle(.plain)
-                .disabled(isRunning)
-            }
-        }
-    }
-}
-
 struct TaskResultCard: View {
     @Environment(\.kssTheme) private var theme
     var result: TaskRunResult
+    var compact: Bool = false
+    @State private var showOutput = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -609,23 +870,37 @@ struct TaskResultCard: View {
                     .font(.system(size: 11.5, design: .monospaced))
                     .foregroundStyle(theme.textSecondary)
             }
-            if !result.stdout.isEmpty {
-                Text(result.stdout)
-                    .font(.system(size: 11.5, design: .monospaced))
-                    .foregroundStyle(theme.textPrimary)
-                    .textSelection(.enabled)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(theme.canvas, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
-            }
-            if !result.stderr.isEmpty {
-                Text(result.stderr)
-                    .font(.system(size: 11.5, design: .monospaced))
-                    .foregroundStyle(theme.up)
-                    .textSelection(.enabled)
+            if !result.stdout.isEmpty || !result.stderr.isEmpty {
+                if compact {
+                    DisclosureGroup("输出", isExpanded: $showOutput) {
+                        outputBlock
+                    }
+                    .font(KSSFont.themed(12.5, theme: theme))
+                } else {
+                    outputBlock
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .kssCard(padding: 14)
+    }
+
+    @ViewBuilder
+    private var outputBlock: some View {
+        if !result.stdout.isEmpty {
+            Text(result.stdout)
+                .font(.system(size: 11.5, design: .monospaced))
+                .foregroundStyle(theme.textPrimary)
+                .textSelection(.enabled)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(theme.canvas, in: RoundedRectangle(cornerRadius: KSSTheme.shapeS))
+        }
+        if !result.stderr.isEmpty {
+            Text(result.stderr)
+                .font(.system(size: 11.5, design: .monospaced))
+                .foregroundStyle(theme.up)
+                .textSelection(.enabled)
+        }
     }
 }
