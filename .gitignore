@@ -130,3 +130,6 @@ evals/**/traces/
 
 # 舆情热点 digest 运行时归档(每场重生成,不入库)
 storage/news_digest/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+graft/
