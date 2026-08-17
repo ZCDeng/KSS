@@ -630,7 +630,7 @@ enum SettingsCredentialChangePolicy {
 }
 
 private enum ResearchProviderOption: String, CaseIterable, Identifiable {
-    case disabled, requests, jina, serper, fixture
+    case disabled, requests, jina, serper, combosearch, fixture
     var id: String { rawValue }
 
     var label: String {
@@ -639,6 +639,7 @@ private enum ResearchProviderOption: String, CaseIterable, Identifiable {
         case .requests: return "HTTP 直连"
         case .jina: return "Jina"
         case .serper: return "Serper"
+        case .combosearch: return "本机 comboSearch"
         case .fixture: return "本地夹具（开发）"
         }
     }
@@ -674,7 +675,7 @@ enum SettingsDataSource: String, CaseIterable, Identifiable {
             if provider == "serper" {
                 return !(KeychainStore.read("SERPER_API_KEY") ?? "").isEmpty
             }
-            return ["fixture", "requests", "jina"].contains(provider)
+            return ["fixture", "requests", "jina", "combosearch"].contains(provider)
         }
     }
 

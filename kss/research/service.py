@@ -1113,8 +1113,27 @@ class ResearchService:
                 goal_id=goal_id,
                 evidence=evidence,
             )
+            if str(goal.get("profile_id") or "") == "investment-daily-v1":
+                from kss.research.recipe_metrics import (
+                    augment_daily_investment_coverage,
+                    daily_investment_gates_satisfied,
+                )
+
+                investment_coverage = augment_daily_investment_coverage(
+                    investment_coverage,
+                    evidence=evidence,
+                    task_results=self._current_task_results(goal_id),
+                    goal_as_of=self._goal_as_of(goal_id),
+                )
             coverage["investment_inputs"] = investment_coverage
-            if investment_coverage["source_records"] == 0:
+            daily_gates = None
+            if str(goal.get("profile_id") or "") == "investment-daily-v1":
+                from kss.research.recipe_metrics import daily_investment_gates_satisfied
+
+                daily_gates = daily_investment_gates_satisfied(investment_coverage)
+            if investment_coverage["source_records"] == 0 and not (
+                daily_gates and daily_gates["corpus"]
+            ):
                 findings.append(
                     {
                         "severity": "block",
@@ -1122,7 +1141,9 @@ class ResearchService:
                         "detail": "正式投资分析必须导入受控 analyst-corpus-v1 语料",
                     }
                 )
-            if investment_coverage["verified_precision_cards"] == 0:
+            if investment_coverage["verified_precision_cards"] == 0 and not (
+                daily_gates and daily_gates["cards"]
+            ):
                 findings.append(
                     {
                         "severity": "block",
@@ -1130,7 +1151,9 @@ class ResearchService:
                         "detail": "正式投资分析必须至少包含一张通过独立 checker 的精判卡",
                     }
                 )
-            if investment_coverage["formula_runs"] == 0:
+            if investment_coverage["formula_runs"] == 0 and not (
+                daily_gates and daily_gates["formula"]
+            ):
                 findings.append(
                     {
                         "severity": "block",
@@ -1584,6 +1607,8 @@ class ResearchService:
                     ),
                 )
                 self._capture_task_result(goal_id, task, attempt_id, result)
+                if task["kind"] == "analyst_cards":
+                    self._ingest_extracted_precision_cards(goal_id, result)
                 status = str(result.get("status") or "incomplete")
                 current_goal_status = (self.repo.get_goal(goal_id) or {}).get(
                     "status"
@@ -1692,6 +1717,30 @@ class ResearchService:
             f"{task['title']}证据",
         )
 
+
+    def _backfill_collect_source_evidence(self, goal_id: str) -> None:
+        """Register URL evidence_refs that harness put on collect_sources."""
+        goal = self.repo.get_goal(goal_id) or {}
+        task = next(
+            (
+                item
+                for item in goal.get("tasks") or []
+                if item.get("kind") == "collect_sources"
+            ),
+            None,
+        )
+        if not task:
+            return
+        result = (self._current_task_results(goal_id).get("collect_sources") or {})
+        if not result:
+            return
+        self._capture_task_result(
+            goal_id,
+            task,
+            str(task.get("current_attempt_id") or task.get("task_id")),
+            result,
+        )
+
     def _compile_report(
         self,
         goal_id: str,
@@ -1699,6 +1748,7 @@ class ResearchService:
         attempt_id: str,
     ) -> dict[str, Any]:
         self._emit(goal_id, "compile_start", {"task_id": task["task_id"]}, task_id=task["task_id"], attempt_id=attempt_id)
+        self._backfill_collect_source_evidence(goal_id)
         document = (
             make_investment_weekly_fixture()
             if self.allow_synthetic_fixture
@@ -1741,6 +1791,7 @@ class ResearchService:
                 "theme_consensus",
                 "risk_radar",
                 "precision_cards",
+                "delivery_audit",
             ):
                 criterion = self._criterion_for_validator(goal_id, validator)
                 if not criterion:
@@ -1901,6 +1952,15 @@ class ResearchService:
             formula_inputs.update(investment_formula["formula_inputs"])
             if investment_formula["card_rows"]:
                 card_rows = investment_formula["card_rows"]
+        if str(goal.get("profile_id") or "") == "investment-daily-v1" and not (
+            investment_formula and investment_formula.get("card_rows")
+        ):
+            from kss.research.recipe_metrics import build_daily_card_rows
+
+            card_rows = build_daily_card_rows(
+                task_results=task_results,
+                evidence=evidence,
+            )
         for task_kind, expected in metric_specs.items():
             if expected["metric_id"] in derived_metrics:
                 continue
@@ -1977,6 +2037,16 @@ class ResearchService:
                 formula_inputs[metric_id] = normalized_values
                 break
         all_refs = [item.evidence_id for item in evidence]
+        from kss.research.recipe_metrics import fill_missing_recipe_metrics
+
+        fill_missing_recipe_metrics(
+            derived_metrics,
+            formula_inputs,
+            task_results,
+            evidence_ids=evidence_ids,
+            fallback_refs=all_refs,
+            goal_as_of=self._goal_as_of(goal_id),
+        )
         metrics = MetricLedger(
             [
                 derived_metrics.get("m_temperature")
@@ -2642,7 +2712,36 @@ class ResearchService:
         self.repo.register_evidence(evidence)
         self.repo.verify_evidence(evidence.evidence_id, checker="research_deterministic_runner")
 
+    def _ingest_extracted_precision_cards(
+        self,
+        goal_id: str,
+        result: dict[str, Any],
+    ) -> None:
+        """Persist precision-card-v1 rows extracted by analyst_cards when corpus exists."""
+        from kss.research.recipe_metrics import extract_precision_card_payloads
+
+        cards = extract_precision_card_payloads(result)
+        if not cards:
+            return
+        goal = self.repo.get_goal(goal_id) or {}
+        path_value = str((goal.get("inputs") or {}).get("analyst_corpus_path") or "").strip()
+        if not path_value:
+            path_value = os.environ.get("KSS_ANALYST_CORPUS_PATH", "").strip()
+        if not path_value:
+            return
+        imported = self.import_analyst_corpus(
+            goal_id=goal_id,
+            payload={"path": path_value, "precision_cards": cards},
+        )
+        if not imported.get("ok"):
+            self._emit(
+                goal_id,
+                "precision_cards_ingest_skipped",
+                {"error": imported.get("error"), "detail": imported.get("detail")},
+            )
+
     def _capture_task_result(
+
         self,
         goal_id: str,
         task: dict[str, Any],
@@ -2676,9 +2775,22 @@ class ResearchService:
             goal_id,
             "source_coverage" if task["kind"] == "collect_sources" else "evidence",
         )
-        for source in result.get("_tool_evidence") or []:
+        from kss.research.recipe_metrics import iter_url_evidence_refs
+
+        existing_uris = {
+            str(item.get("uri") or "")
+            for item in self.repo.evidence_for_goal(goal_id)
+            if str((item.get("metadata") or {}).get("snapshot_id") or "")
+            == self._snapshot_id(goal_id)
+            and item.get("uri")
+        }
+        for source in iter_url_evidence_refs(result):
             if not isinstance(source, dict) or not source.get("url"):
                 continue
+            url = str(source.get("url") or "").strip()
+            if not url or url in existing_uris:
+                continue
+            existing_uris.add(url)
             evidence_id = new_id("ev")
             source_payload = stable_json(source)
             evidence = Evidence(
@@ -2694,7 +2806,9 @@ class ResearchService:
                 uri=str(source["url"]),
                 artifact_id=artifact["artifact_id"],
                 data_as_of=str(
-                    source.get("retrievedAt")
+                    self._goal_as_of(goal_id)
+                    if task.get("kind") == "collect_sources"
+                    else source.get("retrievedAt")
                     or source.get("data_as_of")
                     or self._goal_as_of(goal_id)
                 ),

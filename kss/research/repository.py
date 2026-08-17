@@ -41,6 +41,27 @@ def _bool(value: Any) -> int:
     return 1 if bool(value) else 0
 
 
+def _warning_text(item: Any) -> str:
+    if isinstance(item, str):
+        return item
+    if isinstance(item, dict):
+        message = item.get("message") or item.get("type") or item.get("id")
+        if message:
+            return str(message)
+    return str(item)
+
+
+def _join_warnings(warnings: Any) -> str | None:
+    if not warnings:
+        return None
+    if isinstance(warnings, str):
+        return warnings
+    if not isinstance(warnings, list):
+        return str(warnings)
+    texts = [_warning_text(item) for item in warnings if item]
+    return "; ".join(texts) if texts else None
+
+
 class ResearchRepository:
     """Persistence boundary for research goals, DAG state and events."""
 
@@ -455,7 +476,7 @@ class ResearchRepository:
             attempt_result = loads(item.pop("attempt_result_json"), {})
             item["attempt"] = item.pop("attempt_no")
             item["detail"] = item.pop("attempt_error") or (
-                "; ".join(attempt_result.get("warnings") or [])
+                _join_warnings(attempt_result.get("warnings"))
                 if isinstance(attempt_result, dict)
                 else None
             )

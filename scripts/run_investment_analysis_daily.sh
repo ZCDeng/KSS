@@ -21,25 +21,9 @@ else
     exit 1
 fi
 
-find_helper() {
-  local candidate
-  for candidate in \
-    "${KSS_SCHEDULED_RESEARCH_HELPER:-}" \
-    "$(cd "$PROJECT_ROOT/.." && pwd)/Helpers/KSSResearchSchedulerHelper" \
-    "$PROJECT_ROOT/scripts/KSSResearchSchedulerHelper" \
-    "$PROJECT_ROOT/.build/arm64-apple-macosx/release/KSSResearchSchedulerHelper" \
-    "$PROJECT_ROOT/.build/arm64-apple-macosx/debug/KSSResearchSchedulerHelper" \
-    "$PROJECT_ROOT/.build/release/KSSResearchSchedulerHelper" \
-    "$PROJECT_ROOT/.build/debug/KSSResearchSchedulerHelper"; do
-    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  return 1
-}
-
-HELPER="$(find_helper || true)"
+# shellcheck source=scripts/lib_scheduled_research.sh
+source "$PROJECT_ROOT/scripts/lib_scheduled_research.sh"
+HELPER="$(kss_find_scheduled_research_helper "$PROJECT_ROOT" || true)"
 if [ -z "$HELPER" ]; then
   echo "scheduled research helper is unavailable; sync the signed KSS app or build KSSResearchSchedulerHelper" >&2
   exit 2

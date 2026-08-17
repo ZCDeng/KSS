@@ -275,7 +275,7 @@ export async function injectCredentialsFromSocket(socketPath, nonce) {
       else resolve(value);
     };
     socket.setEncoding("utf8");
-    socket.setTimeout(5000, () => finish(new Error("credential socket timed out")));
+    socket.setTimeout(60000, () => finish(new Error("credential socket timed out")));
     socket.on("connect", () => {
       socket.write(
         `${JSON.stringify({ protocol_version: 1, action: "credentials", nonce })}\n`,

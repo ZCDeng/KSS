@@ -202,6 +202,12 @@ struct ResearchWorkbenchView: View {
                     }
                     .font(KSSFont.themed(10.5, .semibold, theme: theme))
                     .foregroundStyle(theme.textSecondary)
+                    if let reason = goal.terminalReason, !reason.isEmpty {
+                        Text(reason)
+                            .font(KSSFont.themed(11.5, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                            .textSelection(.enabled)
+                    }
                     if let snapshot = goal.snapshot {
                         HStack(spacing: 12) {
                             Label(
@@ -407,6 +413,9 @@ struct ResearchWorkbenchView: View {
                 actionButton("取消", icon: "xmark", action: "cancel")
             case "interrupted":
                 actionButton("继续", icon: "play.fill", action: "resume", prominent: true)
+            case "waiting_user":
+                actionButton("开始", icon: "play.fill", action: "start", prominent: true)
+                actionButton("取消", icon: "xmark", action: "cancel")
             default:
                 EmptyView()
             }
@@ -682,6 +691,7 @@ private struct ResearchStatusLabel: View {
         case "budget_limited": "预算已用尽"
         case "needs_refresh": "需要刷新"
         case "cancelled", "aborted": "已取消"
+        case "waiting_user": "待处理"
         default: status
         }
     }
@@ -691,7 +701,7 @@ private struct ResearchStatusLabel: View {
         case "running", "completed", "succeeded", "met", "passed": theme.accent
         case "failed", "blocked": .red
         case "paused", "pending", "incomplete", "insufficient_evidence",
-             "interrupted", "budget_limited", "needs_refresh": .orange
+             "interrupted", "budget_limited", "needs_refresh", "waiting_user": .orange
         default: theme.textSecondary
         }
     }

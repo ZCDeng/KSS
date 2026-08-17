@@ -194,6 +194,7 @@ class PiAIHelperClient:
             "auth.reload_from_socket",
             socket_path=resolved_path,
             nonce=effective_nonce,
+            timeout=90.0,
         )
         next_nonce = result.get("next_nonce")
         self._credential_socket_path = resolved_path

@@ -23,7 +23,10 @@ WRAPPER_PATHS = sorted(
 )
 
 # 共享 helper 本身不是「wrapper」（无 shebang 直跑约定），但仍纳入硬编码扫描。
-ALL_SHELL_ASSETS = WRAPPER_PATHS + [REPO_ROOT / "scripts" / "lib_cron_credentials.sh"]
+ALL_SHELL_ASSETS = WRAPPER_PATHS + [
+    REPO_ROOT / "scripts" / "lib_cron_credentials.sh",
+    REPO_ROOT / "scripts" / "lib_scheduled_research.sh",
+]
 
 HARDCODED_USER_PATH_RE = re.compile(r"/Users/[A-Za-z0-9_.-]+")
 DIRECT_SYSTEM_PYTHON_RE = re.compile(r"/usr/bin/python3\b")
