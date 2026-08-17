@@ -13,6 +13,17 @@ enum SettingsFormStyle {
     static let titleMetaSpacing: CGFloat = 3
     /// 行横向元素
     static let rowHSpacing: CGFloat = 12
+    /// 左分类栏宽度（设置 / 任务台共用）
+    static let navWidth: CGFloat = 240
+    /// 左栏页标题（「设置」/「任务台」）
+    static let navTitleSize: CGFloat = 20
+    /// 左栏行标题
+    static let navRowFont: CGFloat = 15
+    /// 左栏行内边距
+    static let navRowHPadding: CGFloat = 14
+    static let navRowVPadding: CGFloat = 11
+    /// 左栏选中胶囊
+    static let navPillRadius: CGFloat = 999
     /// 详情区水平 padding
     static let detailHPadding: CGFloat = 20
     /// 详情区垂直 padding
@@ -151,5 +162,70 @@ struct SettingsInfoBanner: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .kssCard(isError ? .warning : .info, padding: SettingsFormStyle.bannerPadding)
+    }
+}
+
+/// 左栏导航行（设置分类 / 任务台作业共用：15pt + 胶囊底）。
+struct SettingsNavRow<Trailing: View>: View {
+    @Environment(\.kssTheme) private var theme
+    var title: String
+    var selected: Bool
+    var action: () -> Void
+    var trailing: Trailing
+    @State private var hovered = false
+
+    init(
+        title: String,
+        selected: Bool,
+        action: @escaping () -> Void,
+        @ViewBuilder trailing: () -> Trailing
+    ) {
+        self.title = title
+        self.selected = selected
+        self.action = action
+        self.trailing = trailing()
+    }
+
+    var body: some View {
+        let hoverOpacity = theme.appearance == .dark ? 0.10 : 0.07
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Text(title)
+                    .font(KSSFont.themed(
+                        SettingsFormStyle.navRowFont,
+                        selected ? .bold : .regular,
+                        theme: theme
+                    ))
+                    .foregroundStyle(theme.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                trailing
+            }
+            .padding(.horizontal, SettingsFormStyle.navRowHPadding)
+            .padding(.vertical, SettingsFormStyle.navRowVPadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: SettingsFormStyle.navPillRadius, style: .continuous)
+                    .fill(
+                        selected
+                            ? theme.textPrimary.opacity(theme.appearance == .dark ? 0.14 : 0.08)
+                            : (hovered ? theme.textPrimary.opacity(hoverOpacity) : Color.clear)
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .onHover { hovering in
+            hovered = hovering
+        }
+    }
+}
+
+extension SettingsNavRow where Trailing == EmptyView {
+    init(title: String, selected: Bool, action: @escaping () -> Void) {
+        self.init(title: title, selected: selected, action: action) {
+            EmptyView()
+        }
     }
 }

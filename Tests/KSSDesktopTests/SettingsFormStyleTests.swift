@@ -18,5 +18,9 @@ final class SettingsFormStyleTests: XCTestCase {
         XCTAssertEqual(SettingsFormStyle.blockSpacing, 12)
         XCTAssertEqual(SettingsFormStyle.cardPadding, 12)
         XCTAssertEqual(SettingsFormStyle.pageTitle, SettingsFormStyle.itemTitle)
+        XCTAssertEqual(SettingsFormStyle.navWidth, 240)
+        XCTAssertEqual(SettingsFormStyle.navTitleSize, 20)
+        XCTAssertEqual(SettingsFormStyle.navRowFont, 15)
+        XCTAssertEqual(SettingsFormStyle.navPillRadius, 999)
     }
 }

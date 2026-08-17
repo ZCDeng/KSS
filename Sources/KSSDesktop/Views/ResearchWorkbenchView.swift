@@ -63,17 +63,17 @@ struct ResearchWorkbenchView: View {
 
     private func goalDetail(_ goal: ResearchGoalDetail) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: SettingsFormStyle.blockSpacing) {
+                VStack(alignment: .leading, spacing: SettingsFormStyle.cardInnerSpacing) {
                     HStack(alignment: .top) {
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: SettingsFormStyle.titleMetaSpacing) {
                             ResearchStatusLabel(status: goal.status)
                             Text(goal.objective)
-                                .font(KSSFont.themed(22, .bold, theme: theme))
+                                .font(KSSFont.themed(SettingsFormStyle.pageTitle, .bold, theme: theme))
                                 .foregroundStyle(theme.textPrimary)
                                 .textSelection(.enabled)
                         }
-                        Spacer()
+                        Spacer(minLength: 12)
                         controls(for: goal)
                     }
                     if let progress = goal.progress {
@@ -299,8 +299,12 @@ struct ResearchWorkbenchView: View {
                     }
                 }
             }
-            .padding(18)
+            .frame(maxWidth: 720, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, SettingsFormStyle.detailHPadding)
+            .padding(.vertical, SettingsFormStyle.detailVPadding)
         }
+        .scrollContentBackground(.hidden)
     }
 
     @ViewBuilder
@@ -355,14 +359,17 @@ struct ResearchWorkbenchView: View {
         action: String,
         prominent: Bool = false
     ) -> some View {
-        Button {
-            Task { await store.performResearchAction(action) }
-        } label: {
-            Label(title, systemImage: icon)
+        Group {
+            if prominent {
+                SettingsPrimaryAction(title: title, systemImage: icon) {
+                    Task { await store.performResearchAction(action) }
+                }
+            } else {
+                SettingsBorderedAction(title: title, systemImage: icon) {
+                    Task { await store.performResearchAction(action) }
+                }
+            }
         }
-        .buttonStyle(.bordered)
-        .tint(prominent ? theme.accent : nil)
-        .controlSize(.small)
     }
 
     private func timeline(goalId: String) -> some View {
@@ -502,6 +509,10 @@ struct ResearchCreateGoalSheet: View {
     @State private var asOf = ""
     @State private var useMultiAgentPilot = false
 
+    private var creatableProfiles: [ResearchProfileSummary] {
+        store.researchProfiles.filter { RunbookResearchList.isCreatableProfile($0.profileId) }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("新建深度研究")
@@ -513,10 +524,10 @@ struct ResearchCreateGoalSheet: View {
                 .frame(minHeight: 120)
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.hairline))
             Picker("研究配置", selection: $profileId) {
-                if store.researchProfiles.isEmpty {
+                if creatableProfiles.isEmpty {
                     Text("投资周报 v3").tag("investment-weekly-v3")
                 } else {
-                    ForEach(store.researchProfiles) { profile in
+                    ForEach(creatableProfiles) { profile in
                         Text(profile.name).tag(profile.profileId)
                     }
                 }
@@ -595,8 +606,11 @@ struct ResearchCreateGoalSheet: View {
             if objective.isEmpty, let candidate = store.researchCandidate?.objective {
                 objective = candidate
             }
-            if let profile = store.researchCandidate?.profileId, !profile.isEmpty {
+            if let profile = store.researchCandidate?.profileId, !profile.isEmpty,
+               RunbookResearchList.isCreatableProfile(profile) {
                 profileId = profile
+            } else if !RunbookResearchList.isCreatableProfile(profileId) {
+                profileId = "investment-weekly-v3"
             }
         }
     }

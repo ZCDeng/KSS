@@ -10,7 +10,6 @@ struct SettingsView: View {
     @State private var selectedCategory: SettingsCategory = .selfCheck
     @State private var dataSourceResults: [String: DataSourceTestResult] = [:]
     @State private var dirtySources: Set<String> = []
-    @State private var hoveredCategory: SettingsCategory?
 
     private var isXcom: Bool { theme.system == .xcom }
 
@@ -104,7 +103,7 @@ struct SettingsView: View {
     private var xcomSettingsShell: some View {
         HStack(spacing: 0) {
             xcomCategoryNav
-                .frame(width: 240)
+                .frame(width: SettingsFormStyle.navWidth)
             Divider().overlay(theme.hairline)
             xcomDetailPane
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -115,7 +114,7 @@ struct SettingsView: View {
     private var xcomCategoryNav: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("设置")
-                .font(KSSFont.themed(20, .bold, theme: theme))
+                .font(KSSFont.themed(SettingsFormStyle.navTitleSize, .bold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
                 .padding(.horizontal, 16)
                 .padding(.top, 20)
@@ -142,7 +141,6 @@ struct SettingsView: View {
 
     private func xcomNavRow(_ cat: SettingsCategory) -> some View {
         let isOn = selectedCategory == cat
-        let isHovered = hoveredCategory == cat
         let needsBadge = SettingsTabRouting.categoryNeedsBadge(
             cat,
             isSourceConfigured: { raw in
@@ -152,48 +150,23 @@ struct SettingsView: View {
             jobs: store.scheduledJobs
         )
         let isDirty = cat.dataSource.map { dirtySources.contains($0.rawValue) } ?? false
-        let hoverOpacity = theme.appearance == .dark ? 0.10 : 0.07
 
-        return Button {
+        return SettingsNavRow(title: cat.label, selected: isOn) {
             withAnimation(.easeOut(duration: 0.12)) {
                 selectedCategory = cat
                 tab = cat.tab
             }
-        } label: {
-            HStack(spacing: 10) {
-                Text(cat.label)
-                    .font(KSSFont.themed(15, isOn ? .bold : .regular, theme: theme))
-                    .foregroundStyle(theme.textPrimary)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                if isDirty {
-                    Text("·")
-                        .font(KSSFont.themed(18, .bold, theme: theme))
-                        .foregroundStyle(theme.accent)
-                        .help("有未保存更改")
-                } else if needsBadge {
-                    Circle()
-                        .fill(theme.ma5)
-                        .frame(width: 7, height: 7)
-                }
+        } trailing: {
+            if isDirty {
+                Text("·")
+                    .font(KSSFont.themed(18, .bold, theme: theme))
+                    .foregroundStyle(theme.accent)
+                    .help("有未保存更改")
+            } else if needsBadge {
+                Circle()
+                    .fill(theme.ma5)
+                    .frame(width: 7, height: 7)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 999, style: .continuous)
-                    .fill(
-                        isOn
-                            ? theme.textPrimary.opacity(theme.appearance == .dark ? 0.14 : 0.08)
-                            : (isHovered ? theme.textPrimary.opacity(hoverOpacity) : Color.clear)
-                    )
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(isOn ? .isSelected : [])
-        .onHover { hovering in
-            hoveredCategory = hovering ? cat : (hoveredCategory == cat ? nil : hoveredCategory)
         }
     }
 

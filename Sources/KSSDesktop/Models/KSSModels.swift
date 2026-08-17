@@ -1241,6 +1241,26 @@ enum RunbookEODChain {
     }
 }
 
+/// 任务台深度研究列表：投资分析日报已全量下线（改走 Drive 左侧机会扫描）。
+enum RunbookResearchList {
+    static let retiredDailyProfileId = "investment-daily-v1"
+    static let retiredDailyObjectivePrefix = "投资分析日报"
+
+    static func isListed(_ goal: ResearchGoalSummary) -> Bool {
+        if goal.profileId == retiredDailyProfileId { return false }
+        let objective = goal.objective.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !objective.hasPrefix(retiredDailyObjectivePrefix)
+    }
+
+    static func listed(_ goals: [ResearchGoalSummary]) -> [ResearchGoalSummary] {
+        goals.filter(isListed)
+    }
+
+    static func isCreatableProfile(_ profileId: String) -> Bool {
+        profileId != retiredDailyProfileId
+    }
+}
+
 /// cron-list 响应：任务列表 + 清单派生的分类排序（U4 下发，U5 任务页读 categoryOrder）。
 struct CronListResponse: Codable, Hashable {
     var jobs: [ScheduledJob]

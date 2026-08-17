@@ -24,14 +24,15 @@ struct RunbookView: View {
 
     @State private var selection: RunbookItem = .today(.previewPicks)
     @State private var showingCreateResearch = false
-    @State private var hoveredListID: String?
 
-    private var isXcom: Bool { XcomListChrome.isXcom(theme.system) }
+    private var listedResearchGoals: [ResearchGoalSummary] {
+        RunbookResearchList.listed(store.researchGoals)
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             listColumn
-                .frame(width: XcomListChrome.listColumnWidth(theme.system))
+                .frame(width: SettingsFormStyle.navWidth)
                 .frame(maxHeight: .infinity, alignment: .top)
             Divider().overlay(theme.hairline)
             detailPane
@@ -60,6 +61,10 @@ struct RunbookView: View {
             if case .research = selection, let goalId {
                 selection = .research(goalId)
             }
+            pruneHiddenResearchSelection()
+        }
+        .onChange(of: store.researchGoals) { _, _ in
+            pruneHiddenResearchSelection()
         }
     }
 
@@ -71,33 +76,43 @@ struct RunbookView: View {
             return
         }
         if reveal, let goalId = store.selectedResearchGoalId, !goalId.isEmpty {
+            if let goal = store.researchGoals.first(where: { $0.goalId == goalId }),
+               !RunbookResearchList.isListed(goal) {
+                selection = .today(.previewPicks)
+                return
+            }
             selection = .research(goalId)
             Task { await store.openResearchGoal(goalId) }
         }
     }
 
-    private var listColumn: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .center, spacing: 8) {
-                Text("任务台")
-                    .font(KSSFont.themed(15, .bold, theme: theme))
-                    .foregroundStyle(theme.textPrimary)
-                Spacer(minLength: 8)
-                pythonChip
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+    private func pruneHiddenResearchSelection() {
+        guard case .research(let id) = selection else { return }
+        if let goal = store.researchGoals.first(where: { $0.goalId == id }),
+           !RunbookResearchList.isListed(goal) {
+            selection = .today(.previewPicks)
+        }
+    }
 
-            Divider().overlay(theme.hairline)
+    private var listColumn: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("任务台")
+                .font(KSSFont.themed(SettingsFormStyle.navTitleSize, .bold, theme: theme))
+                .foregroundStyle(theme.textPrimary)
+                .padding(.horizontal, 16)
+                .padding(.top, 20)
+                .padding(.bottom, 8)
+
+            pythonChip
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 2) {
                     listSection("今日作业") {
                         ForEach(KSSTask.workbenchTasks) { task in
-                            listRow(
-                                id: RunbookItem.today(task).id,
+                            SettingsNavRow(
                                 title: task.title,
-                                subtitle: nil,
                                 selected: selection == .today(task)
                             ) {
                                 selection = .today(task)
@@ -105,13 +120,13 @@ struct RunbookView: View {
                         }
                     }
 
-                    listSection("深度研究") {
-                        HStack {
-                            Spacer()
+                    listSection("深度研究", count: listedResearchGoals.count, trailing: {
+                        HStack(spacing: 2) {
                             Button {
                                 Task { await store.loadResearchGoals() }
                             } label: {
                                 Image(systemName: "arrow.clockwise")
+                                    .font(KSSFont.themed(SettingsFormStyle.meta, theme: theme))
                             }
                             .buttonStyle(.borderless)
                             .help("刷新研究目标")
@@ -119,79 +134,82 @@ struct RunbookView: View {
                                 showingCreateResearch = true
                             } label: {
                                 Image(systemName: "plus")
+                                    .font(KSSFont.themed(SettingsFormStyle.meta, theme: theme))
                             }
                             .buttonStyle(.borderless)
                             .help("新建研究目标")
                         }
-                        .padding(.horizontal, 4)
-
+                    }) {
                         if let candidate = store.researchCandidate {
-                            VStack(alignment: .leading, spacing: 8) {
+                            VStack(alignment: .leading, spacing: SettingsFormStyle.titleMetaSpacing) {
                                 Text("Seesaw 建议")
-                                    .font(KSSFont.themed(11, .bold, theme: theme))
+                                    .font(KSSFont.themed(SettingsFormStyle.meta, .semibold, theme: theme))
                                     .foregroundStyle(theme.accent)
                                 Text(candidate.objective)
-                                    .font(KSSFont.themed(12.5, .semibold, theme: theme))
+                                    .font(KSSFont.themed(SettingsFormStyle.bodyHint, theme: theme))
                                     .foregroundStyle(theme.textPrimary)
-                                    .lineLimit(4)
-                                Button("创建为研究目标") {
+                                    .lineLimit(3)
+                                SettingsBorderedAction(title: "创建为研究目标") {
                                     showingCreateResearch = true
                                 }
-                                .buttonStyle(.borderedProminent)
-                                .controlSize(.small)
                             }
-                            .padding(10)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
+                            .kssCard(.info, padding: SettingsFormStyle.bannerPadding)
                         }
 
-                        if store.researchGoals.isEmpty {
-                            Text("暂无深度研究")
-                                .font(KSSFont.themed(12.5, theme: theme))
-                                .foregroundStyle(theme.textSecondary)
-                                .padding(.horizontal, 4)
+                        if listedResearchGoals.isEmpty {
+                            SettingsHintText(text: "暂无深度研究", empty: true)
+                                .padding(.horizontal, SettingsFormStyle.navRowHPadding)
+                                .padding(.vertical, 8)
                         } else {
-                            ForEach(store.researchGoals) { goal in
-                                listRow(
-                                    id: RunbookItem.research(goal.goalId).id,
+                            ForEach(listedResearchGoals) { goal in
+                                SettingsNavRow(
                                     title: goal.objective,
-                                    subtitle: goal.progress.map { "\(Int($0 * 100))%" },
                                     selected: selection == .research(goal.goalId)
                                 ) {
                                     selection = .research(goal.goalId)
                                     Task { await store.openResearchGoal(goal.goalId) }
+                                } trailing: {
+                                    if let caption = progressCaption(goal) {
+                                        SettingsStatusCapsule(text: caption)
+                                    }
                                 }
                             }
                         }
                     }
 
                     listSection("今日管线") {
-                        let chain = RunbookEODChain.jobs(from: store.scheduledJobs)
-                        let stale = store.scheduledJobs.filter(\.stale).count
-                        let failed = store.scheduledJobs.filter { $0.health == .failed }.count
-                        let subtitle: String = {
-                            if chain.isEmpty { return "正在读取定时任务" }
-                            let done = chain.filter { $0.health == .ok || $0.health == .running }.count
-                            var parts = ["EOD \(done)/\(chain.count)"]
-                            if stale > 0 { parts.append("漏跑 \(stale)") }
-                            if failed > 0 { parts.append("失败 \(failed)") }
-                            return parts.joined(separator: " · ")
-                        }()
-                        listRow(
-                            id: RunbookItem.pipeline.id,
+                        SettingsNavRow(
                             title: "盘后事件链",
-                            subtitle: subtitle,
                             selected: selection == .pipeline
                         ) {
                             selection = .pipeline
+                        } trailing: {
+                            SettingsStatusCapsule(text: pipelineCaption)
                         }
                     }
                 }
                 .padding(.horizontal, 8)
-                .padding(.vertical, 12)
+                .padding(.bottom, 16)
             }
         }
         .background(theme.canvas)
+    }
+
+    private var pipelineCaption: String {
+        let chain = RunbookEODChain.jobs(from: store.scheduledJobs)
+        if chain.isEmpty { return "读取中" }
+        let done = chain.filter { $0.health == .ok || $0.health == .running }.count
+        let stale = store.scheduledJobs.filter(\.stale).count
+        let failed = store.scheduledJobs.filter { $0.health == .failed }.count
+        if stale > 0 { return "漏跑 \(stale)" }
+        if failed > 0 { return "失败 \(failed)" }
+        return "\(done)/\(chain.count)"
+    }
+
+    private func progressCaption(_ goal: ResearchGoalSummary) -> String? {
+        guard let progress = goal.progress else { return nil }
+        return "\(Int((progress * 100).rounded()))%"
     }
 
     @ViewBuilder
@@ -220,62 +238,47 @@ struct RunbookView: View {
 
     private var pythonChip: some View {
         let usable = pythonEnvironment?.usable == true
-        return HStack(spacing: 5) {
-            Circle()
-                .fill(usable ? theme.accent : theme.ma5)
-                .frame(width: 7, height: 7)
-            Text(usable ? "Python 就绪" : "Python 不可用")
-                .font(KSSFont.themed(11, .semibold, theme: theme))
-                .foregroundStyle(usable ? theme.textSecondary : theme.ma5)
-        }
+        return SettingsStatusCapsule(
+            text: usable ? "Python 就绪" : "Python 不可用",
+            tint: usable ? nil : theme.ma5
+        )
         .help(pythonEnvironment?.selected ?? "缺少正式解释器")
     }
 
-    private func listSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(KSSFont.themed(11, .bold, theme: theme))
-                .foregroundStyle(theme.textSecondary)
-                .padding(.horizontal, 6)
-            content()
-        }
+    private func listSection<Content: View>(
+        _ title: String,
+        count: Int? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        listSection(title, count: count, trailing: { EmptyView() }, content: content)
     }
 
-    private func listRow(
-        id: String,
-        title: String,
-        subtitle: String?,
-        selected: Bool,
-        action: @escaping () -> Void
+    private func listSection<Content: View, Trailing: View>(
+        _ title: String,
+        count: Int? = nil,
+        @ViewBuilder trailing: () -> Trailing,
+        @ViewBuilder content: () -> Content
     ) -> some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
                 Text(title)
-                    .font(KSSFont.themed(13, .semibold, theme: theme))
-                    .foregroundStyle(theme.textPrimary)
-                    .lineLimit(3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if let subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(KSSFont.themed(11, theme: theme))
+                    .font(KSSFont.themed(SettingsFormStyle.sectionHeader, .bold, theme: theme))
+                    .foregroundStyle(theme.textSecondary)
+                if let count {
+                    Text("\(count)")
+                        .font(KSSFont.themed(10.5, .bold, theme: theme))
                         .foregroundStyle(theme.textSecondary)
-                        .lineLimit(1)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(theme.textSecondary.opacity(0.12), in: Capsule())
                 }
+                Spacer(minLength: 0)
+                trailing()
             }
-            .padding(10)
-            .background(
-                XcomListChrome.listSelectionFill(
-                    isOn: selected,
-                    isHovered: isXcom && hoveredListID == id,
-                    theme: theme
-                ),
-                in: RoundedRectangle(cornerRadius: 9)
-            )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            guard isXcom else { return }
-            hoveredListID = hovering ? id : (hoveredListID == id ? nil : hoveredListID)
+            .padding(.horizontal, SettingsFormStyle.navRowHPadding)
+            .padding(.top, 10)
+            .padding(.bottom, 4)
+            content()
         }
     }
 }
@@ -291,45 +294,41 @@ struct TodayJobDetail: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: SettingsFormStyle.blockSpacing) {
                 HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: SettingsFormStyle.titleMetaSpacing) {
                         Text(task.title)
-                            .font(KSSFont.themed(XcomListChrome.detailTitlePointSize(theme.system), .bold, theme: theme))
+                            .font(KSSFont.themed(SettingsFormStyle.pageTitle, .bold, theme: theme))
                             .foregroundStyle(theme.textPrimary)
-                        Text(task.workbenchBlurb)
-                            .font(KSSFont.themed(13.5, theme: theme))
-                            .foregroundStyle(theme.textSecondary)
+                        SettingsHintText(text: task.workbenchBlurb)
                     }
-                    Spacer()
-                    Button(action: onRun) {
-                        if isThisRunning {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Label("运行", systemImage: "play.fill")
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isBusy)
+                    Spacer(minLength: 12)
+                    SettingsPrimaryAction(
+                        title: "运行",
+                        systemImage: "play.fill",
+                        busy: isThisRunning,
+                        disabled: isBusy,
+                        action: onRun
+                    )
                     .help(isBusy && !isThisRunning ? "已有任务在跑" : "运行此作业")
                 }
 
                 if let result {
                     TaskResultCard(result: result, compact: true)
                 } else {
-                    Text("还没有运行记录。点运行后摘要会出现在这里。")
-                        .font(KSSFont.themed(13, theme: theme))
-                        .foregroundStyle(theme.textSecondary)
+                    SettingsHintText(text: "还没有运行记录。点运行后摘要会出现在这里。", empty: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .kssCard(padding: SettingsFormStyle.cardPadding)
                 }
 
-                Button("打开完整日志", action: onOpenLogs)
-                    .buttonStyle(.borderless)
-                    .font(KSSFont.themed(12.5, theme: theme))
+                SettingsBorderedAction(title: "打开完整日志", action: onOpenLogs)
             }
-            .padding(24)
             .frame(maxWidth: 720, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, SettingsFormStyle.detailHPadding)
+            .padding(.vertical, SettingsFormStyle.detailVPadding)
         }
+        .scrollContentBackground(.hidden)
         .background(theme.canvas)
     }
 }
@@ -343,55 +342,53 @@ struct PipelineStatusDetail: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: SettingsFormStyle.blockSpacing) {
+                VStack(alignment: .leading, spacing: SettingsFormStyle.titleMetaSpacing) {
                     Text("盘后事件链")
-                        .font(KSSFont.themed(XcomListChrome.detailTitlePointSize(theme.system), .bold, theme: theme))
-                    Text("选股 → MI → 指标 → 复盘。任务台只看状态；启停、改排期、重跑都在设置 → 定时任务。")
-                        .font(KSSFont.themed(13.5, theme: theme))
-                        .foregroundStyle(theme.textSecondary)
+                        .font(KSSFont.themed(SettingsFormStyle.pageTitle, .bold, theme: theme))
+                    SettingsHintText(text: "选股 → MI → 指标 → 复盘。任务台只看状态；启停、改排期、重跑都在设置 → 定时任务。")
                 }
 
                 if jobs.isEmpty {
-                    Text("尚未读到定时任务。打开设置 → 定时任务可同步 LaunchAgent。")
-                        .font(KSSFont.themed(13, theme: theme))
-                        .foregroundStyle(theme.textSecondary)
+                    SettingsHintText(text: "尚未读到定时任务。打开设置 → 定时任务可同步 LaunchAgent。", empty: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .kssCard(padding: SettingsFormStyle.cardPadding)
                 } else {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: SettingsFormStyle.groupSpacing) {
                         ForEach(jobs) { job in
-                            HStack {
+                            HStack(spacing: SettingsFormStyle.rowHSpacing) {
                                 Text(job.title)
-                                    .font(KSSFont.themed(13.5, .semibold, theme: theme))
+                                    .font(KSSFont.themed(SettingsFormStyle.itemTitle, .bold, theme: theme))
                                 Spacer()
-                                Text(job.schedule)
-                                    .font(KSSFont.themed(11.5, theme: theme))
-                                    .foregroundStyle(theme.textSecondary)
+                                SettingsStatusCapsule(text: job.schedule)
                                 pipelineBadge(job.health)
                             }
-                            .padding(.vertical, 6)
+                            .padding(.vertical, 2)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .kssCard(padding: 14)
+                    .kssCard(padding: SettingsFormStyle.cardPadding)
                 }
 
                 if staleCount > 0 {
-                    Text("另有 \(staleCount) 条定时任务漏跑，去设置里一键补跑。")
-                        .font(KSSFont.themed(12.5, theme: theme))
-                        .foregroundStyle(theme.ma5)
+                    SettingsInfoBanner(
+                        text: "另有 \(staleCount) 条定时任务漏跑，去设置里一键补跑。",
+                        isError: false,
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
                 }
 
-                HStack(spacing: 12) {
-                    Button("管理排期", action: onOpenSchedule)
-                        .buttonStyle(.borderedProminent)
-                    Button("查看日志", action: onOpenLogs)
-                        .buttonStyle(.bordered)
+                HStack(spacing: SettingsFormStyle.rowHSpacing) {
+                    SettingsPrimaryAction(title: "管理排期", action: onOpenSchedule)
+                    SettingsBorderedAction(title: "查看日志", action: onOpenLogs)
                 }
             }
-            .padding(24)
             .frame(maxWidth: 720, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, SettingsFormStyle.detailHPadding)
+            .padding(.vertical, SettingsFormStyle.detailVPadding)
         }
+        .scrollContentBackground(.hidden)
         .background(theme.canvas)
     }
 
@@ -857,13 +854,13 @@ struct TaskResultCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(result.title)
-                    .font(KSSFont.themed(15, .bold, theme: theme))
+                    .font(KSSFont.themed(SettingsFormStyle.itemTitle, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
                 Spacer()
                 StatusBadge.task(result.status)
             }
             Text(result.summary)
-                .font(KSSFont.themed(13.5, theme: theme))
+                .font(KSSFont.themed(SettingsFormStyle.bodyHint, theme: theme))
                 .foregroundStyle(theme.textPrimary)
             if !result.artifacts.isEmpty {
                 Text(result.artifacts.joined(separator: "  "))
@@ -882,7 +879,7 @@ struct TaskResultCard: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .kssCard(padding: 14)
+        .kssCard(padding: SettingsFormStyle.cardPadding)
     }
 
     @ViewBuilder

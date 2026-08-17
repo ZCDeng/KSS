@@ -46,6 +46,50 @@ final class RunbookWorkbenchTests: XCTestCase {
         XCTAssertNotEqual(RunbookItem.research("a"), RunbookItem.research("b"))
     }
 
+    func testRetiredInvestmentDailyIsHiddenFromWorkbench() {
+        let daily = ResearchGoalSummary(
+            goalId: "d1",
+            profileId: "investment-daily-v1",
+            objective: "投资分析日报 2026-08-13",
+            status: "created",
+            progress: 0)
+        let dailyByName = ResearchGoalSummary(
+            goalId: "d2",
+            profileId: "investment-weekly-v3",
+            objective: "投资分析日报 2026-08-12",
+            status: "created",
+            progress: 0)
+        let completedDaily = ResearchGoalSummary(
+            goalId: "d3",
+            profileId: "investment-daily-v1",
+            objective: "投资分析日报 2026-08-14",
+            status: "completed",
+            progress: 1)
+        let weekly = ResearchGoalSummary(
+            goalId: "w1",
+            profileId: "investment-weekly-v3",
+            objective: "投资分析周报 2026-08-10 至 2026-08-14",
+            status: "running",
+            progress: 0.66)
+        let scan = ResearchGoalSummary(
+            goalId: "s1",
+            profileId: "left-scan",
+            objective: "左侧机会扫描 · 2026-08-17",
+            status: "completed",
+            progress: 1)
+
+        XCTAssertFalse(RunbookResearchList.isListed(daily))
+        XCTAssertFalse(RunbookResearchList.isListed(dailyByName))
+        XCTAssertFalse(RunbookResearchList.isListed(completedDaily))
+        XCTAssertTrue(RunbookResearchList.isListed(weekly))
+        XCTAssertTrue(RunbookResearchList.isListed(scan))
+        XCTAssertEqual(
+            RunbookResearchList.listed([daily, dailyByName, completedDaily, weekly, scan]).map(\.goalId),
+            ["w1", "s1"])
+        XCTAssertFalse(RunbookResearchList.isCreatableProfile("investment-daily-v1"))
+        XCTAssertTrue(RunbookResearchList.isCreatableProfile("investment-weekly-v3"))
+    }
+
     private func job(label: String, title: String) -> ScheduledJob {
         ScheduledJob(
             label: label, title: title, category: "扫描选股", schedule: "工作日 23:00",
