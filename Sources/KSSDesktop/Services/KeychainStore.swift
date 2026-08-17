@@ -41,6 +41,7 @@ enum KeychainStore {
         "KSS_RESEARCH_PROVIDER",
         "KSS_RESEARCH_FETCH_PROVIDER",
         "KSS_RESEARCH_FIXTURE_PATH",
+        "KSS_COMBOSEARCH_BIN",
         "JINA_API_KEY",
         "SERPER_API_KEY",
     ]

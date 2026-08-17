@@ -912,6 +912,7 @@ def _load_project_env() -> dict[str, str]:
         "KSS_RESEARCH_PROVIDER",
         "KSS_RESEARCH_FETCH_PROVIDER",
         "KSS_RESEARCH_FIXTURE_PATH",
+        "KSS_COMBOSEARCH_BIN",
         "JINA_API_KEY",
         "SERPER_API_KEY",
     }
@@ -5560,7 +5561,7 @@ def _datasource_test_research() -> dict[str, Any]:
         if provider == "serper":
             hint = "已选 Serper 但缺少 SERPER_API_KEY"
         elif provider in {"disabled", ""}:
-            hint = "未配置外部研究，去设置里选择 Jina/Serper/HTTP"
+            hint = "未配置外部研究，去设置 → 外部研究选择本机 comboSearch / Jina / Serper / HTTP"
         else:
             hint = f"外部研究不可用（provider={provider}）"
         return {

@@ -149,6 +149,26 @@
     font-weight: 400;
     line-height: 1.7;
   }
+  /* Compiled research HTML brings its own type and layout. */
+  html[data-report="compiled"] { background: transparent !important; }
+  html[data-report="compiled"] #md { max-width: 1100px; }
+  html[data-report="compiled"] body {
+    padding: 8px 12px 36px;
+    background: transparent !important;
+  }
+  html[data-report="compiled"][data-reader="kami"] #md .kss-report :is(h1,h2,h3,h4,p,table,th,td,ul,ol,li,blockquote,strong) {
+    font-family: inherit;
+    font-size: inherit;
+    font-weight: inherit;
+    line-height: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    margin: revert;
+    padding: revert;
+    border: revert;
+    background: revert;
+    max-width: revert;
+  }
   html[data-reader="kami"] a {
     color: var(--brand);
     text-decoration: none;
@@ -416,6 +436,13 @@
       });
     }
 
+    function markCompiledReport(host) {
+      const compiled = !!(host && host.querySelector(".kss-report, .report-masthead, .report-daily"));
+      if (compiled) document.documentElement.setAttribute("data-report", "compiled");
+      else document.documentElement.removeAttribute("data-report");
+      return compiled;
+    }
+
     function polishEditorialDom(host) {
       // 去掉文首空节点后的首个 h1（壳层已显示标题）
       let node = host.firstChild;
@@ -451,7 +478,7 @@
       try {
         marked.setOptions({ gfm: true, breaks: false });
         host.innerHTML = marked.parse(text);
-        if (readerMode === "xcom" || readerMode === "kami") polishEditorialDom(host);
+        if (!markCompiledReport(host) && (readerMode === "xcom" || readerMode === "kami")) polishEditorialDom(host);
       } catch (e) {
         host.textContent = text;
       }
@@ -488,7 +515,7 @@
         readerMode = next;
         document.documentElement.setAttribute("data-reader", next);
         const host = document.getElementById("md");
-        if (host) polishEditorialDom(host);
+        if (host && !markCompiledReport(host)) polishEditorialDom(host);
         scheduleHeight();
       } catch (e) { /* 主题失败不应破坏正文渲染 */ }
     };
@@ -501,7 +528,7 @@
       if (!html) { host.innerHTML = '<div id="empty">暂无内容</div>'; scheduleHeight(); return; }
       try {
         host.innerHTML = String(html);
-        if (readerMode === "xcom" || readerMode === "kami") polishEditorialDom(host);
+        if (!markCompiledReport(host) && (readerMode === "xcom" || readerMode === "kami")) polishEditorialDom(host);
       } catch (e) {
         host.textContent = String(html);
       }

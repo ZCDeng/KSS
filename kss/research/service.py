@@ -2107,19 +2107,34 @@ class ResearchService:
             ]
         )
         objective = str(goal.get("objective") or "深度研究")
+        profile_id = str(goal.get("profile_id") or "investment-weekly-v3")
+        narrative_paragraphs: list[str] = []
+        if profile_id == "investment-daily-v1":
+            from kss.research.recipe_metrics import extract_daily_narrative_paragraphs
+
+            narrative_paragraphs = extract_daily_narrative_paragraphs(task_results)
+        overview_blocks = [
+            ReportBlock(
+                f"b_overview_{index}",
+                "paragraph",
+                text=text,
+                evidence_refs=all_refs,
+            )
+            for index, text in enumerate(narrative_paragraphs, start=1)
+        ] or [
+            ReportBlock(
+                "b_overview",
+                "paragraph",
+                text=objective,
+                evidence_refs=all_refs,
+            )
+        ]
         sections = [
             ReportSection(
                 "sec_overview",
-                "总览",
+                "盘后综述" if narrative_paragraphs else "总览",
                 "overview",
-                [
-                    ReportBlock(
-                        "b_overview",
-                        "paragraph",
-                        text=objective,
-                        evidence_refs=all_refs,
-                    )
-                ],
+                overview_blocks,
             ),
             ReportSection(
                 "sec_temperature",
@@ -2222,7 +2237,6 @@ class ResearchService:
                 ],
             ),
         ]
-        profile_id = str(goal.get("profile_id") or "investment-weekly-v3")
         if profile_id == "investment-daily-v1":
             sections = [
                 section for section in sections
@@ -2236,7 +2250,7 @@ class ResearchService:
             document_id=f"{goal_id}-{snapshot_id or 'snapshot'}",
             profile_id=profile_id,
             title=("投资分析日报 V1" if profile_id == "investment-daily-v1" else "投资分析周报 V3"),
-            subtitle="结构化证据草稿",
+            subtitle=("盘后投资分析" if narrative_paragraphs else "结构化证据草稿"),
             date_range=date_range or "未指定",
             as_of=self._goal_as_of(goal_id),
             sections=sections,

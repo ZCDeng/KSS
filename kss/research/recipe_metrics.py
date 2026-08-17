@@ -268,6 +268,29 @@ def iter_url_evidence_refs(result: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def extract_daily_narrative_paragraphs(task_results: dict[str, dict[str, Any]]) -> list[str]:
+    """Pull harness narrative statements into the compiled daily report body."""
+    paragraphs: list[str] = []
+    seen: set[str] = set()
+    for raw_claim in (task_results.get("narrative") or {}).get("claims") or []:
+        if not isinstance(raw_claim, dict):
+            continue
+        kind = str(raw_claim.get("kind") or "narrative")
+        if kind not in {"narrative", "paragraph"}:
+            continue
+        text = str(
+            raw_claim.get("statement")
+            or raw_claim.get("text")
+            or raw_claim.get("content")
+            or ""
+        ).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        paragraphs.append(text)
+    return paragraphs
+
+
 def extract_precision_card_payloads(task_result: dict[str, Any]) -> list[dict[str, Any]]:
     """Collect precision-card-v1 objects from an analyst_cards attempt."""
     cards: list[dict[str, Any]] = []

@@ -26,6 +26,8 @@ final class MarkdownWebResourceTests: XCTestCase {
         XCTAssertTrue(html.contains("window.kssSetTheme"))
         XCTAssertTrue(html.contains("window.kssSetMarkdown"))
         XCTAssertTrue(html.contains("window.kssSetHTML"))
+        XCTAssertTrue(html.contains("data-report"))
+        XCTAssertTrue(html.contains("markCompiledReport"))
         XCTAssertFalse(html.contains("background: #f5f4ed"))
         XCTAssertFalse(html.lowercased().contains("https://"))
         XCTAssertFalse(html.lowercased().contains("gstatic.com"))
@@ -94,5 +96,16 @@ final class MarkdownWebResourceTests: XCTestCase {
     func testHtmlBodyFragmentFallsBackForBareSnippet() {
         let snippet = "<section><p>片段</p></section>"
         XCTAssertEqual(ResearchArtifactPreviewSupport.htmlBodyFragment(snippet), snippet)
+    }
+
+    func testHtmlBodyFragmentKeepsHeadStylesWithBody() {
+        let html = """
+        <!doctype html><html><head><style>.metric{color:navy}</style></head>
+        <body><article class="kss-report"><h1>日报</h1></article></body></html>
+        """
+        let fragment = ResearchArtifactPreviewSupport.htmlBodyFragment(html)
+        XCTAssertTrue(fragment.contains("<style>.metric{color:navy}</style>"))
+        XCTAssertTrue(fragment.contains("<article class=\"kss-report\"><h1>日报</h1></article>"))
+        XCTAssertFalse(fragment.lowercased().contains("<html"))
     }
 }

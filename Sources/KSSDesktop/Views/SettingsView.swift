@@ -278,6 +278,7 @@ struct SettingsCredentialsSection: View {
     @State private var researchJinaKey = ""
     @State private var researchSerperKey = ""
     @State private var researchFixturePath = ""
+    @State private var researchComboSearchBin = ""
     /// 已保存反馈按卡显示（source.rawValue）。任一字段编辑即清除对应卡的反馈。
     @State private var savedSources: Set<String> = []
     /// Keychain/provider route 回填会触发 SwiftUI `onChange`；回填期间不能被误判成用户编辑。
@@ -332,13 +333,16 @@ struct SettingsCredentialsSection: View {
                 field("API URL（自建中继，可选）", text: $telegramApiUrl, secure: false, source: .telegram)
             }
         case .research:
-            sourceCard(.research, note: "覆盖与对话可拉取公告/舆情作为 evidence-only 背景，不得覆盖本地盘面，不得写成动作或仓位。") {
+            sourceCard(.research, note: "覆盖与对话可拉取公告/舆情作为 evidence-only 背景，不得覆盖本地盘面，不得写成动作或仓位。定时投资分析日报请选「本机 comboSearch」。") {
                 researchProviderPicker
                 if researchProvider == "jina" {
                     field("Jina API Key（可选）", text: $researchJinaKey, secure: true, source: .research)
                 }
                 if researchProvider == "serper" {
                     field("Serper API Key", text: $researchSerperKey, secure: true, source: .research)
+                }
+                if researchProvider == "combosearch" {
+                    field("comboSearch 路径（可选）", text: $researchComboSearchBin, secure: false, source: .research)
                 }
                 if researchProvider == "fixture" {
                     field("夹具路径（开发，可选）", text: $researchFixturePath, secure: false, source: .research)
@@ -348,7 +352,7 @@ struct SettingsCredentialsSection: View {
     }
 
     private var researchProviderPicker: some View {
-        VStack(alignment: .leading, spacing: isXcomFlat ? SettingsFormStyle.titleMetaSpacing : 5) {
+        VStack(alignment: .leading, spacing: isXcomFlat ? SettingsFormStyle.titleMetaSpacing : 8) {
             Text("提供方")
                 .font(KSSFont.themed(
                     isXcomFlat ? SettingsFormStyle.fieldLabel : 13,
@@ -356,14 +360,29 @@ struct SettingsCredentialsSection: View {
                     theme: theme
                 ))
                 .foregroundStyle(theme.textSecondary)
-            Picker("", selection: $researchProvider) {
+            VStack(alignment: .leading, spacing: 6) {
                 ForEach(ResearchProviderOption.allCases) { option in
-                    Text(option.label).tag(option.rawValue)
+                    Button {
+                        researchProvider = option.rawValue
+                        markDirty(.research)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: researchProvider == option.rawValue ? "largecircle.fill.circle" : "circle")
+                                .foregroundStyle(researchProvider == option.rawValue ? theme.accent : theme.textSecondary)
+                            Text(option.label)
+                                .font(KSSFont.themed(isXcomFlat ? SettingsFormStyle.fieldLabel : 13, theme: theme))
+                                .foregroundStyle(theme.textPrimary)
+                            Spacer(minLength: 0)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(researchProvider == option.rawValue ? [.isSelected] : [])
                 }
             }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .onChange(of: researchProvider) { _, _ in markDirty(.research) }
+            Text("定时投资分析日报走本机 CLI 时请选「本机 comboSearch」。钥匙串未写时会回读 network.env。")
+                .font(KSSFont.themed(isXcomFlat ? SettingsFormStyle.bodyHint : 12, theme: theme))
+                .foregroundStyle(theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -499,7 +518,15 @@ struct SettingsCredentialsSection: View {
         }
     }
 
-    private func sourceConfigured(_ source: SettingsDataSource) -> Bool { source.isConfigured }
+    private func sourceConfigured(_ source: SettingsDataSource) -> Bool {
+        if source == .research {
+            if researchProvider == "serper" {
+                return !researchSerperKey.isEmpty
+            }
+            return ["fixture", "requests", "jina", "combosearch"].contains(researchProvider)
+        }
+        return source.isConfigured
+    }
 
     @ViewBuilder
     private func resultDetail(_ result: DataSourceTestResult) -> some View {
@@ -573,11 +600,13 @@ struct SettingsCredentialsSection: View {
         longbridgeAppKey = KeychainStore.read("LONGBRIDGE_APP_KEY") ?? ""
         longbridgeAppSecret = KeychainStore.read("LONGBRIDGE_APP_SECRET") ?? ""
         longbridgeAccessToken = KeychainStore.read("LONGBRIDGE_ACCESS_TOKEN") ?? ""
-        let provider = (KeychainStore.read("KSS_RESEARCH_PROVIDER") ?? "disabled").lowercased()
-        researchProvider = ResearchProviderOption(rawValue: provider)?.rawValue ?? "disabled"
+        researchProvider = SettingsNetworkEnv.resolvedResearchProvider(stateRoot: store.bridge?.stateRoot)
         researchJinaKey = KeychainStore.read("JINA_API_KEY") ?? ""
         researchSerperKey = KeychainStore.read("SERPER_API_KEY") ?? ""
         researchFixturePath = KeychainStore.read("KSS_RESEARCH_FIXTURE_PATH") ?? ""
+        researchComboSearchBin = KeychainStore.read("KSS_COMBOSEARCH_BIN")
+            ?? SettingsNetworkEnv.read("KSS_COMBOSEARCH_BIN", stateRoot: store.bridge?.stateRoot)
+            ?? ""
     }
 
     /// 按源保存（只写该卡字段）；随后重启 sidecar 并刷新自检。
@@ -603,6 +632,7 @@ struct SettingsCredentialsSection: View {
             KeychainStore.write("JINA_API_KEY", researchJinaKey)
             KeychainStore.write("SERPER_API_KEY", researchSerperKey)
             KeychainStore.write("KSS_RESEARCH_FIXTURE_PATH", researchFixturePath)
+            KeychainStore.write("KSS_COMBOSEARCH_BIN", researchComboSearchBin)
         }
         BridgeClient.restartSidecarForEnvChange()
         store.refreshLLMCredentialsStatus()
@@ -626,6 +656,50 @@ struct SettingsCredentialsSection: View {
 enum SettingsCredentialChangePolicy {
     static func shouldMarkDirty(isHydrating: Bool) -> Bool {
         !isHydrating
+    }
+}
+
+private enum SettingsNetworkEnv {
+    static func defaultStateRoot() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/KSS", isDirectory: true)
+    }
+
+    static func read(_ key: String, stateRoot: URL? = nil) -> String? {
+        let roots = [stateRoot, defaultStateRoot()].compactMap { $0 }
+        for root in roots {
+            let url = root.appendingPathComponent("network.env")
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            for rawLine in text.split(whereSeparator: \.isNewline) {
+                let line = rawLine.trimmingCharacters(in: .whitespaces)
+                if line.isEmpty || line.hasPrefix("#") || !line.contains("=") {
+                    continue
+                }
+                let parts = line.split(separator: "=", maxSplits: 1)
+                guard parts.count == 2,
+                      parts[0].trimmingCharacters(in: .whitespaces) == key
+                else { continue }
+                let value = String(parts[1])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                if !value.isEmpty {
+                    return value
+                }
+            }
+        }
+        return nil
+    }
+
+    static func resolvedResearchProvider(stateRoot: URL? = nil) -> String {
+        let keychain = (KeychainStore.read("KSS_RESEARCH_PROVIDER") ?? "").lowercased()
+        if let option = ResearchProviderOption(rawValue: keychain), option != .disabled {
+            return option.rawValue
+        }
+        if let env = read("KSS_RESEARCH_PROVIDER", stateRoot: stateRoot)?.lowercased(),
+           let option = ResearchProviderOption(rawValue: env) {
+            return option.rawValue
+        }
+        return ResearchProviderOption(rawValue: keychain)?.rawValue ?? "disabled"
     }
 }
 
@@ -671,7 +745,7 @@ enum SettingsDataSource: String, CaseIterable, Identifiable {
         case .telegram:
             return !(KeychainStore.read("TELEGRAM_BOT_TOKEN") ?? "").isEmpty
         case .research:
-            let provider = (KeychainStore.read("KSS_RESEARCH_PROVIDER") ?? "disabled").lowercased()
+            let provider = SettingsNetworkEnv.resolvedResearchProvider()
             if provider == "serper" {
                 return !(KeychainStore.read("SERPER_API_KEY") ?? "").isEmpty
             }

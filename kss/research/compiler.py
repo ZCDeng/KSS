@@ -508,9 +508,13 @@ class ReportCompiler:
                     bad_numbers = self._unbound_financial_numbers(text_blob, row_metrics, document.metric_ledger.by_id())
                     if bad_numbers:
                         findings.append({"severity": "block", "code": "row_unbound_financial_number", "block_id": block.block_id, "numbers": bad_numbers[:5]})
-                bad_numbers = self._unbound_financial_numbers(" ".join([block.title or "", block.text or ""]), block.metric_refs, document.metric_ledger.by_id())
-                if bad_numbers:
-                    findings.append({"severity": "block", "code": "unbound_financial_number", "block_id": block.block_id, "numbers": bad_numbers[:5]})
+                if not (
+                    document.profile_id == "investment-daily-v1"
+                    and block.type == "paragraph"
+                ):
+                    bad_numbers = self._unbound_financial_numbers(" ".join([block.title or "", block.text or ""]), block.metric_refs, document.metric_ledger.by_id())
+                    if bad_numbers:
+                        findings.append({"severity": "block", "code": "unbound_financial_number", "block_id": block.block_id, "numbers": bad_numbers[:5]})
 
         cards = self._precision_card_rows(document)
         card_ids = [str(row.get("card_id") or "") for row in cards]
@@ -569,8 +573,13 @@ class ReportCompiler:
         watermark = "<div class=\"watermark\">草稿 · 审计未通过 · 不得正式发布</div>" if draft else ""
         audit_passed = audit["status"] == "pass"
         audit_summary = "审计通过" if audit_passed else "审计未通过"
+        if document.profile_id == "investment-daily-v1":
+            from kss.research.report_html import render_daily_html
+
+            return render_daily_html(self, document, audit=audit, draft=draft)
         report_class = "report-v3" if document.profile_id == "investment-weekly-v3" else "report-standard"
         audit_class = "audit-chip" if audit_passed else "audit-chip is-failed"
+        layout = V3_PRESENTATION_CONTRACT["layout"] if report_class == "report-v3" else "standard"
         return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -580,7 +589,7 @@ class ReportCompiler:
   <title>{html.escape(document.title)}</title>
   <style>{REPORT_CSS}</style>
 </head>
-<body class="{report_class}" data-report-layout="{V3_PRESENTATION_CONTRACT['layout'] if report_class == 'report-v3' else 'standard'}">{watermark}<main>
+<body class="{report_class}" data-report-layout="{layout}">{watermark}<article class="kss-report {report_class}"><main>
 <header class="report-masthead">
   <div class="report-eyebrow">KSS · INVESTMENT RESEARCH</div>
   <div class="masthead-title-row"><h1>{html.escape(document.title)}</h1><span class="{audit_class}">{audit_summary}</span></div>
@@ -592,7 +601,7 @@ class ReportCompiler:
   </div>
 </header>
 {sections}
-</main></body></html>"""
+</main></article></body></html>"""
 
     def _render_section(self, section: ReportSection, metrics: dict[str, MetricEntry], *, index: int) -> str:
         blocks = "\n".join(self._render_block(block, metrics) for block in section.blocks)
@@ -615,19 +624,24 @@ class ReportCompiler:
                     "<div class=\"metric\">"
                     f"<div class=\"metric-label\">{html.escape(metric.label)}</div>"
                     f"<div class=\"metric-value\">{html.escape(value)}</div>"
-                    f"<div class=\"metric-meta\">{html.escape(metric.formula_id)} · {html.escape(metric.as_of)}</div>"
+                    f"<div class=\"metric-meta\">截至 {html.escape(metric.as_of)}</div>"
                     "</div>"
                 )
             return f"<div class=\"report-block report-block-metrics\">{title}<div class=\"metric-grid\">{''.join(items)}</div></div>"
         if block.type == "precision_cards":
             cards = []
             for row in block.rows:
+                evidence_line = (
+                    f"<p class=\"card-evidence\">{html.escape(str(row.get('source_group') or ''))}</p>"
+                    if row.get("source_group")
+                    else ""
+                )
                 cards.append(
                     "<article class=\"precision-card\">"
                     "<span class=\"card-kicker\">精判卡</span>"
                     f"<strong>{html.escape(str(row.get('title') or row.get('card_id') or '卡片'))}</strong>"
                     f"<p>{html.escape(str(row.get('summary') or ''))}</p>"
-                    f"<p class=\"card-evidence\">metric: {html.escape(','.join(map(str, row.get('metric_refs', []))))} · evidence: {html.escape(','.join(map(str, row.get('evidence_refs', []))))}</p>"
+                    f"{evidence_line}"
                     "</article>"
                 )
             return f"<div class=\"report-block report-block-cards\">{title}<div class=\"precision-cards\">{''.join(cards)}</div></div>"

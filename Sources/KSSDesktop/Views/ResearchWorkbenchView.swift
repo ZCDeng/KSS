@@ -780,6 +780,7 @@ enum ResearchArtifactPreviewSupport {
     }
 
     /// 完整 HTML 文档只取 body 片段，复用 Kami/markdown 阅读壳；片段则原样注入。
+    /// 编译报告的版式在 ``<head><style>``，预览必须一并带上，否则只剩平铺标签。
     static func htmlBodyFragment(_ html: String) -> String {
         let lower = html.lowercased()
         guard let bodyOpen = lower.range(of: "<body"),
@@ -793,7 +794,27 @@ enum ResearchArtifactPreviewSupport {
             offsetBy: lower.distance(from: lower.startIndex, to: bodyCloseRel.lowerBound)
         )
         guard start < end else { return html }
-        return String(html[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = String(html[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let head = String(html[html.startIndex..<bodyOpen.lowerBound])
+        let styles = extractedStyles(from: head)
+        if styles.isEmpty {
+            return body
+        }
+        return styles + "\n" + body
+    }
+
+    static func extractedStyles(from head: String) -> String {
+        var styles: [String] = []
+        var remainder = head[...]
+        while true {
+            guard let open = remainder.range(of: "<style", options: .caseInsensitive),
+                  let gt = remainder[open.upperBound...].firstIndex(of: ">"),
+                  let close = remainder[gt...].range(of: "</style>", options: .caseInsensitive)
+            else { break }
+            styles.append(String(remainder[open.lowerBound..<close.upperBound]))
+            remainder = remainder[close.upperBound...]
+        }
+        return styles.joined(separator: "\n")
     }
 }
 

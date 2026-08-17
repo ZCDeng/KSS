@@ -12,6 +12,7 @@ from kss.research.recipe_metrics import (
     build_daily_card_rows,
     coerce_recipe_metric,
     daily_investment_gates_satisfied,
+    extract_daily_narrative_paragraphs,
     extract_precision_card_payloads,
     fill_missing_recipe_metrics,
     strip_unbound_financial_tokens,
@@ -247,6 +248,25 @@ def test_build_daily_card_rows_fallback_omits_headline_numbers() -> None:
     assert "39亿" not in str(rows[0])
 
 
+def test_extract_daily_narrative_paragraphs_keeps_order_and_dedupes() -> None:
+    paragraphs = extract_daily_narrative_paragraphs(
+        {
+            "narrative": {
+                "claims": [
+                    {"kind": "narrative", "statement": "稀土永磁领涨，北方稀土 +5.82%。"},
+                    {"kind": "metric", "statement": "应忽略"},
+                    {"kind": "narrative", "statement": "稀土永磁领涨，北方稀土 +5.82%。"},
+                    {"kind": "paragraph", "text": "主线仍未形成，领涨碎片化。"},
+                ]
+            }
+        }
+    )
+    assert paragraphs == [
+        "稀土永磁领涨，北方稀土 +5.82%。",
+        "主线仍未形成，领涨碎片化。",
+    ]
+
+
 def test_extract_precision_card_payloads() -> None:
     cards = extract_precision_card_payloads(
         {
@@ -417,6 +437,20 @@ def test_daily_document_compiles_recipe_metrics_without_input_refs(tmp_path: Pat
             "claims": [{"kind": "card_structure", "fields": {"card_id": "c1", "sections": []}}],
         },
     )
+    _insert_succeeded_task(
+        service,
+        goal_id,
+        "narrative",
+        {
+            "status": "succeeded",
+            "claims": [
+                {
+                    "kind": "narrative",
+                    "statement": "盘后主线仍未形成，稀土永磁领涨，北方稀土 +5.82%。",
+                }
+            ],
+        },
+    )
 
     document = service._build_report_document(goal_id)
     compiled = service.compiler.compile(document)
@@ -424,7 +458,21 @@ def test_daily_document_compiles_recipe_metrics_without_input_refs(tmp_path: Pat
     assert "metric_value_not_numeric" not in codes
     assert "metric_formula_inputs_missing" not in codes
     assert "row_unbound_financial_number" not in codes
+    assert "unbound_financial_number" not in codes
+    assert document.subtitle == "盘后投资分析"
+    overview = next(section for section in document.sections if section.anchor == "overview")
+    assert overview.title == "盘后综述"
+    assert any("+5.82%" in (block.text or "") for block in overview.blocks)
     assert document.metric_ledger.by_id()["m_temperature"].value == 0.6125
+    html = compiled["outputs"]["report.html"].decode("utf-8")
+    assert 'class="kss-report report-daily"' in html
+    assert "<style>" in html.split('class="kss-report report-daily"', 1)[1]
+    assert 'class="daily-metrics"' in html
+    assert 'class="daily-lead"' in html
+    assert "temperature_index · 2026-08-14" not in html
+    assert "摘要" in html
+    assert "注释" in html
+    assert "+5.82%" in html
     card_rows = [
         row
         for section in document.sections
