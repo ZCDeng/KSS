@@ -73,11 +73,14 @@ def test_scheduled_research_lib_prefers_signed_app_over_build_tree() -> None:
     block = lib[start:]
     assert block.index("/Applications/KSSDesktop.app") < block.index(".build")
     assert "kss_helper_is_team_signed" in lib
-    for name in ("run_investment_analysis_daily.sh", "run_investment_analysis_weekly.sh"):
-        wrapper = (_REPO / "scripts" / name).read_text(encoding="utf-8")
-        assert "lib_scheduled_research.sh" in wrapper
-        assert "kss_find_scheduled_research_helper" in wrapper
-        assert "API_KEY" not in wrapper
+    weekly = (_REPO / "scripts" / "run_investment_analysis_weekly.sh").read_text(encoding="utf-8")
+    assert "lib_scheduled_research.sh" in weekly
+    assert "kss_find_scheduled_research_helper" in weekly
+    assert "API_KEY" not in weekly
+    daily = (_REPO / "scripts" / "run_investment_analysis_daily.sh").read_text(encoding="utf-8")
+    assert "run_left_scan_daily.py" in daily
+    assert "kss_find_scheduled_research_helper" not in daily
+    assert "API_KEY" not in daily
 
 
 def test_finder_honors_explicit_helper_override(tmp_path: Path) -> None:

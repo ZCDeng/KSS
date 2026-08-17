@@ -403,19 +403,25 @@ class TestTriggeredBy:
         assert m.job("mi_signal_pack").triggered_by == "formal_daily_picks"
         assert m.job("indicator_signal_pack").triggered_by == "mi_signal_pack"
         assert m.job("formal_daily_review").triggered_by == "indicator_signal_pack"
-        assert m.job("investment_analysis_daily").triggered_by == "formal_daily_review"
+        assert m.job("investment_analysis_daily").triggered_by is None
         assert m.job("investment_analysis_weekly").triggered_by is None
         for suffix in ("formal_daily_picks", "mi_signal_pack",
                        "indicator_signal_pack", "formal_daily_review"):
             assert m.job(suffix).schedule.hour == 23, f"{suffix} 应为深夜兜底档"
-        assert m.job("investment_analysis_daily").schedule.minute == 20
+        assert m.job("investment_analysis_daily").schedule.hour == 20
+        assert m.job("investment_analysis_daily").schedule.minute == 0
+        assert m.job("investment_analysis_daily").schedule.weekdays is None
         assert m.job("investment_analysis_weekly").schedule.minute == 40
 
 
 def test_scheduled_research_wrappers_do_not_load_or_export_model_keys() -> None:
-    for name in ("run_investment_analysis_daily.sh", "run_investment_analysis_weekly.sh"):
-        wrapper = (_REPO / "scripts" / name).read_text(encoding="utf-8")
-        assert "KSSResearchSchedulerHelper" in wrapper
+    daily = (_REPO / "scripts" / "run_investment_analysis_daily.sh").read_text(encoding="utf-8")
+    assert "run_left_scan_daily.py" in daily
+    assert "KSSResearchSchedulerHelper" not in daily
+    assert "API_KEY" not in daily
+    weekly = (_REPO / "scripts" / "run_investment_analysis_weekly.sh").read_text(encoding="utf-8")
+    assert "KSSResearchSchedulerHelper" in weekly
+    for wrapper in (daily, weekly):
         assert "API_KEY" not in wrapper
         assert "KSS_LLM_PRIMARY_KEY" not in wrapper
         assert "KSS_LLM_FALLBACK_KEY" not in wrapper

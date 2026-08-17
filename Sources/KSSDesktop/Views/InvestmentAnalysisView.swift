@@ -127,7 +127,11 @@ struct InvestmentAnalysisView: View {
                 ContentUnavailableView(
                     cadence == .daily ? "暂无投资分析日报" : "暂无投资分析周报",
                     systemImage: "doc.text.image",
-                    description: Text("定时研究完成并通过审计后会归档在这里。"))
+                    description: Text(
+                        cadence == .daily
+                            ? "每晚 20:00 从 Google Drive「左侧机会扫描」写入当天报告。"
+                            : "定时研究完成并通过审计后会归档在这里。"
+                    ))
             } else {
                 List(selection: $selectedID) {
                     ForEach(reports) { report in

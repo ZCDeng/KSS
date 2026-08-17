@@ -66,7 +66,4 @@ kss_run_with_timeout 1800 \
 
 if [ "$CHAIN_RUN" -eq 1 ]; then
   kss_mark_done review
-  # A successful formal review is the normal event path for the investment
-  # daily; its own 23:20 calendar entry remains a safe fallback.
-  kss_kick_next investment_analysis_daily
 fi

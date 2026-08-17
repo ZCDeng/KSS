@@ -333,7 +333,7 @@ struct SettingsCredentialsSection: View {
                 field("API URL（自建中继，可选）", text: $telegramApiUrl, secure: false, source: .telegram)
             }
         case .research:
-            sourceCard(.research, note: "覆盖与对话可拉取公告/舆情作为 evidence-only 背景，不得覆盖本地盘面，不得写成动作或仓位。定时投资分析日报请选「本机 comboSearch」。") {
+            sourceCard(.research, note: "覆盖与对话可拉取公告/舆情作为 evidence-only 背景，不得覆盖本地盘面，不得写成动作或仓位。定时投资分析日报已改为 20:00 读取 Google Drive「左侧机会扫描」；本机 comboSearch 只服务周报与任务台。") {
                 researchProviderPicker
                 if researchProvider == "jina" {
                     field("Jina API Key（可选）", text: $researchJinaKey, secure: true, source: .research)
@@ -379,7 +379,7 @@ struct SettingsCredentialsSection: View {
                     .accessibilityAddTraits(researchProvider == option.rawValue ? [.isSelected] : [])
                 }
             }
-            Text("定时投资分析日报走本机 CLI 时请选「本机 comboSearch」。钥匙串未写时会回读 network.env。")
+            Text("定时投资分析日报不再走研究 harness。周报与任务台走本机 CLI 时请选「本机 comboSearch」；钥匙串未写时会回读 network.env。")
                 .font(KSSFont.themed(isXcomFlat ? SettingsFormStyle.bodyHint : 12, theme: theme))
                 .foregroundStyle(theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)

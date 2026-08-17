@@ -169,16 +169,15 @@ jobs:
     enabled: true
     triggered_by: indicator_signal_pack
 
-  # 研究报告由签名 Swift helper 开 Keychain credential broker，再启动持久
-  # Python Runner；launchd plist 与 wrapper 均不含模型 API key。
+  # 日报改为 20:00 从 Google Drive「左侧机会扫描」取当天 PDF/HTML 入库，
+  # 不再跑研究 harness。周报仍由签名 Swift helper 开 Keychain broker。
   - suffix: investment_analysis_daily
     wrapper: scripts/run_investment_analysis_daily.sh
-    schedule: {hour: 23, minute: 20, weekdays: [1, 2, 3, 4, 5]}
+    schedule: {hour: 20, minute: 0}
     title: 投资分析日报
     category: 板块复盘
     catchup: true
     enabled: true
-    triggered_by: formal_daily_review
 
   - suffix: investment_analysis_weekly
     wrapper: scripts/run_investment_analysis_weekly.sh

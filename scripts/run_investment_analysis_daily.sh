@@ -1,15 +1,10 @@
 #!/usr/bin/env bash
-# Scheduled investment-analysis daily report.  Credentials stay in Keychain:
-# this wrapper delegates to the signed Swift helper and never reads/exports a
-# model key itself.
+# Nightly 左侧机会扫描 → 投资分析日报. No model keys, no research helper.
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${KSS_STATE_ROOT:=$PROJECT_ROOT}"
 
-# Keep the same portable runtime guard as every launchd wrapper. The Swift
-# helper owns credential brokering, but it deliberately invokes this verified
-# interpreter to run the isolated Python Research Runner.
 if [ -n "${KSS_PYTHON:-}" ]; then
     PYTHON="$KSS_PYTHON"
 elif [ -x "$HOME/Library/Application Support/KSS/venv/bin/python3" ]; then
@@ -21,12 +16,6 @@ else
     exit 1
 fi
 
-# shellcheck source=scripts/lib_scheduled_research.sh
-source "$PROJECT_ROOT/scripts/lib_scheduled_research.sh"
-HELPER="$(kss_find_scheduled_research_helper "$PROJECT_ROOT" || true)"
-if [ -z "$HELPER" ]; then
-  echo "scheduled research helper is unavailable; sync the signed KSS app or build KSSResearchSchedulerHelper" >&2
-  exit 2
-fi
-
-exec "$HELPER" --project-root "$PROJECT_ROOT" --state-root "$KSS_STATE_ROOT" --cadence daily
+exec "$PYTHON" "$PROJECT_ROOT/scripts/run_left_scan_daily.py" \
+    --project-root "$PROJECT_ROOT" \
+    --state-root "$KSS_STATE_ROOT"

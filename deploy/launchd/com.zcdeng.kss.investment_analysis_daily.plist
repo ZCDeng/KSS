@@ -25,48 +25,12 @@
 	<key>ThrottleInterval</key>
 	<integer>60</integer>
 	<key>StartCalendarInterval</key>
-	<array>
-		<dict>
-			<key>Weekday</key>
-			<integer>1</integer>
-			<key>Hour</key>
-			<integer>23</integer>
-			<key>Minute</key>
-			<integer>20</integer>
-		</dict>
-		<dict>
-			<key>Weekday</key>
-			<integer>2</integer>
-			<key>Hour</key>
-			<integer>23</integer>
-			<key>Minute</key>
-			<integer>20</integer>
-		</dict>
-		<dict>
-			<key>Weekday</key>
-			<integer>3</integer>
-			<key>Hour</key>
-			<integer>23</integer>
-			<key>Minute</key>
-			<integer>20</integer>
-		</dict>
-		<dict>
-			<key>Weekday</key>
-			<integer>4</integer>
-			<key>Hour</key>
-			<integer>23</integer>
-			<key>Minute</key>
-			<integer>20</integer>
-		</dict>
-		<dict>
-			<key>Weekday</key>
-			<integer>5</integer>
-			<key>Hour</key>
-			<integer>23</integer>
-			<key>Minute</key>
-			<integer>20</integer>
-		</dict>
-	</array>
+	<dict>
+		<key>Hour</key>
+		<integer>20</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
 	<key>RunAtLoad</key>
 	<false/>
 </dict>
