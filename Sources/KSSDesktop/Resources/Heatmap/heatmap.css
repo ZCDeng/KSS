@@ -1,0 +1,90 @@
+:root {
+  --bg: #111111;
+  --surface: #1a1a1a;
+  --ink: #f2f2f2;
+  --muted: #9a9a9a;
+  --line: #333333;
+  --accent: #3b82f6;
+}
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "HarmonyOS Sans SC", sans-serif;
+  overflow: hidden;
+}
+#chrome {
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  align-items: center;
+}
+label {
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+select, button {
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+button { cursor: pointer; }
+#stats {
+  font-size: 12px;
+  color: var(--muted);
+  margin-left: auto;
+}
+#industries {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+.chip.on {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+#stage {
+  position: relative;
+  height: calc(100% - 92px);
+}
+#map {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+}
+#tip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  max-width: 240px;
+  z-index: 2;
+}

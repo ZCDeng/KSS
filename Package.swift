@@ -25,6 +25,7 @@ let package = Package(
                 .copy("Resources/markdown.html"),
                 .copy("Resources/architecture.html"),
                 .copy("Resources/Launch"),
+                .copy("Resources/Heatmap"),
                 .copy("Resources/logo.png"),
                 .copy("Resources/kmark.png"),
                 .copy("Resources/DashboardSparkleIcon.png"),

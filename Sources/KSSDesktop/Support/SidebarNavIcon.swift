@@ -12,6 +12,7 @@ enum SidebarNavIconCatalog {
         case .watchlist: return "watchlist"
         case .themes: return "themes"
         case .investabilityMap: return "investability"
+        case .heatmap: return "heatmap"
         case .trends: return "trends"
         case .reviews: return "reviews"
         case .newsDigest: return "newsDigest"

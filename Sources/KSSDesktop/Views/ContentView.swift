@@ -299,6 +299,12 @@ struct ContentView: View {
                 store: store,
                 onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } }
             )
+        } else if store.selectedSection == .heatmap {
+            // 热力图拉自己的公开快照，不该跟着大快照一起等（plan U5 / KTD3）。
+            HeatmapView(
+                store: store,
+                onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } }
+            )
         } else if let snapshot = store.snapshot {
             switch store.selectedSection {
             case .dashboard:
@@ -431,7 +437,7 @@ struct ContentView: View {
                     onSelectSectorRotationDate: { date in Task { await store.loadSectorRotation(date: date) } },
                     onOpenExternally: { path in store.openReportInMarkEdit(path: path) }
                 )
-            case .investmentAnalysis, .investabilityMap:
+            case .investmentAnalysis, .investabilityMap, .heatmap:
                 EmptyView()
             case .backtests:
                 BacktestsView(

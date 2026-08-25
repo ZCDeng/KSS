@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>热力图</title>
+  <link rel="stylesheet" href="heatmap.css" />
+</head>
+<body>
+  <div id="chrome">
+    <div class="row">
+      <label>范围
+        <select id="market"></select>
+      </label>
+      <label>周期
+        <select id="period"></select>
+      </label>
+      <button type="button" id="shot">截图</button>
+      <div id="stats"></div>
+    </div>
+    <div id="industries"></div>
+  </div>
+  <div id="stage">
+    <canvas id="map"></canvas>
+    <div id="tip" hidden></div>
+  </div>
+  <script src="heatmap.js"></script>
+</body>
+</html>

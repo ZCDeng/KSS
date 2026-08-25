@@ -537,6 +537,10 @@ struct BridgeClient {
         try run(["trends-day", date], as: TrendDayDetail.self)
     }
 
+    func heatmapSnapshot(market: String = "all", period: String = "day") throws -> HeatmapSnapshot {
+        try run(["heatmap-snapshot", market, period], as: HeatmapSnapshot.self)
+    }
+
     /// 长跑任务（run/import 拉数据、回测、回填）直接走 subprocess：sidecar 的 3s
     /// socket 超时会误判不可用并回退，而 daemon 仍在跑同一任务 → 双跑（重复 Tushare
     /// 调用 + 争抢同一归档）。这些命令不属于热路径读，无需暖 pandas。
@@ -807,7 +811,8 @@ struct BridgeClient {
         // Longbridge 首连/行情常 >3s；过短会超时回退 subprocess（冷启 SDK 更慢）。
         let timeout: TimeInterval
         switch cmd {
-        case "longbridge-quote", "intraday-snapshot", "intraday-bars", "trading-hours":
+        case "longbridge-quote", "intraday-snapshot", "intraday-bars", "trading-hours",
+             "heatmap-snapshot":
             timeout = 20.0
         default:
             timeout = 3.0

@@ -47,4 +47,13 @@ final class KSSResourcesTests: XCTestCase {
         )
         XCTAssertEqual(resolved.bundleURL, Bundle.module.bundleURL)
     }
+
+    func testHeatmapHTMLIsBundled() {
+        let url = KSSResources.bundle.url(
+            forResource: "heatmap",
+            withExtension: "html",
+            subdirectory: "Heatmap"
+        ) ?? KSSResources.bundle.url(forResource: "heatmap", withExtension: "html")
+        XCTAssertNotNil(url, "heatmap.html should be in the resource bundle")
+    }
 }

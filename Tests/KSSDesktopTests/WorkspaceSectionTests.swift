@@ -37,6 +37,43 @@ final class WorkspaceSectionTests: XCTestCase {
         XCTAssertFalse(encoded.contains("Reviews"))
     }
 
+    func testHeatmapIsVisibleAndNotHidden() {
+        XCTAssertEqual(WorkspaceSection.heatmap.displayName, "热力图")
+        XCTAssertTrue(WorkspaceSection.ordered(from: "").contains(.heatmap))
+        XCTAssertFalse(WorkspaceSection.hidden.contains(.heatmap))
+        XCTAssertFalse(WorkspaceSection.pinned.contains(.heatmap))
+        XCTAssertNotEqual(
+            SidebarNavIconCatalog.resourceBase(for: .heatmap),
+            SidebarNavIconCatalog.resourceBase(for: .investabilityMap)
+        )
+    }
+
+    func testOrderedAppendsHeatmapWhenSavedOrderOmitsIt() {
+        let saved = WorkspaceSection.encode(
+            WorkspaceSection.ordered(from: "").filter { $0 != .heatmap }
+        )
+        XCTAssertFalse(saved.contains(WorkspaceSection.heatmap.rawValue))
+        let ordered = WorkspaceSection.ordered(from: saved)
+        XCTAssertEqual(ordered.last, .heatmap)
+    }
+
+    func testHeatmapRoutesBeforeDashboardSnapshotWait() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: root.appending(path: "Sources/KSSDesktop/Views/ContentView.swift"),
+            encoding: .utf8)
+
+        let heatmapRoute = source.range(of: "store.selectedSection == .heatmap")
+        let snapshotWait = source.range(of: "else if let snapshot = store.snapshot")
+        XCTAssertNotNil(heatmapRoute)
+        XCTAssertNotNil(snapshotWait)
+        XCTAssertLessThan(heatmapRoute!.lowerBound, snapshotWait!.lowerBound)
+        XCTAssertTrue(source.contains("case .investmentAnalysis, .investabilityMap, .heatmap:"))
+    }
+
     func testInvestmentAnalysisKeepsCadenceTabsAtTheTopOfTheArchiveColumn() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

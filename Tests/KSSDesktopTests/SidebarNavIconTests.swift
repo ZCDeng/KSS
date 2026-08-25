@@ -9,6 +9,7 @@ final class SidebarNavIconTests: XCTestCase {
             .watchlist: "watchlist",
             .themes: "themes",
             .investabilityMap: "investability",
+            .heatmap: "heatmap",
             .trends: "trends",
             .reviews: "reviews",
             .newsDigest: "newsDigest",
@@ -34,7 +35,7 @@ final class SidebarNavIconTests: XCTestCase {
     func testBundledPDFLoadsForOutlineAndFilled() {
         let bases = ["dashboard", "recommendations", "watchlist", "themes", "trends",
                      "reviews", "newsDigest", "backtests", "stocks", "investmentAnalysis",
-                     "investability", "seesaw"]
+                     "investability", "heatmap", "seesaw"]
         for base in bases {
             XCTAssertNotNil(SidebarNavIconCatalog.image(base: base, filled: false), "\(base)-outline")
             XCTAssertNotNil(SidebarNavIconCatalog.image(base: base, filled: true), "\(base)-filled")

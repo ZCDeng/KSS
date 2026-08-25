@@ -6113,6 +6113,10 @@ COMMANDS = {
         "desc": "标记节点已人工确认无标的",
         "args": ["NODE_ID", "true|false"],
     },
+    "heatmap-snapshot": {
+        "desc": "全市场热力图公开快照(只读,非回测;失败不回落样本)",
+        "args": ["[MARKET]", "[PERIOD]"],
+    },
     "cron-list": {"desc": "计划任务及状态", "args": []},
     "cron-rerun": {"desc": "重跑计划任务", "args": ["LABEL"]},
     "cron-enable": {"desc": "启用计划任务", "args": ["LABEL"]},
@@ -7531,6 +7535,15 @@ def dispatch(command: str, args: list[str]) -> Any:
         lines = int(args[1]) if len(args) > 1 and args[1] else 500
         grep = args[2] if len(args) > 2 else ""
         return _log_tail(args[0], lines, grep)
+    if command == "heatmap-snapshot":
+        from kss.heatmap.snapshot import HeatmapSnapshotError, load_snapshot
+
+        market = args[0] if args else "all"
+        period = args[1] if len(args) > 1 else "day"
+        try:
+            return load_snapshot(market, period)
+        except HeatmapSnapshotError as exc:
+            raise ValueError(str(exc)) from exc
     if command == "self-check":
         return _self_check()
     if command == "cs-freshness":

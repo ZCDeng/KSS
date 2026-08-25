@@ -78,6 +78,12 @@ final class KSSStore: ObservableObject {
     /// 就地补标的选择器目标。四处落点都只是把代码丢过来，sheet 由 ContentView 单点承载，
     /// 免得三个视图各挂一个同样的 sheet。
     @Published var exposurePickerTarget: ExposurePickerTarget?
+
+    // MARK: 热力图（plan 2026-08-25 U4）
+
+    @Published var heatmapSnapshot: HeatmapSnapshot?
+    @Published var heatmapLoading = false
+    @Published var heatmapError: String?
     /// 8 问的助手草稿，按代码存。只在内存里活着——逐题人工点「采纳」才入库。
     @Published var exposureDrafts: [String: ExposureAnswerDrafts] = [:]
     @Published var exposureDraftingSymbol: String?
@@ -3092,6 +3098,31 @@ final class KSSStore: ObservableObject {
             try bridge.investabilitySummary(codes: codes, capPct: capPct)
         }.value
         exposureQuota = quota
+    }
+
+    func loadHeatmapSnapshot(market: String = "all", period: String = "day") async {
+        guard let bridge else {
+            heatmapSnapshot = nil
+            heatmapError = "无法定位 KSS 项目根目录，heatmap-snapshot 不可用"
+            return
+        }
+        heatmapLoading = true
+        heatmapError = nil
+        defer { heatmapLoading = false }
+        do {
+            let snap = try await Task.detached {
+                try bridge.heatmapSnapshot(market: market, period: period)
+            }.value
+            guard HeatmapTape.canShow(snap) else {
+                heatmapSnapshot = nil
+                heatmapError = "heatmap-snapshot 不是可显示的当前行情（样本或空快照已拒绝）"
+                return
+            }
+            heatmapSnapshot = snap
+        } catch {
+            heatmapSnapshot = nil
+            heatmapError = "heatmap-snapshot 调用失败：\(error.localizedDescription)"
+        }
     }
 
     /// 只重算配额（改橙+紫上限时用，不重拉节点树）。
