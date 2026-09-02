@@ -37,8 +37,23 @@ export function projectSessionEvent(event) {
   const data = event.data && typeof event.data === "object" ? event.data : {};
   if (type === "assistant/chunk") {
     const chunk = data.chunk && typeof data.chunk === "object" ? data.chunk : {};
+    const index = Number.isInteger(chunk.index) ? chunk.index : 0;
     if (chunk.type === "text-delta" && chunk.text) {
-      return { type: "message_delta", text: chunk.text, delta: chunk.text, origin: "text-delta" };
+      return {
+        type: "message_delta",
+        text: chunk.text,
+        delta: chunk.text,
+        origin: "text-delta",
+        content_index: index,
+      };
+    }
+    if (chunk.type === "reasoning-delta" && typeof chunk.text === "string" && chunk.text) {
+      return {
+        type: "thinking_delta",
+        text: chunk.text,
+        delta: chunk.text,
+        content_index: index,
+      };
     }
     return null;
   }
@@ -47,6 +62,17 @@ export function projectSessionEvent(event) {
     if (Array.isArray(texts) && texts.length) {
       const text = texts.filter((part) => typeof part === "string").join("");
       if (text) return { type: "message_delta", text, delta: text, origin: "text-chunks" };
+    }
+    return null;
+  }
+  if (type === "reasoning-chunks") {
+    const texts = data.texts;
+    if (Array.isArray(texts) && texts.length) {
+      const text = texts.filter((part) => typeof part === "string").join("");
+      const index = Number.isInteger(data.index) ? data.index : 0;
+      if (text) {
+        return { type: "thinking_delta", text, delta: text, content_index: index };
+      }
     }
     return null;
   }
@@ -494,6 +520,17 @@ export async function runLiveTurn(ctx, deps, spec) {
   const events = [];
   let assistant = "";
   let deltaOrigin = null;
+  const reasoningOpen = new Set();
+  const forward = (frame) => {
+    events.push(frame);
+    if (typeof spec.onEvent === "function") spec.onEvent(frame);
+  };
+  const closeReasoning = () => {
+    for (const idx of reasoningOpen) {
+      forward({ type: "thinking_end", content_index: idx });
+    }
+    reasoningOpen.clear();
+  };
   const emit = (event) => {
     if (!event || typeof event !== "object") return;
     if (event.type === "chunk") {
@@ -503,6 +540,20 @@ export async function runLiveTurn(ctx, deps, spec) {
       // forward them as chrome deltas; they duplicate streamed deltas.
       return;
     }
+    if (event.type === "thinking_delta") {
+      const idx = Number.isInteger(event.content_index) ? event.content_index : 0;
+      if (!reasoningOpen.has(idx)) {
+        reasoningOpen.add(idx);
+        forward({ type: "thinking_start", content_index: idx });
+      }
+    } else if (
+      event.type === "message_delta" ||
+      event.type === "tool_start" ||
+      event.type === "message_end" ||
+      event.type === "turn_end"
+    ) {
+      closeReasoning();
+    }
     if (event.type === "message_delta") {
       // Harness 可能同时给出 raw text-delta 与合批 text-chunks 两种正文流。
       // 锁定本回合首个出现的来源，丢弃另一路，避免正文翻倍。
@@ -511,8 +562,7 @@ export async function runLiveTurn(ctx, deps, spec) {
       else if (origin !== deltaOrigin) return;
       assistant += String(event.text || event.delta || "");
     }
-    events.push(event);
-    if (typeof spec.onEvent === "function") spec.onEvent(event);
+    forward(event);
   };
   turnEmitters.set(sessionId, emit);
   currentTurnSurface = spec.surface === "research" ? "research" : "desktop";

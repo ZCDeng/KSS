@@ -62,6 +62,11 @@ def test_bundle_mode_changes_when_content_changes(tmp_path: Path) -> None:
     (scripts / "kss_sidecar.py").write_text("sidecar_v2")
     fp2 = bridge._sidecar_version_fingerprint(project_root=root)
     assert fp1 != fp2
+    (scripts / "kss_harness_live.mjs").write_text("old")
+    fp3 = bridge._sidecar_version_fingerprint(project_root=root)
+    (scripts / "kss_harness_live.mjs").write_text("new")
+    fp4 = bridge._sidecar_version_fingerprint(project_root=root)
+    assert fp3 != fp4
 
 
 def test_extreme_fallback_unknown(tmp_path: Path) -> None:

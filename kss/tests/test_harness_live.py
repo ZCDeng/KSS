@@ -63,7 +63,11 @@ console.log(JSON.stringify({{ chunk, ignore }}));
 """
     )
     assert out["chunk"] == {
-        "type": "message_delta", "text": "盘面", "delta": "盘面", "origin": "text-delta",
+        "type": "message_delta",
+        "text": "盘面",
+        "delta": "盘面",
+        "origin": "text-delta",
+        "content_index": 0,
     }
     assert out["ignore"] is None
 
@@ -96,6 +100,45 @@ console.log(JSON.stringify({{
     assert out["resumeDisk"] is True
     assert out["resumeExists"] is True
     assert out["other"] is False
+
+
+def test_project_session_event_maps_reasoning_deltas() -> None:
+    href = _LIVE.resolve().as_posix()
+    out = _node_eval(
+        f"""
+import {{ projectSessionEvent }} from 'file://{href}';
+const delta = projectSessionEvent({{
+  type: 'assistant/chunk',
+  seq: 1,
+  time: 0,
+  data: {{ chunk: {{ type: 'reasoning-delta', index: 0, text: '先核对板块' }} }},
+}});
+const packed = projectSessionEvent({{
+  type: 'reasoning-chunks',
+  seq: 2,
+  time: 0,
+  data: {{ index: 0, texts: ['再核对', '数字'] }},
+}});
+const empty = projectSessionEvent({{
+  type: 'assistant/chunk',
+  data: {{ chunk: {{ type: 'reasoning-delta', index: 0, text: '' }} }},
+}});
+console.log(JSON.stringify({{ delta, packed, empty }}));
+"""
+    )
+    assert out["delta"] == {
+        "type": "thinking_delta",
+        "text": "先核对板块",
+        "delta": "先核对板块",
+        "content_index": 0,
+    }
+    assert out["packed"] == {
+        "type": "thinking_delta",
+        "text": "再核对数字",
+        "delta": "再核对数字",
+        "content_index": 0,
+    }
+    assert out["empty"] is None
 
 
 def test_project_session_event_maps_tool_calls() -> None:
@@ -188,6 +231,89 @@ console.log(JSON.stringify({{
     assert "KSS live stub" in out["text"]
     assert "turn_start" in out["types"]
     assert "message_delta" in out["types"]
+
+
+def test_run_live_turn_forwards_reasoning_before_visible_text() -> None:
+    href = _LIVE.resolve().as_posix()
+    out = _node_eval(
+        f"""
+import {{ runLiveTurn }} from 'file://{href}';
+
+const agent = {{
+  followed: null,
+  session: {{ id: 'live-think', header: {{ id: 'live-think' }} }},
+  followup(message) {{ this.followed = message; }},
+  async whenIdle() {{
+    if (!this.followed) return;
+    this._emit({{
+      type: 'assistant/chunk',
+      data: {{ chunk: {{ type: 'reasoning-delta', index: 0, text: '先核对' }} }},
+    }});
+    this._emit({{
+      type: 'assistant/chunk',
+      data: {{ chunk: {{ type: 'reasoning-delta', index: 0, text: '证据' }} }},
+    }});
+    this._emit({{
+      type: 'assistant/chunk',
+      data: {{ chunk: {{ type: 'text-delta', index: 1, text: '结论' }} }},
+    }});
+  }},
+  cancel() {{}},
+  steer() {{}},
+}};
+const ctx = {{
+  agents: {{
+    async create(opts) {{
+      const agentCtx = {{
+        on(name, fn) {{
+          agent._emit = (event) => fn({{ id: 'live-think' }}, event);
+          return () => {{}};
+        }},
+      }};
+      await opts?.setup?.(agentCtx);
+      return {{ agent, async dispose() {{}} }};
+    }},
+    get() {{ return agent; }},
+  }},
+  on() {{ return () => {{}}; }},
+}};
+const deps = {{
+  SessionId: (id) => id,
+  createUserMessage: (input) => ({{ role: 'user', ...input }}),
+  attachSessionPolicy: (ag, spec) => {{ ag.policy = spec; }},
+  inheritResearchPolicy() {{}},
+  resolveDesktopApproval() {{}},
+  setApprovalPrompt() {{}},
+}};
+const forwarded = [];
+const result = await runLiveTurn(ctx, deps, {{
+  surface: 'desktop',
+  sessionId: 'live-think',
+  input: '为什么慢',
+  onEvent: (event) => forwarded.push(event.type),
+}});
+console.log(JSON.stringify({{
+  ok: result.ok,
+  text: result.assistant_text,
+  types: result.events.map((e) => e.type),
+  forwarded,
+  thinking: result.events.filter((e) => e.type === 'thinking_delta').map((e) => e.delta),
+}}));
+"""
+    )
+    assert out["ok"] is True
+    assert out["text"] == "结论"
+    assert out["thinking"] == ["先核对", "证据"]
+    assert out["types"][:6] == [
+        "turn_start",
+        "message_start",
+        "thinking_start",
+        "thinking_delta",
+        "thinking_delta",
+        "thinking_end",
+    ]
+    assert "message_delta" in out["types"]
+    assert out["forwarded"] == out["types"]
 
 
 def _live_agent_source(*, create_throws: bool = False, emit: bool = True) -> str:

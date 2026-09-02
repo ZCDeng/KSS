@@ -87,6 +87,22 @@ final class AgentFrameTests: XCTestCase {
         XCTAssertEqual(store.agentModel, "claude-test")
     }
 
+    func testThinkingDeltaWithoutStartStillFillsThinkingBlocks() throws {
+        let store = KSSStore(testBridge: nil)
+        store.chatMessages = [
+            ChatMessage(role: .assistant, text: "", numbersUnverified: true),
+        ]
+        let assistantId = try XCTUnwrap(store.chatMessages.first?.id)
+
+        XCTAssertTrue(store.applyAgentFrame(
+            try decodeFrame(#"{"type":"thinking_delta","run_id":"r1","sequence":1,"content_index":0,"delta":"先核对板块"}"#),
+            assistantId: assistantId))
+
+        XCTAssertEqual(store.chatMessages[0].text, "")
+        XCTAssertEqual(store.chatMessages[0].thinkingBlocks.count, 1)
+        XCTAssertEqual(store.chatMessages[0].thinkingBlocks[0].text, "先核对板块")
+    }
+
     func testFrameDecodesProviderRouteContentBlocksAndAttachments() throws {
         let frame = try decodeFrame("""
         {"type":"message_end","provider":"openai","model":"gpt-test","content_index":2,

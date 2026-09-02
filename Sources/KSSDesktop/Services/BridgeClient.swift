@@ -662,6 +662,10 @@ struct BridgeClient {
         if let d = try? Data(contentsOf: sidecarFile) { data.append(d) }
         let kernelFile = projectRoot.appending(path: "kss/agent/harness_kernel.py")
         if let d = try? Data(contentsOf: kernelFile) { data.append(d) }
+        let liveFile = projectRoot.appending(path: "scripts/kss_harness_live.mjs")
+        if let d = try? Data(contentsOf: liveFile) { data.append(d) }
+        let hostFile = projectRoot.appending(path: "scripts/kss_harness_host.mjs")
+        if let d = try? Data(contentsOf: hostFile) { data.append(d) }
 
         let digest = SHA256.hash(data: data)
         let hex = digest.map { String(format: "%02x", $0) }.joined()

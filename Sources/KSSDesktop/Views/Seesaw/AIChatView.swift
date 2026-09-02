@@ -1558,12 +1558,29 @@ struct AIChatView: View {
                     .frame(minHeight: 18)
 
                 VStack(alignment: .leading, spacing: 6) {
+                    if !message.thinkingBlocks.isEmpty {
+                        AgentThinkingDisclosure(
+                            blocks: message.thinkingBlocks,
+                            streaming: store.isChatStreaming
+                                && store.chatMessages.last?.id == message.id
+                                && message.text.isEmpty
+                        )
+                    }
                     if message.text.isEmpty && store.isChatStreaming {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text("思考中…")
-                                .font(KSSFont.themed(13, theme: theme))
-                                .foregroundStyle(theme.textSecondary)
+                        if let tool = store.chatToolInProgress {
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text("正在调用 \(tool)…")
+                                    .font(KSSFont.themed(13, theme: theme))
+                                    .foregroundStyle(theme.textSecondary)
+                            }
+                        } else if message.thinkingBlocks.isEmpty {
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text(streamingThinkLabel)
+                                    .font(KSSFont.themed(13, theme: theme))
+                                    .foregroundStyle(theme.textSecondary)
+                            }
                         }
                     } else if !message.text.isEmpty {
                         SeesawMarkdownView(markdown: message.text, errorTint: message.isError ? Color.red : nil)
@@ -1571,10 +1588,6 @@ struct AIChatView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     streamingTail(for: message)
-
-                    if !message.thinkingBlocks.isEmpty {
-                        AgentThinkingDisclosure(blocks: message.thinkingBlocks)
-                    }
 
                     messageAttachmentStrip(message.attachments)
 
@@ -1937,6 +1950,15 @@ struct AIChatView: View {
             providerID: route?.providerId,
             modelID: route?.modelId
         )?.defaultReasoningEffort ?? "off"
+    }
+
+    /// Empty-bubble wait copy. Does not change thinking_level; it only names the wait.
+    private var streamingThinkLabel: String {
+        switch composerThinkingLevel {
+        case "max": return "深度思考中（max）…"
+        case "high": return "深度思考中…"
+        default: return "思考中…"
+        }
     }
 
     private var composerThinkingBinding: Binding<String> {
@@ -3647,12 +3669,19 @@ struct AIChatView: View {
     }
 }
 
-/// Compact, collapsed-by-default rendering of provider-supplied reasoning.
+/// Compact rendering of provider-supplied reasoning.
 /// It intentionally never derives "thinking" from the visible answer.
 private struct AgentThinkingDisclosure: View {
     @Environment(\.kssTheme) private var theme
-    @State private var isExpanded = false
+    @State private var isExpanded: Bool
     let blocks: [AgentContentBlock]
+    var streaming: Bool = false
+
+    init(blocks: [AgentContentBlock], streaming: Bool = false) {
+        self.blocks = blocks
+        self.streaming = streaming
+        _isExpanded = State(initialValue: streaming)
+    }
 
     private var visibleText: String {
         blocks.compactMap { block -> String? in
@@ -3689,8 +3718,12 @@ private struct AgentThinkingDisclosure: View {
             }
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: "brain")
-                Text("思考过程")
+                if streaming {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: "brain")
+                }
+                Text(streaming ? "正在思考…" : "思考过程")
                 if let metadata {
                     Text(metadata)
                         .foregroundStyle(theme.textSecondary)
@@ -3703,6 +3736,9 @@ private struct AgentThinkingDisclosure: View {
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
         .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: 10))
+        .onChange(of: streaming) { _, live in
+            if live { isExpanded = true }
+        }
     }
 }
 

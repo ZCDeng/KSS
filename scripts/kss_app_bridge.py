@@ -85,8 +85,8 @@ def _sidecar_version_fingerprint(project_root: Path | None = None) -> str:
        知代码改动，并与 scripts/sign_and_build.sh 给 CFBundleShortVersionString
        的写法一致。
     2. bundle 模式（无 .git 或 git 失败）fallback：scripts/VERSION 内容 + 关键
-       文件内容 hash。这里的关键文件是 sidecar 和 bridge 本身，因为任何一方变
-       都意味着 daemon 逻辑与 app 可能不同步。
+       文件内容 hash。这里的关键文件是 sidecar、bridge、harness kernel 与 live
+       投影脚本，因为任何一方变都意味着 daemon 逻辑与 app 可能不同步。
     3. 极端 fallback 返回 "unknown"，绝不抛异常，避免 sidecar 因版本计算失败
        无法启动。
 
@@ -122,6 +122,8 @@ def _sidecar_version_fingerprint(project_root: Path | None = None) -> str:
             Path(__file__),
             root / "scripts" / "kss_sidecar.py",
             root / "kss" / "agent" / "harness_kernel.py",
+            root / "scripts" / "kss_harness_live.mjs",
+            root / "scripts" / "kss_harness_host.mjs",
         ]
         for path in key_files:
             if path.exists():

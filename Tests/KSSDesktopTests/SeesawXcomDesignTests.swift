@@ -119,6 +119,16 @@ final class SeesawXcomDesignTests: XCTestCase {
         XCTAssertFalse(source.contains("private var focusProviderIssue"))
     }
 
+    func testStreamingEmptyBubbleShowsThinkingAndToolProgress() throws {
+        let source = try source
+        XCTAssertTrue(source.contains("streamingThinkLabel"))
+        XCTAssertTrue(source.contains("正在调用 \\(tool)…"))
+        XCTAssertTrue(source.contains("message.thinkingBlocks.isEmpty"))
+        XCTAssertTrue(source.contains("Text(streaming ? \"正在思考…\" : \"思考过程\")"))
+        XCTAssertTrue(source.contains("AgentThinkingDisclosure("))
+        XCTAssertTrue(source.contains("streaming: store.isChatStreaming"))
+    }
+
     func testRailOnlyShowsContextualMarketAndWorkState() throws {
         let source = try source
         let start = try XCTUnwrap(source.range(of: "private var focusInspector"))
