@@ -4,6 +4,10 @@
 :class:`SectorSnapshot`。任一单 API 失败时该字段为 ``None`` ，
 其他字段不受影响（符合 :mod:`kss.data` 数据层契约）。
 
+行业资金流额外兜底：Tushare ``moneyflow_ind_dc`` 失败时改走东财 HTTP
+（当日 ``push2delay`` 全量 / 隔日 ``RPT_INDUSTRY_FUNDFLOW`` 粗板块），
+见 :mod:`kss.data.em_industry_fundflow`。
+
 设计取舍（U2 实施期决定）：
 
 - 东财行业（``moneyflow_ind_dc``）与申万行业（``sw_daily``）命名空间不一致
@@ -27,6 +31,7 @@ from kss.data.tushare_client import TushareClient
 from kss.data.ths_client import fetch_ths_hot
 from kss.data.dragon_tiger_client import fetch_dragon_tiger
 from kss.data.margin_client import fetch_kcb_margin
+from kss.data.em_industry_fundflow import fetch_industry_fundflow_em
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +55,7 @@ class SectorSnapshot:
         trade_date: 目标交易日，``YYYYMMDD`` 格式.
         industry: 东财行业资金流（已过滤 ``content_type == '行业'``）；
             含 ``name`` / ``pct_change`` / ``net_amount_rate`` / ``buy_elg_amount_rate``.
+            Tushare 失败时可能是东财 HTTP 兜底（``em_source`` 列标明口径）。
             失败时为 ``None``.
         concept: 同花顺概念板块资金流；含 ``name`` / ``pct_change`` / ``net_amount``.
             失败时为 ``None``.
@@ -141,7 +147,18 @@ def load_sector_snapshot(
     raw_ind = client.fetch_moneyflow_ind_dc(trade_date)
     snap.industry = _filter_industry_only(raw_ind)
     if snap.industry is None:
-        snap.missing.append("industry")
+        snap.industry = fetch_industry_fundflow_em(trade_date)
+        if snap.industry is None:
+            snap.missing.append("industry")
+        else:
+            logger.warning(
+                "load_sector_snapshot(%s) 行业资金流改用东财兜底 em_source=%s n=%d",
+                trade_date,
+                snap.industry["em_source"].iloc[0]
+                if "em_source" in snap.industry.columns
+                else "em",
+                len(snap.industry),
+            )
 
     raw_cnt = client.fetch_moneyflow_cnt_ths(trade_date)
     if raw_cnt is None or raw_cnt.empty:

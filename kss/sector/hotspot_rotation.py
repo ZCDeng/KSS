@@ -37,6 +37,7 @@ from kss.data.plate_rotation_adapter import (
     fetch_plate_rotat_data,
     rank_plate_long_persistence,
 )
+from kss.data.em_industry_fundflow import fetch_industry_fundflow_em
 from kss.data.tushare_client import TushareClient
 from kss.sector.scorer import compute_heat_score, load_config
 
@@ -440,6 +441,18 @@ def build_hotspot_rotation_snapshot(
     config = load_config(config_path)
 
     raw_ind = client.fetch_moneyflow_ind_dc(trade_date)
+    if raw_ind is None or getattr(raw_ind, "empty", False):
+        em_ind = fetch_industry_fundflow_em(trade_date)
+        if em_ind is not None:
+            logger.warning(
+                "[hotspot_rotation] %s 行业资金流改用东财兜底 em_source=%s n=%d",
+                trade_date,
+                em_ind["em_source"].iloc[0]
+                if "em_source" in em_ind.columns
+                else "em",
+                len(em_ind),
+            )
+            raw_ind = em_ind
     raw_cnt = client.fetch_moneyflow_cnt_ths(trade_date)
 
     if raw_ind is None and raw_cnt is None:

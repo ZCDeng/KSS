@@ -24,6 +24,15 @@ from kss.sector.hotspot_rotation import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _patch_em_industry_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """默认关掉东财行业兜底，避免 FakeClient(industry=None) 打真网."""
+    monkeypatch.setattr(
+        "kss.sector.hotspot_rotation.fetch_industry_fundflow_em",
+        lambda trade_date, **kwargs: None,
+    )
+
+
 class MockPro:
     """模拟 Tushare pro API."""
 
@@ -306,6 +315,34 @@ def test_build_hotspot_rotation_snapshot_both_missing() -> None:
     client = FakeTushareClient(industry=None, concept=None)
     snap = build_hotspot_rotation_snapshot("20260618", client=client)
     assert snap is None
+
+
+def test_build_hotspot_rotation_snapshot_em_industry_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tushare 行业空、概念有数时，东财兜底应撑起行业榜."""
+    em = pd.DataFrame({
+        "name": ["航空机场"],
+        "ts_code": ["BK0420.DC"],
+        "pct_change": [0.77],
+        "net_amount_rate": [3.19],
+        "buy_elg_amount_rate": [2.5],
+        "content_type": ["行业"],
+        "em_source": ["em_push2delay"],
+    })
+    monkeypatch.setattr(
+        "kss.sector.hotspot_rotation.fetch_industry_fundflow_em",
+        lambda trade_date, **kwargs: em,
+    )
+    dates = ["20260618", "20260617"]
+    client = FakeTushareClient(
+        industry=None, concept=_make_concept_df(), trade_cal_df=_trade_cal_for(dates),
+    )
+    snap = build_hotspot_rotation_snapshot(
+        "20260618", client=client, lookback_days=2, enable_kaipan=False, enable_leaders=False,
+    )
+    assert snap is not None
+    assert any(b.name == "航空机场" for b in snap.industries)
 
 
 def test_build_hotspot_rotation_snapshot_industry_content_type_filter() -> None:

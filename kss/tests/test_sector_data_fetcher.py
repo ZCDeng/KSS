@@ -74,6 +74,10 @@ def _patch_external_http(monkeypatch: pytest.MonkeyPatch) -> None:
         "kss.sector.data_fetcher.fetch_kcb_margin",
         lambda trade_date: _make_margin_df(),
     )
+    monkeypatch.setattr(
+        "kss.sector.data_fetcher.fetch_industry_fundflow_em",
+        lambda trade_date, **kwargs: None,
+    )
 
 
 class _FakeClient:
@@ -363,6 +367,33 @@ class TestLoadSectorSnapshot:
         assert len(snap.industry) == 2
         assert set(snap.industry["name"]) == {"电网设备", "半导体"}
 
+    def test_em_fallback_when_tushare_industry_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Tushare 行业失败 → 东财兜底填 industry，不进 missing."""
+        em = pd.DataFrame({
+            "trade_date": ["20260512"],
+            "content_type": ["行业"],
+            "ts_code": ["BK0420.DC"],
+            "name": ["航空机场"],
+            "pct_change": [0.77],
+            "net_amount_rate": [3.19],
+            "buy_elg_amount_rate": [2.5],
+            "em_source": ["em_datacenter"],
+        })
+        monkeypatch.setattr(
+            "kss.sector.data_fetcher.fetch_industry_fundflow_em",
+            lambda trade_date, **kwargs: em,
+        )
+        client = _FakeClient(
+            ind=None, cnt=_make_cnt_ths(), sw=_make_sw_daily(), hs=_make_hsgt(),
+        )
+        snap = load_sector_snapshot("20260512", client=client)  # type: ignore[arg-type]
+        assert snap.industry is not None
+        assert list(snap.industry["name"]) == ["航空机场"]
+        assert "industry" not in snap.missing
+        assert snap.concept is not None
+
     def test_uses_default_client_when_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """client=None 时回退到 TushareClient 单例（不真实调 API）."""
         TushareClient._instance = None
@@ -380,7 +411,8 @@ class TestLoadSectorSnapshot:
         snap = load_sector_snapshot("20260512")
         assert isinstance(snap, SectorSnapshot)
         assert snap.trade_date == "20260512"
-        # ths_hot 由 autouse fixture 提供（默认成功），所以 missing 仍是 4 项
+        # ths_hot 由 autouse fixture 提供（默认成功），东财行业兜底同 fixture 关死，
+        # 所以 missing 仍是 4 项
         assert len(snap.missing) == 4
 
 

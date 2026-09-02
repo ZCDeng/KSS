@@ -9,7 +9,8 @@
 模块约定：
 
 - 数据层失败一律降级，不抛异常（与 :mod:`kss.data` 契约一致）
-- 行业数据源用东财（``moneyflow_ind_dc`` 过滤 ``content_type == '行业'``）
+- 行业数据源用东财（``moneyflow_ind_dc`` 过滤 ``content_type == '行业'``；
+  Tushare 失败时走 :func:`kss.data.em_industry_fundflow.fetch_industry_fundflow_em`）
 - 概念数据源用同花顺（``moneyflow_cnt_ths``，与 ``stock_names.csv`` 概念字段一致）
 """
 
