@@ -120,7 +120,7 @@ final class ThemeCatalogTests: XCTestCase {
                         "accent", "accentSoft", "onAccent", "code", "th", "zebra", "tag",
                         "olive", "oliveSoft", "gold", "blue", "blueSoft", "zone", "zoneLine",
                         "up", "down", "upFill", "downFill", "ma5", "ma20", "grid", "text",
-                        "cross", "dif", "dea", "obv", "bbi", "boll", "chip", "chipText",
+                        "cross", "dif", "dea", "obv", "bbi", "boll", "vwap", "chip", "chipText",
                         "chipOn", "chartBg", "hair"]
         for system in KSSDesignSystem.allCases {
             for appearance in KSSAppearance.allCases {

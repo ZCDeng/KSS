@@ -15,10 +15,10 @@
   @font-face { font-family: "HarmonyOS Sans SC"; src: url("HarmonyOS_Sans_SC_Black.ttf") format("truetype"); font-weight: 900; font-style: normal; }
   :root { color-scheme: dark; }
   :root { --bg:#FFFFFF; --text:#141413; --muted:#87867F; --ma5:#F5A623; --ma20:#2962FF;
-          --bbi:#141413; --boll:#0097A7;
+          --bbi:#141413; --boll:#0097A7; --vwap:#A21CAF;
           --chip:#F0EEE6; --chipText:#3D3D3A; --chipOn:#D97757; --hair:#D1CFC5; }
   html.dark { --bg:#1F1F1D; --text:#FAF9F5; --muted:#8A8980; --ma5:#FF9F1C; --ma20:#4C82FB;
-          --bbi:#FFFFFF; --boll:#26C6DA;
+          --bbi:#FFFFFF; --boll:#26C6DA; --vwap:#E879F9;
           --chip:#2A2A28; --chipText:#D1CFC5; --chipOn:#E48A6E; --hair:#3D3D3A; }
   html, body {
     margin: 0; padding: 0; height: 100%; width: 100%;
@@ -38,6 +38,7 @@
   .ma20 { color: var(--ma20); }
   .bbi { color: var(--bbi); }
   .boll { color: var(--boll); }
+  .vwap { color: var(--vwap); }
   #tf {
     position: absolute; top: 8px; right: 10px; z-index: 6;
     display: flex; gap: 4px;
@@ -81,6 +82,7 @@
     <button data-ind="ma20" class="on">MA20</button>
     <button data-ind="bbi" class="on">BBI</button>
     <button data-ind="boll" class="on">BOLL</button>
+    <button data-ind="vwap" class="on">VWAP</button>
     <button data-ind="vol" class="on">VOL</button>
     <button data-ind="mi" class="on">MI</button>
     <button data-ind="macd" class="on">MACD</button>
@@ -93,17 +95,17 @@
   (function () {
     // 醒目标准红绿（红涨绿跌），均线橙/蓝；MACD/OBV 副图各占一带。
     const PALETTES = {
-      dark:  { up:"#F6465D", down:"#2EBD85", ma5:"#FF9F1C", ma20:"#4C82FB", grid:"#3D3D3A", text:"#8A8980", bg:"#1F1F1D", cross:"#9AA0A6", upFill:"rgba(246,70,93,0.5)", downFill:"rgba(46,189,133,0.5)", dif:"#FF9F1C", dea:"#4C82FB", obv:"#B388FF", bbi:"#FFFFFF", boll:"#26C6DA" },
-      light: { up:"#F23645", down:"#089981", ma5:"#F5A623", ma20:"#2962FF", grid:"#D1CFC5", text:"#87867F", bg:"#FFFFFF", cross:"#787B86", upFill:"rgba(242,54,69,0.4)", downFill:"rgba(8,153,129,0.4)", dif:"#F5A623", dea:"#2962FF", obv:"#7C4DFF", bbi:"#141413", boll:"#0097A7" },
+      dark:  { up:"#F6465D", down:"#2EBD85", ma5:"#FF9F1C", ma20:"#4C82FB", grid:"#3D3D3A", text:"#8A8980", bg:"#1F1F1D", cross:"#9AA0A6", upFill:"rgba(246,70,93,0.5)", downFill:"rgba(46,189,133,0.5)", dif:"#FF9F1C", dea:"#4C82FB", obv:"#B388FF", bbi:"#FFFFFF", boll:"#26C6DA", vwap:"#E879F9" },
+      light: { up:"#F23645", down:"#089981", ma5:"#F5A623", ma20:"#2962FF", grid:"#D1CFC5", text:"#87867F", bg:"#FFFFFF", cross:"#787B86", upFill:"rgba(242,54,69,0.4)", downFill:"rgba(8,153,129,0.4)", dif:"#F5A623", dea:"#2962FF", obv:"#7C4DFF", bbi:"#141413", boll:"#0097A7", vwap:"#A21CAF" },
     };
     let COLORS = PALETTES.dark;
     let currentTheme = "dark";
     let currentTF = "D";
     // 指标可见性（用户随用随隐；跨重采样/主题重建后由 applyIndVisibility 还原）
-    let indState = { ma5: true, ma20: true, bbi: true, boll: true, vol: true, macd: true, obv: true, mi: true, sr: true };
+    let indState = { ma5: true, ma20: true, bbi: true, boll: true, vwap: true, vol: true, macd: true, obv: true, mi: true, sr: true };
 
     let chart, candleSeries, volumeSeries, ma5Series, ma20Series;
-    let bbiSeries, bollUpper, bollMid, bollLower;
+    let bbiSeries, bollUpper, bollMid, bollLower, vwapSeries;
     let macdHist, difSeries, deaSeries, obvSeries, miSeries;
     let pending = null;
     let rawBars = [];
@@ -240,6 +242,68 @@
       }
       return out;
     }
+    // 会话 VWAP：每个上海自然日重置。typical = amount/vol（单位接近 HLC3 时）否则 HLC3。
+    // 日线 Tushare amount 是千元、volume 是手，amount/vol 不是价，启发式会退回 HLC3。
+    function typicalPrice(b) {
+      const h = b.high != null ? +b.high : +b.close;
+      const l = b.low != null ? +b.low : +b.close;
+      const c = +b.close;
+      if (!isFinite(c)) return null;
+      return (h + l + c) / 3;
+    }
+    function barAmount(b) {
+      if (b.amount != null && +b.amount > 0) return +b.amount;
+      if (b.turnover != null && +b.turnover > 0) return +b.turnover;
+      return null;
+    }
+    function shanghaiDateFromUnix(sec) {
+      const sh = new Date(sec * 1000 + 8 * 3600 * 1000);
+      const y = sh.getUTCFullYear();
+      const m = String(sh.getUTCMonth() + 1).padStart(2, "0");
+      const d = String(sh.getUTCDate()).padStart(2, "0");
+      return y + "-" + m + "-" + d;
+    }
+    function sessionKey(b) {
+      if (b.date) return String(b.date).slice(0, 10);
+      const ts = b.timestamp != null ? b.timestamp : b.time;
+      if (typeof ts === "number" && isFinite(ts)) {
+        const sec = ts > 1e12 ? Math.floor(ts / 1000) : ts;
+        return shanghaiDateFromUnix(sec);
+      }
+      if (typeof ts === "string") {
+        const s = parseIntradayTime(ts);
+        return s != null ? shanghaiDateFromUnix(s) : String(ts).slice(0, 10);
+      }
+      return "";
+    }
+    function sessionVwap(bars) {
+      let cumPV = 0, cumV = 0, prev = null;
+      const out = [];
+      for (const b of bars) {
+        const t = b.time != null ? b.time : b.date;
+        if (t == null) continue;
+        const sess = sessionKey(b);
+        if (sess !== prev) { cumPV = 0; cumV = 0; prev = sess; }
+        const tp = typicalPrice(b);
+        if (tp == null) continue;
+        const vol = (b.volume != null && +b.volume > 0) ? +b.volume : 0;
+        const amt = barAmount(b);
+        if (vol <= 0) {
+          if (cumV > 0) out.push({ time: t, value: +(cumPV / cumV).toFixed(3) });
+          continue;
+        }
+        let pv;
+        if (amt != null) {
+          const implied = amt / vol;
+          pv = (implied > tp * 0.5 && implied < tp * 2) ? amt : tp * vol;
+        } else {
+          pv = tp * vol;
+        }
+        cumPV += pv; cumV += vol;
+        out.push({ time: t, value: +(cumPV / cumV).toFixed(3) });
+      }
+      return out;
+    }
 
     // ---- 周/月/年 重采样（从日线聚合） ----
     function tfKey(dateStr, tf) {
@@ -270,6 +334,7 @@
           low: Math.min.apply(null, arr.map(x => x.low != null ? x.low : x.close)),
           close: last.close,
           volume: arr.reduce((s, x) => s + (x.volume || 0), 0),
+          amount: arr.reduce((s, x) => s + (x.amount || 0), 0) || undefined,
         });
       }
       out.sort((a, b) => a.date < b.date ? -1 : 1);
@@ -317,6 +382,7 @@
       bollUpper = chart.addLineSeries({ color: COLORS.boll, lineWidth: 1, lineStyle: 2, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false });
       bollMid = chart.addLineSeries({ color: COLORS.boll, lineWidth: 1, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false });
       bollLower = chart.addLineSeries({ color: COLORS.boll, lineWidth: 1, lineStyle: 2, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false });
+      vwapSeries = chart.addLineSeries({ color: COLORS.vwap, lineWidth: 2, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: false });
 
       // 成交量带
       volumeSeries = chart.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "vol", priceLineVisible: false, lastValueVisible: false });
@@ -363,8 +429,9 @@
         const bu = param.seriesData.get(bollUpper);
         const bm = param.seriesData.get(bollMid);
         const blw = param.seriesData.get(bollLower);
+        const vw = param.seriesData.get(vwapSeries);
         if (c) renderLegend(param.time, c, m5 && m5.value, m20 && m20.value, dif && dif.value, dea && dea.value, ob && ob.value,
-                            bb && bb.value, bu && bu.value, bm && bm.value, blw && blw.value);
+                            bb && bb.value, bu && bu.value, bm && bm.value, blw && blw.value, vw && vw.value);
       });
       applyIndVisibility();   // 主题重建后还原用户的指标可见性选择
       return true;
@@ -374,31 +441,50 @@
     function fmtTime(t) {
       if (typeof t === "string") return t;
       if (t && t.year) return `${t.year}-${String(t.month).padStart(2,"0")}-${String(t.day).padStart(2,"0")}`;
+      if (typeof t === "number" && isFinite(t)) {
+        const sh = new Date(t * 1000 + 8 * 3600 * 1000);
+        const y = sh.getUTCFullYear();
+        const m = String(sh.getUTCMonth() + 1).padStart(2, "0");
+        const d = String(sh.getUTCDate()).padStart(2, "0");
+        const hh = String(sh.getUTCHours()).padStart(2, "0");
+        const mm = String(sh.getUTCMinutes()).padStart(2, "0");
+        return y + "-" + m + "-" + d + " " + hh + ":" + mm;
+      }
       return "";
+    }
+    function tfLegendLabel() {
+      if (intradayMode) return (intradayTF === "5m" ? "5分" : "1分");
+      return ({ D: "日", W: "周", M: "月", Y: "年" }[currentTF] || "日") + "线";
     }
     function pct(o, c) { return o ? ((c - o) / o * 100).toFixed(2) + "%" : "-"; }
     function num(v) { return v == null ? "-" : (Math.abs(v) >= 10000 ? (v / 10000).toFixed(1) + "万" : (+v).toFixed(2)); }
-    function renderLegend(t, c, m5, m20, dif, dea, ob, bbiV, bUp, bMid, bLow) {
+    function renderLegend(t, c, m5, m20, dif, dea, ob, bbiV, bUp, bMid, bLow, vwapV) {
       const col = c.close >= c.open ? COLORS.up : COLORS.down;
-      const tfName = { D: "日", W: "周", M: "月", Y: "年" }[currentTF];
-      document.getElementById("legend").innerHTML =
-        `<div class="row"><span class="k">${fmtTime(t)} · ${tfName}线</span></div>` +
+      let html =
+        `<div class="row"><span class="k">${fmtTime(t)} · ${tfLegendLabel()}</span></div>` +
         `<div class="row"><span class="k">开</span><span>${c.open}</span>` +
         `<span class="k">高</span><span>${c.high}</span>` +
         `<span class="k">低</span><span>${c.low}</span>` +
         `<span class="k">收</span><span style="color:${col}">${c.close}</span>` +
         `<span style="color:${col}">${pct(c.open, c.close)}</span></div>` +
-        `<div class="row"><span class="ma5">MA5 ${m5 != null ? m5 : "-"}</span>` +
-        `<span class="ma20">MA20 ${m20 != null ? m20 : "-"}</span>` +
-        `<span class="bbi">BBI ${bbiV != null ? bbiV : "-"}</span></div>` +
-        `<div class="row"><span class="boll">BOLL ${bUp != null ? bUp : "-"} / ${bMid != null ? bMid : "-"} / ${bLow != null ? bLow : "-"}</span></div>` +
-        `<div class="row"><span class="k">DIF</span><span style="color:${COLORS.dif}">${num(dif)}</span>` +
-        `<span class="k">DEA</span><span style="color:${COLORS.dea}">${num(dea)}</span>` +
-        `<span class="k">OBV</span><span style="color:${COLORS.obv}">${num(ob)}</span></div>`;
+        `<div class="row"><span class="vwap">VWAP ${vwapV != null ? vwapV : "-"}</span>`;
+      if (!intradayMode) {
+        html +=
+          `<span class="ma5">MA5 ${m5 != null ? m5 : "-"}</span>` +
+          `<span class="ma20">MA20 ${m20 != null ? m20 : "-"}</span>` +
+          `<span class="bbi">BBI ${bbiV != null ? bbiV : "-"}</span></div>` +
+          `<div class="row"><span class="boll">BOLL ${bUp != null ? bUp : "-"} / ${bMid != null ? bMid : "-"} / ${bLow != null ? bLow : "-"}</span></div>` +
+          `<div class="row"><span class="k">DIF</span><span style="color:${COLORS.dif}">${num(dif)}</span>` +
+          `<span class="k">DEA</span><span style="color:${COLORS.dea}">${num(dea)}</span>` +
+          `<span class="k">OBV</span><span style="color:${COLORS.obv}">${num(ob)}</span></div>`;
+      } else {
+        html += `</div>`;
+      }
+      document.getElementById("legend").innerHTML = html;
     }
     function renderLegendLast() {
       if (lastCtx) renderLegend(lastCtx.time, lastCtx.c, lastCtx.m5, lastCtx.m20, lastCtx.dif, lastCtx.dea, lastCtx.ob,
-                                lastCtx.bbi, lastCtx.bUp, lastCtx.bMid, lastCtx.bLow);
+                                lastCtx.bbi, lastCtx.bUp, lastCtx.bMid, lastCtx.bLow, lastCtx.vwap);
     }
 
     // R6 R8：日档存在未收盘 bar 时的显式标注（chart 无 tooltip 设施，用固定徽标）。
@@ -443,7 +529,7 @@
       setProvisionalBadge(hasProvisional);
       document.getElementById("empty").style.display = bars.length ? "none" : "flex";
       if (!bars.length) {
-        [candleSeries, volumeSeries, ma5Series, ma20Series, bbiSeries, bollUpper, bollMid, bollLower, macdHist, difSeries, deaSeries, obvSeries].forEach(s => s.setData([]));
+        [candleSeries, volumeSeries, ma5Series, ma20Series, bbiSeries, bollUpper, bollMid, bollLower, vwapSeries, macdHist, difSeries, deaSeries, obvSeries].forEach(s => s.setData([]));
         return;
       }
       const candles = bars.map(p => ({
@@ -468,6 +554,14 @@
       const ob = obv(candles, vols);
       const bb = bbi(candles);
       const bl = boll(candles, 20, 2);
+      const vwBars = bars.map(p => ({
+        date: p.date, time: p.date,
+        open: p.open != null ? p.open : p.close,
+        high: p.high != null ? p.high : p.close,
+        low: p.low != null ? p.low : p.close,
+        close: p.close, volume: p.volume, amount: p.amount,
+      }));
+      const vw = sessionVwap(vwBars);
 
       candleSeries.setData(candles);
       volumeSeries.setData(vols);
@@ -477,6 +571,7 @@
       bollUpper.setData(bl.up);
       bollMid.setData(bl.mid);
       bollLower.setData(bl.low);
+      vwapSeries.setData(vw);
       macdHist.setData(mm.hist);
       difSeries.setData(mm.dif);
       deaSeries.setData(mm.dea);
@@ -492,6 +587,7 @@
         dea: mm.dea.length ? mm.dea[mm.dea.length - 1].value : null,
         ob: ob.length ? ob[ob.length - 1].value : null,
         bbi: last(bb), bUp: last(bl.up), bMid: last(bl.mid), bLow: last(bl.low),
+        vwap: last(vw),
       };
       renderLegendLast();
       restoreOrFit();
@@ -500,8 +596,8 @@
       if (lastIndicatorOverlays.length) applyIndicatorOverlays(lastIndicatorOverlays);
     }
 
-    // U3 日内渲染（F008）：分钟 K 线独立路径——UNIX 秒时间键 + timeVisible，无 resample，
-    // 无需日线级 MA/BOLL/MACD（分钟窗口 bar 数不足以稳定这些指标）。仅 candlestick + volume。
+    // U3 日内渲染（F008）：分钟 K 线独立路径——UNIX 秒时间键 + timeVisible，无 resample。
+    // 分钟窗口不足以稳定 MA/BOLL/MACD；会话 VWAP 按上海自然日重置，适合日内主图。
     function parseIntradayTime(ts) {
       // ts 可能是 ISO-8601（"2026-07-08T14:58:00+08:00"）或 UNIX 秒。lightweight-charts
       // 日内用 UTCTimestamp（秒）。ISO → Date → 秒。
@@ -531,12 +627,13 @@
         timeScaleMode = "I";
       }
       document.getElementById("empty").style.display = intradayBars.length ? "none" : "flex";
-      // 隐藏日线级指标 series（日内不渲染）。
+      // 隐藏日线级指标 series（日内不渲染）。会话 VWAP 留在主图。
       [ma5Series, ma20Series, bbiSeries, bollUpper, bollMid, bollLower,
        macdHist, difSeries, deaSeries, obvSeries].forEach(s => { if (s) s.setData([]); });
       clearSrPriceLines();  // S/R 位仅日线渲染（R9），日内模式下清空
       if (!intradayBars.length) {
         candleSeries.setData([]); volumeSeries.setData([]);
+        if (vwapSeries) vwapSeries.setData([]);
         return;
       }
       const candles = intradayBars.map(p => ({
@@ -551,13 +648,31 @@
         value: p.volume != null ? p.volume : 0,
         color: (p.close >= (p.open != null ? p.open : p.close)) ? COLORS.upFill : COLORS.downFill,
       })).filter(v => v.time != null);
+      const vwBars = intradayBars.map(p => {
+        const time = parseIntradayTime(p.timestamp);
+        if (time == null) return null;
+        return {
+          time, timestamp: p.timestamp,
+          open: p.open != null ? p.open : p.close,
+          high: p.high != null ? p.high : p.close,
+          low: p.low != null ? p.low : p.close,
+          close: p.close, volume: p.volume,
+          amount: p.amount != null ? p.amount : p.turnover,
+        };
+      }).filter(Boolean);
+      const vw = sessionVwap(vwBars);
       candleSeries.setData(candles);
       volumeSeries.setData(vols);
+      if (vwapSeries) vwapSeries.setData(vw);
       if (candles.length) {
-        const last = candles[candles.length - 1];
-        document.getElementById("legend").textContent =
-          "分时 · O " + num(last.open) + " H " + num(last.high) +
-          " L " + num(last.low) + " C " + num(last.close);
+        const lastC = candles[candles.length - 1];
+        lastCtx = {
+          time: lastC.time, c: lastC,
+          m5: null, m20: null, dif: null, dea: null, ob: null,
+          bbi: null, bUp: null, bMid: null, bLow: null,
+          vwap: vw.length ? vw[vw.length - 1].value : null,
+        };
+        renderLegendLast();
       }
       restoreOrFit();
     }
@@ -576,6 +691,7 @@
         grid: c.grid, text: c.text, bg: c.chartBg || c.bg, cross: c.cross,
         upFill: c.upFill, downFill: c.downFill,
         dif: c.dif, dea: c.dea, obv: c.obv, bbi: c.bbi, boll: c.boll,
+        vwap: c.vwap || (currentTheme === "light" ? "#A21CAF" : "#E879F9"),
       };
       currentTheme = (p && p.mode) || currentTheme;
       const r = document.documentElement.style;
@@ -584,6 +700,7 @@
       r.setProperty("--muted", c.muted);
       r.setProperty("--ma5", c.ma5); r.setProperty("--ma20", c.ma20);
       r.setProperty("--bbi", c.bbi); r.setProperty("--boll", c.boll);
+      r.setProperty("--vwap", COLORS.vwap);
       r.setProperty("--chip", c.chip); r.setProperty("--chipText", c.chipText);
       r.setProperty("--chipOn", c.chipOn); r.setProperty("--hair", c.hair);
       if (p && p.typography) document.body.style.fontFamily = p.typography.sans;
@@ -684,6 +801,7 @@
         case "ma20": return [ma20Series];
         case "bbi": return [bbiSeries];
         case "boll": return [bollUpper, bollMid, bollLower];
+        case "vwap": return [vwapSeries];
         case "vol": return [volumeSeries];
         case "macd": return [macdHist, difSeries, deaSeries];
         case "obv": return [obvSeries];

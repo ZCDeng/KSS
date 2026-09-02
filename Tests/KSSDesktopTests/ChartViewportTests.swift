@@ -105,4 +105,15 @@ final class ChartViewportTests: XCTestCase {
             "rightOffset 只在 buildChart 初始配置与日内形态各出现一次"
         )
     }
+
+    func testChartHTMLHasSessionVwapPriceOverlay() throws {
+        let html = try chartHTML()
+        XCTAssertTrue(html.contains(#"data-ind="vwap""#), "VWAP 应有独立指标钮")
+        XCTAssertTrue(html.contains("function sessionVwap("), "会话 VWAP 必须在 JS 里算，不走副图 pack")
+        XCTAssertTrue(html.contains("vwapSeries"), "VWAP 是主图价格叠加线")
+        XCTAssertFalse(
+            html.contains("priceScaleId: \"vwap\""),
+            "VWAP 不能进独立副图，应跟 MA 共用主图价格轴"
+        )
+    }
 }

@@ -1161,11 +1161,18 @@ struct ChartLegend: View {
             legendDot(theme.down, "跌")
             legendDot(theme.ma5, "MA5")
             legendDot(theme.ma20, "MA20")
+            legendDot(vwapSwatch, "VWAP")
             Spacer()
         }
         .font(.caption2)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
+    }
+
+    private var vwapSwatch: Color {
+        theme.appearance == .dark
+            ? Color(red: 232 / 255, green: 121 / 255, blue: 249 / 255)
+            : Color(red: 162 / 255, green: 28 / 255, blue: 175 / 255)
     }
 
     private func legendDot(_ color: Color, _ label: String) -> some View {

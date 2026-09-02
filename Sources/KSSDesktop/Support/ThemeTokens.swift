@@ -215,6 +215,8 @@ extension KSSPalette {
         // 图表副图功能色：跨主题恒定（对图表底色保持可读），随明暗取一组。
         let obv = appearance == .dark ? ThemeColor(0xB388FF) : ThemeColor(0x7C4DFF)
         let boll = appearance == .dark ? ThemeColor(0x26C6DA) : ThemeColor(0x0097A7)
+        // VWAP 主图叠加：品红，避开 MA 橙/蓝、BOLL 青、OBV 紫
+        let vwap = appearance == .dark ? ThemeColor(0xE879F9) : ThemeColor(0xA21CAF)
         let colors: [String: String] = [
             // 公共表面 / 文字 / 边线
             "bg": canvas.css,
@@ -260,6 +262,7 @@ extension KSSPalette {
             "obv": obv.css,
             "bbi": ink.css,
             "boll": boll.css,
+            "vwap": vwap.css,
             "chip": surfaceRaised.css,
             "chipText": body.css,
             "chipOn": accent.css,
