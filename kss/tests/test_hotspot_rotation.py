@@ -343,6 +343,39 @@ def test_build_hotspot_rotation_snapshot_em_industry_fallback(
     )
     assert snap is not None
     assert any(b.name == "航空机场" for b in snap.industries)
+    assert "industry:em_datacenter_coarse" not in snap.missing
+
+
+def test_build_hotspot_rotation_snapshot_all_concept_falls_back_to_em(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tushare 只返回概念行时，过滤后为空，应走东财兜底."""
+    em = pd.DataFrame({
+        "name": ["航空机场"],
+        "ts_code": ["BK0420.DC"],
+        "pct_change": [0.77],
+        "net_amount_rate": [3.19],
+        "buy_elg_amount_rate": [2.5],
+        "content_type": ["行业"],
+        "em_source": ["em_datacenter"],
+    })
+    monkeypatch.setattr(
+        "kss.sector.hotspot_rotation.fetch_industry_fundflow_em",
+        lambda trade_date, **kwargs: em,
+    )
+    df = _make_industry_df()
+    df["content_type"] = "概念"
+    dates = ["20260618", "20260617"]
+    client = FakeTushareClient(
+        industry=df, concept=_make_concept_df(), trade_cal_df=_trade_cal_for(dates),
+    )
+    snap = build_hotspot_rotation_snapshot(
+        "20260618", client=client, lookback_days=2,
+        enable_kaipan=False, enable_leaders=False,
+    )
+    assert snap is not None
+    assert any(b.name == "航空机场" for b in snap.industries)
+    assert "industry:em_datacenter_coarse" in snap.missing
 
 
 def test_build_hotspot_rotation_snapshot_industry_content_type_filter() -> None:

@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 SOURCE_PUSH2DELAY: Final[str] = "em_push2delay"
 SOURCE_DATACENTER: Final[str] = "em_datacenter"
+MISSING_INDUSTRY_COARSE: Final[str] = "industry:em_datacenter_coarse"
 
 _DC_URL: Final[str] = "https://datacenter-web.eastmoney.com/api/data/v1/get"
 _CLIST_URL: Final[str] = "https://push2delay.eastmoney.com/api/qt/clist/get"
@@ -188,18 +189,37 @@ def _fetch_push2delay(
         n_total = len(rows)
     n_pages = max(1, math.ceil(n_total / _CLIST_PAGE_SIZE))
     n_pages = min(n_pages, _CLIST_MAX_PAGES)
-    for page in range(2, n_pages + 1):
-        params["pn"] = str(page)
-        payload = _get_json(
-            sess, _CLIST_URL, params, label=f"push2delay {trade_date} p{page}"
+    aborted = False
+    if len(rows) < n_total:
+        for page in range(2, n_pages + 1):
+            params["pn"] = str(page)
+            payload = _get_json(
+                sess, _CLIST_URL, params, label=f"push2delay {trade_date} p{page}"
+            )
+            nxt = (payload or {}).get("data") if payload else None
+            page_diff = nxt.get("diff") if isinstance(nxt, dict) else None
+            if not isinstance(page_diff, list) or not page_diff:
+                logger.warning(
+                    "[em_ind] %s push2delay 第 %d 页空，中止翻页", trade_date, page
+                )
+                aborted = True
+                break
+            rows.extend(page_diff)
+            time.sleep(0.2)
+            if len(rows) >= n_total:
+                break
+    if _page_set_incomplete(
+        n_rows=len(rows),
+        n_total=n_total,
+        max_pages=_CLIST_MAX_PAGES,
+        page_size=_CLIST_PAGE_SIZE,
+        aborted=aborted,
+    ):
+        logger.warning(
+            "[em_ind] %s push2delay 不完整（%d/%d 行 aborted=%s），不当全量",
+            trade_date, len(rows), n_total, aborted,
         )
-        nxt = (payload or {}).get("data") if payload else None
-        page_diff = nxt.get("diff") if isinstance(nxt, dict) else None
-        if not isinstance(page_diff, list) or not page_diff:
-            logger.warning("[em_ind] %s push2delay 第 %d 页空，中止翻页", trade_date, page)
-            break
-        rows.extend(page_diff)
-        time.sleep(0.2)
+        return None
     df = _normalize_clist(rows, trade_date)
     if df is None:
         return None
@@ -240,18 +260,42 @@ def _fetch_datacenter(
         pages = int((result or {}).get("pages") or 1)
     except (TypeError, ValueError):
         pages = 1
+    try:
+        n_total = int((result or {}).get("count") or len(rows))
+    except (TypeError, ValueError):
+        n_total = len(rows)
     pages = min(max(pages, 1), _DC_MAX_PAGES)
-    for page in range(2, pages + 1):
-        params["pageNumber"] = str(page)
-        payload = _get_json(
-            sess, _DC_URL, params, label=f"datacenter {trade_date} p{page}"
+    aborted = False
+    if len(rows) < n_total:
+        for page in range(2, pages + 1):
+            params["pageNumber"] = str(page)
+            payload = _get_json(
+                sess, _DC_URL, params, label=f"datacenter {trade_date} p{page}"
+            )
+            nxt = (payload or {}).get("result") if payload else None
+            extra = nxt.get("data") if isinstance(nxt, dict) else None
+            if not isinstance(extra, list) or not extra:
+                logger.warning(
+                    "[em_ind] %s datacenter 第 %d 页空，中止翻页", trade_date, page
+                )
+                aborted = True
+                break
+            rows.extend(extra)
+            time.sleep(0.2)
+            if len(rows) >= n_total:
+                break
+    if _page_set_incomplete(
+        n_rows=len(rows),
+        n_total=n_total,
+        max_pages=_DC_MAX_PAGES,
+        page_size=_DC_PAGE_SIZE,
+        aborted=aborted,
+    ):
+        logger.warning(
+            "[em_ind] %s datacenter 不完整（%d/%d 行 aborted=%s）",
+            trade_date, len(rows), n_total, aborted,
         )
-        nxt = (payload or {}).get("result") if payload else None
-        extra = nxt.get("data") if isinstance(nxt, dict) else None
-        if not isinstance(extra, list) or not extra:
-            break
-        rows.extend(extra)
-        time.sleep(0.2)
+        return None
     df = _normalize_datacenter(rows, trade_date)
     if df is None:
         return None
@@ -260,6 +304,34 @@ def _fetch_datacenter(
         trade_date, len(df),
     )
     return df
+
+
+def _page_set_incomplete(
+    *,
+    n_rows: int,
+    n_total: int,
+    max_pages: int,
+    page_size: int,
+    aborted: bool,
+) -> bool:
+    """翻页中止、行数少于申报总量、或打到页帽仍不够 → 不完整."""
+    if aborted:
+        return True
+    if n_rows < n_total:
+        return True
+    return n_total > max_pages * page_size
+
+
+def note_coarse_industry(
+    df: pd.DataFrame | None, missing: list[str]
+) -> None:
+    """datacenter 粗板块可保留，但必须在 ``missing`` 里留下口径印."""
+    if df is None or df.empty or "em_source" not in df.columns:
+        return
+    if str(df["em_source"].iloc[0]) != SOURCE_DATACENTER:
+        return
+    if MISSING_INDUSTRY_COARSE not in missing:
+        missing.append(MISSING_INDUSTRY_COARSE)
 
 
 def _ts_code(board: object) -> str:

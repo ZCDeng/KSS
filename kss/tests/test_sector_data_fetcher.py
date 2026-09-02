@@ -12,6 +12,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from kss.data.em_industry_fundflow import MISSING_INDUSTRY_COARSE
 from kss.data.tushare_client import TushareClient
 from kss.sector.data_fetcher import (
     MARKET_INDEX_TS_CODES,
@@ -392,7 +393,34 @@ class TestLoadSectorSnapshot:
         assert snap.industry is not None
         assert list(snap.industry["name"]) == ["航空机场"]
         assert "industry" not in snap.missing
+        assert MISSING_INDUSTRY_COARSE in snap.missing
         assert snap.concept is not None
+
+    def test_em_push2delay_fallback_not_tagged_coarse(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """push2delay 全量兜底不得打粗板块印."""
+        em = pd.DataFrame({
+            "trade_date": ["20260512"],
+            "content_type": ["行业"],
+            "ts_code": ["BK0420.DC"],
+            "name": ["航空机场"],
+            "pct_change": [0.77],
+            "net_amount_rate": [3.19],
+            "buy_elg_amount_rate": [2.5],
+            "em_source": ["em_push2delay"],
+        })
+        monkeypatch.setattr(
+            "kss.sector.data_fetcher.fetch_industry_fundflow_em",
+            lambda trade_date, **kwargs: em,
+        )
+        client = _FakeClient(
+            ind=None, cnt=_make_cnt_ths(), sw=_make_sw_daily(), hs=_make_hsgt(),
+        )
+        snap = load_sector_snapshot("20260512", client=client)  # type: ignore[arg-type]
+        assert snap.industry is not None
+        assert "industry" not in snap.missing
+        assert MISSING_INDUSTRY_COARSE not in snap.missing
 
     def test_uses_default_client_when_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """client=None 时回退到 TushareClient 单例（不真实调 API）."""

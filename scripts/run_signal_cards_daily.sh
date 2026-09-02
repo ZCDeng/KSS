@@ -47,7 +47,7 @@ if [ "$CHAIN_RUN" -eq 1 ]; then
   echo "[chain] signal_cards: 构建目标日 $TARGET_DAY"
   kss_run_with_timeout 600 \
     "$PYTHON" "$PROJECT_ROOT/scripts/build_signal_cards.py" --date "$TARGET_DAY" 2>&1
-  kss_mark_done signal_cards
+  kss_mark_done signal_cards "$TARGET_DAY"
 else
   kss_run_with_timeout 600 \
     "$PYTHON" "$PROJECT_ROOT/scripts/build_signal_cards.py" "$@" 2>&1

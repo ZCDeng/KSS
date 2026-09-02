@@ -129,12 +129,33 @@ def run_gate(task: str, data_root: Path, state_root: Path, sentinels: tuple[str,
     return decide(target, lagging, marker)
 
 
-def write_marker(task: str, data_root: Path, state_root: Path, sentinels: tuple[str, ...]) -> str | None:
-    """任务成功后落完成标记（目标日与 gate 同源自锚）；返回目标日，无目标日返回 None。"""
+def write_marker(
+    task: str,
+    data_root: Path,
+    state_root: Path,
+    sentinels: tuple[str, ...],
+    target_day: str | None = None,
+) -> str | None:
+    """任务成功后落完成标记；返回目标日，无目标日 / 与当前 quorum 冲突返回 None.
+
+    ``target_day`` 钉死本次构建日。若当前 sentinel quorum 已前进到另一天，
+    拒绝落标记，避免给没构建的那天盖章。
+    """
     import datetime
 
     latest = {sym: read_latest_trade_date(data_root / f"cs_data_{sym.split('.')[0]}.csv") for sym in sentinels}
-    target, _ = compute_target_day(latest)
+    computed, _ = compute_target_day(latest)
+    if target_day:
+        if computed is None or computed != target_day:
+            print(
+                f"[gate] task={task} mark-done 拒绝：构建日 {target_day} "
+                f"与当前 quorum {computed} 不一致",
+                file=sys.stderr,
+            )
+            return None
+        target = target_day
+    else:
+        target = computed
     if target is None:
         return None
     marker_dir = state_root / "storage" / "pipeline_markers"
@@ -160,6 +181,8 @@ def main() -> int:
     parser.add_argument("--state-root", default=".", help="KSS_STATE_ROOT（pipeline_markers 落点）")
     parser.add_argument("--sentinels", default=",".join(DEFAULT_SENTINELS),
                         help="逗号分隔 sentinel 列表（默认内置四只）")
+    parser.add_argument("--target-day", default=None,
+                        help="mark-done 时钉死本次构建日（YYYY-MM-DD）；与当前 quorum 不一致则拒绝")
     args = parser.parse_args()
 
     sentinels = tuple(s.strip() for s in args.sentinels.split(",") if s.strip())
@@ -174,9 +197,12 @@ def main() -> int:
         return 0
 
     if args.action == "mark-done":
-        target = write_marker(args.task, Path(args.data_root), Path(args.state_root), sentinels)
+        target = write_marker(
+            args.task, Path(args.data_root), Path(args.state_root), sentinels,
+            target_day=args.target_day,
+        )
         if target is None:
-            print(f"[gate] task={args.task} mark-done 失败：sentinel 数据全部缺失", file=sys.stderr)
+            print(f"[gate] task={args.task} mark-done 失败：无目标日或与 quorum 冲突", file=sys.stderr)
             return 1
         print(f"[gate] task={args.task} 完成标记 {target}")
         return 0

@@ -123,6 +123,64 @@ def test_cli_exit_codes(tmp_path):
     assert subprocess.run(base, capture_output=True).returncode == 4
 
 
+def test_cli_split_roots_stale_noop_vs_fresh_run(tmp_path):
+    """CLI 必须读传入的 data-root/state-root，不得偷偷锚仓库 cs_data.
+
+    停更树 + 完整 marker → NOOP；另一棵新鲜树无 marker → RUN。
+    """
+    stale = tmp_path / "stale"
+    fresh = tmp_path / "fresh"
+    stale.mkdir()
+    fresh.mkdir()
+    _write_all(stale, ["2026-08-14"])
+    _marker(stale, "signal_cards", "2026-08-14")
+    _write_all(fresh, ["2026-09-01"])
+    script = str(PROJECT_ROOT / "scripts" / "check_pipeline_gate.py")
+
+    def _run(root: Path) -> int:
+        return subprocess.run(
+            [sys.executable, script, "--task", "signal_cards",
+             "--data-root", str(root), "--state-root", str(root),
+             "--sentinels", ",".join(SENTINELS)],
+            capture_output=True,
+        ).returncode
+
+    assert _run(stale) == 3
+    assert _run(fresh) == 0
+
+
+def test_write_marker_target_day_match(tmp_path):
+    _write_all(tmp_path, ["2026-07-14"])
+    target = gate.write_marker(
+        "signal_cards", tmp_path, tmp_path, SENTINELS, target_day="2026-07-14",
+    )
+    assert target == "2026-07-14"
+    assert (tmp_path / "storage" / "pipeline_markers" / "signal_cards_2026-07-14.json").exists()
+
+
+def test_write_marker_target_day_mismatch_writes_nothing(tmp_path):
+    _write_all(tmp_path, ["2026-07-14"])
+    target = gate.write_marker(
+        "signal_cards", tmp_path, tmp_path, SENTINELS, target_day="2026-07-13",
+    )
+    assert target is None
+    marker_dir = tmp_path / "storage" / "pipeline_markers"
+    assert not marker_dir.exists() or not any(marker_dir.iterdir())
+
+
+def test_cli_mark_done_target_day_mismatch(tmp_path):
+    _write_all(tmp_path, ["2026-07-14"])
+    p = subprocess.run(
+        [sys.executable, str(PROJECT_ROOT / "scripts" / "check_pipeline_gate.py"),
+         "--task", "signal_cards", "--action", "mark-done",
+         "--data-root", str(tmp_path), "--state-root", str(tmp_path),
+         "--sentinels", ",".join(SENTINELS),
+         "--target-day", "2026-07-13"],
+        capture_output=True,
+    )
+    assert p.returncode == 1
+    marker_dir = tmp_path / "storage" / "pipeline_markers"
+    assert not marker_dir.exists() or not any(marker_dir.iterdir())
 
 
 def test_chain_wrappers_anchor_cs_data_to_state_root():
@@ -139,6 +197,7 @@ def test_chain_wrappers_anchor_cs_data_to_state_root():
     cards = (PROJECT_ROOT / "scripts" / "run_signal_cards_daily.sh").read_text(encoding="utf-8")
     assert "export KSS_STATE_ROOT" in cards
     assert '--date "$TARGET_DAY"' in cards
+    assert 'kss_mark_done signal_cards "$TARGET_DAY"' in cards
     bridge = (PROJECT_ROOT / "scripts" / "kss_app_bridge.py").read_text(encoding="utf-8")
     assert "read_latest_trade_date(STATE_ROOT" in bridge
     assert "read_latest_trade_date(PROJECT_ROOT" not in bridge

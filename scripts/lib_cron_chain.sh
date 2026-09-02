@@ -3,7 +3,7 @@
 #
 # 供 EOD 与四个下游 wrapper source。三个能力：
 #   kss_gate_or_exit <task>       —— 三态 gate：NOOP(3) 静默成功退出 / STALE(4) 响亮失败 / RUN 继续
-#   kss_mark_done <task>          —— 任务成功后落完成标记（gate 的产物判定依据）
+#   kss_mark_done <task> [day]    —— 任务成功后落完成标记（可选钉死本次构建日）
 #   kss_kick_next <suffix>        —— 踢下一环。不带 -k（防腰斩运行中实例）；rc 局部捕获，
 #                                    失败只记日志不影响本环退出码（KTD1 防污染细则）
 #   kss_run_with_timeout <sec> …  —— 进程组超时守护（KTD3），超时 exit 124
@@ -37,11 +37,17 @@ kss_gate_or_exit() {
 
 kss_mark_done() {
   local task="$1"
+  local day="${2:-}"
   local py; py="$(kss_chain_python)"
+  local extra=()
+  if [ -n "$day" ]; then
+    extra+=(--target-day "$day")
+  fi
   # 标记落盘失败不改判本环成败（产物已真实生成），只留日志。
   "$py" "$PROJECT_ROOT/scripts/check_pipeline_gate.py" \
     --task "$task" --action mark-done \
     --data-root "$KSS_STATE_ROOT" --state-root "$KSS_STATE_ROOT" \
+    "${extra[@]}" \
     || echo "[chain] $task: mark-done 落盘失败（不影响本环结果）"
   return 0
 }

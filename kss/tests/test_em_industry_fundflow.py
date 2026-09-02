@@ -4,7 +4,7 @@
 - 当日走 push2delay，映射 f14/f3/f184/f66/f69 → Tushare 行业列
 - 隔日走 datacenter RPT_INDUSTRY_FUNDFLOW
 - 当日 push2delay 失败 → 降到 datacenter
-- 翻页合并
+- 翻页合并；翻页不完整不得当全量
 - 非法日期 / 空响应 / 必需列缺失 → None
 """
 
@@ -95,14 +95,22 @@ def _dc_row(
     }
 
 
-def _dc_payload(rows: list[dict], *, pages: int = 1) -> dict:
+def _dc_payload(
+    rows: list[dict], *, pages: int = 1, count: int | None = None
+) -> dict:
     return {
         "success": True,
-        "result": {"data": rows, "pages": pages, "count": len(rows)},
+        "result": {
+            "data": rows,
+            "pages": pages,
+            "count": count if count is not None else len(rows),
+        },
     }
 
 
 class TestSameDayPush2delay:
+    """当日走 push2delay clist，映射字段并翻页合并。"""
+
     def test_maps_clist_fields_to_tushare_schema(self) -> None:
         sess = _make_session(_clist_payload([_clist_row()]))
         df = fetch_industry_fundflow_em(
@@ -126,11 +134,14 @@ class TestSameDayPush2delay:
         monkeypatch.setattr(
             "kss.data.em_industry_fundflow.time.sleep", lambda _: None
         )
+        monkeypatch.setattr(
+            "kss.data.em_industry_fundflow._CLIST_PAGE_SIZE", 1
+        )
         page1 = _clist_payload(
-            [_clist_row("BK0001", "甲")], total=101
+            [_clist_row("BK0001", "甲")], total=2
         )
         page2 = _clist_payload(
-            [_clist_row("BK0002", "乙")], total=101
+            [_clist_row("BK0002", "乙")], total=2
         )
         sess = _make_session(page1, page2)
         df = fetch_industry_fundflow_em(
@@ -139,9 +150,33 @@ class TestSameDayPush2delay:
         assert df is not None
         assert set(df["name"]) == {"甲", "乙"}
         assert sess.get.call_count == 2
+        assert df.iloc[0]["em_source"] == SOURCE_PUSH2DELAY
+
+    def test_incomplete_clist_falls_back_to_datacenter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "kss.data.em_industry_fundflow.time.sleep", lambda _: None
+        )
+        monkeypatch.setattr(
+            "kss.data.em_industry_fundflow._CLIST_PAGE_SIZE", 1
+        )
+        page1 = _clist_payload([_clist_row("BK0001", "甲")], total=2)
+        empty_page2 = _clist_payload([], total=2)
+        sess = _make_session(page1, empty_page2, _dc_payload([_dc_row()]))
+        df = fetch_industry_fundflow_em(
+            "20260901", session=sess, now_ymd="20260901"
+        )
+        assert df is not None
+        assert df.iloc[0]["em_source"] == SOURCE_DATACENTER
+        urls = [c.args[0] for c in sess.get.call_args_list]
+        assert urls[0] == _CLIST_URL
+        assert urls[-1] == _DC_URL
 
 
 class TestDatedDatacenter:
+    """隔日走 datacenter；当日 clist 失败再降到粗板块。"""
+
     def test_past_day_hits_datacenter_not_clist(self) -> None:
         sess = _make_session(_dc_payload([_dc_row()]))
         df = fetch_industry_fundflow_em(
@@ -179,8 +214,26 @@ class TestDatedDatacenter:
         assert urls[0] == _CLIST_URL
         assert urls[-1] == _DC_URL
 
+    def test_empty_clist_falls_back_to_datacenter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "kss.data.em_industry_fundflow.time.sleep", lambda _: None
+        )
+        sess = _make_session(
+            {"data": {"total": 0, "diff": []}},
+            _dc_payload([_dc_row()]),
+        )
+        df = fetch_industry_fundflow_em(
+            "20260901", session=sess, now_ymd="20260901"
+        )
+        assert df is not None
+        assert df.iloc[0]["em_source"] == SOURCE_DATACENTER
+
 
 class TestErrorPaths:
+    """非法日期、空响应、必需列缺失、翻页不完整 → None。"""
+
     def test_invalid_date_does_not_request(self) -> None:
         sess = _make_session()
         assert fetch_industry_fundflow_em("2026-09-01", session=sess) is None
@@ -209,6 +262,22 @@ class TestErrorPaths:
         del bad["CHANGE_RATE"]
         sess = _make_session(_dc_payload([bad]))
         # pct_change / net_amount_rate become NA → dropna 清空
+        assert (
+            fetch_industry_fundflow_em(
+                "20260901", session=sess, now_ymd="20260902"
+            )
+            is None
+        )
+
+    def test_datacenter_empty_page2_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "kss.data.em_industry_fundflow.time.sleep", lambda _: None
+        )
+        page1 = _dc_payload([_dc_row()], pages=2, count=2)
+        page2 = _dc_payload([], pages=2, count=2)
+        sess = _make_session(page1, page2)
         assert (
             fetch_industry_fundflow_em(
                 "20260901", session=sess, now_ymd="20260902"

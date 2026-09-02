@@ -37,8 +37,12 @@ from kss.data.plate_rotation_adapter import (
     fetch_plate_rotat_data,
     rank_plate_long_persistence,
 )
-from kss.data.em_industry_fundflow import fetch_industry_fundflow_em
+from kss.data.em_industry_fundflow import (
+    fetch_industry_fundflow_em,
+    note_coarse_industry,
+)
 from kss.data.tushare_client import TushareClient
+from kss.sector.data_fetcher import _filter_industry_only
 from kss.sector.scorer import compute_heat_score, load_config
 
 logger = logging.getLogger(__name__)
@@ -440,8 +444,8 @@ def build_hotspot_rotation_snapshot(
 
     config = load_config(config_path)
 
-    raw_ind = client.fetch_moneyflow_ind_dc(trade_date)
-    if raw_ind is None or getattr(raw_ind, "empty", False):
+    raw_ind = _filter_industry_only(client.fetch_moneyflow_ind_dc(trade_date))
+    if raw_ind is None:
         em_ind = fetch_industry_fundflow_em(trade_date)
         if em_ind is not None:
             logger.warning(
@@ -473,6 +477,7 @@ def build_hotspot_rotation_snapshot(
         tradingDaysUsed=trading_days,
         historyCoverage=history_coverage,
     )
+    note_coarse_industry(raw_ind, snap.missing)
 
     history: list[tuple[str, list[HotspotBoard]]] = []
     for d in history_days:

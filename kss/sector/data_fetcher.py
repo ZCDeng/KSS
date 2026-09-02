@@ -31,7 +31,10 @@ from kss.data.tushare_client import TushareClient
 from kss.data.ths_client import fetch_ths_hot
 from kss.data.dragon_tiger_client import fetch_dragon_tiger
 from kss.data.margin_client import fetch_kcb_margin
-from kss.data.em_industry_fundflow import fetch_industry_fundflow_em
+from kss.data.em_industry_fundflow import (
+    fetch_industry_fundflow_em,
+    note_coarse_industry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +59,8 @@ class SectorSnapshot:
         industry: 东财行业资金流（已过滤 ``content_type == '行业'``）；
             含 ``name`` / ``pct_change`` / ``net_amount_rate`` / ``buy_elg_amount_rate``.
             Tushare 失败时可能是东财 HTTP 兜底（``em_source`` 列标明口径）。
-            失败时为 ``None``.
+            datacenter 粗板块会另把 ``industry:em_datacenter_coarse`` 写入
+            ``missing``，不得当成细分全量。失败时为 ``None``.
         concept: 同花顺概念板块资金流；含 ``name`` / ``pct_change`` / ``net_amount``.
             失败时为 ``None``.
         industry_index: 申万指数日线（含 L1/L2/L3 全量，由调用方按 ts_code 过滤）.
@@ -159,6 +163,7 @@ def load_sector_snapshot(
                 else "em",
                 len(snap.industry),
             )
+    note_coarse_industry(snap.industry, snap.missing)
 
     raw_cnt = client.fetch_moneyflow_cnt_ths(trade_date)
     if raw_cnt is None or raw_cnt.empty:
