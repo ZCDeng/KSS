@@ -9,6 +9,8 @@
 #   kss_run_with_timeout <sec> …  —— 进程组超时守护（KTD3），超时 exit 124
 #
 # 依赖调用方已定义 PROJECT_ROOT 与 KSS_STATE_ROOT（各 wrapper 既有惯例）。
+# data-root 必须是 cs_data 的写入根：bundle-mode 下 EOD 写 $KSS_STATE_ROOT，
+# 若仍锚 PROJECT_ROOT，仓库里那份停更 CSV 会把目标日钉死，天天 NOOP（2026-08-14 事故）。
 
 kss_chain_python() {
   # gate/timeout 是纯 stdlib 工具，系统 python3 即可；优先 wrapper 已解析的 $PYTHON。
@@ -24,7 +26,7 @@ kss_gate_or_exit() {
   local py; py="$(kss_chain_python)"
   local rc=0
   "$py" "$PROJECT_ROOT/scripts/check_pipeline_gate.py" \
-    --task "$task" --data-root "$PROJECT_ROOT" --state-root "$KSS_STATE_ROOT" || rc=$?
+    --task "$task" --data-root "$KSS_STATE_ROOT" --state-root "$KSS_STATE_ROOT" || rc=$?
   case "$rc" in
     0) return 0 ;;                                        # RUN
     3) echo "[chain] $task: 目标日产物已在，no-op 退出"; exit 0 ;;   # NOOP＝合法成功
@@ -39,7 +41,7 @@ kss_mark_done() {
   # 标记落盘失败不改判本环成败（产物已真实生成），只留日志。
   "$py" "$PROJECT_ROOT/scripts/check_pipeline_gate.py" \
     --task "$task" --action mark-done \
-    --data-root "$PROJECT_ROOT" --state-root "$KSS_STATE_ROOT" \
+    --data-root "$KSS_STATE_ROOT" --state-root "$KSS_STATE_ROOT" \
     || echo "[chain] $task: mark-done 落盘失败（不影响本环结果）"
   return 0
 }

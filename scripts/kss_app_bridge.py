@@ -1439,7 +1439,7 @@ def _run_formal_daily_picks(args: dict[str, str | bool]) -> dict[str, Any]:
             from check_pipeline_gate import (  # noqa: PLC0415 — 同目录 stdlib-only 工具
                 DEFAULT_SENTINELS, compute_target_day, read_latest_trade_date,
             )
-            latest = {s: read_latest_trade_date(PROJECT_ROOT / f"cs_data_{s.split('.')[0]}.csv")
+            latest = {s: read_latest_trade_date(STATE_ROOT / f"cs_data_{s.split('.')[0]}.csv")
                       for s in DEFAULT_SENTINELS}
             target_date, _ = compute_target_day(latest)
         except Exception:  # noqa: BLE001

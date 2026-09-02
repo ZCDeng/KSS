@@ -11,6 +11,7 @@ set -o pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${KSS_STATE_ROOT:=$PROJECT_ROOT}"
+export KSS_STATE_ROOT
 LOG_DIR="$KSS_STATE_ROOT/storage/logs/cron"
 
 if [ -n "${KSS_PYTHON:-}" ]; then
@@ -36,12 +37,19 @@ if [ "$#" -gt 0 ]; then
 fi
 if [ "$CHAIN_RUN" -eq 1 ]; then
   kss_gate_or_exit signal_cards
-fi
-
-kss_run_with_timeout 600 \
-  "$PYTHON" "$PROJECT_ROOT/scripts/build_signal_cards.py" "$@" 2>&1
-
-if [ "$CHAIN_RUN" -eq 1 ]; then
+  TARGET_DAY=$("$PYTHON" "$PROJECT_ROOT/scripts/check_pipeline_gate.py" \
+    --task signal_cards --action target-day \
+    --data-root "$KSS_STATE_ROOT" --state-root "$KSS_STATE_ROOT")
+  if [ -z "${TARGET_DAY:-}" ]; then
+    echo "[chain] signal_cards: 无法解析目标交易日" >&2
+    exit 1
+  fi
+  echo "[chain] signal_cards: 构建目标日 $TARGET_DAY"
+  kss_run_with_timeout 600 \
+    "$PYTHON" "$PROJECT_ROOT/scripts/build_signal_cards.py" --date "$TARGET_DAY" 2>&1
   kss_mark_done signal_cards
+else
+  kss_run_with_timeout 600 \
+    "$PYTHON" "$PROJECT_ROOT/scripts/build_signal_cards.py" "$@" 2>&1
 fi
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') signal_cards_daily 结束 ====="

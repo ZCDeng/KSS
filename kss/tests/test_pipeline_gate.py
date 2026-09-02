@@ -123,6 +123,26 @@ def test_cli_exit_codes(tmp_path):
     assert subprocess.run(base, capture_output=True).returncode == 4
 
 
+
+
+def test_chain_wrappers_anchor_cs_data_to_state_root():
+    """bundle-mode：EOD 写 $KSS_STATE_ROOT/cs_data_*.csv，gate 必须读同一根。
+
+    读 PROJECT_ROOT 会把目标日钉死在仓库停更副本上，天天 NOOP（2026-08-14 事故）。
+    """
+    chain = (PROJECT_ROOT / "scripts" / "lib_cron_chain.sh").read_text(encoding="utf-8")
+    assert '--data-root "$KSS_STATE_ROOT"' in chain
+    assert '--data-root "$PROJECT_ROOT"' not in chain
+    picks = (PROJECT_ROOT / "scripts" / "run_formal_daily_picks.sh").read_text(encoding="utf-8")
+    assert '--data-root "$KSS_STATE_ROOT"' in picks
+    assert '--data-root "$PROJECT_ROOT"' not in picks
+    cards = (PROJECT_ROOT / "scripts" / "run_signal_cards_daily.sh").read_text(encoding="utf-8")
+    assert "export KSS_STATE_ROOT" in cards
+    assert '--date "$TARGET_DAY"' in cards
+    bridge = (PROJECT_ROOT / "scripts" / "kss_app_bridge.py").read_text(encoding="utf-8")
+    assert "read_latest_trade_date(STATE_ROOT" in bridge
+    assert "read_latest_trade_date(PROJECT_ROOT" not in bridge
+
 # ---------------------------------------------------------------------------
 # 超时守护（KTD3）
 # ---------------------------------------------------------------------------

@@ -75,7 +75,7 @@ fi
 if [ "$CHAIN_RUN" -eq 1 ]; then
   DB_PATH="$KSS_STATE_ROOT/storage/kss.db"
   TARGET_DAY=$("$PYTHON" "$PROJECT_ROOT/scripts/check_pipeline_gate.py" \
-    --task picks --action target-day --data-root "$PROJECT_ROOT" --state-root "$KSS_STATE_ROOT")
+    --task picks --action target-day --data-root "$KSS_STATE_ROOT" --state-root "$KSS_STATE_ROOT")
   LANDED=$("$PYTHON" -c "
 import sys
 sys.path.insert(0, '$PROJECT_ROOT')

@@ -10,6 +10,8 @@
 目标交易日从数据侧自锚（KTD2）：取固定 sentinel 标的的 cs_data `max(trade_date)`
 的最大值为目标日，并要求全部 sentinel 都已写到该日（quorum）——部分池写入
 （如 07-14 实测 85/115）判 STALE_DATA，而非静默用不完整横截面出产物。
+`--data-root` 必须指向 cs_data 的写入根（bundle-mode = `$KSS_STATE_ROOT`）；
+锚到仓库根会把目标日钉在停更的副本上，下游天天 NOOP（2026-08-14 事故）。
 不从日历工作日推导：仓内离线假日表只到 2025，节假日 EOD 无新行时目标日
 自然停在上一交易日、产物同日已在 → NOOP，误报被数据侧自锚天然消化。
 
@@ -154,7 +156,7 @@ def main() -> int:
     parser.add_argument("--action", choices=("check", "mark-done", "target-day"), default="check",
                         help="check=三态判定（默认）；mark-done=成功后落完成标记；"
                              "target-day=只打印目标交易日（供落盘校验取参照系）")
-    parser.add_argument("--data-root", default=".", help="cs_data csv 所在目录（默认当前目录）")
+    parser.add_argument("--data-root", default=".", help="cs_data csv 所在目录（bundle-mode 必须是 KSS_STATE_ROOT）")
     parser.add_argument("--state-root", default=".", help="KSS_STATE_ROOT（pipeline_markers 落点）")
     parser.add_argument("--sentinels", default=",".join(DEFAULT_SENTINELS),
                         help="逗号分隔 sentinel 列表（默认内置四只）")
