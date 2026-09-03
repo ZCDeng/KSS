@@ -49,6 +49,13 @@ storage/**/*.db-journal
 storage/**/*.db-wal
 storage/**/*.db-shm
 
+# Repo-root compatibility DB and migration lock are machine-local runtime state.
+/kss.db
+/kss.db-journal
+/kss.db-wal
+/kss.db-shm
+/kss.db.migration.lock
+
 # 审计底稿例外：storage/daily_review/ 与 storage/etf_radar/ 是预测校验
 # (validate_predictions.py) 的依据，纳入版本控制；周五校验 cron 自动 commit
 # 同类日级归档还包括 storage/sector_rotation/*.json、storage/paper_trade/*.json
@@ -70,6 +77,10 @@ storage/intel_rewrites/
 storage/intel_track_keywords.json
 storage/kss.db.migration.lock
 storage/pipeline_markers/
+storage/ui_surface/
+
+# 研究分钟线缓存：回测脚本会按需重拉，正式证据落 storage/reports/indicator_lab
+storage/research/vwap_intraday/
 
 # 日志 / 临时
 *.log

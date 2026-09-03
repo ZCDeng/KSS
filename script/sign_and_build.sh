@@ -212,17 +212,49 @@ fi
 # Prefer explicit Apple HTTP TSA — bare --timestamp sometimes fails with
 # "The timestamp service is not available" when the default endpoint flakes.
 CODESIGN_TIMESTAMP="${KSS_CODESIGN_TIMESTAMP:-http://timestamp.apple.com/ts01}"
+codesign_retry() {
+  local attempt=1
+  local max=6
+  local delay=3
+  while true; do
+    if codesign "$@"; then
+      return 0
+    fi
+    if [ "$attempt" -ge "$max" ]; then
+      echo "ERROR: codesign failed after ${max} attempts." >&2
+      return 1
+    fi
+    echo "codesign 失败（时间戳服务？），${delay}s 后重试 (${attempt}/${max})…" >&2
+    sleep "$delay"
+    attempt=$((attempt + 1))
+    delay=$((delay * 2))
+    [ "$delay" -gt 30 ] && delay=30
+  done
+}
+cleanup_file() {
+  local target="$1"
+  [ -n "$target" ] || return 0
+  case "$target" in
+    "$DIST_DIR"/*|"/Applications/${APP_NAME}.zip")
+      rm -f "$target"
+      ;;
+    *)
+      echo "ERROR: refuse to remove unexpected file target: $target" >&2
+      return 1
+      ;;
+  esac
+}
 # Nested Harness natives (koffi, node-pty, sharp, ripgrep, spawn-helper)
 # are Mach-O and must be signed before the parent bundle is sealed.
 # Detect by magic bytes — spawn-helper is 0644, so -perm +111 misses it.
 while IFS= read -r native; do
   [ -n "$native" ] || continue
   echo "签名 Harness native: $native"
-  codesign --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
+  codesign_retry --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
     --sign "$SIGN_IDENTITY" "$native"
   codesign --verify --strict --verbose=2 "$native"
 done < <(python3 "$ROOT_DIR/script/list_harness_macho.py" "$APP_RESOURCES/harness")
-codesign --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
+codesign_retry --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
   --entitlements "$NODE_ENTITLEMENTS" \
   --sign "$SIGN_IDENTITY" "$APP_RESOURCES/pi-ai-runtime/bin/node"
 codesign --verify --strict --verbose=2 "$APP_RESOURCES/pi-ai-runtime/bin/node"
@@ -233,7 +265,7 @@ if ! codesign -d --entitlements :- "$APP_RESOURCES/pi-ai-runtime/bin/node" 2>&1 
 fi
 # The Harness kernel runs dsh with this nested Node binary. Independent
 # availability from Python, but live writes still require a Node grant first.
-codesign --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
+codesign_retry --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
   --entitlements "$NODE_ENTITLEMENTS" \
   --sign "$SIGN_IDENTITY" "$APP_RESOURCES/harness-runtime/bin/node"
 codesign --verify --strict --verbose=2 "$APP_RESOURCES/harness-runtime/bin/node"
@@ -245,7 +277,7 @@ fi
 # The scheduler helper is a nested executable.  It owns the ephemeral
 # Keychain credential broker used by launchd jobs, so it must be independently
 # signed before sealing the parent application bundle.
-codesign --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
+codesign_retry --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
   --entitlements "$ENTITLEMENTS" \
   --sign "$SIGN_IDENTITY" "$APP_HELPERS/KSSResearchSchedulerHelper"
 codesign --verify --strict --verbose=2 "$APP_HELPERS/KSSResearchSchedulerHelper"
@@ -270,10 +302,10 @@ if [ -d "$APP_RESOURCE_BUNDLE" ]; then
 </plist>
 RESPLIST
   fi
-  codesign --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
+  codesign_retry --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
     --sign "$SIGN_IDENTITY" "$APP_RESOURCE_BUNDLE"
 fi
-codesign --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
+codesign_retry --force --options runtime --timestamp="$CODESIGN_TIMESTAMP" \
   --entitlements "$ENTITLEMENTS" \
   --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
 
@@ -318,6 +350,74 @@ else
   rm -f "$NOTARY_ZIP"
   echo "公证完成，Gatekeeper 首开不再需要手动信任。"
 fi
+
+# 每次发布后清旧包：公证 zip、Applications 里的旧 zip / .previous、release-backups。
+# 不碰 dist 里刚签好的 .app，也不删正在用的 /Applications/KSSDesktop.app。
+echo ""
+echo "清理旧包…"
+cleanup_file "$DIST_DIR/${APP_NAME}-notarize.zip"
+APP_INSTALL_DIR="/Applications"
+shopt -s nullglob
+for archive in "$DIST_DIR/${APP_NAME}-desktop-v"*.zip; do
+  cleanup_file "$archive"
+done
+cleanup_file "$APP_INSTALL_DIR/${APP_NAME}.zip"
+safe_remove_old_dir() {
+  local target="$1"
+  local allowed_parent="$2"
+  local target_parent resolved_parent resolved_target
+
+  case "$target" in
+    "$APP_INSTALL_DIR/${APP_NAME}.app.previous-"*|"$APP_SUPPORT_DIR/release-backups")
+      ;;
+    *)
+      echo "ERROR: refuse to remove unexpected tree target: $target" >&2
+      return 1
+      ;;
+  esac
+
+  if [ -L "$target" ]; then
+    echo "WARNING: 跳过符号链接旧包：$target" >&2
+    return 0
+  fi
+  if [ ! -d "$target" ]; then
+    echo "WARNING: 跳过非目录旧包：$target" >&2
+    return 0
+  fi
+  target_parent="$(dirname "$target")"
+  resolved_parent="$(cd "$allowed_parent" 2>/dev/null && pwd -P)" || {
+    echo "ERROR: cleanup parent missing: $allowed_parent" >&2
+    return 1
+  }
+  resolved_target="$(cd "$target_parent" 2>/dev/null && pwd -P)/$(basename "$target")" || {
+    echo "ERROR: cleanup target parent missing: $target_parent" >&2
+    return 1
+  }
+  case "$resolved_target" in
+    "$resolved_parent"/*) ;;
+    *)
+      echo "ERROR: refuse to delete outside parent: $resolved_target" >&2
+      return 1
+      ;;
+  esac
+  chmod -R u+w "$resolved_target" 2>/dev/null || true
+  chflags -R nouchg,noschg "$resolved_target" 2>/dev/null || true
+  if rm -rf -- "$resolved_target"; then
+    echo "removed $resolved_target"
+  else
+    echo "WARNING: 无法清理旧包：$resolved_target" >&2
+  fi
+}
+for leftover in "$APP_INSTALL_DIR/${APP_NAME}.app.previous-"*; do
+  [ -e "$leftover" ] || continue
+  safe_remove_old_dir "$leftover" "$APP_INSTALL_DIR"
+done
+APP_SUPPORT_DIR="$HOME/Library/Application Support/KSS"
+BACKUP="$APP_SUPPORT_DIR/release-backups"
+if [ -e "$BACKUP" ] || [ -L "$BACKUP" ]; then
+  safe_remove_old_dir "$BACKUP" "$APP_SUPPORT_DIR"
+fi
+echo "旧包清理完成。"
 
 echo ""
 echo "完成：$APP_BUNDLE"
