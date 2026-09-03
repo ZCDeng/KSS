@@ -4894,18 +4894,102 @@ def _check_cs_data_freshness() -> dict[str, Any]:
     }
 
 
+
+def _db_max_trade_date(db_path: Path, table: str) -> str | None:
+    """kss.db 某表 max(trade_date)，忽略 2099 占位行；缺库/缺表 → None。"""
+    import sqlite3
+
+    if table not in {"signal_cards", "etf_radar_snapshots", "sector_rotation_snapshots"}:
+        raise ValueError(f"unsupported table: {table}")
+    if not db_path.is_file():
+        return None
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            row = con.execute(
+                f"SELECT MAX(trade_date) FROM {table} WHERE trade_date < '2099'"
+            ).fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return None
+    val = row[0] if row else None
+    return str(val) if val else None
+
+
+def _signal_cards_freshness() -> dict[str, Any]:
+    """信号卡落后上游 ETF/板块快照 >1 个交易日 → stale。
+
+    专门打 2026-08-14 这类事故：cs_data 自检看 STATE_ROOT 是绿的，gate 却对着仓库
+    停更副本 NOOP，卡层停更无人发现。对照物是 etf_radar / sector_rotation（卡层真正
+    上游），不是 sentinel CSV。
+    """
+    db = STATE_ROOT / "storage" / "kss.db"
+    cards = _db_max_trade_date(db, "signal_cards")
+    etf = _db_max_trade_date(db, "etf_radar_snapshots")
+    rotation = _db_max_trade_date(db, "sector_rotation_snapshots")
+    candidates = [d for d in (etf, rotation) if d]
+    if not candidates:
+        return {"ok": True, "skipped": True, "reason": "no_upstream_snapshots",
+                "cards": cards, "etf": etf, "rotation": rotation}
+    reference = max(candidates)
+    threshold = _prev_trade_day(reference)
+    if cards is None or cards < threshold:
+        return {
+            "ok": False, "skipped": False, "reference": reference, "threshold": threshold,
+            "cards": cards, "etf": etf, "rotation": rotation,
+        }
+    return {
+        "ok": True, "skipped": False, "reference": reference, "threshold": threshold,
+        "cards": cards, "etf": etf, "rotation": rotation,
+    }
+
+
+def _check_signal_cards_freshness() -> dict[str, Any]:
+    r = _signal_cards_freshness()
+    if r["ok"]:
+        detail = ("上游快照为空，跳过" if r.get("skipped")
+                  else f"信号卡 {r['cards']} 不落后 ETF/板块 {r['reference']} 超 1 个交易日")
+        return {"item": "signal_cards", "status": "ok", "detail": detail,
+                "fixHint": None, "fixAction": None}
+    return {
+        "item": "signal_cards",
+        "status": "fail",
+        "detail": (
+            f"信号卡停在 {r['cards'] or '无'}，上游 ETF/板块已到 {r['reference']}"
+        ),
+        "fixHint": "手动 bash scripts/run_signal_cards_daily.sh --backfill <缺日起> <上游日>；并确认 cron gate 读 $KSS_STATE_ROOT",
+        "fixAction": None,
+    }
+
+
 def _cs_freshness_cmd(notify: bool) -> dict[str, Any]:
     """cs-freshness 命令：看门狗数据线。notify 且陈旧时推 Telegram（复用 send_to_channels）。"""
     r = _cs_data_freshness()
+    cards = _signal_cards_freshness()
+    r["signal_cards"] = cards
     r["notified"] = False
-    if notify and not r["ok"]:
+    if not notify:
+        return r
+    from kss.notifications.manager import send_to_channels  # noqa: PLC0415
+
+    sent = False
+    if not r["ok"]:
         lines = [f"应有日线日 {r['reference']}，{len(r['stale'])}/{r['checked']} 只自选 cs_data 落后 >1 个交易日:"]
         lines += [f"- {s['symbol']}: {s['maxDate'] or '文件缺失'}" for s in r["stale"][:20]]
         lines.append("处理: App 任务页重跑「更新日线数据」；若被 git restore/stash 冲掉需重新增量拉取。")
-        from kss.notifications.manager import send_to_channels  # noqa: PLC0415
-
         results = send_to_channels("\n".join(lines), "telegram", title="KSS 自检: 自选日线陈旧")
-        r["notified"] = bool(results.get("telegram"))
+        sent = sent or bool(results.get("telegram"))
+    if not cards["ok"]:
+        msg = (
+            f"信号卡停在 {cards.get('cards') or '无'}，"
+            f"上游 ETF={cards.get('etf')} 板块={cards.get('rotation')} 已到 {cards.get('reference')}。"
+            "处理: bash scripts/run_signal_cards_daily.sh --backfill <缺日起> <上游日>；"
+            "确认 cron gate --data-root 为 $KSS_STATE_ROOT。"
+        )
+        results = send_to_channels(msg, "telegram", title="KSS 自检: 信号卡停更")
+        sent = sent or bool(results.get("telegram"))
+    r["notified"] = sent
     return r
 
 
@@ -4919,6 +5003,7 @@ def _self_check() -> dict[str, Any]:
     items.append(_check_research_credential())
     items.append(_check_yupi_runtime())
     items.append(_check_cs_data_freshness())
+    items.append(_check_signal_cards_freshness())
     return {"items": items, "generatedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 

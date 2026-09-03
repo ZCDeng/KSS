@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import sys
 from enum import Enum
 from pathlib import Path
@@ -120,8 +121,41 @@ def decide(
     return GateResult(GateDecision.RUN, target_day, f"{target_day} 数据齐、产物缺失（marker={marker}）")
 
 
+def _sentinel_latest(root: Path, sentinels: tuple[str, ...]) -> dict[str, str | None]:
+    return {sym: read_latest_trade_date(root / f"cs_data_{sym.split('.')[0]}.csv") for sym in sentinels}
+
+
+def split_brain_if_any(
+    data_root: Path, state_root: Path, sentinels: tuple[str, ...]
+) -> GateResult | None:
+    """data-root 与 state-root 不是同一棵树且后者 sentinel 更新 → 响亮失败。
+
+    2026-08-14 事故：EOD 写 KSS_STATE_ROOT，gate 仍读仓库根，目标日钉死、标记仍在 → 天天 NOOP。
+    双根日期分叉时不得再当「产物已在」。
+    """
+    try:
+        data = data_root.expanduser().resolve()
+        state = state_root.expanduser().resolve()
+    except OSError:
+        return None
+    if data == state:
+        return None
+    data_target, _ = compute_target_day(_sentinel_latest(data, sentinels))
+    state_target, _ = compute_target_day(_sentinel_latest(state, sentinels))
+    if state_target and (data_target is None or data_target < state_target):
+        return GateResult(
+            GateDecision.STALE_DATA,
+            data_target,
+            f"data-root 停在 {data_target}，state-root 已到 {state_target}（split-brain）",
+        )
+    return None
+
+
 def run_gate(task: str, data_root: Path, state_root: Path, sentinels: tuple[str, ...]) -> GateResult:
-    latest = {sym: read_latest_trade_date(data_root / f"cs_data_{sym.split('.')[0]}.csv") for sym in sentinels}
+    split = split_brain_if_any(data_root, state_root, sentinels)
+    if split is not None:
+        return split
+    latest = _sentinel_latest(data_root, sentinels)
     target, lagging = compute_target_day(latest)
     marker = "absent"
     if target is not None:
@@ -143,7 +177,7 @@ def write_marker(
     """
     import datetime
 
-    latest = {sym: read_latest_trade_date(data_root / f"cs_data_{sym.split('.')[0]}.csv") for sym in sentinels}
+    latest = _sentinel_latest(data_root, sentinels)
     computed, _ = compute_target_day(latest)
     if target_day:
         if computed is None or computed != target_day:
@@ -177,8 +211,10 @@ def main() -> int:
     parser.add_argument("--action", choices=("check", "mark-done", "target-day"), default="check",
                         help="check=三态判定（默认）；mark-done=成功后落完成标记；"
                              "target-day=只打印目标交易日（供落盘校验取参照系）")
-    parser.add_argument("--data-root", default=".", help="cs_data csv 所在目录（bundle-mode 必须是 KSS_STATE_ROOT）")
-    parser.add_argument("--state-root", default=".", help="KSS_STATE_ROOT（pipeline_markers 落点）")
+    env_root = os.environ.get("KSS_STATE_ROOT") or "."
+    parser.add_argument("--data-root", default=env_root,
+                        help="cs_data csv 所在目录（默认 $KSS_STATE_ROOT，bundle-mode 必须与写入根一致）")
+    parser.add_argument("--state-root", default=env_root, help="KSS_STATE_ROOT（pipeline_markers 落点）")
     parser.add_argument("--sentinels", default=",".join(DEFAULT_SENTINELS),
                         help="逗号分隔 sentinel 列表（默认内置四只）")
     parser.add_argument("--target-day", default=None,

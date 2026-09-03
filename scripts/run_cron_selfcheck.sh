@@ -7,10 +7,10 @@
 # 再调 bridge cron-catchup —— 只 kickstart「应跑未跑」且启用的任务，
 # selfcheck 自身永不参与，停用任务跳过。判定逻辑与应用内「一键补跑」完全一致。
 #
-# 补跑之后追加一道数据线：自选 cs_data 日线新鲜度（bridge cs-freshness notify）。
-# 落后应有日线日 >1 个交易日即推 Telegram——针对 git restore/stash 冲掉根目录
-# cs_data_*.csv 这类 cron 正常但数据被回滚的静默事故（宽限 1 个交易日，单次漏跑
-# 8:30 日更不告警，交给 catchup 恢复）。
+# 补跑之后追加一道数据线：自选 cs_data 日线新鲜度 + 信号卡是否落后 ETF/板块快照
+# （bridge cs-freshness notify）。落后应有日 >1 个交易日即推 Telegram——针对
+# git restore 冲掉 cs_data，以及 gate 读错根导致信号卡天天 NOOP 的静默事故
+# （宽限 1 个交易日，单次漏跑交给 catchup 恢复）。
 # ---------------------------------------------------------------------------
 set -u
 

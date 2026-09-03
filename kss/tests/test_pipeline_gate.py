@@ -202,6 +202,30 @@ def test_chain_wrappers_anchor_cs_data_to_state_root():
     assert "read_latest_trade_date(STATE_ROOT" in bridge
     assert "read_latest_trade_date(PROJECT_ROOT" not in bridge
 
+
+
+def test_split_brain_data_root_lags_state_root_is_stale(tmp_path):
+    """仓库根停更、state-root 已前进：即使旧日 marker 完整，也不得 NOOP。"""
+    data = tmp_path / "repo"
+    state = tmp_path / "state"
+    data.mkdir()
+    state.mkdir()
+    _write_all(data, ["2026-08-14"])
+    _write_all(state, ["2026-08-14", "2026-09-01"])
+    _marker(state, "signal_cards", "2026-08-14")
+    r = gate.run_gate("signal_cards", data, state, SENTINELS)
+    assert r.decision is gate.GateDecision.STALE_DATA
+    assert "split-brain" in r.reason
+    assert r.target_day == "2026-08-14"
+
+
+def test_same_root_intact_marker_still_noops(tmp_path):
+    """双根合一且标记完整 → 仍是合法 NOOP（兜底档让路）。"""
+    _write_all(tmp_path, ["2026-09-01"])
+    _marker(tmp_path, "signal_cards", "2026-09-01")
+    r = gate.run_gate("signal_cards", tmp_path, tmp_path, SENTINELS)
+    assert r.decision is gate.GateDecision.NOOP
+
 # ---------------------------------------------------------------------------
 # 超时守护（KTD3）
 # ---------------------------------------------------------------------------
