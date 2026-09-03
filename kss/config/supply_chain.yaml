@@ -1,5 +1,8 @@
 version: 1
 updated: '2026-06-30'
+structural_updated: '2026-06-30'
+analyst_updated: '2026-06-30'
+evidence_updated: '2026-09-03'
 scoring_weights:
   layer: 0.25
   moat: 0.35
@@ -48,6 +51,54 @@ demand_chains:
       desc: 精密轴承/编码器/特种电机
     - depth: 5
       desc: 稀土永磁/碳纤维
+  生物医药:
+    layers:
+    - depth: 1
+      desc: 医疗终端/药品与器械
+    - depth: 2
+      desc: 研发生产平台/CXO
+    - depth: 3
+      desc: 核心部件/制剂与耗材
+    - depth: 4
+      desc: 专用设备/关键中间体
+    - depth: 5
+      desc: 高壁垒生物基材料/原料
+  新能源储能:
+    layers:
+    - depth: 1
+      desc: 整车/光伏与储能系统
+    - depth: 2
+      desc: 电池/组件/逆变器
+    - depth: 3
+      desc: 电芯材料/功率器件
+    - depth: 4
+      desc: 专用设备/关键部件
+    - depth: 5
+      desc: 衬底/稀土永磁/高纯材料
+  工业母机·低空·航天:
+    layers:
+    - depth: 1
+      desc: 航空航天整机/终端装备
+    - depth: 2
+      desc: 分系统/动力与控制
+    - depth: 3
+      desc: 核心部件/传感与执行
+    - depth: 4
+      desc: 专用设备/结构功能材料
+    - depth: 5
+      desc: 高温合金/钛材/超导材料
+  数字经济:
+    layers:
+    - depth: 1
+      desc: 软件服务/互联网应用
+    - depth: 2
+      desc: 计算平台/基础硬件
+    - depth: 3
+      desc: 网络与通信核心部件
+    - depth: 4
+      desc: 制造设备/关键电子元件
+    - depth: 5
+      desc: 高纯材料/特种基材
 stocks:
   688008.SH:
     name: 澜起科技
@@ -88,6 +139,49 @@ stocks:
     analyst_count: 20
     analyst_notes: CCP刻蚀全球前三(Lam/TEL/中微),国产替代不可逆
     us_peer: {ticker: LRCX, name: Lam Research}
+    structural_as_of: '2026-09-03'
+    main_business_confirmed: true
+    import_substitution_valid: null
+    liquidity_eligible: true
+    valuation_unpriced: null
+    evidence_as_of: '2026-09-03'
+    evidence_sources:
+    - https://static.cninfo.com.cn/finalpage/2026-08-20/1225482915.PDF
+    - https://static.cninfo.com.cn/finalpage/2026-03-31/1225062430.PDF
+    - repo:cs_data_688012.csv@2026-09-03
+    - repo:kss/config/risk_filters.yaml@HEAD
+    evidence_history:
+    - as_of: '2026-06-30'
+      published_at: '2026-08-20'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://static.cninfo.com.cn/finalpage/2026-08-20/1225482915.PDF
+      verdict: support
+      support:
+      - main_business
+      - etch_and_deposition
+      limits:
+      - exact_global_supplier_count_not_independently_verified
+      - import_substitution_and_valuation_not_concluded
+    - as_of: '2025-12-31'
+      published_at: '2026-03-31'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://static.cninfo.com.cn/finalpage/2026-03-31/1225062430.PDF
+      verdict: support
+      support:
+      - main_business
+      - high_end_semiconductor_equipment
+    - as_of: '2026-09-03'
+      published_at: '2026-09-03'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: local_market_data
+      source_url: repo:cs_data_688012.csv
+      policy_source: repo:kss/config/risk_filters.yaml
+      verdict: support
+      support:
+      - liquidity_eligible
+      metrics: {window_days: 20, valid_days: 20, average_daily_amount_million_yuan: 7141.2}
   688017.SH:
     name: 绿的谐波
     demand_chains:
@@ -101,6 +195,49 @@ stocks:
     demand_locked: true
     analyst_count: 10
     analyst_notes: 谐波减速器全球双寡头(哈默纳科/绿的),机器人关节核心
+    structural_as_of: '2026-09-03'
+    main_business_confirmed: true
+    import_substitution_valid: null
+    liquidity_eligible: true
+    valuation_unpriced: null
+    evidence_as_of: '2026-09-03'
+    evidence_sources:
+    - https://static.cninfo.com.cn/finalpage/2026-08-27/1225513896.PDF
+    - https://static.cninfo.com.cn/finalpage/2026-04-23/1225149955.PDF
+    - repo:cs_data_688017.csv@2026-09-03
+    - repo:kss/config/risk_filters.yaml@HEAD
+    evidence_history:
+    - as_of: '2026-06-30'
+      published_at: '2026-08-27'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://static.cninfo.com.cn/finalpage/2026-08-27/1225513896.PDF
+      verdict: support
+      support:
+      - main_business
+      - harmonic_reducer_core
+      limits:
+      - exact_global_duopoly_not_independently_verified
+      - import_substitution_and_valuation_not_concluded
+    - as_of: '2025-12-31'
+      published_at: '2026-04-23'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://static.cninfo.com.cn/finalpage/2026-04-23/1225149955.PDF
+      verdict: support
+      support:
+      - main_business
+      - industrialization
+    - as_of: '2026-09-03'
+      published_at: '2026-09-03'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: local_market_data
+      source_url: repo:cs_data_688017.csv
+      policy_source: repo:kss/config/risk_filters.yaml
+      verdict: support
+      support:
+      - liquidity_eligible
+      metrics: {window_days: 20, valid_days: 20, average_daily_amount_million_yuan: 2921.1}
   688027.SH:
     name: 国盾量子
     demand_chains:
@@ -158,13 +295,56 @@ stocks:
     - 生物医药
     chain_layer: 5
     chain_role: material
-    n_competitors_global: 2
+    n_competitors_global: 3
     n_competitors_domestic: 1
     substitutability: low
     expansion_cycle_years: 3.0
     demand_locked: true
     analyst_count: 8
-    analyst_notes: 生物法长链二元酸全球双寡头(凯赛/Verdezyne已退出→实质独家)
+    analyst_notes: 生物法长链二元酸处全球领先梯队；公开材料未充分支持精确“双寡头/实质独家”口径，按三家寡头保守分层
+    structural_as_of: '2026-09-03'
+    main_business_confirmed: true
+    import_substitution_valid: null
+    liquidity_eligible: true
+    valuation_unpriced: null
+    evidence_as_of: '2026-09-03'
+    evidence_sources:
+    - https://static.cninfo.com.cn/finalpage/2026-08-20/1225483511.PDF
+    - https://static.cninfo.com.cn/finalpage/2026-04-24/1225169284.PDF
+    - repo:cs_data_688065.csv@2026-09-03
+    - repo:kss/config/risk_filters.yaml@HEAD
+    evidence_history:
+    - as_of: '2026-06-30'
+      published_at: '2026-08-20'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://static.cninfo.com.cn/finalpage/2026-08-20/1225483511.PDF
+      verdict: support
+      support:
+      - main_business
+      - long_chain_diacid_leading_position
+      limits:
+      - exact_duopoly_not_established
+      - import_substitution_and_valuation_not_concluded
+    - as_of: '2025-12-31'
+      published_at: '2026-04-24'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://static.cninfo.com.cn/finalpage/2026-04-24/1225169284.PDF
+      verdict: support
+      support:
+      - main_business
+      - industrial_and_technical_barriers
+    - as_of: '2026-09-03'
+      published_at: '2026-09-03'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: local_market_data
+      source_url: repo:cs_data_688065.csv
+      policy_source: repo:kss/config/risk_filters.yaml
+      verdict: support
+      support:
+      - liquidity_eligible
+      metrics: {window_days: 20, valid_days: 20, average_daily_amount_million_yuan: 238.1}
   688072.SH:
     name: 拓荆科技
     demand_chains:
@@ -179,6 +359,49 @@ stocks:
     analyst_count: 15
     analyst_notes: CVD/ALD全球三家(AMAT/TEL/拓荆),国产替代确定
     us_peer: {ticker: AMAT, name: Applied Materials}
+    structural_as_of: '2026-09-03'
+    main_business_confirmed: true
+    import_substitution_valid: null
+    liquidity_eligible: true
+    valuation_unpriced: null
+    evidence_as_of: '2026-09-03'
+    evidence_sources:
+    - https://www.sse.com.cn/disclosure/listedinfo/summaries/indexDetail.shtml?SEQ=334677786
+    - https://static.cninfo.com.cn/finalpage/2026-04-28/1225222254.PDF
+    - repo:cs_data_688072.csv@2026-09-03
+    - repo:kss/config/risk_filters.yaml@HEAD
+    evidence_history:
+    - as_of: '2026-06-30'
+      published_at: '2026-08-21'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://www.sse.com.cn/disclosure/listedinfo/summaries/indexDetail.shtml?SEQ=334677786
+      verdict: support
+      support:
+      - main_business
+      - thin_film_deposition
+      limits:
+      - exact_global_supplier_count_not_independently_verified
+      - import_substitution_and_valuation_not_concluded
+    - as_of: '2025-12-31'
+      published_at: '2026-04-28'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://static.cninfo.com.cn/finalpage/2026-04-28/1225222254.PDF
+      verdict: support
+      support:
+      - main_business
+      - semiconductors
+    - as_of: '2026-09-03'
+      published_at: '2026-09-03'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: local_market_data
+      source_url: repo:cs_data_688072.csv
+      policy_source: repo:kss/config/risk_filters.yaml
+      verdict: support
+      support:
+      - liquidity_eligible
+      metrics: {window_days: 20, valid_days: 20, average_daily_amount_million_yuan: 3770.3}
   688082.SH:
     name: 盛美上海
     demand_chains:
@@ -193,6 +416,50 @@ stocks:
     analyst_count: 15
     analyst_notes: 单片清洗全球前三(DNS/LAM/盛美)
     us_peer: {ticker: ACMR, name: ACM Research}
+    structural_as_of: '2026-09-03'
+    main_business_confirmed: true
+    import_substitution_valid: null
+    liquidity_eligible: true
+    valuation_unpriced: null
+    evidence_as_of: '2026-09-03'
+    evidence_sources:
+    - https://www.sse.com.cn/disclosure/listedinfo/summaries/indexDetail.shtml?SEQ=334673051
+    - https://static.cninfo.com.cn/finalpage/2026-02-27/1224986438.PDF
+    - repo:cs_data_688082.csv@2026-09-03
+    - repo:kss/config/risk_filters.yaml@HEAD
+    evidence_history:
+    - as_of: '2026-06-30'
+      published_at: '2026-08-08'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://www.sse.com.cn/disclosure/listedinfo/summaries/indexDetail.shtml?SEQ=334673051
+      verdict: support
+      support:
+      - main_business
+      - cleaning_equipment
+      - advanced_packaging
+      limits:
+      - exact_global_supplier_count_not_independently_verified
+      - import_substitution_and_valuation_not_concluded
+    - as_of: '2025-12-31'
+      published_at: '2026-02-27'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_issuer_disclosure
+      source_url: https://static.cninfo.com.cn/finalpage/2026-02-27/1224986438.PDF
+      verdict: support
+      support:
+      - main_business
+      - product_mix
+    - as_of: '2026-09-03'
+      published_at: '2026-09-03'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: local_market_data
+      source_url: repo:cs_data_688082.csv
+      policy_source: repo:kss/config/risk_filters.yaml
+      verdict: support
+      support:
+      - liquidity_eligible
+      metrics: {window_days: 20, valid_days: 20, average_daily_amount_million_yuan: 1923.7}
   688099.SH:
     name: 晶晨股份
     demand_chains: []
@@ -229,8 +496,51 @@ stocks:
     expansion_cycle_years: 3.0
     demand_locked: true
     analyst_count: 12
-    analyst_notes: CMP全球双寡头(AMAT/华海清科),晶圆厂必配
+    analyst_notes: CMP装备+离子注入/减薄/清洗/晶圆再生/关键耗材与维保服务平台
     us_peer: {ticker: AMAT, name: Applied Materials}
+    structural_as_of: '2026-09-03'
+    main_business_confirmed: true
+    import_substitution_valid: null
+    liquidity_eligible: true
+    valuation_unpriced: null
+    evidence_as_of: '2026-09-03'
+    evidence_sources:
+    - http://file.finance.sina.com.cn/211.154.219.97:9494/MRGG/CNSESH_STOCK/2026/2026-8/2026-08-22/12517052.PDF
+    - https://static.cninfo.com.cn/finalpage/2025-08-29/1224611390.PDF
+    - repo:cs_data_688120.csv@2026-09-03
+    - repo:kss/config/risk_filters.yaml@HEAD
+    evidence_history:
+    - as_of: '2026-06-30'
+      published_at: '2026-08-22'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: secondary_report_mirror
+      source_url: http://file.finance.sina.com.cn/211.154.219.97:9494/MRGG/CNSESH_STOCK/2026/2026-8/2026-08-22/12517052.PDF
+      verdict: support
+      support:
+      - main_business
+      - cmp_and_adjacent_equipment
+      limits:
+      - exact_duopoly_not_independently_verified
+      - import_substitution_and_valuation_not_concluded
+    - as_of: '2025-06-30'
+      published_at: '2025-08-29'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://static.cninfo.com.cn/finalpage/2025-08-29/1224611390.PDF
+      verdict: support
+      support:
+      - main_business
+      - point_in_time_comparison
+    - as_of: '2026-09-03'
+      published_at: '2026-09-03'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: local_market_data
+      source_url: repo:cs_data_688120.csv
+      policy_source: repo:kss/config/risk_filters.yaml
+      verdict: support
+      support:
+      - liquidity_eligible
+      metrics: {window_days: 20, valid_days: 20, average_daily_amount_million_yuan: 2559.3}
   688122.SH:
     name: 西部超导
     demand_chains:
@@ -245,6 +555,49 @@ stocks:
     analyst_count: 12
     analyst_notes: 航空钛合金+低温超导线材,国内独家量产
     us_peer: {ticker: ATI, name: ATI Inc}
+    structural_as_of: '2026-09-03'
+    main_business_confirmed: true
+    import_substitution_valid: null
+    liquidity_eligible: true
+    valuation_unpriced: null
+    evidence_as_of: '2026-09-03'
+    evidence_sources:
+    - https://static.cninfo.com.cn/finalpage/2026-08-27/1225513859.PDF
+    - https://static.cninfo.com.cn/finalpage/2026-04-24/1225162778.PDF
+    - repo:cs_data_688122.csv@2026-09-03
+    - repo:kss/config/risk_filters.yaml@HEAD
+    evidence_history:
+    - as_of: '2026-06-30'
+      published_at: '2026-08-27'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://static.cninfo.com.cn/finalpage/2026-08-27/1225513859.PDF
+      verdict: support
+      support:
+      - main_business
+      - titanium_and_superconducting_materials
+      limits:
+      - exact_global_supplier_count_not_independently_verified
+      - import_substitution_and_valuation_not_concluded
+    - as_of: '2025-12-31'
+      published_at: '2026-04-24'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://static.cninfo.com.cn/finalpage/2026-04-24/1225162778.PDF
+      verdict: support
+      support:
+      - main_business
+      - point_in_time_comparison
+    - as_of: '2026-09-03'
+      published_at: '2026-09-03'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: local_market_data
+      source_url: repo:cs_data_688122.csv
+      policy_source: repo:kss/config/risk_filters.yaml
+      verdict: support
+      support:
+      - liquidity_eligible
+      metrics: {window_days: 20, valid_days: 20, average_daily_amount_million_yuan: 396.7}
   688126.SH:
     name: 沪硅产业
     demand_chains:
@@ -359,8 +712,51 @@ stocks:
     expansion_cycle_years: 3.0
     demand_locked: true
     analyst_count: 10
-    analyst_notes: SiC衬底全球前三(Wolfspeed/Coherent/天岳),第三代半导体核心
+    analyst_notes: 碳化硅衬底材料研发、生产和销售, 第三代半导体核心材料
     us_peer: {ticker: WOLF, name: Wolfspeed}
+    structural_as_of: '2026-09-03'
+    main_business_confirmed: true
+    import_substitution_valid: null
+    liquidity_eligible: true
+    valuation_unpriced: null
+    evidence_as_of: '2026-09-03'
+    evidence_sources:
+    - http://file.finance.sina.com.cn/211.154.219.97:9494/MRGG/CNSESH_STOCK/2026/2026-8/2026-08-20/12507055.PDF
+    - https://static.cninfo.com.cn/finalpage/2025-08-30/1224625222.PDF
+    - repo:cs_data_688234.csv@2026-09-03
+    - repo:kss/config/risk_filters.yaml@HEAD
+    evidence_history:
+    - as_of: '2026-06-30'
+      published_at: '2026-08-20'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: secondary_report_mirror
+      source_url: http://file.finance.sina.com.cn/211.154.219.97:9494/MRGG/CNSESH_STOCK/2026/2026-8/2026-08-20/12507055.PDF
+      verdict: support
+      support:
+      - main_business
+      - silicon_carbide_substrates
+      limits:
+      - exact_global_supplier_count_not_independently_verified
+      - import_substitution_and_valuation_not_concluded
+    - as_of: '2025-06-30'
+      published_at: '2025-08-30'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://static.cninfo.com.cn/finalpage/2025-08-30/1224625222.PDF
+      verdict: support
+      support:
+      - main_business
+      - point_in_time_comparison
+    - as_of: '2026-09-03'
+      published_at: '2026-09-03'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: local_market_data
+      source_url: repo:cs_data_688234.csv
+      policy_source: repo:kss/config/risk_filters.yaml
+      verdict: support
+      support:
+      - liquidity_eligible
+      metrics: {window_days: 20, valid_days: 20, average_daily_amount_million_yuan: 1222.1}
   688249.SH:
     name: 晶合集成
     demand_chains:
@@ -471,14 +867,58 @@ stocks:
     - 半导体
     chain_layer: 4
     chain_role: equipment
-    n_competitors_global: 2
-    n_competitors_domestic: 1
+    n_competitors_global: 5
+    n_competitors_domestic: 2
     substitutability: low
     expansion_cycle_years: 3.0
-    demand_locked: true
-    analyst_count: 8
-    analyst_notes: 晶圆光学检测全球双寡头(KLA/中科飞测),晶圆厂良率必配
+    demand_locked: false
+    analyst_count: 25
+    analyst_notes: 高端半导体质量控制设备, 覆盖检测/量测/软件/服务, 国产替代推进但海外厂商仍强势
     us_peer: {ticker: KLAC, name: KLA Corp}
+    structural_as_of: '2026-09-03'
+    main_business_confirmed: true
+    import_substitution_valid: null
+    liquidity_eligible: true
+    valuation_unpriced: null
+    evidence_as_of: '2026-09-03'
+    evidence_sources:
+    - http://file.finance.sina.com.cn/211.154.219.97:9494/MRGG/CNSESH_STOCK/2026/2026-8/2026-08-26/12536730.PDF
+    - https://dataclouds.cninfo.com.cn/shgonggao/hsomarket/2026/20260424/77e64732de4a48e58583c2179e472fad.PDF
+    - repo:cs_data_688361.csv@2026-09-03
+    - repo:kss/config/risk_filters.yaml@HEAD
+    evidence_history:
+    - as_of: '2026-06-30'
+      published_at: '2026-08-26'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: secondary_report_mirror
+      source_url: http://file.finance.sina.com.cn/211.154.219.97:9494/MRGG/CNSESH_STOCK/2026/2026-8/2026-08-26/12536730.PDF
+      verdict: conflict
+      support:
+      - main_business
+      conflicts:
+      - exact_duopoly_claim
+      - locked_demand_claim_not_established
+      limits:
+      - import_substitution_and_valuation_not_concluded
+    - as_of: '2025-12-31'
+      published_at: '2026-04-24'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://dataclouds.cninfo.com.cn/shgonggao/hsomarket/2026/20260424/77e64732de4a48e58583c2179e472fad.PDF
+      verdict: support
+      support:
+      - main_business
+      - point_in_time_comparison
+    - as_of: '2026-09-03'
+      published_at: '2026-09-03'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: local_market_data
+      source_url: repo:cs_data_688361.csv
+      policy_source: repo:kss/config/risk_filters.yaml
+      verdict: support
+      support:
+      - liquidity_eligible
+      metrics: {window_days: 20, valid_days: 20, average_daily_amount_million_yuan: 3201.9}
   688375.SH:
     name: 国博电子
     demand_chains:
@@ -950,7 +1390,41 @@ stocks:
     expansion_cycle_years: 3.0
     demand_locked: true
     analyst_count: 18
-    analyst_notes: 单晶炉+碳化硅长晶炉全球双寡头(晶盛/PVA TePla),光伏+SiC双需求链锁定
+    analyst_notes: 先进材料+先进装备双引擎, 覆盖硅/蓝宝石/碳化硅等半导体材料及相关装备
+    structural_as_of: '2026-09-03'
+    main_business_confirmed: true
+    import_substitution_valid: null
+    liquidity_eligible: true
+    valuation_unpriced: null
+    evidence_as_of: '2026-09-03'
+    evidence_sources:
+    - http://file.finance.sina.com.cn/211.154.219.97:9494/MRGG/CNSESZ_STOCK/2026/2026-8/2026-08-22/12518590.PDF
+    - https://www.jsjd.cc/
+    - repo:cs_data_300316.csv@2026-09-03
+    - repo:kss/config/risk_filters.yaml@HEAD
+    evidence_history:
+    - as_of: '2026-06-30'
+      published_at: '2026-08-22'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: secondary_report_mirror
+      source_url: http://file.finance.sina.com.cn/211.154.219.97:9494/MRGG/CNSESZ_STOCK/2026/2026-8/2026-08-22/12518590.PDF
+      verdict: support
+      support:
+      - main_business
+      - advanced_materials_and_equipment
+      limits:
+      - exact_duopoly_not_independently_verified
+      - import_substitution_and_valuation_not_concluded
+    - as_of: '2026-09-03'
+      published_at: '2026-09-03'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: local_market_data
+      source_url: repo:cs_data_300316.csv
+      policy_source: repo:kss/config/risk_filters.yaml
+      verdict: support
+      support:
+      - liquidity_eligible
+      metrics: {window_days: 20, valid_days: 20, average_daily_amount_million_yuan: 533.6}
   300339.SZ:
     name: 润和软件
     demand_chains: []
@@ -969,13 +1443,57 @@ stocks:
     - 半导体
     chain_layer: 5
     chain_role: material
-    n_competitors_global: 2
-    n_competitors_domestic: 1
+    n_competitors_global: 5
+    n_competitors_domestic: 2
     substitutability: low
     expansion_cycle_years: 3.0
-    demand_locked: true
+    demand_locked: false
     analyst_count: 8
-    analyst_notes: ArF光刻胶+MO源全球双寡头(TOK+南大/JSR),先进制程光刻必需,国产替代卡脖子
+    analyst_notes: 先进前驱体、电子特气、光刻胶及配套材料并行, 半导体关键材料国产化推进但竞争面更宽
+    structural_as_of: '2026-09-03'
+    main_business_confirmed: true
+    import_substitution_valid: null
+    liquidity_eligible: true
+    valuation_unpriced: null
+    evidence_as_of: '2026-09-03'
+    evidence_sources:
+    - http://file.finance.sina.com.cn/211.154.219.97:9494/MRGG/CNSESZ_STOCK/2026/2026-8/2026-08-28/12557641.PDF
+    - https://static.cninfo.com.cn/finalpage/2026-04-10/1225087468.PDF
+    - repo:cs_data_300346.csv@2026-09-03
+    - repo:kss/config/risk_filters.yaml@HEAD
+    evidence_history:
+    - as_of: '2026-06-30'
+      published_at: '2026-08-28'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: secondary_report_mirror
+      source_url: http://file.finance.sina.com.cn/211.154.219.97:9494/MRGG/CNSESZ_STOCK/2026/2026-8/2026-08-28/12557641.PDF
+      verdict: conflict
+      support:
+      - main_business
+      conflicts:
+      - exact_duopoly_claim
+      - locked_demand_claim_not_established
+      limits:
+      - import_substitution_and_valuation_not_concluded
+    - as_of: '2025-12-31'
+      published_at: '2026-04-10'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://static.cninfo.com.cn/finalpage/2026-04-10/1225087468.PDF
+      verdict: support
+      support:
+      - main_business
+      - business_mix
+    - as_of: '2026-09-03'
+      published_at: '2026-09-03'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: local_market_data
+      source_url: repo:cs_data_300346.csv
+      policy_source: repo:kss/config/risk_filters.yaml
+      verdict: support
+      support:
+      - liquidity_eligible
+      metrics: {window_days: 20, valid_days: 20, average_daily_amount_million_yuan: 2198.5}
   300347.SZ:
     name: 泰格医药
     demand_chains:
@@ -1016,6 +1534,49 @@ stocks:
     analyst_count: 15
     analyst_notes: 光无源器件(准直器/隔离器/适配器)全球双寡头(天孚/Hoya Senko),光模块必配零件,AI算力产业链深层卡脖子
     us_peer: {ticker: COHR, name: Coherent}
+    structural_as_of: '2026-09-03'
+    main_business_confirmed: true
+    import_substitution_valid: null
+    liquidity_eligible: true
+    valuation_unpriced: null
+    evidence_as_of: '2026-09-03'
+    evidence_sources:
+    - https://static.cninfo.com.cn/finalpage/2026-08-19/1225480327.PDF
+    - https://static.cninfo.com.cn/finalpage/2026-04-08/1225082704.PDF
+    - repo:cs_data_300394.csv@2026-09-03
+    - repo:kss/config/risk_filters.yaml@HEAD
+    evidence_history:
+    - as_of: '2026-06-30'
+      published_at: '2026-08-19'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://static.cninfo.com.cn/finalpage/2026-08-19/1225480327.PDF
+      verdict: support
+      support:
+      - main_business
+      - optical_communication
+      limits:
+      - exact_duopoly_not_independently_verified
+      - import_substitution_and_valuation_not_concluded
+    - as_of: '2025-12-31'
+      published_at: '2026-04-08'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://static.cninfo.com.cn/finalpage/2026-04-08/1225082704.PDF
+      verdict: support
+      support:
+      - main_business
+      - optical_passive_components
+    - as_of: '2026-09-03'
+      published_at: '2026-09-03'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: local_market_data
+      source_url: repo:cs_data_300394.csv
+      policy_source: repo:kss/config/risk_filters.yaml
+      verdict: support
+      support:
+      - liquidity_eligible
+      metrics: {window_days: 20, valid_days: 20, average_daily_amount_million_yuan: 12334.8}
   300395.SZ:
     name: 菲利华
     demand_chains:
@@ -1029,6 +1590,49 @@ stocks:
     demand_locked: true
     analyst_count: 10
     analyst_notes: 半导体用石英玻璃全球前三(Heraeus/Momentive/菲利华),光刻机+扩散炉+刻蚀腔必需材料
+    structural_as_of: '2026-09-03'
+    main_business_confirmed: true
+    import_substitution_valid: null
+    liquidity_eligible: true
+    valuation_unpriced: null
+    evidence_as_of: '2026-09-03'
+    evidence_sources:
+    - http://file.finance.sina.com.cn/211.154.219.97:9494/MRGG/CNSESZ_STOCK/2026/2026-8/2026-08-21/12509546.PDF
+    - https://static.cninfo.com.cn/finalpage/2025-08-27/1224576184.PDF
+    - repo:cs_data_300395.csv@2026-09-03
+    - repo:kss/config/risk_filters.yaml@HEAD
+    evidence_history:
+    - as_of: '2026-06-30'
+      published_at: '2026-08-21'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: secondary_report_mirror
+      source_url: http://file.finance.sina.com.cn/211.154.219.97:9494/MRGG/CNSESZ_STOCK/2026/2026-8/2026-08-21/12509546.PDF
+      verdict: support
+      support:
+      - main_business
+      - quartz_glass_materials
+      limits:
+      - exact_global_supplier_count_not_independently_verified
+      - import_substitution_and_valuation_not_concluded
+    - as_of: '2025-06-30'
+      published_at: '2025-08-27'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://static.cninfo.com.cn/finalpage/2025-08-27/1224576184.PDF
+      verdict: support
+      support:
+      - main_business
+      - point_in_time_comparison
+    - as_of: '2026-09-03'
+      published_at: '2026-09-03'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: local_market_data
+      source_url: repo:cs_data_300395.csv
+      policy_source: repo:kss/config/risk_filters.yaml
+      verdict: support
+      support:
+      - liquidity_eligible
+      metrics: {window_days: 20, valid_days: 20, average_daily_amount_million_yuan: 2372.0}
   300408.SZ:
     name: 三环集团
     demand_chains:
@@ -1043,6 +1647,49 @@ stocks:
     demand_locked: true
     analyst_count: 12
     analyst_notes: MLCC陶瓷基体+光通信陶瓷插芯全球前三(Murata/TDK/三环),被动元件上游,国内独家量产
+    structural_as_of: '2026-09-03'
+    main_business_confirmed: true
+    import_substitution_valid: null
+    liquidity_eligible: true
+    valuation_unpriced: null
+    evidence_as_of: '2026-09-03'
+    evidence_sources:
+    - https://static.cninfo.com.cn/finalpage/2026-08-28/1225516991.PDF
+    - https://static.cninfo.com.cn/finalpage/2026-03-28/1225041594.PDF
+    - repo:cs_data_300408.csv@2026-09-03
+    - repo:kss/config/risk_filters.yaml@HEAD
+    evidence_history:
+    - as_of: '2026-06-30'
+      published_at: '2026-08-28'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://static.cninfo.com.cn/finalpage/2026-08-28/1225516991.PDF
+      verdict: support
+      support:
+      - main_business
+      - mlcc_and_ceramics
+      limits:
+      - exact_global_supplier_count_not_independently_verified
+      - import_substitution_and_valuation_not_concluded
+    - as_of: '2025-12-31'
+      published_at: '2026-03-28'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://static.cninfo.com.cn/finalpage/2026-03-28/1225041594.PDF
+      verdict: support
+      support:
+      - main_business
+      - communication_components
+    - as_of: '2026-09-03'
+      published_at: '2026-09-03'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: local_market_data
+      source_url: repo:cs_data_300408.csv
+      policy_source: repo:kss/config/risk_filters.yaml
+      verdict: support
+      support:
+      - liquidity_eligible
+      metrics: {window_days: 20, valid_days: 20, average_daily_amount_million_yuan: 6845.9}
   300418.SZ:
     name: 昆仑万维
     demand_chains:
@@ -1183,19 +1830,106 @@ stocks:
     analyst_count: 12
     analyst_notes: 半导体测试设备(探针台+分选机),全球前三(Teradyne/Advantest/长川),国内独家量产
     us_peer: {ticker: TER, name: Teradyne}
+    structural_as_of: '2026-09-03'
+    main_business_confirmed: true
+    import_substitution_valid: null
+    liquidity_eligible: true
+    valuation_unpriced: null
+    evidence_as_of: '2026-09-03'
+    evidence_sources:
+    - https://disc.static.szse.cn/disc/disk03/finalpage/2026-08-28/df60c9ec-07cc-4c91-bfa5-7b40801df61b.PDF
+    - https://disc.static.szse.cn/disc/disk03/finalpage/2026-04-25/ea20ff71-0300-4078-8b58-93c0385ea2ac.PDF
+    - repo:cs_data_300604.csv@2026-09-03
+    - repo:kss/config/risk_filters.yaml@HEAD
+    evidence_history:
+    - as_of: '2026-06-30'
+      published_at: '2026-08-28'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://disc.static.szse.cn/disc/disk03/finalpage/2026-08-28/df60c9ec-07cc-4c91-bfa5-7b40801df61b.PDF
+      verdict: support
+      support:
+      - main_business
+      - semiconductor_test_equipment
+      limits:
+      - exact_global_supplier_count_not_independently_verified
+      - import_substitution_and_valuation_not_concluded
+    - as_of: '2025-12-31'
+      published_at: '2026-04-25'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://disc.static.szse.cn/disc/disk03/finalpage/2026-04-25/ea20ff71-0300-4078-8b58-93c0385ea2ac.PDF
+      verdict: support
+      support:
+      - main_business
+      - point_in_time_comparison
+    - as_of: '2026-09-03'
+      published_at: '2026-09-03'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: local_market_data
+      source_url: repo:cs_data_300604.csv
+      policy_source: repo:kss/config/risk_filters.yaml
+      verdict: support
+      support:
+      - liquidity_eligible
+      metrics: {window_days: 20, valid_days: 20, average_daily_amount_million_yuan: 5150.1}
   300724.SZ:
     name: 捷佳伟创
     demand_chains:
     - 新能源储能
     chain_layer: 4
     chain_role: equipment
-    n_competitors_global: 3
-    n_competitors_domestic: 1
+    n_competitors_global: 5
+    n_competitors_domestic: 3
     substitutability: medium
     expansion_cycle_years: 2.0
-    demand_locked: true
+    demand_locked: false
     analyst_count: 15
-    analyst_notes: 光伏电池片设备(PECVD+湿法),全球前三(梅耶博格/捷佳/迈为),HJT/TOPCon扩产锁定
+    analyst_notes: 光伏电池片设备仍属主营，但2026年上半年收入及在手订单显著承压；需求锁定假设撤销并降观察
+    structural_as_of: '2026-09-03'
+    main_business_confirmed: true
+    import_substitution_valid: null
+    liquidity_eligible: true
+    valuation_unpriced: null
+    evidence_as_of: '2026-09-03'
+    evidence_sources:
+    - https://file.finance.sina.com.cn/211.154.219.97:9494/MRGG/CNSESZ_STOCK/2026/2026-8/2026-08-28/12559389.PDF
+    - https://disc.static.szse.cn/disc/disk03/finalpage/2026-04-27/558f22ef-ae51-403d-92a5-7b81fa54f68c.PDF
+    - repo:cs_data_300724.csv@2026-09-03
+    - repo:kss/config/risk_filters.yaml@HEAD
+    evidence_history:
+    - as_of: '2026-06-30'
+      published_at: '2026-08-28'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: secondary_report_mirror
+      source_url: https://file.finance.sina.com.cn/211.154.219.97:9494/MRGG/CNSESZ_STOCK/2026/2026-8/2026-08-28/12559389.PDF
+      verdict: conflict
+      support:
+      - main_business
+      conflicts:
+      - locked_demand_claim
+      - prior_supplier_concentration_assumption
+      limits:
+      - import_substitution_and_valuation_not_concluded
+    - as_of: '2025-12-31'
+      published_at: '2026-04-27'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://disc.static.szse.cn/disc/disk03/finalpage/2026-04-27/558f22ef-ae51-403d-92a5-7b81fa54f68c.PDF
+      verdict: support
+      support:
+      - main_business
+      - point_in_time_comparison
+    - as_of: '2026-09-03'
+      published_at: '2026-09-03'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: local_market_data
+      source_url: repo:cs_data_300724.csv
+      policy_source: repo:kss/config/risk_filters.yaml
+      verdict: support
+      support:
+      - liquidity_eligible
+      metrics: {window_days: 20, valid_days: 20, average_daily_amount_million_yuan: 579.2}
   300748.SZ:
     name: 金力永磁
     demand_chains:
@@ -1211,6 +1945,49 @@ stocks:
     analyst_count: 12
     analyst_notes: 高性能稀土永磁材料,全球前三(金力/中科三环/日立金属),电机核心材料,新能源车+机器人双需求链
     us_peer: {ticker: MP, name: MP Materials}
+    structural_as_of: '2026-09-03'
+    main_business_confirmed: true
+    import_substitution_valid: null
+    liquidity_eligible: true
+    valuation_unpriced: null
+    evidence_as_of: '2026-09-03'
+    evidence_sources:
+    - https://static.cninfo.com.cn/finalpage/2026-08-21/1225485582.PDF
+    - https://static.cninfo.com.cn/finalpage/2026-03-26/1225030338.PDF
+    - repo:cs_data_300748.csv@2026-09-03
+    - repo:kss/config/risk_filters.yaml@HEAD
+    evidence_history:
+    - as_of: '2026-06-30'
+      published_at: '2026-08-21'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://static.cninfo.com.cn/finalpage/2026-08-21/1225485582.PDF
+      verdict: support
+      support:
+      - main_business
+      - high_performance_rare_earth_magnets
+      limits:
+      - exact_global_top_three_not_independently_verified
+      - import_substitution_and_valuation_not_concluded
+    - as_of: '2025-12-31'
+      published_at: '2026-03-26'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://static.cninfo.com.cn/finalpage/2026-03-26/1225030338.PDF
+      verdict: support
+      support:
+      - main_business
+      - point_in_time_comparison
+    - as_of: '2026-09-03'
+      published_at: '2026-09-03'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: local_market_data
+      source_url: repo:cs_data_300748.csv
+      policy_source: repo:kss/config/risk_filters.yaml
+      verdict: support
+      support:
+      - liquidity_eligible
+      metrics: {window_days: 20, valid_days: 20, average_daily_amount_million_yuan: 615.2}
   300750.SZ:
     name: 宁德时代
     demand_chains:
@@ -1414,11 +2191,58 @@ stocks:
     - 工业母机·低空·航天
     chain_layer: 4
     chain_role: material
-    n_competitors_global: 3
-    n_competitors_domestic: 1
+    n_competitors_global: 5
+    n_competitors_domestic: 2
     substitutability: low
     expansion_cycle_years: 3.0
-    demand_locked: true
+    demand_locked: false
     analyst_count: 6
-    analyst_notes: '[补标2026-06-30待审] 芳纶纸全球三家(DuPont Nomex/Teijin/民士达),国内唯一量产,航空蜂窝芯材+5G介质+电气绝缘,需求锁定; 但全球三家=寡头非双寡头, 属Tier A观察非核心紫苏叶'
+    analyst_notes: 芳纶纸主营已确认；公开材料未充分支持“全球三家+需求锁定”，按更宽竞争格局降观察
     us_peer: {ticker: DD, name: DuPont}
+    structural_as_of: '2026-09-03'
+    main_business_confirmed: true
+    import_substitution_valid: null
+    liquidity_eligible: true
+    valuation_unpriced: null
+    evidence_as_of: '2026-09-03'
+    evidence_sources:
+    - https://static.cninfo.com.cn/finalpage/2026-08-20/1225486256.PDF
+    - https://static.cninfo.com.cn/finalpage/2026-03-19/1225019059.PDF
+    - repo:cs_data_920394.csv@2026-09-03
+    - repo:kss/config/risk_filters.yaml@HEAD
+    evidence_history:
+    - as_of: '2026-06-30'
+      published_at: '2026-08-20'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_periodic_report
+      source_url: https://static.cninfo.com.cn/finalpage/2026-08-20/1225486256.PDF
+      verdict: conflict
+      support:
+      - main_business
+      - aramid_paper
+      conflicts:
+      - exact_global_top_three_not_established
+      - locked_demand_claim_not_established
+      limits:
+      - import_substitution_and_valuation_not_concluded
+    - as_of: '2025-12-31'
+      published_at: '2026-03-19'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: official_issuer_disclosure
+      source_url: https://static.cninfo.com.cn/finalpage/2026-03-19/1225019059.PDF
+      verdict: support
+      support:
+      - main_business
+      - point_in_time_comparison
+    - as_of: '2026-09-03'
+      published_at: '2026-09-03'
+      retrieved_at: '2026-09-03T16:38:02+08:00'
+      source_kind: local_market_data
+      source_url: repo:cs_data_920394.csv
+      policy_source: repo:kss/config/risk_filters.yaml
+      verdict: support
+      support:
+      - liquidity_eligible
+      metrics: {window_days: 20, valid_days: 20, average_daily_amount_million_yuan: 59.7}
+      limits:
+      - liquidity_buffer_to_50m_threshold_is_narrow
