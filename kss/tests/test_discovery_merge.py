@@ -43,9 +43,14 @@ def _load_bridge():
 bridge = _load_bridge()
 
 
-def _result(pid: str, items: list[tuple[str, float | None]], date: str = "20260620") -> dict:
+def _result(
+    pid: str,
+    items: list[tuple[str, float | None]],
+    date: str = "20260620",
+    signal_role: str | None = None,
+) -> dict:
     """构造 PipelineResult dict（ts_code, score）。"""
-    return {
+    result = {
         "pipeline_id": pid,
         "date": date,
         "candidates": [
@@ -53,6 +58,9 @@ def _result(pid: str, items: list[tuple[str, float | None]], date: str = "202606
             for c, s in items
         ],
     }
+    if signal_role is not None:
+        result["signal_role"] = signal_role
+    return result
 
 
 EQUAL_W = {pid: 0.25 for pid in bridge.PIPELINE_IDS}
@@ -123,6 +131,70 @@ def test_none_score_excluded_from_denominator():
     assert c["hit_count"] == 1  # None 管道不计入
     assert c["sources"] == ["log_mv"]
     assert "supply_chain" not in c["pipeline_scores"]
+
+
+def test_research_overlay_does_not_create_alpha_candidate_or_bonus():
+    """静态结构研究层不能凭自身进入 alpha 排名，也不能制造共识溢价."""
+    overlay = _result(
+        "supply_chain",
+        [("688017.SH", 0.9)],
+        signal_role="research_overlay",
+    )
+    only_overlay = bridge._discovery_merge([overlay], pipeline_weights=EQUAL_W)
+    assert only_overlay["candidates"] == []
+
+    results = [
+        _result("log_mv", [("688017.SH", 0.8)]),
+        overlay,
+    ]
+    out = bridge._discovery_merge(results, pipeline_weights=EQUAL_W)
+    candidate = out["candidates"][0]
+    assert candidate["hit_count"] == 1
+    assert candidate["sources"] == ["log_mv"]
+    assert candidate["research_overlays"] == ["supply_chain"]
+    assert candidate["consensus_applied"] is False
+    assert candidate["base_score"] == pytest.approx(0.25 * 0.8)
+
+
+def test_research_overlay_is_excluded_from_correlation_precheck():
+    """研究层与 alpha 集合重合不代表两条独立信号高度相关."""
+    results = [
+        _result("log_mv", [("688017.SH", 0.8), ("688018.SH", 0.7)]),
+        _result(
+            "supply_chain",
+            [("688017.SH", 0.9), ("688018.SH", 0.8)],
+            signal_role="research_overlay",
+        ),
+    ]
+    out = bridge._discovery_merge(results, pipeline_weights=EQUAL_W)
+    assert out["warnings"] == []
+
+
+def test_supply_chain_adapter_uses_structural_date_and_overlay_role(monkeypatch):
+    """紫苏叶 adapter 不得用今天伪装静态标注日期，也不得声明为 alpha."""
+    monkeypatch.setattr(
+        bridge,
+        "_perilla_picks",
+        lambda **_: [{
+            "symbol": "688017.SH",
+            "name": "样例",
+            "score": 0.8,
+            "layer": 4,
+            "role": "material",
+            "assessmentStatus": "needs_review",
+            "reviewFlags": ["待补证据来源"],
+            "structuralAsOf": "2026-06-30",
+            "evidenceAsOf": None,
+        }],
+    )
+
+    result = bridge._adapt_supply_chain()
+
+    assert result is not None
+    assert result["signal_role"] == bridge.RESEARCH_OVERLAY_ROLE
+    assert result["validation_status"] == "point_in_time_recording"
+    assert result["date"] == "20260630"
+    assert result["degraded"] == "evidence_review_required"
 
 
 # ===================================================================== #

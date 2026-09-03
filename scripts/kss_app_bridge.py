@@ -3191,6 +3191,9 @@ def _perilla_picks(top_n: int = 20, min_score: float = 0.4) -> list[dict[str, An
         tier = reg.tier(code)
         if tier not in ("core", "main"):
             continue
+        assessment = reg.assess(code)
+        if assessment is not None and assessment.status == "excluded":
+            continue
         if len(picks) >= top_n:
             break
         if info.n_competitors_domestic <= 1:
@@ -3219,6 +3222,15 @@ def _perilla_picks(top_n: int = 20, min_score: float = 0.4) -> list[dict[str, An
             "locked": bool(info.demand_locked),
             "tier": tier,
             "score": round(float(score), 3),
+            "assessmentStatus": assessment.status if assessment is not None else "needs_review",
+            "exclusionReasons": list(assessment.exclusion_reasons) if assessment is not None else [],
+            "reviewFlags": list(assessment.review_flags) if assessment is not None else ["待补证据审计"],
+            "positiveSignals": list(assessment.positive_signals) if assessment is not None else [],
+            "structuralAsOf": info.structural_as_of or reg.config.structural_updated,
+            "analystAsOf": reg.config.analyst_updated,
+            "evidenceAsOf": info.evidence_as_of or None,
+            "evidenceSources": list(info.evidence_sources),
+            "evidenceHistory": list(info.evidence_history),
             "ret1d": metrics.get("ret1d"),
             "ret5d": metrics.get("ret5d"),
             "ret20d": metrics.get("ret20d"),
@@ -3301,7 +3313,9 @@ def _perilla_enrich(symbol: str) -> dict[str, Any]:
 # 设计不变量：
 #   - 各管道 adapter 内部 min-max 归一化到 [0,1]（量纲隔离，避免跨管道 look-ahead，
 #     见 brainstorm Key Decisions：全局归一化引入跨管道联动）。
-#   - 共识溢价 consensus_multiplier 默认 1.2，仅在 hit_count >= 2 时生效。
+#   - 共识溢价 consensus_multiplier 默认 1.2，仅在 alpha hit_count >= 2 时生效。
+#   - supply_chain 是无逐日归档的静态研究 overlay：可附着结构证据，但不贡献
+#     alpha 权重、hit_count 或共识溢价，也不能独立生成 discovery 候选。
 #   - 相关性预检（关键护栏）：合并前先算管道两两候选集 Jaccard；任意对 >= 阈值
 #     视为高相关，对**该对涉及的 ts_code** 取消共识溢价——A 股横截面高相关下，
 #     相关管道的「共识」是放大共同偏差，不是独立确认。门控在已证独立性上。
@@ -3311,6 +3325,8 @@ def _perilla_enrich(symbol: str) -> dict[str, Any]:
 
 PIPELINE_WEIGHTS_PATH = STATE_ROOT / "storage" / "pipeline_weights.json"
 PIPELINE_IDS = ("log_mv", "bj50_scan", "sector_hotspot", "supply_chain")
+ALPHA_SIGNAL_ROLE = "alpha_signal"
+RESEARCH_OVERLAY_ROLE = "research_overlay"
 CONSENSUS_MULTIPLIER = 1.2
 MIN_HIT_COUNT_FOR_BONUS = 2
 CORRELATION_JACCARD_THRESHOLD = 0.6
@@ -3439,7 +3455,7 @@ def _adapt_sector_hotspot() -> dict[str, Any] | None:
 
 
 def _adapt_supply_chain(top_n: int = 30, min_score: float = 0.4) -> dict[str, Any] | None:
-    """紫苏叶产业链管道 → PipelineResult。perilla_score 已是 [0,1]，直接用。"""
+    """紫苏叶产业链研究层 → PipelineResult，不参与 alpha 权重与共识溢价."""
     picks = _perilla_picks(top_n=top_n, min_score=min_score)
     if not picks:
         return None
@@ -3453,11 +3469,31 @@ def _adapt_supply_chain(top_n: int = 30, min_score: float = 0.4) -> dict[str, An
             "name": p.get("name", ""),
             "score": round(float(sc), 6),  # 已 0-1，无需再归一化
             "raw_score": round(float(sc), 6),
-            "metadata": {"layer": p.get("layer"), "role": p.get("role")},
+            "metadata": {
+                "layer": p.get("layer"),
+                "role": p.get("role"),
+                "assessmentStatus": p.get("assessmentStatus"),
+                "reviewFlags": p.get("reviewFlags") or [],
+                "structuralAsOf": p.get("structuralAsOf"),
+                "evidenceAsOf": p.get("evidenceAsOf"),
+                "evidenceHistory": p.get("evidenceHistory") or [],
+            },
         })
     candidates.sort(key=lambda c: c["score"], reverse=True)
-    today = datetime.now().strftime("%Y%m%d")
-    return {"pipeline_id": "supply_chain", "date": today, "candidates": candidates}
+    structural_as_of = next(
+        (str(p.get("structuralAsOf")) for p in picks if p.get("structuralAsOf")),
+        "",
+    )
+    date_value = structural_as_of.replace("-", "")
+    needs_review = any(p.get("assessmentStatus") != "qualified" for p in picks)
+    return {
+        "pipeline_id": "supply_chain",
+        "signal_role": RESEARCH_OVERLAY_ROLE,
+        "validation_status": "point_in_time_recording",
+        "date": date_value,
+        "candidates": candidates,
+        "degraded": "evidence_review_required" if needs_review else None,
+    }
 
 
 def _load_pipeline_weights() -> dict[str, float]:
@@ -3508,9 +3544,14 @@ def _correlation_precheck(
         warnings: 高相关管道对名称列表（如 [["sector_hotspot","bj50_scan"]]）。
         suppressed_codes: 共识溢价被抑制的 ts_code 集合。
     """
+    # 只有可验证的 alpha 信号之间才谈相关性；静态研究标签不是第二条独立信号。
+    alpha_results = [
+        r for r in results
+        if r.get("signal_role", ALPHA_SIGNAL_ROLE) != RESEARCH_OVERLAY_ROLE
+    ]
     sets: dict[str, set[str]] = {
         r["pipeline_id"]: {c["ts_code"] for c in r.get("candidates", [])}
-        for r in results
+        for r in alpha_results
     }
     ids = list(sets.keys())
     warnings: list[list[str]] = []
@@ -3534,7 +3575,7 @@ def _discovery_merge(
     min_hit_count_for_bonus: int = MIN_HIT_COUNT_FOR_BONUS,
     correlation_threshold: float = CORRELATION_JACCARD_THRESHOLD,
 ) -> dict[str, Any]:
-    """四发现管道合并 + 去重 + 共识溢价（相关性门控）。
+    """发现管道合并 + 研究 overlay 附着 + 共识溢价（相关性门控）。
 
     Args:
         results: PipelineResult dict 列表；None → 触发四管道 adapter 实时取数。
@@ -3548,9 +3589,10 @@ def _discovery_merge(
         + warnings（高相关管道对）+ pipelineWeights + 各管道命中数 meta。
 
     合并语义：
-        final_score = (Σ w_i × score_i over hit pipelines)
+        final_score = (Σ w_i × score_i over alpha pipelines)
                       × (consensus_multiplier if hit_count>=门槛 且 该票未被相关性抑制 else 1.0)
-        分母只计入 score 非 None 的管道（None 管道不当 0 分，见 Acceptance Example C）。
+        research_overlay 只写入 ``research_overlays`` / ``overlay_metadata``，不计分。
+        score 为 None 的 alpha 管道不参与（None 不当 0 分，见 Acceptance Example C）。
     """
     if results is None:
         results = [
@@ -3562,6 +3604,10 @@ def _discovery_merge(
             ) if r is not None
         ]
     weights = pipeline_weights if pipeline_weights is not None else _load_pipeline_weights()
+    effective_weights = dict(weights)
+    for result in results:
+        if result.get("signal_role", ALPHA_SIGNAL_ROLE) == RESEARCH_OVERLAY_ROLE:
+            effective_weights[result["pipeline_id"]] = 0.0
 
     warnings, suppressed = _correlation_precheck(results, threshold=correlation_threshold)
 
@@ -3569,6 +3615,7 @@ def _discovery_merge(
     agg: dict[str, dict[str, Any]] = {}
     for r in results:
         pid = r["pipeline_id"]
+        is_overlay = r.get("signal_role", ALPHA_SIGNAL_ROLE) == RESEARCH_OVERLAY_ROLE
         for c in r.get("candidates", []):
             code = c.get("ts_code")
             if not code:
@@ -3581,16 +3628,28 @@ def _discovery_merge(
                 "name": c.get("name", ""),
                 "sources": [],
                 "pipeline_scores": {},
+                "research_overlays": [],
+                "overlay_scores": {},
+                "overlay_metadata": {},
                 "weighted_sum": 0.0,
             })
             if not slot["name"] and c.get("name"):
                 slot["name"] = c.get("name")
+            if is_overlay:
+                if pid not in slot["research_overlays"]:
+                    slot["research_overlays"].append(pid)
+                slot["overlay_scores"][pid] = sc
+                slot["overlay_metadata"][pid] = c.get("metadata") or {}
+                continue
             slot["sources"].append(pid)
             slot["pipeline_scores"][pid] = sc
-            slot["weighted_sum"] += float(weights.get(pid, 0.0)) * float(sc)
+            slot["weighted_sum"] += float(effective_weights.get(pid, 0.0)) * float(sc)
 
     merged: list[dict[str, Any]] = []
     for code, slot in agg.items():
+        # 研究层只标注已经由 alpha 管道发现的候选；不能独立生成交易候选。
+        if not slot["sources"]:
+            continue
         hit_count = len(slot["sources"])
         base = slot["weighted_sum"]
         bonus = 1.0
@@ -3606,6 +3665,9 @@ def _discovery_merge(
             "hit_count": hit_count,
             "sources": sorted(slot["sources"]),
             "pipeline_scores": {k: round(float(v), 6) for k, v in slot["pipeline_scores"].items()},
+            "research_overlays": sorted(slot["research_overlays"]),
+            "overlay_scores": {k: round(float(v), 6) for k, v in slot["overlay_scores"].items()},
+            "overlay_metadata": slot["overlay_metadata"],
             "consensus_applied": consensus_applied,
             "consensus_suppressed": (hit_count >= min_hit_count_for_bonus and code in suppressed),
         })
@@ -3617,6 +3679,8 @@ def _discovery_merge(
             "date": r.get("date", ""),
             "nCandidates": len(r.get("candidates", [])),
             "degraded": r.get("degraded"),
+            "signalRole": r.get("signal_role", ALPHA_SIGNAL_ROLE),
+            "validationStatus": r.get("validation_status"),
         }
         for r in results
     ]
@@ -3624,6 +3688,7 @@ def _discovery_merge(
         "candidates": merged,
         "warnings": warnings,
         "pipelineWeights": weights,
+        "effectivePipelineWeights": effective_weights,
         "pipelines": pipeline_meta,
         "consensusMultiplier": consensus_multiplier,
         "correlationThreshold": correlation_threshold,
