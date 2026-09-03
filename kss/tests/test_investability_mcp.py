@@ -132,12 +132,26 @@ def _registered_tool_names() -> set[str]:
         def run(self) -> None:
             raise AssertionError("test should not run MCP server")
 
+    missing = object()
+    previous_fastmcp = sys.modules.get("fastmcp", missing)
+    previous_kss_mcp = sys.modules.get("kss_mcp", missing)
     mod = types.ModuleType("fastmcp")
     mod.FastMCP = FakeFastMCP
-    sys.modules["fastmcp"] = mod
-    sys.modules.pop("kss_mcp", None)
-    kss_mcp = importlib.import_module("kss_mcp")
-    return set(kss_mcp.mcp.tools)
+    try:
+        sys.modules["fastmcp"] = mod
+        sys.modules.pop("kss_mcp", None)
+        kss_mcp = importlib.import_module("kss_mcp")
+        names = set(kss_mcp.mcp.tools)
+    finally:
+        if previous_fastmcp is missing:
+            sys.modules.pop("fastmcp", None)
+        else:
+            sys.modules["fastmcp"] = previous_fastmcp
+        if previous_kss_mcp is missing:
+            sys.modules.pop("kss_mcp", None)
+        else:
+            sys.modules["kss_mcp"] = previous_kss_mcp
+    return names
 
 
 def test_map_read_tools_registered() -> None:
