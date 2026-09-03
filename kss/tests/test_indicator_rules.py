@@ -11,6 +11,7 @@ from kss.indicators.primitives import (
     FAMILY_MA_CROSS,
     FAMILY_RSI_THRESHOLD,
     FAMILY_SR_LEVEL,
+    FAMILY_VWAP,
 )
 from kss.indicators.rules import IndicatorSpec, compute_positions, warm_period
 
@@ -134,6 +135,16 @@ def test_boll_atr_entry_on_breakout() -> None:
         (
             FAMILY_SR_LEVEL,
             {"pivot_window": 3, "cluster_atr_mult": 1.0, "rule_variant": "breakout", "multi_timeframe": False},
+        ),
+        (
+            FAMILY_VWAP,
+            {
+                "rule_variant": "dev_reclaim",
+                "entry_dev_bps": 80,
+                "stop_dev_bps": 250,
+                "max_hold_bars": 4,
+                "t1_exit": True,
+            },
         ),
     ],
 )

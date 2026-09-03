@@ -23,6 +23,7 @@ from kss.indicators.primitives import (
     FAMILY_MA_CROSS,
     FAMILY_RSI_THRESHOLD,
     FAMILY_SR_LEVEL,
+    FAMILY_VWAP,
 )
 from kss.indicators.registry import KIND_MI_LEGACY, KIND_PRIMITIVE, RegistryEntry, state_root
 
@@ -101,6 +102,7 @@ _PRIMARY_SERIES_COLS: dict[str, tuple[str, ...]] = {
     FAMILY_RSI_THRESHOLD: ("rsi",),
     FAMILY_BOLL_ATR: ("boll_upper", "boll_mid", "boll_lower"),
     FAMILY_SR_LEVEL: ("sr_support", "sr_resistance"),
+    FAMILY_VWAP: ("vwap",),
 }
 
 

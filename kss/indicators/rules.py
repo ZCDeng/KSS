@@ -19,6 +19,7 @@ from kss.indicators.primitives import (
     FAMILY_MA_CROSS,
     FAMILY_RSI_THRESHOLD,
     FAMILY_SR_LEVEL,
+    FAMILY_VWAP,
     build_features,
 )
 
@@ -45,6 +46,8 @@ def warm_period(spec: IndicatorSpec) -> int:
         longest = max(int(spec.params["period"]), int(spec.params["atr_period"]))
     elif spec.family == FAMILY_SR_LEVEL:
         longest = int(spec.params["pivot_window"]) * 4
+    elif spec.family == FAMILY_VWAP:
+        longest = int(spec.params.get("max_hold_bars", 4))
     else:  # pragma: no cover - IndicatorSpec.__post_init__ 已拦截未知族
         raise ValueError(f"未知基元族: {spec.family!r}")
     return max(longest + 5, 40)
@@ -106,6 +109,28 @@ def _entry_exit_signals(
 
         raise ValueError(f"未知 sr_level 规则变体: {variant!r}")
 
+    if family == FAMILY_VWAP:
+        variant = params.get("rule_variant", "dev_reclaim")
+        entry_th = -float(params["entry_dev_bps"]) / 10000.0
+        stop_th = -float(params["stop_dev_bps"]) / 10000.0
+        close, close_prev = feat["close"], feat["close"].shift(1)
+        vwap, dev, dev_prev = feat["vwap"], feat["vwap_dev"], feat["vwap_dev"].shift(1)
+        exit_ = ((close >= vwap) | (dev <= stop_th)).fillna(False)
+        if variant == "dev_reclaim":
+            # 左侧：上一根已低于 VWAP 达阈值，本根收阳但仍未站上 VWAP。
+            entry = (
+                (dev_prev <= entry_th)
+                & (close > close_prev)
+                & (dev <= 0)
+                & (feat["bars_in_session"] >= 2)
+            )
+            return entry.fillna(False), exit_
+        if variant == "close_dip":
+            # 左侧：会话收盘仍低于 VWAP 达阈值（T+1 次日开盘买）。
+            entry = feat["is_session_close"] & (dev <= entry_th) & vwap.notna()
+            return entry.fillna(False), exit_
+        raise ValueError(f"未知 vwap 规则变体: {variant!r}")
+
     raise ValueError(f"未知基元族: {family!r}")  # pragma: no cover
 
 
@@ -119,17 +144,31 @@ def positions_from_spec(
     exit_ = exit_.fillna(False)
     pos = np.zeros(len(feat), dtype=float)
     holding = 0.0
+    hold_len = 0
+    entry_date = None
+    max_hold = spec.params.get("max_hold_bars")
+    t1_exit = bool(spec.params.get("t1_exit", False))
+    dates = pd.to_datetime(feat["trade_date"]).dt.strftime("%Y-%m-%d").values
     for i in range(len(feat)):
         if i < warm:
             holding = 0.0
+            hold_len = 0
+            entry_date = None
             pos[i] = 0.0
             continue
         if holding > 0:
-            if bool(exit_.iloc[i]):
+            hold_len += 1
+            timed_out = max_hold is not None and hold_len >= int(max_hold)
+            same_session = t1_exit and entry_date is not None and dates[i] == entry_date
+            if (bool(exit_.iloc[i]) or timed_out) and not same_session:
                 holding = 0.0
+                hold_len = 0
+                entry_date = None
         else:
             if bool(entry.iloc[i]):
                 holding = 1.0
+                hold_len = 0
+                entry_date = dates[i]
         pos[i] = holding
     return pd.Series(pos, index=feat.index)
 
@@ -209,6 +248,8 @@ def signal_strength(feat: pd.DataFrame, family: str) -> pd.Series:
         width = (feat["sr_resistance"] - feat["sr_support"]).replace(0, np.nan)
         pos = (feat["close"] - mid) / width
         return np.tanh(pos.fillna(0) * 2)
+    if family == FAMILY_VWAP:
+        return np.tanh(feat["vwap_dev"].fillna(0) * 20)
     raise ValueError(f"未知基元族: {family!r}")  # pragma: no cover
 
 
@@ -229,6 +270,14 @@ def rule_sentence(spec: IndicatorSpec) -> str:
             else "收盘突破阻力入场、回落破位（追踪止损）离场"
         )
         return f"支撑阻力·{variant}（{spec.params}）：{desc}"
+    if spec.family == FAMILY_VWAP:
+        variant = spec.params.get("rule_variant", "dev_reclaim")
+        desc = (
+            "价低于会话 VWAP 达阈值后收阳仍未站上（左侧）入场，站上 VWAP 或止损离场"
+            if variant == "dev_reclaim"
+            else "会话收盘低于 VWAP 达阈值入场（T+1 次日开），站上 VWAP 或止损离场"
+        )
+        return f"会话VWAP·{variant}（{spec.params}）：{desc}"
     desc, label = _ACTION_TEMPLATES[spec.family]
     return f"{label}（{spec.params}）：{desc}"
 

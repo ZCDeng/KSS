@@ -184,6 +184,32 @@ class TushareClient:
             f"fetch_daily {ts_code} ({start}~{end})",
         )
 
+    def fetch_stk_mins(
+        self,
+        ts_code: str,
+        *,
+        freq: str,
+        start: str,
+        end: str,
+    ) -> pd.DataFrame | None:
+        """获取分钟 K（``stk_mins``，含指数退避重试）.
+
+        Args:
+            ts_code: Tushare 代码，例如 ``688017.SH``.
+            freq: 周期，如 ``60min`` / ``15min``（上游无原生 120min）.
+            start: 起始，``YYYY-MM-DD HH:MM:SS`` 或 ``YYYYMMDD``.
+            end: 截止，同上.
+
+        Returns:
+            DataFrame；失败或空响应返回 ``None``.
+        """
+        return _fetch_with_retry(
+            lambda: self._pro.stk_mins(
+                ts_code=ts_code, freq=freq, start_date=start, end_date=end
+            ),
+            f"stk_mins {ts_code} {freq} ({start}~{end})",
+        )
+
     def fetch_daily_basic(
         self,
         ts_code: str,

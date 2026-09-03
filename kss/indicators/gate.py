@@ -124,7 +124,11 @@ def _dim_tradeable(feat: pd.DataFrame, trades: list[dict[str, Any]]) -> Dimensio
         return DimensionVerdict(
             name="可交易", passed=False, value={"trade_count": 0}, detail="交易次数为 0，无法评估"
         )
-    years = max(len(feat) / 252.0, 0.25)
+    if "trade_date" in feat.columns:
+        n_days = int(pd.to_datetime(feat["trade_date"]).dt.normalize().nunique())
+    else:
+        n_days = len(feat)
+    years = max(n_days / 252.0, 0.25)
     per_year = n / years
     slip = SLIPPAGE_BPS / 10000.0 * 2  # 往返滑点
     net_avg = sum((t.get("trade_return") or 0.0) - slip for t in trades) / n

@@ -1,13 +1,15 @@
-"""参数化技术指标基元库：均线交叉 / RSI·动量阈值 / 布林·ATR 波动.
+"""参数化技术指标基元库：均线交叉 / RSI·动量阈值 / 布林·ATR / 支撑阻力 / 会话 VWAP.
 
-三族基元由声明式 ``{family, params}`` 组合产生候选，特征计算复用
-``kss.features.technical.TechnicalFactors``；不做代码生成，候选空间有界。
+各族基元由声明式 ``{family, params}`` 组合产生候选，特征计算复用
+``kss.features.technical.TechnicalFactors``（VWAP 在本模块按会话累加）；
+不做代码生成，候选空间有界。
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from kss.features.technical import TechnicalFactors
@@ -16,14 +18,28 @@ FAMILY_MA_CROSS = "ma_cross"
 FAMILY_RSI_THRESHOLD = "rsi_threshold"
 FAMILY_BOLL_ATR = "boll_atr"
 FAMILY_SR_LEVEL = "sr_level"
+FAMILY_VWAP = "vwap"
 
-FAMILIES: tuple[str, ...] = (FAMILY_MA_CROSS, FAMILY_RSI_THRESHOLD, FAMILY_BOLL_ATR, FAMILY_SR_LEVEL)
+FAMILIES: tuple[str, ...] = (
+    FAMILY_MA_CROSS,
+    FAMILY_RSI_THRESHOLD,
+    FAMILY_BOLL_ATR,
+    FAMILY_SR_LEVEL,
+    FAMILY_VWAP,
+)
 
 DEFAULT_PARAMS: dict[str, dict[str, Any]] = {
     FAMILY_MA_CROSS: {"fast": 5, "slow": 20, "kind": "sma"},
     FAMILY_RSI_THRESHOLD: {"period": 14, "entry_level": 30.0, "exit_level": 70.0},
     FAMILY_BOLL_ATR: {"period": 20, "atr_period": 14, "atr_mult": 2.0, "atr_window": 10},
     FAMILY_SR_LEVEL: {"pivot_window": 5, "cluster_atr_mult": 1.0, "rule_variant": "bounce", "multi_timeframe": False},
+    FAMILY_VWAP: {
+        "rule_variant": "dev_reclaim",
+        "entry_dev_bps": 80,
+        "stop_dev_bps": 250,
+        "max_hold_bars": 4,
+        "t1_exit": True,
+    },
 }
 
 # 参数网格：供 U2 walk-forward 重估消费，与 mi_walk_forward.DEFAULT_N_GRID 同量级。
@@ -51,6 +67,19 @@ PARAM_GRID: dict[str, list[dict[str, Any]]] = {
         for cm in (0.5, 1.0)
         for rv in ("bounce", "breakout")
         for mtf in (False, True)
+    ],
+    # 2(variant) × 3(entry_dev) × 2(max_hold) = 12；止损固定 250bp、A 股 T+1 默认开。
+    FAMILY_VWAP: [
+        {
+            "rule_variant": rv,
+            "entry_dev_bps": el,
+            "stop_dev_bps": 250,
+            "max_hold_bars": mh,
+            "t1_exit": True,
+        }
+        for rv in ("dev_reclaim", "close_dip")
+        for el in (50, 80, 120)
+        for mh in (4, 8)
     ],
 }
 
@@ -125,6 +154,30 @@ def build_features(
         out["sr_resistance"] = level_feat["nearest_resistance"]
         out["sr_support_strength"] = level_feat["support_strength"]
         out["sr_resistance_strength"] = level_feat["resistance_strength"]
+
+    elif family == FAMILY_VWAP:
+        session = pd.to_datetime(out["trade_date"]).dt.strftime("%Y-%m-%d")
+        typical = (out["high"] + out["low"] + out["close"]) / 3.0
+        if "volume" in out.columns:
+            vol = pd.to_numeric(out["volume"], errors="coerce").fillna(0.0)
+        else:
+            vol = pd.Series(1.0, index=out.index)
+        if "amount" in out.columns and "volume" in out.columns:
+            amt = pd.to_numeric(out["amount"], errors="coerce")
+            from_amt = amt / vol.replace(0, np.nan)
+            typical = from_amt.fillna(typical)
+        pv = typical * vol
+        cum_pv = pv.groupby(session, sort=False).cumsum()
+        cum_vol = vol.groupby(session, sort=False).cumsum()
+        out["vwap"] = cum_pv / cum_vol.replace(0, np.nan)
+        out["vwap_dev"] = out["close"] / out["vwap"] - 1.0
+        out["bars_in_session"] = session.groupby(session, sort=False).cumcount() + 1
+        if "bar_end_ts" in out.columns:
+            ts = pd.to_datetime(out["bar_end_ts"])
+            out["is_session_close"] = (ts.dt.hour == 15) & (ts.dt.minute == 0)
+        else:
+            # 日线：一根 bar 即该会话，收盘偏离可作 close_dip。
+            out["is_session_close"] = True
 
     out["ret"] = out["open"].shift(-2) / out["open"].shift(-1) - 1.0
     return out
