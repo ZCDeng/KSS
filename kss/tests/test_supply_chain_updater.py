@@ -42,6 +42,14 @@ def _minimal_yaml(updated: str = "2026-06-02", stocks: dict | None = None) -> di
     }
 
 
+def _dated_yaml(structural_updated: str, analyst_updated: str) -> dict:
+    """构造结构标注与分析师覆盖分开计时的配置."""
+    data = _minimal_yaml(structural_updated)
+    data["structural_updated"] = structural_updated
+    data["analyst_updated"] = analyst_updated
+    return data
+
+
 # ────────────────────────────────────────────────────────────────
 # check_staleness
 # ────────────────────────────────────────────────────────────────
@@ -74,6 +82,20 @@ class TestCheckStaleness:
         result = check_staleness(p)
         assert result["is_stale"]
         assert result["age_days"] == 999
+
+    def test_structural_date_takes_precedence_over_analyst_refresh(self, tmp_path: Path) -> None:
+        """分析师覆盖刚刷新也不能掩盖陈旧的结构标注."""
+        old = (datetime.now() - timedelta(days=_STALENESS_DAYS + 10)).strftime("%Y-%m-%d")
+        today = datetime.now().strftime("%Y-%m-%d")
+        p = tmp_path / "sc.yaml"
+        _write_yaml(p, _dated_yaml(old, today))
+
+        result = check_staleness(p)
+
+        assert result["updated"] == old
+        assert result["structural_updated"] == old
+        assert result["analyst_updated"] == today
+        assert result["is_stale"] is True
 
 
 # ────────────────────────────────────────────────────────────────
@@ -181,8 +203,25 @@ class TestRefreshAnalystCounts:
         with open(p, encoding="utf-8") as f:
             saved = yaml.safe_load(f)
         assert saved["stocks"]["688012.SH"]["analyst_count"] == 40
-        # updated 日期也应该刷新
-        assert saved["updated"] == datetime.now().strftime("%Y-%m-%d")
+        # 只刷新分析师覆盖日期，不能伪装成结构标注也在今天复核过
+        assert saved["updated"] == "2026-06-02"
+        assert saved["analyst_updated"] == datetime.now().strftime("%Y-%m-%d")
+
+    @patch("kss.supply_chain.updater.count_analyst_coverage")
+    def test_preserves_explicit_structural_updated(self, mock_count: MagicMock, tmp_path: Path) -> None:
+        """结构标注日期和动态覆盖日期使用不同时间钟."""
+        p = tmp_path / "sc.yaml"
+        data = _dated_yaml("2025-01-01", "2025-02-01")
+        _write_yaml(p, data)
+        mock_count.return_value = 40
+
+        refresh_analyst_counts(yaml_path=p, dry_run=False, sleep_between=0)
+
+        with open(p, encoding="utf-8") as f:
+            saved = yaml.safe_load(f)
+        assert saved["structural_updated"] == "2025-01-01"
+        assert saved["updated"] == "2025-01-01"
+        assert saved["analyst_updated"] == datetime.now().strftime("%Y-%m-%d")
 
     @patch("kss.supply_chain.updater.count_analyst_coverage")
     def test_dry_run_does_not_write(self, mock_count: MagicMock, tmp_path: Path) -> None:

@@ -1,7 +1,8 @@
 """紫苏叶产业链标注动态更新器.
 
-Phase 3: 把静态 YAML 中 analyst_count 替换为 Tushare report_rc 实时数据,
-并在标注过期时发出告警.
+Phase 3: 把静态 YAML 中 analyst_count 替换为 Tushare report_rc 动态数据,
+并在结构标注过期时发出告警. 结构标注与分析师覆盖使用两套更新时间，
+避免只刷新动态字段就把人工产业链判断伪装成已经复核.
 
 用法:
     python -m kss.supply_chain.updater              # 更新全部标注的 analyst_count
@@ -71,16 +72,20 @@ def count_analyst_coverage(
 
 
 def check_staleness(yaml_path: Path | None = None) -> dict[str, Any]:
-    """检查 YAML 标注是否过期.
+    """检查 YAML 中人工结构标注是否过期.
+
+    ``structural_updated`` 是新字段；旧配置继续读取 ``updated``。动态更新器
+    写入的 ``analyst_updated`` 只描述研报覆盖口径，不参与结构新鲜度判断.
 
     Returns:
-        ``{"updated": str, "age_days": int, "is_stale": bool,
-          "threshold_days": int, "stocks_count": int}``.
+        包含结构/分析师日期、结构年龄和过期状态的字典.
     """
     p = yaml_path or _CONFIG_PATH
     if not p.exists():
         return {
             "updated": None,
+            "structural_updated": None,
+            "analyst_updated": None,
             "age_days": -1,
             "is_stale": True,
             "threshold_days": _STALENESS_DAYS,
@@ -90,17 +95,21 @@ def check_staleness(yaml_path: Path | None = None) -> dict[str, Any]:
     with open(p, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
 
-    updated_str = raw.get("updated", "")
+    structural_updated = raw.get("structural_updated") or raw.get("updated", "")
+    analyst_updated = raw.get("analyst_updated")
     stocks_count = len(raw.get("stocks") or {})
 
     try:
-        updated_dt = datetime.strptime(str(updated_str), "%Y-%m-%d")
+        updated_dt = datetime.strptime(str(structural_updated), "%Y-%m-%d")
         age_days = (datetime.now() - updated_dt).days
     except (ValueError, TypeError):
         age_days = 999
 
     return {
-        "updated": updated_str,
+        # ``updated`` 保留给既有调用方，语义固定为结构标注日期。
+        "updated": structural_updated,
+        "structural_updated": structural_updated,
+        "analyst_updated": analyst_updated,
         "age_days": age_days,
         "is_stale": age_days > _STALENESS_DAYS,
         "threshold_days": _STALENESS_DAYS,
@@ -136,12 +145,12 @@ def refresh_analyst_counts(
     changes: list[dict[str, Any]] = []
 
     for ts_code, info in stocks.items():
-        old_val = info.get("analyst_count", 0)
+        old_val = info.get("analyst_count")
         new_val = count_analyst_coverage(ts_code)
 
         if new_val is None:
             failed_count += 1
-            logger.warning("%s: Tushare 拉取失败, 保留原值 %d", ts_code, old_val)
+            logger.warning("%s: Tushare 拉取失败, 保留原值 %s", ts_code, old_val)
             continue
 
         if new_val != old_val:
@@ -156,7 +165,7 @@ def refresh_analyst_counts(
         time.sleep(sleep_between)
 
     if not dry_run and updated_count > 0:
-        raw["updated"] = datetime.now().strftime("%Y-%m-%d")
+        raw["analyst_updated"] = datetime.now().strftime("%Y-%m-%d")
         _atomic_write_yaml(p, raw)
         logger.info("已更新 %d/%d 只的 analyst_count", updated_count, total)
 

@@ -14,6 +14,7 @@ from kss.supply_chain.scoring import (
     _moat_score,
     _lock_score,
     _coverage_gap_score,
+    _substitutability_score,
     compute_perilla_score,
     explain_score,
     perilla_tier,
@@ -26,7 +27,8 @@ class TestPerillaTier:
     def test_core_duopoly_deep_locked(self) -> None:
         # 全球≤2 + L≥4 + 国内独家 + 锁定 → 核心
         s = _make_stock(n_competitors_global=2, chain_layer=4,
-                        n_competitors_domestic=1, demand_locked=True)
+                        n_competitors_domestic=1, demand_locked=True,
+                        substitutability="low")
         assert perilla_tier(s) == "core"
 
     def test_main_three_global_deep_locked(self) -> None:
@@ -46,6 +48,56 @@ class TestPerillaTier:
     def test_watch_wide_moat(self) -> None:
         # 全球≥4 家 moat 不足 → 观察
         s = _make_stock(n_competitors_global=5, chain_layer=5, demand_locked=True)
+        assert perilla_tier(s) == "watch"
+
+    def test_core_requires_low_substitutability(self) -> None:
+        s = _make_stock(
+            n_competitors_global=2,
+            chain_layer=4,
+            n_competitors_domestic=1,
+            demand_locked=True,
+            substitutability="medium",
+        )
+        assert perilla_tier(s) == "watch"
+
+    def test_main_allows_medium_substitutability(self) -> None:
+        s = _make_stock(
+            n_competitors_global=3,
+            chain_layer=4,
+            demand_locked=True,
+            substitutability="medium",
+        )
+        assert perilla_tier(s) == "main"
+
+    def test_unknown_substitutability_degrades_to_watch(self) -> None:
+        s = _make_stock(
+            n_competitors_global=3,
+            chain_layer=4,
+            demand_locked=True,
+            substitutability="mystery",
+        )
+        assert perilla_tier(s) == "watch"
+
+    def test_short_expansion_cycle_degrades_to_watch(self) -> None:
+        s = _make_stock(
+            n_competitors_global=2,
+            chain_layer=4,
+            n_competitors_domestic=1,
+            demand_locked=True,
+            substitutability="low",
+            expansion_cycle_years=1.5,
+        )
+        assert perilla_tier(s) == "watch"
+
+    def test_missing_demand_chain_degrades_to_watch(self) -> None:
+        s = _make_stock(
+            demand_chains=(),
+            n_competitors_global=2,
+            chain_layer=4,
+            n_competitors_domestic=1,
+            demand_locked=True,
+            substitutability="low",
+        )
         assert perilla_tier(s) == "watch"
 
 
@@ -81,13 +133,15 @@ class TestUsPeerField:
         assert info.us_peer_ticker == ""
 
     def test_real_registry_peer_coverage(self) -> None:
-        # 真注册表: core+main 至少 10 只有非空对标 (R3)
+        # 真注册表: 至少六成 core+main 有干净美股对标；不为凑固定只数硬配伪同业。
         reg = ChainRegistry.from_yaml()
+        selected = [c for c in reg._stocks if reg.tier(c) in ("core", "main")]
         with_peer = [
             c for c in reg._stocks
             if reg.tier(c) in ("core", "main") and reg.get(c).us_peer_ticker
         ]
-        assert len(with_peer) >= 10
+        assert selected
+        assert len(with_peer) / len(selected) >= 0.60
 
 
 # ────────────────────────────────────────────────────────────────
@@ -192,6 +246,20 @@ class TestCoverageGapScore:
         assert _coverage_gap_score(10) == pytest.approx(0.5)
 
 
+class TestSubstitutabilityScore:
+    def test_low(self) -> None:
+        assert _substitutability_score("low") == pytest.approx(1.0)
+
+    def test_medium(self) -> None:
+        assert _substitutability_score("medium") == pytest.approx(0.85)
+
+    def test_high(self) -> None:
+        assert _substitutability_score("high") == pytest.approx(0.25)
+
+    def test_unknown_defaults_conservatively(self) -> None:
+        assert _substitutability_score("mystery") == pytest.approx(0.0)
+
+
 # ────────────────────────────────────────────────────────────────
 # 综合评分测试
 # ────────────────────────────────────────────────────────────────
@@ -199,11 +267,12 @@ class TestCoverageGapScore:
 class TestPerillaScore:
     def test_equipment_deep_layer(self) -> None:
         """中微公司: layer=4, n=3, locked, cycle=3, analyst=20."""
-        info = _make_stock()
+        info = _make_stock(substitutability="medium")
         cfg = _make_config()
         score = compute_perilla_score(info, cfg)
-        # layer=0.75*0.25 + moat=0.3*0.35 + lock=1.0*0.25 + cover=0.0*0.15
-        expected = 0.25 * 0.75 + 0.35 * 0.3 + 0.25 * 1.0 + 0.15 * 0.0
+        # raw=layer=0.75*0.25 + moat=0.3*0.35 + lock=1.0*0.25 + cover=0.0*0.15
+        # medium 可替代性再乘 0.85
+        expected = (0.25 * 0.75 + 0.35 * 0.3 + 0.25 * 1.0 + 0.15 * 0.0) * 0.85
         assert score == pytest.approx(expected, abs=0.001)
 
     def test_terminal_layer_competitive(self) -> None:
@@ -223,6 +292,7 @@ class TestPerillaScore:
             chain_layer=5, n_competitors_global=1,
             demand_locked=True, expansion_cycle_years=3.0,
             analyst_count=2,
+            substitutability="low",
         )
         cfg = _make_config()
         score = compute_perilla_score(info, cfg)
@@ -236,13 +306,33 @@ class TestPerillaScore:
         score = compute_perilla_score(info, cfg)
         assert 0.0 <= score <= 1.0
 
+    def test_high_substitutability_is_penalized_below_candidate_line(self) -> None:
+        info = _make_stock(
+            chain_layer=5,
+            n_competitors_global=1,
+            n_competitors_domestic=1,
+            demand_locked=True,
+            expansion_cycle_years=3.0,
+            analyst_count=0,
+            substitutability="high",
+        )
+        cfg = _make_config()
+        assert compute_perilla_score(info, cfg) < 0.4
+
+    def test_unknown_substitutability_fails_loud_to_zero(self) -> None:
+        info = _make_stock(substitutability="mystery")
+        cfg = _make_config()
+        assert compute_perilla_score(info, cfg) == pytest.approx(0.0)
+
 
 class TestExplainScore:
     def test_returns_all_keys(self) -> None:
         info = _make_stock()
         cfg = _make_config()
         detail = explain_score(info, cfg)
-        assert set(detail.keys()) == {"layer", "moat", "lock", "coverage_gap", "total"}
+        assert set(detail.keys()) == {
+            "layer", "moat", "lock", "coverage_gap", "substitutability", "raw_total", "total"
+        }
 
     def test_total_matches_compute(self) -> None:
         info = _make_stock()
@@ -250,6 +340,13 @@ class TestExplainScore:
         detail = explain_score(info, cfg)
         score = compute_perilla_score(info, cfg)
         assert detail["total"] == pytest.approx(score, abs=0.001)
+
+    def test_raw_total_preserves_pre_penalty_score(self) -> None:
+        info = _make_stock(substitutability="medium")
+        cfg = _make_config()
+        detail = explain_score(info, cfg)
+        assert detail["raw_total"] > detail["total"]
+        assert detail["substitutability"] == pytest.approx(0.85, abs=0.001)
 
 
 # ────────────────────────────────────────────────────────────────
@@ -332,6 +429,63 @@ class TestChainRegistry:
         reg = ChainRegistry.from_yaml(p)
         assert reg.get("688012") is not None
         assert reg.score("688012") > 0
+
+    def test_missing_analyst_count_stays_unknown(self, tmp_path: Path) -> None:
+        data = {
+            "version": 1,
+            "scoring_weights": {},
+            "moat_tiers": {1: 1.0, 2: 0.7, 3: 0.3, "default": 0.0},
+            "ranking_multiplier": 0.3,
+            "stocks": {
+                "688012.SH": {
+                    "name": "中微",
+                    "chain_layer": 4,
+                    "chain_role": "equipment",
+                    "n_competitors_global": 3,
+                    "n_competitors_domestic": 1,
+                    "substitutability": "medium",
+                    "expansion_cycle_years": 3,
+                    "demand_locked": True,
+                },
+            },
+        }
+        p = tmp_path / "sc.yaml"
+        with open(p, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, allow_unicode=True)
+
+        reg = ChainRegistry.from_yaml(p)
+        info = reg.get("688012.SH")
+        assert info is not None
+        assert info.analyst_count is None
+
+    def test_invalid_analyst_count_stays_unknown(self, tmp_path: Path) -> None:
+        data = {
+            "version": 1,
+            "scoring_weights": {},
+            "moat_tiers": {1: 1.0, 2: 0.7, 3: 0.3, "default": 0.0},
+            "ranking_multiplier": 0.3,
+            "stocks": {
+                "688012.SH": {
+                    "name": "中微",
+                    "chain_layer": 4,
+                    "chain_role": "equipment",
+                    "n_competitors_global": 3,
+                    "n_competitors_domestic": 1,
+                    "substitutability": "medium",
+                    "expansion_cycle_years": 3,
+                    "demand_locked": True,
+                    "analyst_count": "unknown",
+                },
+            },
+        }
+        p = tmp_path / "sc.yaml"
+        with open(p, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, allow_unicode=True)
+
+        reg = ChainRegistry.from_yaml(p)
+        info = reg.get("688012.SH")
+        assert info is not None
+        assert info.analyst_count is None
 
     def test_candidates(self, tmp_path: Path) -> None:
         """candidates() 返回 score ≥ min 的票, 降序."""
@@ -442,6 +596,7 @@ class TestPerillaLeafTheory:
             chain_layer=5, n_competitors_global=1,
             demand_locked=True, expansion_cycle_years=3,
             analyst_count=0,
+            substitutability="low",
         )
         assert compute_perilla_score(ideal, cfg) > 0.9
 
@@ -452,5 +607,51 @@ class TestPerillaLeafTheory:
             chain_layer=1, n_competitors_global=10,
             demand_locked=False, expansion_cycle_years=0,
             analyst_count=30,
+            substitutability="high",
         )
         assert compute_perilla_score(anti, cfg) < 0.05
+
+    def test_low_substitutability_beats_medium_with_same_structure(self) -> None:
+        cfg = _make_config()
+        low = _make_stock(substitutability="low")
+        medium = _make_stock(substitutability="medium")
+        assert compute_perilla_score(low, cfg) > compute_perilla_score(medium, cfg)
+
+    def test_candidates_exclude_high_substitutability_false_positive(self, tmp_path: Path) -> None:
+        data = {
+            "version": 1,
+            "scoring_weights": {"layer": 0.25, "moat": 0.35, "lock": 0.25, "coverage_gap": 0.15},
+            "moat_tiers": {1: 1.0, 2: 0.7, 3: 0.3, "default": 0.0},
+            "ranking_multiplier": 0.3,
+            "stocks": {
+                "000001.SZ": {
+                    "name": "真瓶颈",
+                    "chain_layer": 5,
+                    "chain_role": "material",
+                    "n_competitors_global": 2,
+                    "n_competitors_domestic": 1,
+                    "substitutability": "low",
+                    "expansion_cycle_years": 3,
+                    "demand_locked": True,
+                    "analyst_count": 0,
+                },
+                "000002.SZ": {
+                    "name": "伪瓶颈",
+                    "chain_layer": 5,
+                    "chain_role": "material",
+                    "n_competitors_global": 2,
+                    "n_competitors_domestic": 1,
+                    "substitutability": "high",
+                    "expansion_cycle_years": 3,
+                    "demand_locked": True,
+                    "analyst_count": 0,
+                },
+            },
+        }
+        p = tmp_path / "sc.yaml"
+        with open(p, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, allow_unicode=True)
+
+        reg = ChainRegistry.from_yaml(p)
+        codes = [code for code, _ in reg.candidates(min_score=0.4)]
+        assert codes == ["000001.SZ"]

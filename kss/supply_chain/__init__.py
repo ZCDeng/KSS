@@ -6,7 +6,14 @@
 
 from __future__ import annotations
 
+from kss.supply_chain.assessment import PerillaAssessment, assess_perilla
 from kss.supply_chain.registry import ChainRegistry, StockChainInfo
 from kss.supply_chain.scoring import compute_perilla_score
 
-__all__ = ["ChainRegistry", "StockChainInfo", "compute_perilla_score"]
+__all__ = [
+    "ChainRegistry",
+    "PerillaAssessment",
+    "StockChainInfo",
+    "assess_perilla",
+    "compute_perilla_score",
+]

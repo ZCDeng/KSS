@@ -8,15 +8,73 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
+
+if TYPE_CHECKING:
+    from kss.supply_chain.assessment import PerillaAssessment
 
 logger = logging.getLogger(__name__)
 
 _CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "supply_chain.yaml"
+
+
+def _parse_analyst_count(value: Any) -> int | None:
+    """解析 analyst_count.
+
+    未知覆盖度保留为 ``None``，不伪造成“0 家覆盖”或“20 家覆盖”；评分层
+    对未知值不给 coverage gap 奖励，展示层仍能明确识别数据缺口.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        return max(int(value), 0)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_optional_bool(value: Any) -> bool | None:
+    """解析三态证据结论；缺失保持未知，非法值拒绝静默转真."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    raise ValueError(f"证据结论必须是 bool/null，实际为 {value!r}")
+
+
+def _parse_evidence_sources(value: Any) -> tuple[str, ...]:
+    """解析证据标识列表，过滤空值并拒绝把字符串拆成字符."""
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("evidence_sources 必须是列表")
+    return tuple(str(item).strip() for item in value if str(item).strip())
+
+
+def _parse_evidence_history(value: Any) -> tuple[dict[str, Any], ...]:
+    """解析 point-in-time 证据历史.
+
+    每条历史都保留为映射, 以便上层按需渲染 source / as_of / support 等字段。
+    """
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("evidence_history 必须是列表")
+
+    history: list[dict[str, Any]] = []
+    for item in value:
+        if item is None:
+            continue
+        if not isinstance(item, dict):
+            raise ValueError("evidence_history 每项必须是映射")
+        cleaned = {str(key).strip(): val for key, val in item.items() if str(key).strip()}
+        if cleaned:
+            history.append(cleaned)
+    return tuple(history)
 
 
 @dataclass(frozen=True)
@@ -33,10 +91,18 @@ class StockChainInfo:
     substitutability: str          # high / medium / low
     expansion_cycle_years: float
     demand_locked: bool
-    analyst_count: int
+    analyst_count: int | None
     analyst_notes: str
     us_peer_ticker: str = ""        # 美股对标代码(如 LRCX); 空=无干净对标
     us_peer_name: str = ""          # 美股对标名(如 Lam Research)
+    main_business_confirmed: bool | None = None
+    import_substitution_valid: bool | None = None
+    liquidity_eligible: bool | None = None
+    valuation_unpriced: bool | None = None
+    structural_as_of: str = ""
+    evidence_as_of: str = ""
+    evidence_sources: tuple[str, ...] = ()
+    evidence_history: tuple[dict[str, Any], ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         """转字典（Telegram / banner 用）."""
@@ -52,8 +118,17 @@ class StockChainInfo:
             "expansion_cycle_years": self.expansion_cycle_years,
             "demand_locked": self.demand_locked,
             "analyst_count": self.analyst_count,
+            "analyst_notes": self.analyst_notes,
             "us_peer_ticker": self.us_peer_ticker,
             "us_peer_name": self.us_peer_name,
+            "main_business_confirmed": self.main_business_confirmed,
+            "import_substitution_valid": self.import_substitution_valid,
+            "liquidity_eligible": self.liquidity_eligible,
+            "valuation_unpriced": self.valuation_unpriced,
+            "structural_as_of": self.structural_as_of,
+            "evidence_as_of": self.evidence_as_of,
+            "evidence_sources": list(self.evidence_sources),
+            "evidence_history": list(self.evidence_history),
         }
 
 
@@ -75,6 +150,8 @@ class ChainConfig:
     moat_tiers: dict[int, float]
     ranking_multiplier: float
     demand_chains: dict[str, Any]
+    structural_updated: str | None = None
+    analyst_updated: str | None = None
 
 
 class ChainRegistry:
@@ -109,7 +186,7 @@ class ChainRegistry:
             )
 
         with open(p, encoding="utf-8") as f:
-            raw = yaml.safe_load(f)
+            raw = yaml.safe_load(f) or {}
 
         # 解析权重
         sw_raw = raw.get("scoring_weights", {})
@@ -132,6 +209,8 @@ class ChainRegistry:
 
         ranking_mult = float(raw.get("ranking_multiplier", 0.3))
         demand_chains = raw.get("demand_chains", {})
+        structural_updated = raw.get("structural_updated") or raw.get("updated")
+        analyst_updated = raw.get("analyst_updated")
 
         # 解析个股
         stocks: dict[str, StockChainInfo] = {}
@@ -151,10 +230,18 @@ class ChainRegistry:
                     substitutability=str(info.get("substitutability", "high")),
                     expansion_cycle_years=float(info.get("expansion_cycle_years", 0)),
                     demand_locked=bool(info.get("demand_locked", False)),
-                    analyst_count=int(info.get("analyst_count", 0)),
+                    analyst_count=_parse_analyst_count(info.get("analyst_count")),
                     analyst_notes=str(info.get("analyst_notes", "")),
                     us_peer_ticker=str(up.get("ticker", "")).strip(),
                     us_peer_name=str(up.get("name", "")).strip(),
+                    main_business_confirmed=_parse_optional_bool(info.get("main_business_confirmed")),
+                    import_substitution_valid=_parse_optional_bool(info.get("import_substitution_valid")),
+                    liquidity_eligible=_parse_optional_bool(info.get("liquidity_eligible")),
+                    valuation_unpriced=_parse_optional_bool(info.get("valuation_unpriced")),
+                    structural_as_of=str(info.get("structural_as_of", "")).strip(),
+                    evidence_as_of=str(info.get("evidence_as_of", "")).strip(),
+                    evidence_sources=_parse_evidence_sources(info.get("evidence_sources")),
+                    evidence_history=_parse_evidence_history(info.get("evidence_history")),
                 )
             except (ValueError, TypeError) as exc:
                 logger.warning("解析 %s 失败: %s, 跳过", ts_code, exc)
@@ -164,6 +251,8 @@ class ChainRegistry:
             moat_tiers=moat_tiers,
             ranking_multiplier=ranking_mult,
             demand_chains=demand_chains,
+            structural_updated=str(structural_updated) if structural_updated else None,
+            analyst_updated=str(analyst_updated) if analyst_updated else None,
         )
         # 把 default_moat 挂到 config 上, scoring 模块需要
         config._moat_default = default_moat  # type: ignore[attr-defined]
@@ -214,6 +303,20 @@ class ChainRegistry:
                 results.append((ts_code, s))
         results.sort(key=lambda x: x[1], reverse=True)
         return results
+
+    def assess(self, ts_code: str, *, as_of: date | None = None) -> PerillaAssessment | None:
+        """返回紫苏叶证据审计结果; 未标注返回 ``None``."""
+        from kss.supply_chain.assessment import assess_perilla
+
+        info = self.get(ts_code)
+        if info is None:
+            return None
+        return assess_perilla(
+            info,
+            structural_updated=info.structural_as_of or self._config.structural_updated,
+            known_demand_chains=set(self._config.demand_chains),
+            as_of=as_of,
+        )
 
     def format_tag(self, ts_code: str) -> str:
         """生成一行产业链标签 (Telegram / banner 用).

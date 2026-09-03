@@ -7,7 +7,8 @@
 3. **lock_score** — 需求锁定度. 扩产周期长 + 下游需求确定 → 供需缺口锁定.
 4. **coverage_gap** — 分析师覆盖缺口. 覆盖越少, 越可能被市场低估.
 
-每项 0-1 归一化, 加权求和 → perilla_score ∈ [0, 1].
+每项 0-1 归一化, 加权求和后再乘以可替代性惩罚 →
+perilla_score ∈ [0, 1].
 """
 
 from __future__ import annotations
@@ -39,11 +40,26 @@ def _lock_score(demand_locked: bool, expansion_cycle_years: float,
     return cycle_ratio
 
 
-def _coverage_gap_score(analyst_count: int, full_coverage: int = 20) -> float:
-    """分析师覆盖缺口. 0 个分析师→1.0, 20+个→0.0."""
-    if full_coverage <= 0:
+def _coverage_gap_score(analyst_count: int | None, full_coverage: int = 20) -> float:
+    """分析师覆盖缺口. 未知不加分，0 个分析师→1.0，20+个→0.0."""
+    if analyst_count is None or full_coverage <= 0:
         return 0.0
     return max(0.0, 1.0 - min(analyst_count, full_coverage) / full_coverage)
+
+
+def _substitutability_score(substitutability: str) -> float:
+    """可替代性惩罚.
+
+    Serenity 原始逻辑把「不可替代性」当作 choke point 成立的前提，不是锦上添花。
+    这里不用新加权重，而是把它作为总分乘数：低可替代保留满分，medium 轻惩罚，
+    high/未知则保守降级，防止“深链 + 寡头”但可替代性并不强的票被误抬。
+    """
+    key = str(substitutability or "").strip().lower()
+    return {
+        "low": 1.0,
+        "medium": 0.85,
+        "high": 0.25,
+    }.get(key, 0.0)
 
 
 def compute_perilla_score(info: StockChainInfo, config: ChainConfig) -> float:
@@ -63,6 +79,7 @@ def compute_perilla_score(info: StockChainInfo, config: ChainConfig) -> float:
     moat = _moat_score(info.n_competitors_global, config.moat_tiers, moat_default)
     lock = _lock_score(info.demand_locked, info.expansion_cycle_years)
     cover = _coverage_gap_score(info.analyst_count)
+    sub = _substitutability_score(info.substitutability)
 
     score = (
         w.layer * layer
@@ -70,6 +87,7 @@ def compute_perilla_score(info: StockChainInfo, config: ChainConfig) -> float:
         + w.lock * lock
         + w.coverage_gap * cover
     )
+    score *= sub
     # 安全钳位
     return max(0.0, min(score, 1.0))
 
@@ -77,19 +95,27 @@ def compute_perilla_score(info: StockChainInfo, config: ChainConfig) -> float:
 def perilla_tier(info: StockChainInfo) -> str:
     """结构性分层（精不是多: 由结构字段确定性裁定, 非分数线）.
 
-    - ``core`` — 真·紫苏叶核心: 深链(L≥4) + 全球供应商≤2(垄断/双寡头) +
-      国内独家 + 需求锁定. 不可替代的卡脖子.
-    - ``main`` — 国产替代主线(Tier A): 深链(L≥4) + 全球三家寡头 + 需求锁定.
+    - ``core`` — 真·紫苏叶核心: 已绑定需求链 + 深链(L≥4) + 扩产周期≥2年 +
+      全球供应商≤2(垄断/双寡头) + 国内独家 + 需求锁定 + 低可替代.
+    - ``main`` — 国产替代主线(Tier A): 同一瓶颈门槛 + 全球三家寡头 +
+      低/中可替代.
       有定价权但非垄断, 多为半导体设备/材料的国产替代赛道.
     - ``watch`` — 其余(链层不足 / moat 靠分项补 / 需求未锁定), 不入正式列表.
 
     Returns:
         ``"core"`` / ``"main"`` / ``"watch"``.
     """
-    if info.chain_layer >= 4 and info.demand_locked:
-        if info.n_competitors_global <= 2 and info.n_competitors_domestic <= 1:
+    sub = str(info.substitutability or "").strip().lower()
+    bottleneck_gate = (
+        bool(info.demand_chains)
+        and info.chain_layer >= 4
+        and info.demand_locked
+        and info.expansion_cycle_years >= 2.0
+    )
+    if bottleneck_gate:
+        if sub == "low" and info.n_competitors_global <= 2 and info.n_competitors_domestic <= 1:
             return "core"
-        if info.n_competitors_global == 3:
+        if sub in {"low", "medium"} and info.n_competitors_global == 3:
             return "main"
     return "watch"
 
@@ -107,14 +133,17 @@ def explain_score(info: StockChainInfo, config: ChainConfig) -> dict[str, float]
     moat = _moat_score(info.n_competitors_global, config.moat_tiers, moat_default)
     lock = _lock_score(info.demand_locked, info.expansion_cycle_years)
     cover = _coverage_gap_score(info.analyst_count)
+    sub = _substitutability_score(info.substitutability)
 
-    total = w.layer * layer + w.moat * moat + w.lock * lock + w.coverage_gap * cover
-    total = max(0.0, min(total, 1.0))
+    raw_total = w.layer * layer + w.moat * moat + w.lock * lock + w.coverage_gap * cover
+    total = max(0.0, min(raw_total * sub, 1.0))
 
     return {
         "layer": round(layer, 4),
         "moat": round(moat, 4),
         "lock": round(lock, 4),
         "coverage_gap": round(cover, 4),
+        "substitutability": round(sub, 4),
+        "raw_total": round(raw_total, 4),
         "total": round(total, 4),
     }
