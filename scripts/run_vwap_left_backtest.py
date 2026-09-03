@@ -385,6 +385,9 @@ def write_report(
         f"{c['n_days']} 个交易日，{c['min_date']} ~ {c['max_date']}"
         for c in coverage
     ]
+    net_60 = float(best_60.get("pooled_avg_ret_net") or 0.0)
+    net_120 = float(best_120.get("pooled_avg_ret_net") or 0.0)
+    p2_go = bool(gate_60["go"] and gate_120["go"] and net_60 > 0 and net_120 > 0)
     md = f"""# 会话 VWAP 左侧 · 60m / 120m 研究回测
 
 - 日期：2026-09-02
@@ -441,6 +444,14 @@ def write_report(
 ## 网格全表 JSON
 
 见同目录 `vwap_left_60_120_20260902.json`。
+
+## P2 五维汇总（研究层，不固化）
+
+**总裁决：{"GO" if p2_go else "NO-GO"}。**
+
+- 60m：汇总 n={best_60.get('pooled_n')}，胜率 {(best_60.get('pooled_win_rate') or 0)*100:.1f}%，滑点后均笔 {net_60*100:.2f}%，单票门禁 {"GO" if gate_60['go'] else "NO-GO"}。
+- 120m：汇总 n={best_120.get('pooled_n')}，胜率 {(best_120.get('pooled_win_rate') or 0)*100:.1f}%，滑点后均笔 {net_120*100:.2f}%，单票门禁 {"GO" if gate_120['go'] else "NO-GO"}。
+- 只有两个周期门禁都通过且汇总滑点后均笔均为正，才允许进入固化评审；否则保持 `research_only`，不写 App 指标候选或自选 overlay。
 """
     path.write_text(md, encoding="utf-8")
 
@@ -605,6 +616,12 @@ def run_daily() -> int:
         if df is None or df.empty:
             print(f"SKIP {ts_code}: no daily csv", flush=True)
             continue
+        # 报告锚在 END；即使运行态 CSV 已滚到下一交易日，也不得把未来行带进
+        # 以 2026-09-02 命名的 PIT 研究结果。
+        df = df[df["trade_date"] <= align_end].reset_index(drop=True)
+        if df.empty:
+            print(f"SKIP {ts_code}: no daily rows on or before {align_end.date()}", flush=True)
+            continue
         # 日线 VWAP 必须落在价格附近；否则单位换算错了。
         typical = df["amount"] / df["volume"].replace(0, np.nan)
         ratio = float((typical / df["close"]).median())
@@ -662,6 +679,17 @@ def run_daily() -> int:
 
     b60 = minute.get("best_60") or {}
     b120 = minute.get("best_120") or {}
+    minute_gate_60 = minute.get("gate_60") or {}
+    minute_gate_120 = minute.get("gate_120") or {}
+    daily_net = float(best_align.get("pooled_avg_ret_net") or 0.0)
+    p2_go = bool(
+        gate_align["go"]
+        and daily_net > 0
+        and minute_gate_60.get("go")
+        and minute_gate_120.get("go")
+        and float(b60.get("pooled_avg_ret_net") or 0.0) > 0
+        and float(b120.get("pooled_avg_ret_net") or 0.0) > 0
+    )
     cov_lines = [
         f"- `{c['symbol']}`: 全日线 {c['n_full']} 根（{c['min_date']}~{c['max_date']}），对齐窗 {c['n_align']} 根"
         for c in coverage
@@ -717,6 +745,12 @@ def run_daily() -> int:
 - 分钟 `close_dip` 用的是**当日会话 VWAP**（15:00 vs 盘中累计均价）。
 - 日线 `close_dip` 用的是**当日 VWAP**（收盘 vs 全日成交额/量）。两者都是「收在均价下方再隔夜」，不是滚动多日 VWAP。
 - `dev_reclaim` 需要同一会话至少 2 根 bar，日线结构上不会开仓。
+
+## P2（跨周期汇总）
+
+**总裁决：{"GO" if p2_go else "NO-GO"}。** 对齐窗日线汇总滑点后均笔 {daily_net*100:.2f}%；
+60m / 120m 汇总滑点后均笔分别为 {float(b60.get('pooled_avg_ret_net') or 0.0)*100:.2f}% / {float(b120.get('pooled_avg_ret_net') or 0.0)*100:.2f}%。
+单票门禁通过不替代跨标的、跨周期净收益要求；未全部通过前保持 `research_only`。
 """
     report_md = REPORT_DIR / "vwap_left_daily_20260902.md"
     report_json = REPORT_DIR / "vwap_left_daily_20260902.json"
