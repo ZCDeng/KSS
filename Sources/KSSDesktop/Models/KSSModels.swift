@@ -545,6 +545,24 @@ struct NewsSourcePost: Codable, Hashable, Identifiable {
 }
 
 /// 紫苏叶（供应链护城河评分）选股，数据源 supply_chain.yaml + ChainRegistry。
+struct PerillaEvidencePoint: Codable, Hashable {
+    var asOf: String?
+    var publishedAt: String?
+    var retrievedAt: String?
+    var sourceKind: String?
+    var sourceURL: String?
+    var verdict: String?
+
+    enum CodingKeys: String, CodingKey {
+        case asOf = "as_of"
+        case publishedAt = "published_at"
+        case retrievedAt = "retrieved_at"
+        case sourceKind = "source_kind"
+        case sourceURL = "source_url"
+        case verdict
+    }
+}
+
 struct PerillaPick: Codable, Identifiable, Hashable {
     var id: String { symbol }
     var symbol: String
@@ -556,6 +574,16 @@ struct PerillaPick: Codable, Identifiable, Hashable {
     var locked: Bool
     var tier: String?   // core=核心垄断/双寡头 · main=国产替代主线(三家寡头深链)
     var score: Double
+    // 证据审计（缺失保持 nil / needs_review，不把未知包装成利好）
+    var assessmentStatus: String?  // qualified / needs_review
+    var exclusionReasons: [String]?
+    var reviewFlags: [String]?
+    var positiveSignals: [String]?
+    var structuralAsOf: String?
+    var analystAsOf: String?
+    var evidenceAsOf: String?
+    var evidenceSources: [String]?
+    var evidenceHistory: [PerillaEvidencePoint]?
     // 行情 / 估值（cs_data + daily_basic 切片）
     var ret1d: Double?
     var ret5d: Double?

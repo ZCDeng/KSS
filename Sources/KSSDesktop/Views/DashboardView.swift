@@ -149,7 +149,7 @@ struct DashboardView: View {
                     mainRow(contentW: contentW)
 
                     if let picks = snapshot.perillaPicks, !picks.isEmpty {
-                        SectionHeader("紫苏叶选股", caption: "🌿 供应链护城河 · 核心(全球≤2家) / 国产替代主线(三家寡头) 分层 · 点击看个股")
+                        SectionHeader("紫苏叶结构候选", caption: "🌿 供应链研究 overlay · 不参与交易信号加权 · 核心/国产替代主线分层 · 点击看个股")
                         PerillaPicksTable(
                             items: picks,
                             watchlist: watchlist,
@@ -641,6 +641,23 @@ struct PerillaPicksTable: View {
                             .font(KSSFont.themed(8, theme: theme))
                             .foregroundStyle(theme.accent)
                     }
+                    if item.assessmentStatus == "needs_review" {
+                        Text("待证据")
+                            .font(KSSFont.themed(8.5, .semibold, theme: theme))
+                            .foregroundStyle(Color.orange)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.orange.opacity(0.12), in: Capsule())
+                            .help(assessmentHelp(item))
+                    } else if item.assessmentStatus == "qualified" {
+                        Text("证据齐")
+                            .font(KSSFont.themed(8.5, .semibold, theme: theme))
+                            .foregroundStyle(theme.accent)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(theme.accent.opacity(0.10), in: Capsule())
+                            .help(assessmentHelp(item))
+                    }
                 }
                 // 产业链列是弹性列：徽标挂这里，不动任何固定列宽。
                 ExposureBadge(exposure: exposure.stock(item.symbol),
@@ -757,6 +774,28 @@ struct PerillaPicksTable: View {
         default: roleCN = item.role
         }
         return "L\(item.layer)·\(roleCN)"
+    }
+
+    private func assessmentHelp(_ item: PerillaPick) -> String {
+        var parts = item.reviewFlags ?? []
+        if let date = item.structuralAsOf, !date.isEmpty {
+            parts.append("结构标注截至 \(date)")
+        }
+        if let date = item.evidenceAsOf, !date.isEmpty {
+            parts.append("证据截至 \(date)")
+        }
+        if let history = item.evidenceHistory, !history.isEmpty {
+            let latest = history.max { ($0.asOf ?? "") < ($1.asOf ?? "") }
+            var summary = "PIT \(history.count) 条"
+            if let asOf = latest?.asOf, !asOf.isEmpty {
+                summary += "，最新时间点 \(asOf)"
+            }
+            if let publishedAt = latest?.publishedAt, !publishedAt.isEmpty {
+                summary += "，披露/可得 \(publishedAt)"
+            }
+            parts.append(summary)
+        }
+        return parts.isEmpty ? "结构与证据审计已通过" : parts.joined(separator: " · ")
     }
 }
 
