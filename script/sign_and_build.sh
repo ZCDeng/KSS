@@ -357,6 +357,7 @@ echo ""
 echo "清理旧包…"
 cleanup_file "$DIST_DIR/${APP_NAME}-notarize.zip"
 APP_INSTALL_DIR="/Applications"
+APP_SUPPORT_DIR="$HOME/Library/Application Support/KSS"
 shopt -s nullglob
 for archive in "$DIST_DIR/${APP_NAME}-desktop-v"*.zip; do
   cleanup_file "$archive"
@@ -412,7 +413,6 @@ for leftover in "$APP_INSTALL_DIR/${APP_NAME}.app.previous-"*; do
   [ -e "$leftover" ] || continue
   safe_remove_old_dir "$leftover" "$APP_INSTALL_DIR"
 done
-APP_SUPPORT_DIR="$HOME/Library/Application Support/KSS"
 BACKUP="$APP_SUPPORT_DIR/release-backups"
 if [ -e "$BACKUP" ] || [ -L "$BACKUP" ]; then
   safe_remove_old_dir "$BACKUP" "$APP_SUPPORT_DIR"
