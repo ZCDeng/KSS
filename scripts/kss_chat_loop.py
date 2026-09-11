@@ -218,6 +218,14 @@ TOOL_SPECS: list[dict[str, Any]] = [
     _spec("get_intraday_snapshot", "intraday-snapshot",
           "最新分钟 bar 快照(按覆盖自动选源 longbridge/东财,前向-only)。symbol 如 688008.SH",
           {"symbol": _STR}, ["symbol"]),
+    _spec("get_hithink_auction", "hithink-auction",
+          "集合竞价快照(HiThink,stage=live|final)。非现价主源;现价仍用 get_longbridge_quote。"
+          "数字逐字引用 auction_price/auction_pct/auction_unmatched,不得补零",
+          {"stage": _STR, "from_cache": _STR}, ["stage", "from_cache"]),
+    _spec("get_hithink_limit_up", "hithink-limit-up",
+          "官方涨停池(HiThink)。返回 thscode/name/limit_up_time/reason/continue_day_cnt。"
+          "非现价主源,涨幅数字逐字引用返回字段",
+          {"date": _STR}, ["date"]),
     # ---- 指标研究实验室(plan 2026-07-12-004)：读三个 + 写两个,写走 request_write ----
     _spec("get_indicator_lab", "indicator-lab-list", "指标注册表 + 近期 GO/NO-GO 裁决"),
     _spec("backtest_indicator", "indicator-backtest",

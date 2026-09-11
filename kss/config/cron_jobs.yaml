@@ -238,6 +238,22 @@ jobs:
     category: 盘中快讯
     catchup: true
     enabled: true
+  - suffix: auction_live
+    wrapper: scripts/run_hithink_auction.sh
+    args: ["--stage", "live"]
+    schedule: {hour: 9, minute: 20, weekdays: [1, 2, 3, 4, 5]}
+    title: 集合竞价 live
+    category: 盘中快讯
+    catchup: false
+    enabled: true
+  - suffix: auction_final
+    wrapper: scripts/run_hithink_auction.sh
+    args: ["--stage", "final"]
+    schedule: {hour: 9, minute: 26, weekdays: [1, 2, 3, 4, 5]}
+    title: 集合竞价 final
+    category: 盘中快讯
+    catchup: false
+    enabled: true
 
   - suffix: paper_trade_daily
     wrapper: scripts/run_paper_trade_daily.sh

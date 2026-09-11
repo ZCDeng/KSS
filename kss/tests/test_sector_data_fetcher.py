@@ -64,6 +64,14 @@ def _patch_external_http(monkeypatch: pytest.MonkeyPatch) -> None:
     （monkeypatch 同 scope 内顺序应用，后写覆盖先写）.
     """
     monkeypatch.setattr(
+        "kss.sector.data_fetcher.fetch_hithink_ths_hot",
+        lambda trade_date, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "kss.sector.data_fetcher.fetch_hithink_dragon_tiger",
+        lambda trade_date, **kwargs: None,
+    )
+    monkeypatch.setattr(
         "kss.sector.data_fetcher.fetch_ths_hot",
         lambda trade_date: _make_ths_hot_df(),
     )
@@ -476,6 +484,60 @@ class TestThsHotIntegration:
         assert snap.ths_hot is None
         assert "ths_hot" in snap.missing
         assert snap.industry is not None  # 其他维度不受影响
+
+
+
+    def test_ths_hot_source_scrape_when_hithink_empty(self) -> None:
+        client = _FakeClient(
+            ind=_make_ind_dc(),
+            cnt=_make_cnt_ths(),
+            sw=_make_sw_daily(),
+            hs=_make_hsgt(),
+        )
+        snap = load_sector_snapshot("20260512", client=client)  # type: ignore[arg-type]
+        assert snap.ths_hot_source == "scrape"
+        assert snap.dragon_tiger_source == "scrape"
+        assert {"code", "name", "reason"}.issubset(snap.ths_hot.columns)
+
+
+class TestHithinkPreferred:
+    def test_hithink_hot_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        df = _make_ths_hot_df()
+        monkeypatch.setattr(
+            "kss.sector.data_fetcher.fetch_hithink_ths_hot",
+            lambda trade_date, **kwargs: df,
+        )
+        scrape_calls = {"n": 0}
+
+        def _scrape(trade_date):
+            scrape_calls["n"] += 1
+            return _make_ths_hot_df()
+
+        monkeypatch.setattr("kss.sector.data_fetcher.fetch_ths_hot", _scrape)
+        client = _FakeClient(
+            ind=_make_ind_dc(), cnt=_make_cnt_ths(), sw=_make_sw_daily(), hs=_make_hsgt(),
+        )
+        snap = load_sector_snapshot("20260512", client=client)  # type: ignore[arg-type]
+        assert snap.ths_hot_source == "hithink"
+        assert scrape_calls["n"] == 0
+        assert "reason" in snap.ths_hot.columns
+
+    def test_both_hot_empty_is_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "kss.sector.data_fetcher.fetch_hithink_ths_hot",
+            lambda trade_date, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "kss.sector.data_fetcher.fetch_ths_hot",
+            lambda trade_date: None,
+        )
+        client = _FakeClient(
+            ind=_make_ind_dc(), cnt=_make_cnt_ths(), sw=_make_sw_daily(), hs=_make_hsgt(),
+        )
+        snap = load_sector_snapshot("20260512", client=client)  # type: ignore[arg-type]
+        assert snap.ths_hot is None
+        assert snap.ths_hot_source == "missing"
+        assert "ths_hot" in snap.missing
 
 
 # ====================================================================== #

@@ -30,6 +30,7 @@ import pandas as pd
 from kss.data.tushare_client import TushareClient
 from kss.data.ths_client import fetch_ths_hot
 from kss.data.dragon_tiger_client import fetch_dragon_tiger
+from kss.data.hithink_special import fetch_hithink_ths_hot, fetch_hithink_dragon_tiger
 from kss.data.margin_client import fetch_kcb_margin
 from kss.data.em_industry_fundflow import (
     fetch_industry_fundflow_em,
@@ -70,9 +71,11 @@ class SectorSnapshot:
         ths_hot: 同花顺当日强势股 + 题材归因（``reason`` 字段），含 ``code`` /
             ``name`` / ``reason`` / ``pct_change``. 用于在板块复盘文中织入
             「今天为什么涨」的题材关键词. 失败时为 ``None``.
+        ths_hot_source: ``hithink`` / ``scrape`` / ``missing``.
         dragon_tiger: 东财当日全市场龙虎榜明细，含 ``code`` / ``name`` /
             ``net_amount``(元) / ``reason``. 聚合后给复盘 prompt 一份席位级
             资金动向. 外部 HTTP 源（非 Tushare），失败时为 ``None``.
+        dragon_tiger_source: ``hithink`` / ``scrape`` / ``missing``.
         margin_kcb: 东财当日全科创板个股融资融券明细，含 ``code`` / ``name`` /
             ``fin_balance``(元) / ``fin_net_buy``(元). 聚合后给复盘 prompt 一份
             科创板杠杆情绪. 外部 HTTP 源（非 Tushare），失败时为 ``None``.
@@ -85,7 +88,9 @@ class SectorSnapshot:
     industry_index: pd.DataFrame | None = None
     northbound: dict[str, float] | None = None
     ths_hot: pd.DataFrame | None = None
+    ths_hot_source: str | None = None
     dragon_tiger: pd.DataFrame | None = None
+    dragon_tiger_source: str | None = None
     margin_kcb: pd.DataFrame | None = None
     missing: list[str] = field(default_factory=list)
 
@@ -184,15 +189,30 @@ def load_sector_snapshot(
     if snap.northbound is None:
         snap.missing.append("northbound")
 
-    # 同花顺热点是无鉴权 HTTP（非 Tushare），fetcher 自己处理失败 → 返回 None
-    snap.ths_hot = fetch_ths_hot(trade_date)
-    if snap.ths_hot is None:
-        snap.missing.append("ths_hot")
+    # KTD3：HiThink 官方涨停/异动优先，scrape 单版本降级（本计划不删 scrape 文件）.
+    hithink_hot = fetch_hithink_ths_hot(trade_date)
+    if hithink_hot is not None and not hithink_hot.empty:
+        snap.ths_hot = hithink_hot
+        snap.ths_hot_source = "hithink"
+    else:
+        snap.ths_hot = fetch_ths_hot(trade_date)
+        if snap.ths_hot is None:
+            snap.missing.append("ths_hot")
+            snap.ths_hot_source = "missing"
+        else:
+            snap.ths_hot_source = "scrape"
 
-    # 东财龙虎榜同为无鉴权 HTTP；紧挨 ths_hot 串行调用，避免对东财并发触发限流.
-    snap.dragon_tiger = fetch_dragon_tiger(trade_date)
-    if snap.dragon_tiger is None:
-        snap.missing.append("dragon_tiger")
+    hithink_lhb = fetch_hithink_dragon_tiger(trade_date)
+    if hithink_lhb is not None and not hithink_lhb.empty:
+        snap.dragon_tiger = hithink_lhb
+        snap.dragon_tiger_source = "hithink"
+    else:
+        snap.dragon_tiger = fetch_dragon_tiger(trade_date)
+        if snap.dragon_tiger is None:
+            snap.missing.append("dragon_tiger")
+            snap.dragon_tiger_source = "missing"
+        else:
+            snap.dragon_tiger_source = "scrape"
 
     # 东财科创板两融同为无鉴权 HTTP（2 页翻页）；继续串行，不并发.
     snap.margin_kcb = fetch_kcb_margin(trade_date)

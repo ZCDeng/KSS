@@ -33,6 +33,8 @@ enum KeychainStore {
         "LONGBRIDGE_APP_KEY",
         "LONGBRIDGE_APP_SECRET",
         "LONGBRIDGE_ACCESS_TOKEN",
+        // HiThink Financial-API（竞价/涨停/龙虎榜解读层，不是分钟行情）。
+        "HITHINK_FINANCE_API_KEY",
         // yupi-hot-monitor（KSS 托管）：OpenRouter Key + 可选模型覆盖
         "OPENROUTER_API_KEY",
         "KSS_YUPI_MODEL",

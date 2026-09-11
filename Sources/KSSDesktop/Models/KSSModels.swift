@@ -2019,6 +2019,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
     case selfCheck
     case tushare
     case longbridge
+    case hithink
     case telegram
     case research
     case yupi
@@ -2032,6 +2033,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
         case .selfCheck: return "自检"
         case .tushare: return "Tushare"
         case .longbridge: return "Longbridge"
+        case .hithink: return "HiThink"
         case .telegram: return "Telegram"
         case .research: return "外部研究"
         case .yupi: return "资讯雷达"
@@ -2043,7 +2045,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Hashable {
     /// 投影到经典两 Tab。
     var tab: SettingsTab {
         switch self {
-        case .selfCheck, .tushare, .longbridge, .telegram, .research, .yupi:
+        case .selfCheck, .tushare, .longbridge, .hithink, .telegram, .research, .yupi:
             return .credentials
         case .tasks, .logs:
             return .operations
@@ -2066,6 +2068,8 @@ enum SettingsTabRouting {
             return .tushare
         case "longbridge", "intraday_secrets":
             return .longbridge
+        case "hithink":
+            return .hithink
         case "telegram":
             return .telegram
         case "research":
@@ -2101,7 +2105,7 @@ enum SettingsTabRouting {
         switch category {
         case .selfCheck, .yupi, .logs:
             return false
-        case .tushare, .longbridge, .telegram, .research:
+        case .tushare, .longbridge, .hithink, .telegram, .research:
             let raw = category.rawValue
             if !isSourceConfigured(raw) { return true }
             if let ok = testOK(raw), !ok { return true }

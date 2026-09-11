@@ -111,7 +111,7 @@ final class SettingsTabTests: XCTestCase {
     func testCategoryOrderIsStable() {
         XCTAssertEqual(
             SettingsCategory.allCases.map(\.rawValue),
-            ["selfCheck", "tushare", "longbridge", "telegram", "research", "yupi", "tasks", "logs"]
+            ["selfCheck", "tushare", "longbridge", "hithink", "telegram", "research", "yupi", "tasks", "logs"]
         )
     }
 
@@ -148,6 +148,12 @@ final class SettingsTabTests: XCTestCase {
                     "KSS_RESEARCH_FIXTURE_PATH", "JINA_API_KEY", "SERPER_API_KEY"] {
             XCTAssertTrue(KeychainStore.managedKeys.contains(key), key)
         }
+    }
+
+    func testHithinkKeyIsInjectedViaKeychain() {
+        XCTAssertTrue(KeychainStore.managedKeys.contains("HITHINK_FINANCE_API_KEY"))
+        XCTAssertEqual(SettingsCategory.hithink.tab, .credentials)
+        XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "hithink"), .hithink)
     }
 
     func testCredentialHydrationDoesNotLookLikeAnUnsavedUserEdit() {

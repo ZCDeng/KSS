@@ -1,0 +1,84 @@
+{
+  "timestamp": 1789056000000,
+  "board_type": "all",
+  "trade_date": "2026-09-11",
+  "count": 63,
+  "stock_count": 58,
+  "stock_items": [
+    {
+      "thscode": "000759.SZ",
+      "ticker": "000759",
+      "name": "中百集团",
+      "concept_list": [
+        {
+          "name": "预制菜"
+        },
+        {
+          "name": "免税店"
+        },
+        {
+          "name": "农业种植"
+        }
+      ],
+      "change": -0.064442,
+      "net_value": 67123708.26,
+      "net_rate": 0.02773814,
+      "hot_rank": 2,
+      "buy_value": 250656974,
+      "sell_value": 183533265.74,
+      "range_days": 1,
+      "hot_money_net_value": 34280539
+    },
+    {
+      "thscode": "600127.SH",
+      "ticker": "600127",
+      "name": "金健米业",
+      "concept_list": [
+        {
+          "name": "玉米"
+        },
+        {
+          "name": "粮食概念"
+        },
+        {
+          "name": "乳业"
+        }
+      ],
+      "change": -0.032143,
+      "net_value": -231075017.51,
+      "net_rate": -0.06788259,
+      "hot_rank": 4,
+      "buy_value": 326969572.17,
+      "sell_value": 558044589.68,
+      "range_days": 1,
+      "hot_money_net_value": -166139415.05
+    },
+    {
+      "thscode": "000978.SZ",
+      "ticker": "000978",
+      "name": "桂林旅游",
+      "concept_list": [
+        {
+          "name": "国企改革"
+        },
+        {
+          "name": "旅游概念"
+        },
+        {
+          "name": "西部大开发"
+        }
+      ],
+      "change": 0.018576,
+      "net_value": -5835465.75,
+      "net_rate": -0.00347102,
+      "hot_rank": 5,
+      "buy_value": 119021806.97,
+      "sell_value": 124857272.72,
+      "range_days": 1,
+      "hot_money_net_value": 12647996.25
+    }
+  ],
+  "hot_money_items": [],
+  "stock_items_truncated": true,
+  "stock_items_original_count": 63
+}

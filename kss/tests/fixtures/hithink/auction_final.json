@@ -1,0 +1,59 @@
+{
+  "timestamp": 1789160231560,
+  "auction_phase": "closed",
+  "data_status": "not_ready",
+  "total": 3,
+  "item": [
+    {
+      "thscode": "600519.SH",
+      "ticker": "600519",
+      "name": "贵州茅台",
+      "auction_price": 1285.15,
+      "auction_pct": 0.0016,
+      "auction_volume": 320.2,
+      "auction_amount": 41150503,
+      "auction_unmatched": 15.8,
+      "auction_turnover_pct": 0.0026,
+      "auction_yesterday_ratio_pct": 1.6942,
+      "auction_volume_ratio": 3.5578,
+      "pre_close_price": 1285.13,
+      "open_price": 1285.15,
+      "last_price": 1275.16,
+      "float_market_cap": 1594054054331.1602
+    },
+    {
+      "thscode": "300750.SZ",
+      "ticker": "300750",
+      "name": "宁德时代",
+      "auction_price": 333.06,
+      "auction_pct": -1.479,
+      "auction_volume": 5327.57,
+      "auction_amount": 177440050.0,
+      "auction_unmatched": 98.43,
+      "auction_turnover_pct": 0.0125,
+      "auction_yesterday_ratio_pct": 1.8296,
+      "auction_volume_ratio": 1.2801,
+      "pre_close_price": 338.06,
+      "open_price": 333.06,
+      "last_price": 330.51,
+      "float_market_cap": 1408037874733.47
+    },
+    {
+      "thscode": "688008.SH",
+      "ticker": "688008",
+      "name": "澜起科技",
+      "auction_price": 190.01,
+      "auction_pct": -2.7236,
+      "auction_volume": 3387.13,
+      "auction_amount": 64358857,
+      "auction_unmatched": 68.95,
+      "auction_turnover_pct": 0.0296,
+      "auction_yesterday_ratio_pct": 1.8178,
+      "auction_volume_ratio": 2.2606,
+      "pre_close_price": 195.33,
+      "open_price": 190.01,
+      "last_price": 191.96,
+      "float_market_cap": 219748997451.16
+    }
+  ]
+}

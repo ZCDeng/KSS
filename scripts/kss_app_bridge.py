@@ -911,6 +911,7 @@ def _load_project_env() -> dict[str, str]:
         "LONGBRIDGE_APP_KEY",
         "LONGBRIDGE_APP_SECRET",
         "LONGBRIDGE_ACCESS_TOKEN",
+        "HITHINK_FINANCE_API_KEY",
         "KSS_RESEARCH_PROVIDER",
         "KSS_RESEARCH_FETCH_PROVIDER",
         "KSS_RESEARCH_FIXTURE_PATH",
@@ -4654,6 +4655,7 @@ def _check_storage_writable() -> dict[str, Any]:
 _CREDENTIAL_CHECKS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("tushare", "Tushare", ("TUSHARE_TOKEN",)),
     ("longbridge", "Longbridge", ("LONGBRIDGE_APP_KEY", "LONGBRIDGE_APP_SECRET", "LONGBRIDGE_ACCESS_TOKEN")),
+    ("hithink", "HiThink", ("HITHINK_FINANCE_API_KEY",)),
     ("telegram", "Telegram", ("TELEGRAM_BOT_TOKEN",)),
 )
 
@@ -5732,6 +5734,36 @@ def _datasource_test_research() -> dict[str, Any]:
     }
 
 
+
+def _datasource_test_hithink() -> dict[str, Any]:
+    """HiThink 连通性：无 Key → not_configured；有 Key 则 GET tickers/search?q=600519&limit=1。"""
+    import time as _time
+
+    from kss.data.hithink_client import HithinkClient  # noqa: PLC0415
+
+    client = HithinkClient()
+    if not client.api_key:
+        return {"source": "hithink", "ok": False, "error": "not_configured",
+                 "hint": "未配置 HiThink Financial-API Key，去设置里填", "latency_ms": None}
+    t0 = _time.monotonic()
+    try:
+        data = client.search_tickers("600519", limit=1)
+    except Exception as exc:  # noqa: BLE001
+        latency_ms = (_time.monotonic() - t0) * 1000
+        from kss.security.redaction import redact_text  # noqa: PLC0415
+
+        hint = redact_text(str(exc)[:200], known_secrets=(client.api_key,)) or type(exc).__name__
+        return {"source": "hithink", "ok": False, "error": type(exc).__name__,
+                 "hint": hint, "latency_ms": round(latency_ms, 1)}
+    latency_ms = (_time.monotonic() - t0) * 1000
+    if data is None:
+        return {"source": "hithink", "ok": False, "error": "empty_response",
+                 "hint": "tickers/search 返回空，Key 可能无效或上游未就绪",
+                 "latency_ms": round(latency_ms, 1)}
+    return {"source": "hithink", "ok": True, "error": None, "hint": None,
+             "latency_ms": round(latency_ms, 1)}
+
+
 def _datasource_test(source: str) -> dict[str, Any]:
     """按数据源探测连通性（R7/KTD6）：只读、给出成功/失败与明确原因。"""
     source = (source or "").strip().lower()
@@ -5745,6 +5777,8 @@ def _datasource_test(source: str) -> dict[str, Any]:
         return _datasource_test_llm()
     if source == "research":
         return _datasource_test_research()
+    if source == "hithink":
+        return _datasource_test_hithink()
     return {"source": source, "ok": False, "error": "unknown_source",
              "hint": f"未知数据源: {source!r}", "latency_ms": None}
 
@@ -6353,8 +6387,16 @@ COMMANDS = {
     },
     "indicator-retire": {"desc": "退役已固化指标(status=retired，不删数据)", "args": ["ENTRY_ID"]},
     "datasource-test": {
-        "desc": "数据源连通性测试(tushare/longbridge/telegram/llm/research)，只读",
+        "desc": "数据源连通性测试(tushare/longbridge/hithink/telegram/llm/research)，只读",
         "args": ["SOURCE"],
+    },
+    "hithink-auction": {
+        "desc": "集合竞价快照(HiThink live|final,非现价主源)",
+        "args": ["[STAGE]", "[from-cache]"],
+    },
+    "hithink-limit-up": {
+        "desc": "官方涨停池(HiThink,盘中解读,非现价)",
+        "args": ["[DATE]"],
     },
     "log-list": {"desc": "枚举 storage/logs 下全部日志文件(含轮转代)", "args": []},
     "log-tail": {
@@ -6586,6 +6628,21 @@ def _log_longbridge_quote_diag(symbol: str, source_asof_ts: str | None) -> None:
             f.write(line)
     except OSError:
         pass
+
+
+
+def _hithink_auction(stage: str = "live", from_cache: str = "") -> dict[str, Any]:
+    """集合竞价只读。默认打 live API；from-cache 仅读落盘。"""
+    from kss.data.hithink_auction import load_auction_payload  # noqa: PLC0415
+
+    return load_auction_payload(stage=stage, from_cache=from_cache)
+
+
+def _hithink_limit_up(date_text: str = "") -> dict[str, Any]:
+    """官方涨停池结构化 rows（非现价主源）。"""
+    from kss.data.hithink_special import limit_up_tool_payload  # noqa: PLC0415
+
+    return limit_up_tool_payload(date_text)
 
 
 def _longbridge_quote(symbol: str) -> dict[str, Any]:
@@ -7601,6 +7658,13 @@ def dispatch(command: str, args: list[str]) -> Any:
         return _intel_rewrite(args[0] if args else "")
     if command == "intel-rewrite-run":
         return _intel_rewrite_run(args[0] if args else "")
+    if command == "hithink-auction":
+        return _hithink_auction(
+            args[0] if args else "live",
+            args[1] if len(args) > 1 else "",
+        )
+    if command == "hithink-limit-up":
+        return _hithink_limit_up(args[0] if args else "")
     if command == "longbridge-quote":
         return _longbridge_quote(args[0] if args else "")
     if command == "longbridge-quotes":

@@ -20,6 +20,7 @@ struct SettingsView: View {
         [
             store.isCredentialConfigured("tushare"),
             store.isCredentialConfigured("longbridge"),
+            store.isCredentialConfigured("hithink"),
             store.isCredentialConfigured("telegram"),
             store.isCredentialConfigured("research"),
         ].map { $0 ?? true }   // 尚未自检（nil）时不误判为「未配置」而乱亮点
@@ -247,6 +248,7 @@ struct SettingsCredentialsSection: View {
     @State private var longbridgeAppKey = ""
     @State private var longbridgeAppSecret = ""
     @State private var longbridgeAccessToken = ""
+    @State private var hithinkApiKey = ""
     @State private var researchProvider = "disabled"
     @State private var researchJinaKey = ""
     @State private var researchSerperKey = ""
@@ -298,6 +300,10 @@ struct SettingsCredentialsSection: View {
                 field("App Key", text: $longbridgeAppKey, secure: true, source: .longbridge)
                 field("App Secret", text: $longbridgeAppSecret, secure: true, source: .longbridge)
                 field("Access Token", text: $longbridgeAccessToken, secure: true, source: .longbridge)
+            }
+        case .hithink:
+            sourceCard(.hithink, note: "官方 A 股解读层（集合竞价 / 涨停池 / 龙虎榜）。不是分钟行情，不能替代 Longbridge 现价。") {
+                field("Financial-API Key", text: $hithinkApiKey, secure: true, source: .hithink)
             }
         case .telegram:
             sourceCard(.telegram, note: "复盘/告警推送通道（可选自建中继）。") {
@@ -573,6 +579,7 @@ struct SettingsCredentialsSection: View {
         longbridgeAppKey = KeychainStore.read("LONGBRIDGE_APP_KEY") ?? ""
         longbridgeAppSecret = KeychainStore.read("LONGBRIDGE_APP_SECRET") ?? ""
         longbridgeAccessToken = KeychainStore.read("LONGBRIDGE_ACCESS_TOKEN") ?? ""
+        hithinkApiKey = KeychainStore.read("HITHINK_FINANCE_API_KEY") ?? ""
         researchProvider = SettingsNetworkEnv.resolvedResearchProvider(stateRoot: store.bridge?.stateRoot)
         researchJinaKey = KeychainStore.read("JINA_API_KEY") ?? ""
         researchSerperKey = KeychainStore.read("SERPER_API_KEY") ?? ""
@@ -595,6 +602,8 @@ struct SettingsCredentialsSection: View {
             KeychainStore.write("LONGBRIDGE_APP_KEY", longbridgeAppKey)
             KeychainStore.write("LONGBRIDGE_APP_SECRET", longbridgeAppSecret)
             KeychainStore.write("LONGBRIDGE_ACCESS_TOKEN", longbridgeAccessToken)
+        case .hithink:
+            KeychainStore.write("HITHINK_FINANCE_API_KEY", hithinkApiKey)
         case .telegram:
             KeychainStore.write("TELEGRAM_BOT_TOKEN", telegramBotToken)
             KeychainStore.write("TELEGRAM_CHAT_ID", telegramChatId)
@@ -695,13 +704,14 @@ private enum ResearchProviderOption: String, CaseIterable, Identifiable {
 // MARK: - 数据源定义（配置状态判定，凭证卡与 tab 状态点共用）
 
 enum SettingsDataSource: String, CaseIterable, Identifiable {
-    case tushare, longbridge, telegram, research
+    case tushare, longbridge, hithink, telegram, research
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
         case .tushare: return "Tushare"
         case .longbridge: return "Longbridge"
+        case .hithink: return "HiThink"
         case .telegram: return "Telegram"
         case .research: return "外部研究"
         }
@@ -715,6 +725,8 @@ enum SettingsDataSource: String, CaseIterable, Identifiable {
         case .longbridge:
             return ["LONGBRIDGE_APP_KEY", "LONGBRIDGE_APP_SECRET", "LONGBRIDGE_ACCESS_TOKEN"]
                 .allSatisfy { !(KeychainStore.read($0) ?? "").isEmpty }
+        case .hithink:
+            return !(KeychainStore.read("HITHINK_FINANCE_API_KEY") ?? "").isEmpty
         case .telegram:
             return !(KeychainStore.read("TELEGRAM_BOT_TOKEN") ?? "").isEmpty
         case .research:
@@ -730,6 +742,7 @@ enum SettingsDataSource: String, CaseIterable, Identifiable {
         switch self {
         case .tushare: return .tushare
         case .longbridge: return .longbridge
+        case .hithink: return .hithink
         case .telegram: return .telegram
         case .research: return .research
         }
@@ -747,6 +760,7 @@ extension SettingsCategory {
         switch self {
         case .tushare: return .tushare
         case .longbridge: return .longbridge
+        case .hithink: return .hithink
         case .telegram: return .telegram
         case .research: return .research
         default: return nil

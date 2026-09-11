@@ -173,3 +173,33 @@ def test_dispatch_requires_source_arg():
 
     with pytest.raises(ValueError, match="SOURCE"):
         b.dispatch("datasource-test", [])
+
+
+class TestHithinkProbe:
+    def test_missing_key_reports_not_configured(self, monkeypatch):
+        monkeypatch.delenv("HITHINK_FINANCE_API_KEY", raising=False)
+        monkeypatch.setattr("kss.data.hithink_client.resolve_api_key", lambda: "")
+        out = b._datasource_test("hithink")
+        assert out["ok"] is False
+        assert out["error"] == "not_configured"
+
+    def test_success_reports_ok(self, monkeypatch):
+        monkeypatch.setenv("HITHINK_FINANCE_API_KEY", "fake-hithink")
+        monkeypatch.setattr(
+            "kss.data.hithink_client.HithinkClient.search_tickers",
+            lambda self, q, limit=1: {"item": [{"thscode": "600519.SH"}]},
+        )
+        out = b._datasource_test("hithink")
+        assert out["ok"] is True
+        assert out["error"] is None
+
+    def test_exception_reports_error_type(self, monkeypatch):
+        monkeypatch.setenv("HITHINK_FINANCE_API_KEY", "fake-hithink")
+
+        def _boom(self, q, limit=1):
+            raise RuntimeError("upstream down")
+
+        monkeypatch.setattr("kss.data.hithink_client.HithinkClient.search_tickers", _boom)
+        out = b._datasource_test("hithink")
+        assert out["ok"] is False
+        assert out["error"] == "RuntimeError"

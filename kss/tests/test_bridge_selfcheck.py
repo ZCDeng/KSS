@@ -20,6 +20,7 @@ import kss_app_bridge as b  # noqa: E402
 
 _ALL_CREDENTIAL_ENV = (
     "TUSHARE_TOKEN", "LONGBRIDGE_APP_KEY", "LONGBRIDGE_APP_SECRET", "LONGBRIDGE_ACCESS_TOKEN",
+    "HITHINK_FINANCE_API_KEY",
     "TELEGRAM_BOT_TOKEN", "KSS_LLM_PRIMARY_KEY", "KSS_LLM_FALLBACK_KEY",
     "DEEPSEEK_API_KEY", "OPENAI_API_KEY",
     "KSS_RESEARCH_PROVIDER", "JINA_API_KEY", "SERPER_API_KEY",
@@ -52,6 +53,7 @@ class TestFullyConfigured:
         assert statuses["storage"] == "ok"
         assert statuses["tushare"] == "ok"
         assert statuses["longbridge"] == "ok"
+        assert statuses["hithink"] == "ok"
         assert statuses["telegram"] == "ok"
         assert statuses["llm"] == "ok"
         assert statuses["research"] == "ok"
@@ -82,7 +84,7 @@ class TestMissingCredentials:
         monkeypatch.setattr(b, "STATE_ROOT", tmp_path)
         result = b._self_check()
         by_item = {item["item"]: item for item in result["items"]}
-        for item in ("tushare", "longbridge", "telegram", "llm", "research"):
+        for item in ("tushare", "longbridge", "hithink", "telegram", "llm", "research"):
             assert by_item[item]["status"] == "warn"
         # venv/storage 与凭据无关，不受影响。
         assert by_item["storage"]["status"] == "ok"

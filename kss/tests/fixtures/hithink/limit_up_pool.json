@@ -1,0 +1,58 @@
+{
+  "timestamp": 1789160218900,
+  "pagination": {
+    "total": 40,
+    "pages": 1,
+    "size": 50,
+    "page": 1
+  },
+  "item": [
+    {
+      "thscode": "000993.SZ",
+      "ticker": "000993",
+      "name": "闽东电力",
+      "is_st": false,
+      "is_new": false,
+      "last_price": 13.88,
+      "price_change_ratio_pct": 9.9842,
+      "limit_up_time": "09:25",
+      "limit_up_reason": "清洁能源+海上风电+福建国资",
+      "continue_day_text": "3连板",
+      "continue_day_cnt": 3,
+      "seal_money": 135527680,
+      "max_seal_money": 363203525.88
+    },
+    {
+      "thscode": "002161.SZ",
+      "ticker": "002161",
+      "name": "远望谷",
+      "is_st": false,
+      "is_new": false,
+      "last_price": 8.04,
+      "price_change_ratio_pct": 9.9863,
+      "limit_up_time": "09:25",
+      "limit_up_reason": "拟收购光泰通信+光通信+AI赋能+RFID物联网",
+      "continue_day_text": "首板",
+      "continue_day_cnt": 1,
+      "seal_money": 272159290,
+      "max_seal_money": 793419360.0
+    },
+    {
+      "thscode": "002790.SZ",
+      "ticker": "002790",
+      "name": "瑞尔特",
+      "is_st": false,
+      "is_new": false,
+      "last_price": 9.31,
+      "price_change_ratio_pct": 10.0473,
+      "limit_up_time": "09:25",
+      "limit_up_reason": "智能卫浴+适老产品+冲水组件",
+      "continue_day_text": "4连板",
+      "continue_day_cnt": 4,
+      "seal_money": 385166060,
+      "max_seal_money": 416902544.8
+    }
+  ],
+  "item_truncated": true,
+  "item_original_count": 40
+}

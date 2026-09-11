@@ -611,6 +611,52 @@
     "mcpVisible": true
   },
   {
+    "name": "get_hithink_auction",
+    "command": "hithink-auction",
+    "desc": "集合竞价快照(HiThink,stage=live|final)。非现价主源;现价仍用 get_longbridge_quote。数字逐字引用 auction_price/auction_pct/auction_unmatched,不得补零",
+    "params": {
+      "stage": {
+        "type": "string"
+      },
+      "from_cache": {
+        "type": "string"
+      }
+    },
+    "order": [
+      "stage",
+      "from_cache"
+    ],
+    "execution_mode": "sequential",
+    "write": false,
+    "surfaces": [
+      "desktop",
+      "research",
+      "mcp"
+    ],
+    "mcpVisible": true
+  },
+  {
+    "name": "get_hithink_limit_up",
+    "command": "hithink-limit-up",
+    "desc": "官方涨停池(HiThink)。返回 thscode/name/limit_up_time/reason/continue_day_cnt。非现价主源,涨幅数字逐字引用返回字段",
+    "params": {
+      "date": {
+        "type": "string"
+      }
+    },
+    "order": [
+      "date"
+    ],
+    "execution_mode": "sequential",
+    "write": false,
+    "surfaces": [
+      "desktop",
+      "research",
+      "mcp"
+    ],
+    "mcpVisible": true
+  },
+  {
     "name": "get_indicator_lab",
     "command": "indicator-lab-list",
     "desc": "指标注册表 + 近期 GO/NO-GO 裁决",

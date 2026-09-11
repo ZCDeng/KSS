@@ -144,3 +144,7 @@ storage/news_digest/
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 graft/
+
+# HiThink：探针真值与竞价落盘（脱敏 fixture 在 kss/tests/fixtures/hithink/）
+storage/reports/hithink_probe/
+storage/auction/

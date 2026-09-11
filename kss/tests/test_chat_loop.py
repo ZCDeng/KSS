@@ -460,7 +460,7 @@ def test_number_guard():
 def test_longbridge_tools_schema_and_resolve():
     """U5:两只读实时工具进 schema、resolve 正确、判为只读(非写)。"""
     names = {t["function"]["name"] for t in loop.build_tools_schema()}
-    assert {"get_longbridge_quote", "get_market_live_context", "get_intraday_snapshot"} <= names
+    assert {"get_longbridge_quote", "get_market_live_context", "get_intraday_snapshot", "get_hithink_auction", "get_hithink_limit_up"} <= names
     cmd, pos = loop.resolve_tool("get_longbridge_quote", {"symbol": "688008.SH"})
     assert cmd == "longbridge-quote" and pos == ["688008.SH"]
     cmd, pos = loop.resolve_tool(
@@ -470,6 +470,12 @@ def test_longbridge_tools_schema_and_resolve():
     assert cmd == "market-live-context" and pos == ["688008.SH,000001.SH", "explain"]
     cmd, pos = loop.resolve_tool("get_intraday_snapshot", {"symbol": "688008.SH"})
     assert cmd == "intraday-snapshot" and pos == ["688008.SH"]
+    cmd, pos = loop.resolve_tool("get_hithink_auction", {"stage": "live"})
+    assert cmd == "hithink-auction" and pos == ["live"]
+    cmd, pos = loop.resolve_tool("get_hithink_limit_up", {"date": "20260911"})
+    assert cmd == "hithink-limit-up" and pos == ["20260911"]
+    assert loop.is_write_command("hithink-auction") is False
+    assert loop.is_write_command("hithink-limit-up") is False
     # 只读路径:命令 ∉ WRITE_COMMANDS。
     assert loop.is_write_command("longbridge-quote") is False
     assert loop.is_write_command("market-live-context") is False

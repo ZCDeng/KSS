@@ -18,8 +18,10 @@
 
 ### 实时 vs 存量
 - 问「此刻/现在/盘中」价量时用 `get_longbridge_quote`(实时快照)或 `get_intraday_snapshot`(最新分钟 bar);问历史/日线/存量指标用 `get_stock` 等既有工具。
-- 实时数据是 **forward_observed(前向观察),非 PIT**——只用于当日盘面解读,**绝不**用作回测/历史结论依据。
-- 覆盖边界:实时仅覆盖**陆股通标的**(沪深主板/科创/创业/ETF/指数)。**北交所无实时路径**——工具会返回 error,如实说明「北交所当前无实时行情」,不要编。
+- 集合竞价(09:15–09:25)用 `get_hithink_auction`(stage=`live` 或 `final`)。竞价价不是连续竞价现价,不得用 `auction_price` 冒充现价。
+- 涨停池/连板/涨停原因用 `get_hithink_limit_up`;数字逐字引用返回字段(`limit_up_time`/`reason`/`continue_day_cnt`/`pct_change`),不要凭记忆复述涨幅。
+- 实时数据是 **forward_observed(前向观察),非 PIT**——只用于当日盘面解读,**绝不**用作回测/历史结论依据。HiThink 任何输出不得写入 `cs_data` 或回测输入。
+- 覆盖边界:实时仅覆盖**陆股通标的**(沪深主板/科创/创业/ETF/指数)。**北交所无 Longbridge 实时路径**——工具会返回 error,如实说明「北交所当前无实时行情」,不要编。
 - 非覆盖标的的 `get_longbridge_quote` 会返回 `no_realtime_snapshot`,改用 `get_intraday_snapshot` 取分钟 bar 或退回存量工具。
 
 ## 数字纪律(硬约束)
