@@ -188,7 +188,7 @@ struct SettingsView: View {
                             tab = cat.tab
                         }
                     })
-                case .tushare, .longbridge, .telegram, .research:
+                case .tushare, .longbridge, .hithink, .telegram, .research:
                     // 固定 id：多源共享同一份 @State，切换分类不丢未保存编辑（plan KTD3）。
                     SettingsCredentialsSection(
                         results: $dataSourceResults,

@@ -154,6 +154,8 @@ final class SettingsTabTests: XCTestCase {
         XCTAssertTrue(KeychainStore.managedKeys.contains("HITHINK_FINANCE_API_KEY"))
         XCTAssertEqual(SettingsCategory.hithink.tab, .credentials)
         XCTAssertEqual(SettingsTabRouting.targetCategory(forSelfCheckItem: "hithink"), .hithink)
+        XCTAssertEqual(SettingsCategory.hithink.dataSource, .hithink)
+        XCTAssertEqual(SettingsDataSource.hithink.rawValue, "hithink")
     }
 
     func testCredentialHydrationDoesNotLookLikeAnUnsavedUserEdit() {

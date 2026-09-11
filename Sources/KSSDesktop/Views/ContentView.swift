@@ -305,6 +305,14 @@ struct ContentView: View {
                 store: store,
                 onSelectSymbol: { symbol in Task { await store.selectStock(symbol) } }
             )
+        } else if store.selectedSection == .settings {
+            // 凭证页不能等 snapshot：Tushare 挂掉时用户仍须能打开设置修 key。
+            SettingsView()
+        } else if store.selectedSection == .architecture {
+            ArchitectureView()
+        } else if store.selectedSection == .newsDigest {
+            IntelView()
+                .environmentObject(store)
         } else if let snapshot = store.snapshot {
             switch store.selectedSection {
             case .dashboard:
@@ -437,7 +445,8 @@ struct ContentView: View {
                     onSelectSectorRotationDate: { date in Task { await store.loadSectorRotation(date: date) } },
                     onOpenExternally: { path in store.openReportInMarkEdit(path: path) }
                 )
-            case .investmentAnalysis, .investabilityMap, .heatmap:
+            case .investmentAnalysis, .investabilityMap, .heatmap,
+                 .settings, .architecture, .newsDigest:
                 EmptyView()
             case .backtests:
                 BacktestsView(
@@ -474,13 +483,6 @@ struct ContentView: View {
                 )
             case .aiChat:
                 EmptyView()
-            case .newsDigest:
-                IntelView()
-                    .environmentObject(store)
-            case .architecture:
-                ArchitectureView()
-            case .settings:
-                SettingsView()
             }
         } else {
             VStack(spacing: 12) {
