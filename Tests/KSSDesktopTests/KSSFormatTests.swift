@@ -38,6 +38,43 @@ final class KSSFormatTests: XCTestCase {
         XCTAssertEqual(BacktestReport.readableTitle("KSS Desktop log_mv 反向轻量回测"), "KSS Desktop log_mv 反向轻量回测")
     }
 
+    func testStripSlotTitleSplitsCollidingNamesByVenue() {
+        XCTAssertEqual(
+            StripSlotTitle.display(title: "A500ETF", code: "563360.SH", colliding: true),
+            "A500ETF · 沪"
+        )
+        XCTAssertEqual(
+            StripSlotTitle.display(title: "A500ETF", code: "159361.SZ", colliding: true),
+            "A500ETF · 深"
+        )
+        XCTAssertEqual(
+            StripSlotTitle.display(title: "沪深300", code: "000300.SH", colliding: false),
+            "沪深300"
+        )
+        XCTAssertEqual(StripSlotTitle.venueSuffix("830000.BJ"), "京")
+    }
+
+    func testIndexAsOfCaptionAndStaleDay() {
+        XCTAssertEqual(IndexAsOf.caption("20260930"), "截至 09-30")
+        XCTAssertEqual(IndexAsOf.caption(nil), "")
+        XCTAssertTrue(IndexAsOf.isStale("20260930", todayKey: "20261005"))
+        XCTAssertFalse(IndexAsOf.isStale("20261005", todayKey: "20261005"))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let date = calendar.date(from: DateComponents(year: 2026, month: 10, day: 5))!
+        XCTAssertEqual(IndexAsOf.dayKey(date, calendar: calendar), "20261005")
+    }
+
+    func testMarqueePauseFreezesElapsed() {
+        var pause = MarqueePause()
+        let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+        let moving = pause.elapsed(at: t0)
+        pause.setHovering(true, now: t0)
+        XCTAssertEqual(pause.elapsed(at: t0.addingTimeInterval(5)), moving, accuracy: 0.001)
+        pause.setHovering(false, now: t0.addingTimeInterval(5))
+        XCTAssertEqual(pause.elapsed(at: t0.addingTimeInterval(6)), moving + 1, accuracy: 0.001)
+    }
+
     func testSectorGradeLabelShowsShareFlow() {
         XCTAssertEqual(SectorGradeLabel.flowLabel(grade: "强势确认", divergence: false), "净赎回")
         XCTAssertEqual(SectorGradeLabel.flowLabel(grade: "中性偏多", divergence: false), "小幅赎回")

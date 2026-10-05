@@ -531,7 +531,7 @@ struct SettingsCredentialsSection: View {
     private func candidateLine(role: String?, model: String?, ok: Bool, latencyMs: Double?, hint: String?) -> some View {
         HStack(spacing: 6) {
             Image(systemName: ok ? "checkmark.circle.fill" : "xmark.octagon.fill")
-                .foregroundStyle(ok ? theme.accent : theme.up)
+                .foregroundStyle(ok ? theme.accent : theme.textPrimary)
                 .font(KSSFont.themed(12, theme: theme))
             if let role {
                 Text(role == "primary" ? "主" : "备")
@@ -551,7 +551,7 @@ struct SettingsCredentialsSection: View {
             if !ok, let hint, !hint.isEmpty {
                 Text(hint)
                     .font(KSSFont.themed(12, theme: theme))
-                    .foregroundStyle(theme.up)
+                    .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
@@ -1037,7 +1037,7 @@ struct SettingsIntelKeywordsSection: View {
         switch level {
         case .ok: return Color.green.opacity(0.85)
         case .warn: return Color.orange.opacity(0.9)
-        case .fail: return theme.up
+        case .fail: return theme.textPrimary
         case .info: return theme.textSecondary.opacity(0.5)
         }
     }
@@ -1442,7 +1442,7 @@ struct SelfCheckStatusStrip: View {
     }
 
     private var statusTint: Color {
-        if failCount > 0 { return theme.up }
+        if failCount > 0 { return theme.textPrimary }
         if warnCount > 0 { return theme.ma5 }
         return theme.accent
     }
@@ -1462,7 +1462,7 @@ struct SelfCheckStatusStrip: View {
         let row = HStack(spacing: useTasks ? SettingsFormStyle.rowHSpacing : 8) {
             Image(systemName: item.isOK ? "checkmark.circle.fill" : (item.isFail ? "xmark.octagon.fill" : "exclamationmark.triangle.fill"))
                 .font(KSSFont.themed(useTasks ? 16 : 11.5, .semibold, theme: theme))
-                .foregroundStyle(item.isOK ? theme.accent : (item.isFail ? theme.up : theme.ma5))
+                .foregroundStyle(item.isOK ? theme.accent : (item.isFail ? theme.textPrimary : theme.ma5))
                 .frame(width: useTasks ? 22 : nil)
             VStack(alignment: .leading, spacing: useTasks ? SettingsFormStyle.titleMetaSpacing : 0) {
                 Text(item.displayName)
@@ -1592,7 +1592,7 @@ struct SelfCheckBanner: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 Image(systemName: "xmark.octagon.fill")
-                    .foregroundStyle(theme.up)
+                    .foregroundStyle(theme.textPrimary)
                 Text("\(items.count) 项自检未通过")
                     .font(KSSFont.themed(13, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
@@ -1643,7 +1643,7 @@ struct SelfCheckBanner: View {
         .padding(.horizontal, 16).padding(.vertical, 11)
         .frame(maxWidth: 640)
         .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: KSSTheme.shapeL))
-        .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeL).strokeBorder(theme.up.opacity(0.35), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeL).strokeBorder(theme.textPrimary.opacity(0.28), lineWidth: 1))
         .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
     }
 }

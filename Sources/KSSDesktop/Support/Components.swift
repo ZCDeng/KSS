@@ -34,7 +34,7 @@ struct StatusBadge: View {
         case .neutral:  return theme.textSecondary
         case .success:  return theme.accent
         case .skipped:  return theme.ma5
-        case .failure:  return theme.up
+        case .failure:  return theme.textPrimary
         case .accent:   return theme.accent
         }
     }
@@ -66,7 +66,8 @@ extension StatusBadge {
         }
     }
 
-    /// 任务执行状态。用语义色（成功 accent / 跳过橙 / 失败红），不蹭价格红绿。
+    /// 任务执行状态。成功用交互蓝，跳过用均线黄，失败用正文色加图标。
+    /// 失败不借用涨红，过期也不涂成失败。
     static func task(_ status: String) -> StatusBadge {
         switch status {
         case "success":
@@ -76,6 +77,85 @@ extension StatusBadge {
         default:
             return StatusBadge(icon: "xmark.octagon.fill", text: "失败", role: .failure, emphasized: true)
         }
+    }
+}
+
+/// 市场速览里标题撞车时，用交易所把两张卡分开。完整代码留在悬停。
+enum StripSlotTitle {
+    static func display(title: String, code: String?, colliding: Bool) -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let shown = trimmed.isEmpty ? "—" : trimmed
+        guard colliding, let venue = venueSuffix(code) else { return shown }
+        return "\(shown) · \(venue)"
+    }
+
+    static func venueSuffix(_ code: String?) -> String? {
+        guard let code else { return nil }
+        let upper = code.uppercased()
+        if upper.hasSuffix(".SH") { return "沪" }
+        if upper.hasSuffix(".SZ") { return "深" }
+        if upper.hasSuffix(".BJ") { return "京" }
+        return nil
+    }
+}
+
+/// 指数卡的截至日。过期只改写法，颜色用次级灰，不借用涨跌色。
+enum IndexAsOf {
+    static func caption(_ raw: String?) -> String {
+        guard let raw, !raw.isEmpty else { return "" }
+        guard raw.count == 8, raw.allSatisfy(\.isNumber) else { return "截至 \(raw)" }
+        return "截至 \(raw.dropFirst(4).prefix(2))-\(raw.suffix(2))"
+    }
+
+    static func isStale(_ raw: String?, todayKey: String) -> Bool {
+        guard let raw, raw.count == 8 else { return false }
+        return raw != todayKey
+    }
+
+    static func dayKey(_ date: Date, calendar: Calendar = .current) -> String {
+        let parts = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d%02d%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+    }
+}
+
+/// 跑马灯悬停时冻住偏移，移开后从停下的位置继续。
+struct MarqueePause: Equatable {
+    var accumulated: TimeInterval = 0
+    var started: Date?
+
+    mutating func setHovering(_ hovering: Bool, now: Date = Date()) {
+        if hovering {
+            if started == nil { started = now }
+        } else if let start = started {
+            accumulated += now.timeIntervalSince(start)
+            started = nil
+        }
+    }
+
+    func elapsed(at now: Date) -> TimeInterval {
+        (started ?? now).timeIntervalSinceReferenceDate - accumulated
+    }
+}
+
+enum MarqueeMotion {
+    static let fadeInset: CGFloat = 0.10
+
+    static func offset(elapsed: TimeInterval, period: CGFloat, speed: Double) -> CGFloat {
+        guard period > 0 else { return 0 }
+        return -CGFloat((elapsed * speed).truncatingRemainder(dividingBy: Double(period)))
+    }
+
+    static var edgeFade: LinearGradient {
+        LinearGradient(
+            stops: [
+                .init(color: .clear, location: 0),
+                .init(color: .black, location: fadeInset),
+                .init(color: .black, location: 1 - fadeInset),
+                .init(color: .clear, location: 1),
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
     }
 }
 

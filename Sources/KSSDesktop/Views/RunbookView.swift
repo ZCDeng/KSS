@@ -187,7 +187,7 @@ struct RunbookView: View {
                         } trailing: {
                             SettingsStatusCapsule(
                                 text: pipelineCaption,
-                                tint: pipelineFailedCount > 0 ? theme.up : nil
+                                tint: pipelineFailedCount > 0 ? theme.textPrimary : nil
                             )
                         }
                     }
@@ -411,7 +411,7 @@ struct PipelineStatusDetail: View {
         case .stale:
             return StatusBadge(icon: "exclamationmark.triangle.fill", text: "漏跑", tint: theme.ma5, emphasized: true)
         case .failed:
-            return StatusBadge(icon: "xmark.octagon.fill", text: "失败", tint: theme.up, emphasized: true)
+            return StatusBadge(icon: "xmark.octagon.fill", text: "失败", role: .failure, emphasized: true)
         case .disabled:
             return StatusBadge(icon: "pause.circle.fill", text: "停用", tint: theme.textSecondary)
         case .ok:
@@ -479,7 +479,7 @@ struct ScheduledTasksSection: View {
             healthStat("正常", ok, theme.accent)
             healthStat("待同步", needsSync, theme.ma5)
             healthStat("漏跑", stale, theme.ma5)
-            healthStat("失败", failed, theme.up)
+            healthStat("失败", failed, theme.textPrimary)
             healthStat("停用", off, theme.textSecondary)
             Spacer()
             Button {
@@ -747,7 +747,7 @@ struct ScheduledJobRow: View {
         case .stale:
             return StatusBadge(icon: "exclamationmark.triangle.fill", text: "漏跑\(job.missedCycles)", tint: theme.ma5, emphasized: true)
         case .failed:
-            return StatusBadge(icon: "xmark.octagon.fill", text: "失败", tint: theme.up, emphasized: true)
+            return StatusBadge(icon: "xmark.octagon.fill", text: "失败", role: .failure, emphasized: true)
         case .disabled:
             return StatusBadge(icon: "pause.circle.fill", text: "停用", tint: theme.textSecondary)
         case .ok:
@@ -906,7 +906,7 @@ struct TaskResultCard: View {
         if !result.stderr.isEmpty {
             Text(result.stderr)
                 .font(.system(size: 11.5, design: .monospaced))
-                .foregroundStyle(theme.up)
+                .foregroundStyle(theme.textPrimary)
                 .textSelection(.enabled)
         }
     }

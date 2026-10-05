@@ -390,7 +390,7 @@ struct TodayPicksList: View {
         HStack(spacing: colSpacing) {
             Text("#\(item.rank)")
                 .font(.system(size: 15, weight: .heavy, design: .monospaced))
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(theme.textPrimary)
                 .frame(width: wRank, alignment: .leading)
             Text(item.name.isEmpty ? item.symbol : item.name)
                 .font(KSSFont.themed(14.5, .bold, theme: theme))
@@ -1058,7 +1058,7 @@ struct MarketStripRow: View {
             }
             DashboardStripCardRow {
                 ForEach(Array(displaySlots.enumerated()), id: \.offset) { _, props in
-                    slotCard(props)
+                    slotCard(props, among: displaySlots)
                 }
             }
             if let metricError {
@@ -1078,8 +1078,10 @@ struct MarketStripRow: View {
         }
     }
 
-    private func slotCard(_ props: StripMetricProps) -> some View {
-        let title = props.title ?? "—"
+    private func slotCard(_ props: StripMetricProps, among slots: [StripMetricProps]) -> some View {
+        let rawTitle = props.title ?? "—"
+        let colliding = slots.filter { ($0.title ?? "—") == rawTitle }.count > 1
+        let title = StripSlotTitle.display(title: rawTitle, code: props.sub, colliding: colliding)
         let valueText = props.valueText ?? "—"
         let deltaText = props.deltaText ?? ""
         let delta = props.delta ?? 0
@@ -1104,6 +1106,7 @@ struct MarketStripRow: View {
                 Spacer(minLength: 0)
             }
         }
+        .help(props.sub ?? "")
         .opacity(metricBusy ? 0.7 : 1)
     }
 
@@ -1402,6 +1405,7 @@ struct IndexMarquee: View {
     private let gap: CGFloat = 10
     private let speed: Double = 42            // 滚动速度 pts/s
     @State private var rowWidth: CGFloat = 0  // 单份内容宽（含内部间距）
+    @State private var pause = MarqueePause()
 
     private struct LiveIndex: Identifiable {
         var id: String { code }
@@ -1426,10 +1430,11 @@ struct IndexMarquee: View {
         GeometryReader { geo in
             TimelineView(.animation) { timeline in
                 let period = rowWidth + gap    // 一个循环周期 = 单份宽 + 拼接缝
-                let elapsed = timeline.date.timeIntervalSinceReferenceDate
-                let offset = period > 0
-                    ? -CGFloat((elapsed * speed).truncatingRemainder(dividingBy: Double(period)))
-                    : 0
+                let offset = MarqueeMotion.offset(
+                    elapsed: pause.elapsed(at: timeline.date),
+                    period: period,
+                    speed: speed
+                )
                 HStack(spacing: gap) {
                     row(measured: true)
                     row(measured: false)       // 第二份用于无缝衔接
@@ -1440,7 +1445,12 @@ struct IndexMarquee: View {
         }
         .frame(height: 46)
         .clipped()
-        .mask(edgeFade)                        // M3 carousel 两端淡出
+        .mask(MarqueeMotion.edgeFade)
+        .onHover { hovering in
+            var next = pause
+            next.setHovering(hovering)
+            pause = next
+        }
         .onPreferenceChange(MarqueeWidthKey.self) { rowWidth = $0 }
     }
 
@@ -1499,18 +1509,6 @@ struct IndexMarquee: View {
                 .strokeBorder(border, lineWidth: 1)
         )
         .fixedSize()
-    }
-
-    private var edgeFade: some View {
-        LinearGradient(
-            stops: [
-                .init(color: .clear, location: 0),
-                .init(color: .black, location: 0.06),
-                .init(color: .black, location: 0.94),
-                .init(color: .clear, location: 1),
-            ],
-            startPoint: .leading, endPoint: .trailing
-        )
     }
 }
 
@@ -1804,15 +1802,17 @@ struct OvernightUSMarquee: View {
     private let gap: CGFloat = 10
     private let speed: Double = 34
     @State private var rowWidth: CGFloat = 0
+    @State private var pause = MarqueePause()
 
     var body: some View {
         GeometryReader { geo in
             TimelineView(.animation) { timeline in
                 let period = rowWidth + gap
-                let elapsed = timeline.date.timeIntervalSinceReferenceDate
-                let offset = period > 0
-                    ? -CGFloat((elapsed * speed).truncatingRemainder(dividingBy: Double(period)))
-                    : 0
+                let offset = MarqueeMotion.offset(
+                    elapsed: pause.elapsed(at: timeline.date),
+                    period: period,
+                    speed: speed
+                )
                 HStack(spacing: gap) {
                     row(measured: true)
                     row(measured: false)
@@ -1823,7 +1823,12 @@ struct OvernightUSMarquee: View {
         }
         .frame(height: 46)
         .clipped()
-        .mask(edgeFade)
+        .mask(MarqueeMotion.edgeFade)
+        .onHover { hovering in
+            var next = pause
+            next.setHovering(hovering)
+            pause = next
+        }
         .onPreferenceChange(MarqueeWidthKey.self) { rowWidth = $0 }
     }
 
@@ -1912,19 +1917,6 @@ struct OvernightUSMarquee: View {
         .fixedSize()
         .help(live?.error ?? (pending ? "已追加，等待行情刷新" : ""))
     }
-
-    private var edgeFade: some View {
-        LinearGradient(
-            stops: [
-                .init(color: .clear, location: 0),
-                .init(color: .black, location: 0.06),
-                .init(color: .black, location: 0.94),
-                .init(color: .clear, location: 1),
-            ],
-            startPoint: .leading,
-            endPoint: .trailing
-        )
-    }
 }
 
 /// 总览第二行（旧）：上证 / 纳斯达克 / 恒生 — 无 stacks 时回退。
@@ -1944,7 +1936,7 @@ struct MarketIndexRow: View {
                             .foregroundStyle(theme.textPrimary)
                             .lineLimit(1)
                         Spacer(minLength: 4)
-                        Text(dateLabel(idx.date))
+                        Text(live.isLive ? "盘中" : IndexAsOf.caption(idx.date))
                             .font(.system(size: 10.5, design: .monospaced))
                             .foregroundStyle(theme.textSecondary)
                             .lineLimit(1)
@@ -1973,11 +1965,6 @@ struct MarketIndexRow: View {
                 .kssCard(padding: 14)
             }
         }
-    }
-
-    private func dateLabel(_ raw: String?) -> String {
-        guard let raw, raw.count == 8 else { return raw ?? "" }
-        return "\(raw.prefix(4))-\(raw.dropFirst(4).prefix(2))-\(raw.suffix(2))"
     }
 }
 
@@ -2105,7 +2092,7 @@ struct IndexStackColumnView: View {
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
                         .foregroundStyle(theme.textSecondary)
                 }
-                Text(live.isLive ? "盘中" : dateLabel(item.date))
+                Text(live.isLive ? "盘中" : IndexAsOf.caption(item.date))
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(theme.textSecondary)
                     .lineLimit(1)
@@ -2173,14 +2160,6 @@ struct IndexStackColumnView: View {
         f.groupingSeparator = ","
         f.usesGroupingSeparator = true
         return f.string(from: NSNumber(value: value)) ?? String(format: "%.2f", value)
-    }
-
-    private func dateLabel(_ raw: String?) -> String {
-        guard let raw, !raw.isEmpty else { return "" }
-        if raw.count == 8 {
-            return "\(raw.prefix(4))-\(raw.dropFirst(4).prefix(2))-\(raw.suffix(2))"
-        }
-        return raw
     }
 }
 

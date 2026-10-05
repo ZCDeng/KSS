@@ -152,7 +152,7 @@ struct SettingsInfoBanner: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: systemImage)
-                .foregroundStyle(isError ? theme.up : theme.accent)
+                .foregroundStyle(isError ? theme.textPrimary : theme.accent)
             Text(text)
                 .font(KSSFont.themed(SettingsFormStyle.bodyHint, theme: theme))
                 .foregroundStyle(theme.textPrimary)

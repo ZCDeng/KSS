@@ -334,7 +334,7 @@ struct RecommendationsView: View {
             SortHeaderCell(title: "#", key: RecSort.rank, selection: $sort, ascending: $ascending,
                            alignment: .leading, width: 44)
             Text("名称 / 代码").frame(maxWidth: .infinity, alignment: .leading)
-            Text("状态").frame(width: 80, alignment: .center)
+            Text("状态").frame(width: 76, alignment: .leading)
             Text("现价").frame(width: 72, alignment: .trailing)
             if showsIntradayChange {
                 Text("涨跌").frame(width: 64, alignment: .trailing)
@@ -356,8 +356,8 @@ struct RecommendationsView: View {
             Button { onSelectSymbol(item.symbol) } label: {
                 HStack(spacing: 12) {
                     Text("#\(item.rank)")
-                        .font(.system(size: 16, weight: .heavy, design: .monospaced))
-                        .foregroundStyle(theme.accent)
+                        .font(.system(size: 15, weight: .heavy, design: .monospaced))
+                        .foregroundStyle(theme.textPrimary)
                         .frame(width: 44, alignment: .leading)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(item.name.isEmpty ? item.symbol : item.name)
@@ -378,7 +378,7 @@ struct RecommendationsView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .help(recReasonText(item))
-                    StatusBadge.tracking(item.status).frame(width: 80, alignment: .center)
+                    StatusBadge.tracking(item.status).frame(width: 76, alignment: .leading)
                     recPriceCells(item)
                     Text(KSSFormat.number(item.factorValue, digits: 3))
                         .font(.system(size: 13, weight: .semibold, design: .monospaced))
@@ -391,7 +391,7 @@ struct RecommendationsView: View {
                 }
                 .contentShape(Rectangle())
                 .padding(.leading, 14)
-                .padding(.vertical, 10)
+                .padding(.vertical, 11)
             }
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -405,7 +405,7 @@ struct RecommendationsView: View {
             WatchlistStarButton(
                 isWatched: watchlist.contains(item.symbol)
             ) { onToggleWatchlist(item.symbol) }
-            .padding(.trailing, 10)
+            .padding(.trailing, 14)
         }
         .background(theme.surfaceContainer)
     }

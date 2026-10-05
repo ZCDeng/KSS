@@ -2,7 +2,7 @@
 
 ## Source of truth
 - Status: Active
-- Last refreshed: 2026-07-27
+- Last refreshed: 2026-10-05
 - Primary product surfaces: KSSDesktop workspaces, with Seesaw as the OpenWorker-style agent conversation and research surface.
 - Evidence reviewed: `docs/plans/2026-07-11-004-feat-kssdeck-xcom-design-plan.md`, `docs/solutions/kss_desktop_swiftui_design_system.md`, `Sources/KSSDesktop/Support/Theme*.swift`, `Sources/KSSDesktop/Support/XcomListChrome.swift`, the Paper x.com reference supplied on 2026-07-26, the installed Seesaw screenshots supplied on 2026-07-26, OpenWorker, and AI SDK Agents Chat Grok.
 
@@ -34,8 +34,10 @@
 - Tradeoffs: every theme shares a 760pt transcript and 680pt Composer measure with the same information architecture; themes may only vary visual tokens.
 
 ## Visual language
-- Color: x.com tokens from `ThemeCatalog`; `#1D9BF0` is the interaction accent. Market and status semantics remain exempt.
-- Typography: Chirp with HarmonyOS Sans SC cascade through `KSSFont.themed`; body 15pt, metadata 13pt, section/title 15–20pt.
+- Color: x.com tokens from `ThemeCatalog`; `#1D9BF0` is the interaction accent. Red and green (`theme.up` / `theme.down`) are price direction only. Do not reuse them for task failure, a stale quote, or 红区 exposure. Do not add new theme tokens for these states.
+- Status color: a quote that is not the page-header calendar day is stale. Mark that only on the freshness label, in `textSecondary`, as `截至 MM-dd`. The figure keeps its sign color when it is a price move, and `textPrimary` when it is not. Failure is `textPrimary` plus an icon and the word 失败 — not gray, and not 涨红. Needs-attention and skipped stay `ma5`. Task success stays `accent`.
+- Typography: Chirp with HarmonyOS Sans SC cascade through `KSSFont.themed`. Seesaw transcript body is 15pt themed. Metadata is 13pt. Section headers are 17pt semibold under a hairline, with no accent bar.
+- Ratio metrics: win rate, weight and volatility are unsigned and uncolored. Signed color is reserved for price moves.
 - Spacing/layout rhythm: 16pt horizontal column padding, 18pt message cadence, compact 10–14pt Composer internals.
 - Shape/radius/elevation: assistant text is transparent; user messages and Composer use restrained rounded surfaces; buttons/chips are capsules; charts/evidence attachments may use 12–16pt radius.
 - Motion: short, interruptible state changes; no ornamental entrance animation. Respect Reduce Motion.
@@ -85,7 +87,7 @@
 - Performance constraints: lazy timeline rendering; do not recreate the Agent/runtime layer for visual changes.
 - Compatibility constraints: session, Skill and memory protocol schemas stay unchanged; provider route is an optional append-only session state so every session can select a primary model while global settings retain the default/fallback route. A session can only override its primary route; fallback is global and can run only before first output. Temporary Seesaw navigation collapse must not mutate the user's persisted sidebar preference; all safety/evidence/write-confirmation behavior must remain intact.
 - Market-data constraints: Longbridge access is read-only and must reuse the shared context service/tool path. Explicit current-market intent may prefetch `market`, `watchlist` or `symbols`; historical questions must not silently trigger it. Quote provenance remains forward-observed and must be visible in the transcript/evidence rail.
-- Market workspace: the rail and page title use `盯盘`. The title cluster owns the page-header market status; data freshness and coverage semantics remain unchanged and only the compact badge variant appears outside the page header.
+- Market workspace: the rail and page title use `盯盘`. The title cluster owns the page-header market status; data freshness and coverage semantics remain unchanged and only the compact badge variant appears outside the page header. Duplicate strip titles append `· 沪`, `· 深` or `· 京`; the full code stays on the meta line and on hover. Index cards separate carousel position (`1/3`) from as-of (`截至 MM-dd`, or `盘中` while live). Compare that as-of to the page-header calendar day, not to a trading calendar. Marquees pause on hover and fade about 10% at each edge. 今日推荐 and 推荐 stay separate tables; their rank is `textPrimary`, not the interaction accent.
 - Investment analysis archive: `投资分析` is a read-only daily/weekly report library using the AI复盘 master-detail pattern. Rows load audit/status/hash metadata only; selecting a row opens the corresponding report artifact and deep-links research control back to the task workbench. The archive never starts, retries or publishes a research job itself.
 - Test/screenshot expectations: Swift tests, Release build, and installed-app screenshots for empty conversation, active conversation, streaming/tool state, Session Palette, Skill Palette and Context Popover.
 
