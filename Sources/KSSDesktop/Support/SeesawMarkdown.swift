@@ -14,9 +14,15 @@ enum SeesawMarkdownBlock: Equatable {
     case divider
 }
 
+enum SeesawTableColumn: Equatable {
+    case text
+    case number
+    case signedChange
+}
+
 enum SeesawMarkdownLayout {
-    /// Print-oriented body for hybrid assistant columns (compact, not report-page).
-    static let bodyFontSize: CGFloat = 14.5
+    /// DESIGN.md：Seesaw 正文 15pt，走 Chirp / HarmonyOS（`KSSFont.themed`）。
+    static let bodyFontSize: CGFloat = 15
     static let tableFontSize: CGFloat = 12
     static let tableHorizontalPadding: CGFloat = 8
     static func headingSize(for level: Int) -> CGFloat {
@@ -45,6 +51,51 @@ enum SeesawMarkdownLayout {
 
     static func tableContentWidth(columnCount: Int) -> CGFloat {
         tableColumnWidth(columnCount: columnCount) * CGFloat(max(1, columnCount))
+    }
+
+    /// 数值列：该列多数非空单元格以数字或正负号开头。表头含涨跌/涨幅/收益时再套红涨绿跌。
+    static func columnKinds(headers: [String], rows: [[String]]) -> [SeesawTableColumn] {
+        headers.indices.map { index in
+            let samples = rows.compactMap { row -> String? in
+                guard index < row.count else { return nil }
+                let plain = plainCell(row[index]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if plain.isEmpty || plain == "-" || plain == "—" || plain == "–" { return nil }
+                return plain
+            }
+            let numericCount = samples.filter(isNumericCell).count
+            let numeric = !samples.isEmpty && numericCount * 2 >= samples.count
+            let header = headers[index]
+            let signed = ["涨跌", "涨幅", "收益"].contains { header.contains($0) }
+            if signed && numeric { return .signedChange }
+            return numeric ? .number : .text
+        }
+    }
+
+    /// 单元格里第一个带符号的数：正为 1，负为 -1，没有符号为 0。
+    static func signedDirection(_ raw: String) -> Int {
+        let plain = plainCell(raw)
+        guard let expression = try? NSRegularExpression(pattern: "[+＋\\-−–]\\s*\\d") else { return 0 }
+        let range = NSRange(plain.startIndex..., in: plain)
+        guard let match = expression.firstMatch(in: plain, range: range),
+              let hit = Range(match.range, in: plain) else { return 0 }
+        let token = plain[hit].trimmingCharacters(in: .whitespaces)
+        if token.hasPrefix("-") || token.hasPrefix("−") || token.hasPrefix("–") { return -1 }
+        if token.hasPrefix("+") || token.hasPrefix("＋") { return 1 }
+        return 0
+    }
+
+    static func plainCell(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "**", with: "")
+            .replacingOccurrences(of: "*", with: "")
+            .replacingOccurrences(of: "`", with: "")
+    }
+
+    static func isNumericCell(_ raw: String) -> Bool {
+        let text = plainCell(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = text.unicodeScalars.first else { return false }
+        let starters = CharacterSet(charactersIn: "+＋-−–0123456789")
+        guard starters.contains(first) else { return false }
+        return text.unicodeScalars.contains { CharacterSet.decimalDigits.contains($0) }
     }
 }
 
@@ -226,7 +277,7 @@ struct SeesawMarkdownView: View {
         VStack(alignment: .leading, spacing: 6) {
             if errorTint != nil {
                 Text("生成异常")
-                    .font(KSSFont.chiron(11, .semibold))
+                    .font(KSSFont.themed(11, .semibold, theme: theme))
                     .foregroundStyle(errorTint ?? theme.down)
             }
             VStack(alignment: .leading, spacing: 7) {
@@ -247,12 +298,12 @@ struct SeesawMarkdownView: View {
         switch block {
         case let .heading(level, text):
             inlineText(text)
-                .font(KSSFont.chiron(SeesawMarkdownLayout.headingSize(for: level), .bold))
+                .font(KSSFont.themed(SeesawMarkdownLayout.headingSize(for: level), .bold, theme: theme))
                 .foregroundStyle(level <= 2 ? theme.textPrimary : foreground)
                 .padding(.top, level <= 2 ? 4 : 2)
         case let .paragraph(text):
             inlineText(text)
-                .font(KSSFont.chiron(SeesawMarkdownLayout.bodyFontSize))
+                .font(KSSFont.themed(SeesawMarkdownLayout.bodyFontSize, theme: theme))
                 .foregroundStyle(foreground)
                 .lineSpacing(2.5)
                 .fixedSize(horizontal: false, vertical: true)
@@ -261,11 +312,11 @@ struct SeesawMarkdownView: View {
                 ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(ordered ? "\(index + 1)." : "•")
-                            .font(KSSFont.chiron(12.5, .semibold))
+                            .font(KSSFont.themed(12.5, .semibold, theme: theme))
                             .foregroundStyle(theme.accent.opacity(0.85))
                             .frame(width: ordered ? 20 : 12, alignment: .trailing)
                         inlineText(item)
-                            .font(KSSFont.chiron(SeesawMarkdownLayout.bodyFontSize))
+                            .font(KSSFont.themed(SeesawMarkdownLayout.bodyFontSize, theme: theme))
                             .foregroundStyle(foreground)
                             .lineSpacing(2)
                             .fixedSize(horizontal: false, vertical: true)
@@ -280,7 +331,7 @@ struct SeesawMarkdownView: View {
                     .fill(theme.accent.opacity(0.7))
                     .frame(width: 3)
                 inlineText(text)
-                    .font(KSSFont.chiron(13.5, .medium))
+                    .font(KSSFont.themed(13.5, .medium, theme: theme))
                     .foregroundStyle(theme.textSecondary)
                     .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
@@ -303,11 +354,12 @@ struct SeesawMarkdownView: View {
     }
 
     private func table(headers: [String], rows: [[String]]) -> some View {
-        ScrollView(.horizontal, showsIndicators: true) {
+        let kinds = SeesawMarkdownLayout.columnKinds(headers: headers, rows: rows)
+        return ScrollView(.horizontal, showsIndicators: true) {
             VStack(spacing: 0) {
-                tableRow(headers, isHeader: true)
+                tableRow(headers, isHeader: true, kinds: kinds)
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                    tableRow(row, isHeader: false)
+                    tableRow(row, isHeader: false, kinds: kinds)
                 }
             }
             .fixedSize(horizontal: true, vertical: true)
@@ -321,7 +373,7 @@ struct SeesawMarkdownView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func tableRow(_ cells: [String], isHeader: Bool) -> some View {
+    private func tableRow(_ cells: [String], isHeader: Bool, kinds: [SeesawTableColumn]) -> some View {
         let columnWidth = SeesawMarkdownLayout.tableColumnWidth(columnCount: cells.count)
         let contentWidth = max(
             72,
@@ -329,16 +381,14 @@ struct SeesawMarkdownView: View {
         )
         return HStack(spacing: 0) {
             ForEach(cells.indices, id: \.self) { index in
+                let kind = index < kinds.count ? kinds[index] : .text
+                let align: Alignment = kind == .text ? .leading : .trailing
                 inlineText(cells[index])
-                    .font(
-                        KSSFont.chiron(
-                            SeesawMarkdownLayout.tableFontSize,
-                            isHeader ? .semibold : .regular
-                        )
-                    )
-                    .foregroundStyle(isHeader ? theme.textPrimary : foreground)
+                    .font(tableFont(kind: kind, isHeader: isHeader))
+                    .multilineTextAlignment(kind == .text ? .leading : .trailing)
+                    .foregroundStyle(cellColor(cells[index], kind: kind, isHeader: isHeader))
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: contentWidth, alignment: .leading)
+                    .frame(width: contentWidth, alignment: align)
                     .padding(.horizontal, SeesawMarkdownLayout.tableHorizontalPadding)
                     .padding(.vertical, 7)
                     .overlay(alignment: .trailing) {
@@ -351,6 +401,26 @@ struct SeesawMarkdownView: View {
         .background(isHeader ? theme.accentSoft.opacity(0.45) : Color.clear)
         .overlay(alignment: .bottom) {
             Rectangle().fill(theme.hairline).frame(height: 1)
+        }
+    }
+
+    private func tableFont(kind: SeesawTableColumn, isHeader: Bool) -> Font {
+        let base = KSSFont.themed(
+            SeesawMarkdownLayout.tableFontSize,
+            isHeader ? .semibold : .regular,
+            theme: theme
+        )
+        return kind == .text ? base : base.monospacedDigit()
+    }
+
+    private func cellColor(_ text: String, kind: SeesawTableColumn, isHeader: Bool) -> Color {
+        guard !isHeader, kind == .signedChange else {
+            return isHeader ? theme.textPrimary : foreground
+        }
+        switch SeesawMarkdownLayout.signedDirection(text) {
+        case 1: return theme.up
+        case -1: return theme.down
+        default: return foreground
         }
     }
 

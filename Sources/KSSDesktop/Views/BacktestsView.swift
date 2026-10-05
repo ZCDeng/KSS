@@ -126,32 +126,33 @@ struct BacktestsView: View {
     private var detailColumn: some View {
         VStack(alignment: .leading, spacing: isXcom ? 14 : 12) {
             if isXcom {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(selectedReport?.title ?? "AI回测")
-                        .font(KSSFont.themed(XcomListChrome.detailTitlePointSize(theme.system), .bold, theme: theme))
-                        .foregroundStyle(theme.textPrimary)
-                        .textSelection(.enabled)
-                    Text("跟踪 · \(tracking.nDaysLogged) 日日志 · \(tracking.nDaysWithReturns) 日可评估")
-                        .font(KSSFont.themed(13, theme: theme))
-                        .foregroundStyle(theme.textSecondary)
-                }
+                Text(selectedReport.map { BacktestReport.readableTitle($0.title) } ?? "AI回测")
+                    .font(KSSFont.themed(XcomListChrome.detailTitlePointSize(theme.system), .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                    .textSelection(.enabled)
             } else {
-                PageTitle("AI回测", subtitle: selectedReport?.title)
+                PageTitle("AI回测", subtitle: selectedReport.map { BacktestReport.readableTitle($0.title) })
             }
 
-            HStack(spacing: 10) {
-                StatTile(title: "日志天数", value: "\(tracking.nDaysLogged)")
-                StatTile(title: "可评估天数", value: "\(tracking.nDaysWithReturns)")
-                StatTile(title: "Sharpe", value: KSSFormat.number(tracking.sharpe), tint: theme.signColor(tracking.sharpe))
-                StatTile(title: "胜率", value: KSSFormat.percent(tracking.winRate))
+            VStack(alignment: .leading, spacing: 6) {
+                metricScopeLabel("纸交易跟踪")
+                HStack(spacing: 10) {
+                    StatTile(title: "日志天数", value: "\(tracking.nDaysLogged)")
+                    StatTile(title: "可评估天数", value: "\(tracking.nDaysWithReturns)")
+                    StatTile(title: "Sharpe", value: KSSFormat.number(tracking.sharpe))
+                    StatTile(title: "胜率", value: KSSFormat.ratioPercent(tracking.winRate))
+                }
             }
 
             if let selectedReport {
                 HStack(alignment: .firstTextBaseline) {
-                    if !isXcom {
-                        BacktestDetailHeader(report: selectedReport)
-                    } else if !selectedReport.metrics.isEmpty {
-                        BacktestDetailHeader(report: selectedReport)
+                    if !isXcom || !selectedReport.metrics.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            if !selectedReport.metrics.isEmpty {
+                                metricScopeLabel("回测报告")
+                            }
+                            BacktestDetailHeader(report: selectedReport)
+                        }
                     }
                     Spacer()
                     if isXcom {
@@ -205,6 +206,12 @@ struct BacktestsView: View {
         }
         .padding(isXcom ? 20 : 16)
     }
+
+    private func metricScopeLabel(_ text: String) -> some View {
+        Text(text)
+            .font(KSSFont.themed(12, .semibold, theme: theme))
+            .foregroundStyle(theme.textSecondary)
+    }
 }
 
 struct BacktestReportRow: View {
@@ -213,7 +220,7 @@ struct BacktestReportRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(report.title)
+            Text(BacktestReport.readableTitle(report.title))
                 .font(KSSFont.themed(
                     XcomListChrome.isXcom(theme.system) ? 15 : 14.5,
                     .bold,
@@ -284,7 +291,7 @@ struct BacktestDetailHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !isXcom {
-                Text(report.title)
+                Text(BacktestReport.readableTitle(report.title))
                     .font(KSSFont.themed(21, .bold, theme: theme))
                     .foregroundStyle(theme.textPrimary)
                     .textSelection(.enabled)

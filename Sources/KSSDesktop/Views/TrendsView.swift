@@ -20,6 +20,7 @@ struct TrendsView: View {
     var onSelectSymbol: (String) -> Void
 
     @State private var currentMonth: String = ""   // YYYY-MM
+    @State private var didFallbackEmptyMonth = false
     @State private var recSortKey: TrendRecSort = .none
     @State private var recSortAsc = false
     @State private var capitalExpanded = false
@@ -76,6 +77,13 @@ struct TrendsView: View {
                 currentMonth = month?.month ?? Self.monthString(Date())
                 onLoadMonth(currentMonth)
             }
+        }
+        .onChange(of: month?.days.count) { _, count in
+            guard !didFallbackEmptyMonth, !loading, count == 0,
+                  month?.month == currentMonth,
+                  currentMonth == Self.monthString(Date()) else { return }
+            didFallbackEmptyMonth = true
+            shiftMonth(-1)
         }
     }
 

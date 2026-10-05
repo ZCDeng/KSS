@@ -182,6 +182,13 @@ struct SidebarView: View {
         }
     }
 
+    private func collapsedFill(isOn: Bool, isXcom: Bool, isHovered: Bool) -> Color {
+        if isXcom && isOn { return theme.accentSoft }
+        if isHovered { return hoverTint }
+        if !isXcom && isOn { return theme.accent }
+        return .clear
+    }
+
     private func collapsedRow(_ section: WorkspaceSection) -> some View {
         let isOn = selection == section
         let isXcom = theme.system == .xcom
@@ -209,7 +216,7 @@ struct SidebarView: View {
                 }
             }
             .background(
-                isHovered ? hoverTint : ((!isXcom && isOn) ? theme.accent : Color.clear),
+                collapsedFill(isOn: isOn, isXcom: isXcom, isHovered: isHovered),
                 in: isXcom ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: KSSTheme.shapeS))
             )
         }

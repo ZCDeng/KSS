@@ -1472,6 +1472,29 @@ struct BacktestReport: Codable, Identifiable, Hashable {
     var updatedAt: String
     var metrics: [ReportMetric]
     var excerpt: String
+
+    /// 把 `ma_cross({'fast': 5, 'slow': 20})` 这类 Python 参数字典标题改写成
+    /// `ma_cross · fast 5 / slow 20`；其他标题原样返回。
+    static func readableTitle(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let open = trimmed.firstIndex(where: { $0 == "(" || $0 == "（" }),
+              let last = trimmed.last, last == ")" || last == "）" else { return raw }
+        let name = trimmed[..<open].trimmingCharacters(in: .whitespaces)
+        var body = trimmed[trimmed.index(after: open)..<trimmed.index(before: trimmed.endIndex)]
+            .trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, body.hasPrefix("{"), body.hasSuffix("}") else { return raw }
+        body = String(body.dropFirst().dropLast())
+        let quotes = CharacterSet(charactersIn: "'\" ")
+        let pairs = body.split(separator: ",").compactMap { part -> String? in
+            let kv = part.split(separator: ":", maxSplits: 1)
+            guard kv.count == 2 else { return nil }
+            let key = kv[0].trimmingCharacters(in: quotes)
+            let value = kv[1].trimmingCharacters(in: quotes)
+            return key.isEmpty ? nil : "\(key) \(value)"
+        }
+        guard !pairs.isEmpty else { return raw }
+        return "\(name) · " + pairs.joined(separator: " / ")
+    }
 }
 
 struct ReportDetail: Codable, Hashable {
@@ -2401,6 +2424,98 @@ struct AgentSession: Codable, Identifiable, Equatable {
         self.contextUsage = contextUsage
         self.queuedInputs = queuedInputs
         self.providerRoute = providerRoute
+    }
+}
+
+extension AgentSession {
+    /// sidecar 把 `updated_at` 作为 Unix 秒的字符串下发。
+    var lastActivity: Date? {
+        guard let raw = updatedAt, let seconds = Double(raw), seconds > 0 else { return nil }
+        return Date(timeIntervalSince1970: seconds)
+    }
+
+    var hasPlaceholderTitle: Bool {
+        let current = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return current.isEmpty || current == "新会话" || current == sessionId
+    }
+
+    /// 列表已带回消息且一条都没有：启动时自动建的空白会话。
+    var isKnownEmpty: Bool { messages?.isEmpty == true }
+
+    /// 列表与页头展示用标题；原始 sessionId 永远不直接显示。
+    func displayTitle(calendar: Calendar = .current) -> String {
+        guard hasPlaceholderTitle else { return title }
+        if let firstUser = messages?.first(where: { $0.role == "user" }),
+           let derived = KSSStore.derivedSessionTitle(from: firstUser.text) {
+            return derived
+        }
+        guard let date = lastActivity else { return "新会话" }
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "MM-dd HH:mm"
+        return "新会话 · " + formatter.string(from: date)
+    }
+
+    struct RecencyGroup: Equatable {
+        var label: String
+        var sessions: [AgentSession]
+    }
+
+    /// 按最近活动倒序，分成今天 / 本周 / 更早；没有时间的排在最后。
+    static func recencyGroups(
+        _ sessions: [AgentSession],
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> [RecencyGroup] {
+        let sorted = sessions.enumerated().sorted { lhs, rhs in
+            switch (lhs.element.lastActivity, rhs.element.lastActivity) {
+            case let (l?, r?): return l == r ? lhs.offset < rhs.offset : l > r
+            case (.some, .none): return true
+            case (.none, .some): return false
+            case (.none, .none): return lhs.offset < rhs.offset
+            }
+        }.map(\.element)
+        let startOfToday = calendar.startOfDay(for: now)
+        let startOfWeek = calendar.date(byAdding: .day, value: -6, to: startOfToday) ?? startOfToday
+        var today: [AgentSession] = [], week: [AgentSession] = [], earlier: [AgentSession] = []
+        for session in sorted {
+            guard let date = session.lastActivity else { earlier.append(session); continue }
+            if date >= startOfToday { today.append(session) }
+            else if date >= startOfWeek { week.append(session) }
+            else { earlier.append(session) }
+        }
+        return [("今天", today), ("最近 7 天", week), ("更早", earlier)]
+            .filter { !$0.1.isEmpty }
+            .map { RecencyGroup(label: $0.0, sessions: $0.1) }
+    }
+
+    /// 行尾时间：今天显示时刻，其余显示日期。
+    func listTimeLabel(now: Date = Date(), calendar: Calendar = .current) -> String? {
+        guard let date = lastActivity else { return nil }
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = calendar.isDate(date, inSameDayAs: now) ? "HH:mm" : "MM-dd"
+        return formatter.string(from: date)
+    }
+
+    /// 会话列表的可见集合：去掉已归档和非当前的空白会话，按关键字匹配展示标题。
+    static func listed(
+        _ sessions: [AgentSession],
+        selectedId: String?,
+        search: String
+    ) -> [AgentSession] {
+        let keyword = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        return sessions.filter { session in
+            guard !session.archived else { return false }
+            if session.isKnownEmpty && session.hasPlaceholderTitle && session.sessionId != selectedId {
+                return false
+            }
+            guard !keyword.isEmpty else { return true }
+            return session.displayTitle().localizedCaseInsensitiveContains(keyword)
+                || session.title.localizedCaseInsensitiveContains(keyword)
+        }
     }
 }
 
@@ -4468,6 +4583,31 @@ struct SelfCheckItem: Codable, Hashable, Identifiable {
         case "research": return "外部研究"
         default: return item
         }
+    }
+}
+
+enum SelfCheckPresentation {
+    /// 失败在前，待处理其次；已通过的项单独收起。
+    static func partition(_ items: [SelfCheckItem]) -> (attention: [SelfCheckItem], ok: [SelfCheckItem]) {
+        let attention = items.filter { !$0.isOK }.sorted { lhs, rhs in
+            let lhsRank = lhs.isFail ? 0 : 1
+            let rhsRank = rhs.isFail ? 0 : 1
+            if lhsRank != rhsRank { return lhsRank < rhsRank }
+            return lhs.displayName < rhs.displayName
+        }
+        return (attention, items.filter(\.isOK))
+    }
+
+    /// 路径和本地地址留在悬停说明里，行上只留状态。
+    static func rowDetail(_ item: SelfCheckItem) -> (visible: String, help: String?) {
+        let detail = item.detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        let looksInternal = detail.contains("://")
+            || detail.contains("/Users/")
+            || detail.contains(".venv")
+            || detail.hasPrefix("/")
+        guard looksInternal else { return (detail, nil) }
+        let visible = item.isOK ? "已就绪" : (item.isFail ? "未通过" : "需要配置")
+        return (visible, detail)
     }
 }
 

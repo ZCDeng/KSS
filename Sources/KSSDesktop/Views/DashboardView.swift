@@ -78,7 +78,7 @@ struct DashboardView: View {
                 VStack(alignment: .leading, spacing: sectionSpacing) {
                     HStack(alignment: .top) {
                         HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            PageTitle("盯盘")
+                            PageTitle("盯盘", subtitle: Self.headerDateLine(Date()))
                             RealtimeStatusBadge(
                                 freshness: displayedFreshness,
                                 hours: tradingHours,
@@ -90,7 +90,6 @@ struct DashboardView: View {
                             .help(freshnessDiagnostic ?? "")
                         }
                         Spacer(minLength: 16)
-                        EditorialDateView()
                     }
 
                     // 缺 Tushare 凭证 + 股票池确实为空 → 明确指引（U9/R12，AE1），不是静默空白。
@@ -808,21 +807,13 @@ struct SectorPulseStrip: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 2).fill(theme.accent).frame(width: 4, height: 18)
-                Text("今日板块")
-                    .font(KSSFont.themed(18, .semibold, theme: theme, design: .serif))
-                    .foregroundStyle(theme.textPrimary)
+            HStack(alignment: .lastTextBaseline, spacing: 8) {
+                SectionHeader("今日板块")
                 Text(regimeText)
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(pulse.regimeInRegime == true ? theme.up : theme.textSecondary)
-                Spacer()
-                Text("资金正=申购/负=赎回 · 5日赎回≥2%=强势确认")
-                    .font(KSSFont.themed(11, theme: theme))
+                    .font(KSSFont.themed(12, .medium, theme: theme))
                     .foregroundStyle(theme.textSecondary)
-                    .lineLimit(1)
+                Spacer()
             }
-            .padding(.top, 6)
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 152), spacing: 12)], spacing: 12) {
                 ForEach(pulse.themes) { theme in
@@ -837,6 +828,27 @@ struct SectorPulseStrip: View {
         guard let mom = pulse.regimeMom20 else { return "" }
         let on = pulse.regimeInRegime == true
         return "动量 \(String(format: "%.1f", mom)) · \(on ? "趋势确认" : "震荡")"
+    }
+}
+
+enum SectorGradeLabel {
+    /// 界面写份额方向。原档名（强势确认 / 偏弱）是回测用语，不是当日涨跌。
+    static func flowLabel(grade: String, divergence: Bool) -> String {
+        if divergence || grade.contains("预警") || grade.contains("见顶") { return "见顶预警" }
+        switch grade {
+        case "强势确认": return "净赎回"
+        case "中性偏多": return "小幅赎回"
+        case "偏弱": return "净申购"
+        default: return grade
+        }
+    }
+
+    static func help(grade: String, divergence: Bool) -> String {
+        let shown = flowLabel(grade: grade, divergence: divergence)
+        if shown == grade {
+            return "按 ETF 份额申赎分级，不是当日涨跌。"
+        }
+        return "按 ETF 份额申赎分级，不是当日涨跌。原档名「\(grade)」。5 日净赎回 ≥2% 为强势确认，净申购为偏弱。"
     }
 }
 
@@ -893,7 +905,7 @@ struct SectorChip: View {
                 }
             }
             HStack(spacing: 10) {
-                flowItem("1日", theme.flow1d)
+                flowItem("申赎1日", theme.flow1d)
                 flowItem("5日", theme.flow5d)
                 Spacer(minLength: 0)
             }
@@ -902,69 +914,45 @@ struct SectorChip: View {
         .kssCard(padding: 12)
     }
 
+    /// 分级来自 ETF 申赎（份额），不是价格。徽标写资金方向，原档名留在悬停里。
     private var gradeBadge: some View {
-        let warn = theme.divergence || theme.grade.contains("预警") || theme.grade.contains("见顶")
-        let strong = theme.grade.contains("强势")
-        let bg = warn ? tokens.up : (strong ? tokens.accent : tokens.textSecondary.opacity(0.18))
-        // warn 底=up(饱和红，白字为不随主题变化的 invariant)；strong 底=accent，须用 onAccent。
-        let fg = warn ? Color.white : (strong ? tokens.onAccent : tokens.textBody)
-        return Text(theme.divergence ? "见顶预警" : theme.grade)
-            .font(KSSFont.themed(10, .bold, theme: tokens))
-            .foregroundStyle(fg)
+        let label = SectorGradeLabel.flowLabel(grade: theme.grade, divergence: theme.divergence)
+        let warn = label == "见顶预警"
+        let outflow = label == "净赎回" || label == "小幅赎回"
+        let tint = warn ? tokens.up : (outflow ? tokens.accent : tokens.textSecondary)
+        return Text(label)
+            .font(KSSFont.themed(10.5, .semibold, theme: tokens))
+            .foregroundStyle(tint)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
-            .background(bg, in: Capsule())
+            .background(tint.opacity(0.12), in: Capsule())
+            .help(SectorGradeLabel.help(grade: theme.grade, divergence: theme.divergence))
     }
 
-    /// 资金流（正=申购/负=赎回）。语义上「赎回≠利空」由分级徽标承载，故此处中性着色，
-    /// 只呈现方向与量级，避免把申购误读成上涨。
+    /// 资金流（份额加权申赎 %，正=申购/负=赎回）。语义上「赎回≠利空」由分级徽标承载，
+    /// 故此处中性着色，只呈现方向与量级，避免把申购误读成上涨。
     private func flowItem(_ label: String, _ flow: Double?) -> some View {
         HStack(spacing: 3) {
             Text(label)
-                .font(KSSFont.themed(10, theme: tokens))
+                .font(KSSFont.themed(10.5, theme: tokens))
                 .foregroundStyle(tokens.textSecondary)
-            Text(flow.map { String(format: "%+.1f", $0) } ?? "—")
-                .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+            Text(flow.map { String(format: "%+.1f%%", $0) } ?? "—")
+                .font(KSSFont.themed(11.5, .semibold, theme: tokens).monospacedDigit())
                 .foregroundStyle(tokens.textBody)
         }
         .lineLimit(1)
         .fixedSize()
+        .help("份额申赎：正=净申购，负=净赎回")
     }
 }
 
-/// 编辑风日期戳：大号衬线 MM.DD + 小号 年/星期 右侧堆叠（复刻杂志日期设计）。
-struct EditorialDateView: View {
-    @Environment(\.kssTheme) private var theme
-    var date = Date()
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 7) {
-            Text(monthDay)
-                .font(KSSFont.themed(34, .bold, theme: theme, design: .serif))
-                .foregroundStyle(theme.textPrimary)
-                .monospacedDigit()
-            VStack(alignment: .leading, spacing: 1) {
-                Text(year)
-                    .foregroundStyle(theme.textSecondary)
-                Text(weekday)
-                    .foregroundStyle(theme.accent)
-            }
-            .font(KSSFont.themed(12, .semibold, theme: theme, design: .serif))
-            .padding(.top, 3)
-        }
-        .fixedSize()
-    }
-
-    private var comps: DateComponents {
-        Calendar.current.dateComponents([.year, .month, .day], from: date)
-    }
-    private var monthDay: String { String(format: "%02d.%02d", comps.month ?? 0, comps.day ?? 0) }
-    private var year: String { String(comps.year ?? 0) }
-    private var weekday: String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US")
-        f.dateFormat = "EEE"
-        return f.string(from: date).uppercased()
+extension DashboardView {
+    /// 页头一行日期，跟在标题副标题里，不再用大号英文星期。
+    static func headerDateLine(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "MM-dd EEE"
+        return formatter.string(from: date)
     }
 }
 
@@ -1037,7 +1025,7 @@ struct MarketStripRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: 10) {
-                SectionHeader("市场速览", caption: "四槽可配指标")
+                SectionHeader("市场速览")
                 Spacer(minLength: 8)
                 DashboardSparkleControl(
                     help: "用中文或列表配置四槽指标",
@@ -1217,7 +1205,7 @@ struct IndexBoardSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 10) {
-                SectionHeader("指数一览", caption: "常用宽基 / 主题指数当日表现")
+                SectionHeader("指数一览")
                 Spacer(minLength: 8)
                 DashboardSparkleControl(
                     help: "用中文或列表调整指数一览",
@@ -1510,7 +1498,6 @@ struct IndexMarquee: View {
             RoundedRectangle(cornerRadius: KSSTheme.shapeL)
                 .strokeBorder(border, lineWidth: 1)
         )
-        .shadow(color: paper ? Color.black.opacity(0.04) : .clear, radius: paper ? 2 : 0, y: paper ? 1 : 0)
         .fixedSize()
     }
 
@@ -1518,8 +1505,8 @@ struct IndexMarquee: View {
         LinearGradient(
             stops: [
                 .init(color: .clear, location: 0),
-                .init(color: .black, location: 0.035),
-                .init(color: .black, location: 0.965),
+                .init(color: .black, location: 0.06),
+                .init(color: .black, location: 0.94),
                 .init(color: .clear, location: 1),
             ],
             startPoint: .leading, endPoint: .trailing
@@ -1922,7 +1909,6 @@ struct OvernightUSMarquee: View {
             RoundedRectangle(cornerRadius: KSSTheme.shapeL)
                 .strokeBorder(Color.black.opacity(0.08), lineWidth: 1)
         )
-        .shadow(color: Color.black.opacity(0.04), radius: 2, y: 1)
         .fixedSize()
         .help(live?.error ?? (pending ? "已追加，等待行情刷新" : ""))
     }
@@ -1931,8 +1917,8 @@ struct OvernightUSMarquee: View {
         LinearGradient(
             stops: [
                 .init(color: .clear, location: 0),
-                .init(color: .black, location: 0.035),
-                .init(color: .black, location: 0.965),
+                .init(color: .black, location: 0.06),
+                .init(color: .black, location: 0.94),
                 .init(color: .clear, location: 1),
             ],
             startPoint: .leading,
@@ -2001,13 +1987,23 @@ struct IndexStackRow: View {
     var quotes: [String: LongbridgeQuote] = [:]
     var liveSparklines: [String: SparklineSeries] = [:]
 
+    /// 三列一起画分时，或一起不画。只给恒生画线时，另外两列会显得缺了一块。
+    private var allowSparkline: Bool {
+        !stacks.isEmpty && stacks.allSatisfy { column in
+            !column.items.isEmpty && column.items.allSatisfy {
+                indexStackSparkCount($0, liveSparklines: liveSparklines) >= 2
+            }
+        }
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             ForEach(stacks) { col in
                 IndexStackColumnView(
                     column: col,
                     quotes: quotes,
-                    liveSparklines: liveSparklines
+                    liveSparklines: liveSparklines,
+                    allowSparkline: allowSparkline
                 )
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -2015,11 +2011,19 @@ struct IndexStackRow: View {
     }
 }
 
+func indexStackSparkCount(_ item: IndexStackItem, liveSparklines: [String: SparklineSeries]) -> Int {
+    let code = item.code.uppercased()
+    let liveSeries = liveSparklines[code] ?? liveSparklines[RealtimeMerge.toLongbridgeSymbol(code) ?? ""]
+    if (liveSeries?.points.count ?? 0) >= 2 { return liveSeries?.points.count ?? 0 }
+    return item.sparkline?.count ?? 0
+}
+
 struct IndexStackColumnView: View {
     @Environment(\.kssTheme) private var theme
     var column: IndexStackColumn
     var quotes: [String: LongbridgeQuote] = [:]
     var liveSparklines: [String: SparklineSeries] = [:]
+    var allowSparkline: Bool = true
 
     @State private var page = 0
     private let interval: TimeInterval = 4
@@ -2032,15 +2036,6 @@ struct IndexStackColumnView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            // 背后叠层提示
-            if items.count > 1 {
-                RoundedRectangle(cornerRadius: KSSTheme.shapeM)
-                    .fill(theme.surfaceRaised)
-                    .overlay(RoundedRectangle(cornerRadius: KSSTheme.shapeM).stroke(theme.hairline))
-                    .offset(x: 4, y: 6)
-                    .opacity(0.55)
-                    .padding(.trailing, 4)
-            }
             if let item = current {
                 stackCard(item)
             } else {
@@ -2079,7 +2074,9 @@ struct IndexStackColumnView: View {
         let liveSeries = liveSparklines[code] ?? liveSparklines[RealtimeMerge.toLongbridgeSymbol(code) ?? ""]
         let usingLive = (liveSeries?.points.count ?? 0) >= 2
         let spark = usingLive ? liveSeries!.points : (item.sparkline ?? []).map(\.c)
-        let hasSpark = spark.count >= 2
+        let hasSpark = allowSparkline && spark.count >= 2 && items.allSatisfy {
+            indexStackSparkCount($0, liveSparklines: liveSparklines) >= 2
+        }
         // R2-U7 KTD7：仅 live 序列且带有效昨收时启用锚定模式；静态快照兜底沿用旧自适应缩放。
         let sparkAnchor: (yMin: Double, yMax: Double, prevClose: Double)? = usingLive
             ? SparklineYAxis.range(for: liveSeries!).map { (yMin: $0.yMin, yMax: $0.yMax, prevClose: liveSeries!.prevClose ?? 0) }
@@ -2092,7 +2089,7 @@ struct IndexStackColumnView: View {
             HStack(spacing: 6) {
                 Text(item.name)
                     .font(KSSFont.themed(13, .semibold, theme: theme))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(theme.textPrimary)
                     .lineLimit(1)
                 if live.isLive {
                     Text("实时")
@@ -2236,9 +2233,9 @@ struct TrackingSummaryCard: View {
         VStack(alignment: .leading, spacing: 12) {
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                 metric("年化", KSSFormat.percent(tracking.annualized), theme.signColor(tracking.annualized))
-                metric("Sharpe", KSSFormat.number(tracking.sharpe), theme.signColor(tracking.sharpe))
+                metric("Sharpe", KSSFormat.number(tracking.sharpe), theme.textPrimary)
                 metric("最大回撤", KSSFormat.percent(tracking.maxDrawdown), theme.signColor(tracking.maxDrawdown))
-                metric("胜率", KSSFormat.percent(tracking.winRate), theme.textPrimary)
+                metric("胜率", KSSFormat.ratioPercent(tracking.winRate), theme.textPrimary)
             }
             Divider().overlay(theme.hairline)
             HStack {
@@ -2284,23 +2281,20 @@ struct SectionHeader: View {
     }
 
     var body: some View {
-        // Bold section title with a blurple accent bar + optional caption.
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(theme.accent)
-                    .frame(width: 4, height: 18)
-                Text(title)
-                    .font(KSSFont.themed(18, .semibold, theme: theme, design: .serif))
-                    .foregroundStyle(theme.textPrimary)
-            }
+        VStack(alignment: .leading, spacing: 6) {
+            Rectangle()
+                .fill(theme.hairline)
+                .frame(height: 1)
+            Text(title)
+                .font(KSSFont.themed(17, .semibold, theme: theme))
+                .foregroundStyle(theme.textPrimary)
             if let caption {
                 Text(caption)
-                    .font(KSSFont.themed(11.5, theme: theme))
+                    .font(KSSFont.themed(13, theme: theme))
                     .foregroundStyle(theme.textSecondary)
             }
         }
-        .padding(.top, 6)
+        .padding(.top, 8)
     }
 }
 
@@ -2352,7 +2346,7 @@ struct RecommendationCard: View {
                 .font(.system(size: 13, weight: .medium, design: .monospaced))
                 .foregroundStyle(theme.textSecondary)
             HStack {
-                LabeledMetric("权重", KSSFormat.percent(item.weight))
+                LabeledMetric("权重", KSSFormat.ratioPercent(item.weight))
                 LabeledMetric("跟踪", KSSFormat.percent(item.trackingReturn), tint: theme.signColor(item.trackingReturn))
             }
         }

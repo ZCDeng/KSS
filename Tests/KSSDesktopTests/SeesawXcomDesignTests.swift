@@ -138,8 +138,10 @@ final class SeesawXcomDesignTests: XCTestCase {
         XCTAssertTrue(inspector.contains("if store.isChatStreaming || store.agentSteeringCount"))
         XCTAssertTrue(inspector.contains("if !store.agentLiveMarketContexts.isEmpty"))
         XCTAssertTrue(inspector.contains("if hasEvidenceOrAttachments"))
-        XCTAssertTrue(inspector.contains("opens: .skills"))
-        XCTAssertTrue(inspector.contains("opens: .context"))
+        XCTAssertTrue(inspector.contains("浏览 Skills…"))
+        XCTAssertTrue(inspector.contains("管理记忆…"))
+        XCTAssertFalse(inspector.contains("opens: .skills"))
+        XCTAssertFalse(inspector.contains("opens: .context"))
         XCTAssertFalse(inspector.contains("历史问题不会隐式请求"))
     }
 

@@ -52,10 +52,9 @@ struct SeesawWorkbenchSidebar: View {
                         HStack(spacing: 5) {
                             Image(systemName: tab.icon)
                                 .font(.system(size: 11.5, weight: .semibold))
-                            if selection == tab.id {
-                                Text(tab.title)
-                                    .font(KSSFont.themed(11.5, .semibold, theme: theme))
-                            }
+                            Text(tab.title)
+                                .font(KSSFont.themed(11.5, .semibold, theme: theme))
+                                .lineLimit(1)
                             if let badge = tab.badge, badge > 0 {
                                 Text("\(badge)")
                                     .font(KSSFont.themed(9.5, .bold, theme: theme))
@@ -487,14 +486,11 @@ struct SeesawSessionPane: View {
 
     @State private var search = ""
 
-    private var sessions: [AgentSession] {
-        let active = store.agentSessions.filter { !$0.archived }
-        let keyword = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !keyword.isEmpty else { return active }
-        return active.filter {
-            $0.title.localizedCaseInsensitiveContains(keyword)
-                || $0.sessionId.localizedCaseInsensitiveContains(keyword)
-        }
+    private var sessionGroups: [AgentSession.RecencyGroup] {
+        AgentSession.recencyGroups(AgentSession.listed(
+            store.agentSessions,
+            selectedId: store.selectedAgentSessionId,
+            search: search))
     }
 
     var body: some View {
@@ -536,37 +532,16 @@ struct SeesawSessionPane: View {
             Divider().overlay(theme.hairline)
 
             ScrollView {
-                LazyVStack(spacing: 1) {
-                    ForEach(sessions) { session in
-                        Button {
-                            store.openAgentSession(session.sessionId)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(session.title)
-                                    .font(KSSFont.themed(
-                                        12,
-                                        session.sessionId == store.selectedAgentSessionId ? .bold : .medium,
-                                        theme: theme
-                                    ))
-                                    .foregroundStyle(theme.textPrimary)
-                                    .lineLimit(1)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    ForEach(sessionGroups, id: \.label) { group in
+                        Text(group.label)
+                            .font(KSSFont.themed(11, .semibold, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
                             .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
-                            .background(
-                                session.sessionId == store.selectedAgentSessionId
-                                    ? theme.accentSoft
-                                    : .clear,
-                                in: RoundedRectangle(cornerRadius: 8)
-                            )
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .contextMenu {
-                            Button("归档会话") {
-                                store.archiveAgentSession(session.sessionId)
-                            }
+                            .padding(.top, 8)
+                            .padding(.bottom, 2)
+                        ForEach(group.sessions) { session in
+                            sessionRow(session)
                         }
                     }
                 }
@@ -574,5 +549,36 @@ struct SeesawSessionPane: View {
             }
         }
         .background(theme.surface)
+    }
+
+    private func sessionRow(_ session: AgentSession) -> some View {
+        let selected = session.sessionId == store.selectedAgentSessionId
+        return Button {
+            store.openAgentSession(session.sessionId)
+        } label: {
+            HStack(spacing: 6) {
+                Text(session.displayTitle())
+                    .font(KSSFont.themed(12, selected ? .bold : .medium, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if let time = session.listTimeLabel() {
+                    Text(time)
+                        .font(KSSFont.themed(10.5, theme: theme).monospacedDigit())
+                        .foregroundStyle(theme.textSecondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(selected ? theme.accentSoft : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("归档会话") {
+                store.archiveAgentSession(session.sessionId)
+            }
+        }
     }
 }

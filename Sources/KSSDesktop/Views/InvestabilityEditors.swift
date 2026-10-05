@@ -250,7 +250,7 @@ struct ExposurePathSection: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             } else if loaded {
-                Text("未上图 —— 这只票还没挂到任何节点，规则风险这一维度是空的。")
+                Text("未上图")
                     .font(KSSFont.themed(12.5, theme: theme))
                     .foregroundStyle(theme.textSecondary)
             }

@@ -376,7 +376,7 @@ struct ContentView: View {
                 )
             case .watchlist:
                 StockBrowserView(
-                    title: "Watchlist",
+                    title: WorkspaceSection.watchlist.displayName,
                     stocks: snapshot.stocks.filter { watchlist.contains($0.symbol) },
                     selectedSymbol: store.selectedSymbol,
                     detail: store.stockDetail,
@@ -460,7 +460,7 @@ struct ContentView: View {
                 )
             case .stocks:
                 StockBrowserView(
-                    title: "Stocks",
+                    title: WorkspaceSection.stocks.displayName,
                     stocks: snapshot.stocks,
                     selectedSymbol: store.selectedSymbol,
                     detail: store.stockDetail,

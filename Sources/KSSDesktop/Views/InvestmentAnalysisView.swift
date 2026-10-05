@@ -38,6 +38,13 @@ struct InvestmentAnalysisView: View {
         // windows.
         HStack(alignment: .top, spacing: 0) {
             VStack(spacing: 0) {
+                Text("投资分析")
+                    .font(KSSFont.themed(17, .semibold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+                    .padding(.bottom, 6)
                 tabBar
                 reportList
                     // The empty/loading state owns the space below the tabs;
@@ -212,10 +219,12 @@ private struct InvestmentAnalysisRow: View {
                 .font(KSSFont.themed(15, .bold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
                 .lineLimit(2)
-            Text(report.isDraft ? "草稿 · 审计待通过" : "审计通过 · 正式归档")
-                .font(KSSFont.themed(12, .medium, theme: theme))
-                .foregroundStyle(report.isDraft ? theme.ma5 : theme.up)
-                .lineLimit(1)
+            if report.isDraft {
+                Text("草稿 · 审计待通过")
+                    .font(KSSFont.themed(12, .medium, theme: theme))
+                    .foregroundStyle(theme.ma5)
+                    .lineLimit(1)
+            }
         }
         .padding(.vertical, 5)
     }
@@ -247,13 +256,8 @@ private struct InvestmentAnalysisDetail: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(report.title)
-                        .font(KSSFont.themed(XcomListChrome.detailTitlePointSize(theme.system), .bold, theme: theme))
-                    Text("\(report.dateStart ?? "未定") · 截至 \(report.asOf ?? "未记录")")
-                        .font(KSSFont.themed(13, theme: theme))
-                        .foregroundStyle(theme.textSecondary)
-                }
+                Text(report.title)
+                    .font(KSSFont.themed(XcomListChrome.detailTitlePointSize(theme.system), .bold, theme: theme))
                 Spacer()
                 Button(action: onImportCorpus) {
                     Label("导入新语料", systemImage: "doc.badge.plus")
@@ -271,9 +275,9 @@ private struct InvestmentAnalysisDetail: View {
             HStack(spacing: 12) {
                 detailMetric("审计", audit?.status == "pass" ? "通过" : "草稿/阻断")
                 detailMetric("证据时点", report.asOf ?? "未记录")
-                detailMetric("对象哈希", String((report.objectHash ?? "未生成").prefix(12)))
             }
             .padding(.horizontal, 22).padding(.bottom, 12)
+            .help("对象哈希 \(String((report.objectHash ?? "未生成").prefix(12)))")
 
             Divider().overlay(theme.hairline)
             if let artifact = htmlArtifact {

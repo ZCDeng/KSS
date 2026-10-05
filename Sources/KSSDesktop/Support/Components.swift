@@ -383,13 +383,18 @@ struct DashboardSparkleControl<ListContent: View>: View {
 
     var body: some View {
         // 始终可见；disabled 只挡点击（列表/NL 由 sheet 内自行处理 bridge 缺失）。
-        DashboardChromeIconButton(
-            kind: .sparkles,
-            help: help,
-            disabled: disabled
-        ) {
+        Button {
             showSheet = true
+        } label: {
+            Label("配置", systemImage: "slider.horizontal.3")
+                .font(KSSFont.themed(12, .semibold, theme: theme))
+                .foregroundStyle(disabled ? theme.textSecondary : theme.accent)
+                .padding(.horizontal, 8)
+                .frame(minHeight: 28)
         }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .help(help)
         .sheet(isPresented: $showSheet) {
             sheetBody
         }

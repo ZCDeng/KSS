@@ -513,15 +513,29 @@ def _reviews() -> list[dict[str, Any]]:
 
 
 def _report_metrics(text: str) -> list[dict[str, str]]:
+    tokens = ("Sharpe", "年化", "最大回撤", "DSR", "胜率")
     metrics: list[dict[str, str]] = []
-    for line in text.splitlines():
+    lines = text.splitlines()
+    metric_header: list[str] | None = None
+    for index, line in enumerate(lines):
         if not line.startswith("|") or "---" in line:
             continue
         cells = [cell.strip().strip("*") for cell in line.strip("|").split("|")]
         if len(cells) < 2:
             continue
-        joined = " ".join(cells)
-        if any(token in joined for token in ("Sharpe", "年化", "最大回撤", "DSR", "胜率")):
+        # A markdown table header is the row right above its |---| separator;
+        # its cells are column names, so pair them with the first data row.
+        next_line = lines[index + 1] if index + 1 < len(lines) else ""
+        if next_line.startswith("|") and "---" in next_line:
+            has_metric_column = any(token in cell for cell in cells[1:] for token in tokens)
+            metric_header = cells if has_metric_column else None
+            continue
+        if metric_header is not None:
+            for name, value in zip(metric_header[1:], cells[1:]):
+                if any(token in name for token in tokens) and value:
+                    metrics.append({"name": name, "value": value})
+            metric_header = None
+        elif any(token in cells[0] for token in tokens):
             metrics.append({"name": cells[0], "value": " | ".join(cells[1:4])})
         if len(metrics) >= 8:
             break

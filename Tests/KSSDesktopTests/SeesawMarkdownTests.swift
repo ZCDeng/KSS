@@ -1,5 +1,3 @@
-import AppKit
-import CoreText
 import XCTest
 @testable import KSSDesktop
 
@@ -50,7 +48,7 @@ final class SeesawMarkdownTests: XCTestCase {
     }
 
     func testReadingTypographyStaysCompactAndFiveColumnTablesFitTheFeed() {
-        XCTAssertEqual(SeesawMarkdownLayout.bodyFontSize, 14.5)
+        XCTAssertEqual(SeesawMarkdownLayout.bodyFontSize, 15)
         XCTAssertLessThanOrEqual(SeesawMarkdownLayout.headingSize(for: 1), 20)
         XCTAssertLessThanOrEqual(
             SeesawMarkdownLayout.tableContentWidth(columnCount: 5),
@@ -82,20 +80,19 @@ final class SeesawMarkdownTests: XCTestCase {
         }
     }
 
-    func testPrintBodyUsesChironPostScriptNames() {
-        // Assistant print face must match Kami content stack (registered ttf).
-        let regular = NSFont(name: "ChironGoRoundTC-Regular", size: 14)
-        let medium = NSFont(name: "ChironGoRoundTC-Medium", size: 14)
-        let bold = NSFont(name: "ChironGoRoundTC-Bold", size: 14)
-        // In unit tests fonts may be unregistered; still assert API maps weights.
-        _ = KSSFont.chiron(14)
-        _ = KSSFont.chiron(14, .medium)
-        _ = KSSFont.chiron(14, .bold)
-        // Soft check when process has registered fonts (desktop runtime).
-        if CTFontCopyPostScriptName(CTFontCreateWithName("ChironGoRoundTC-Regular" as CFString, 14, nil)) as String == "ChironGoRoundTC-Regular" {
-            XCTAssertNotNil(regular)
-            XCTAssertNotNil(medium)
-            XCTAssertNotNil(bold)
-        }
+    func testNumericColumnsRightAlignAndSignedChangeColumnsKeepSign() {
+        let kinds = SeesawMarkdownLayout.columnKinds(
+            headers: ["项", "8/14 值", "涨跌幅"],
+            rows: [
+                ["开盘", "215.00（高开约 +2.3%）", "**+1.15%**"],
+                ["收盘", "211.91（+0.80%）", "-0.20%"],
+                ["说明", "利好冲高回落", "—"],
+            ]
+        )
+        XCTAssertEqual(kinds, [.text, .number, .signedChange])
+        XCTAssertEqual(SeesawMarkdownLayout.signedDirection("**+1.15%**"), 1)
+        XCTAssertEqual(SeesawMarkdownLayout.signedDirection("-0.20%"), -1)
+        XCTAssertEqual(SeesawMarkdownLayout.signedDirection("215.00（高开约 +2.3%）"), 1)
+        XCTAssertEqual(SeesawMarkdownLayout.signedDirection("约 67.3 亿"), 0)
     }
 }

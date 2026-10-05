@@ -37,6 +37,9 @@ struct SettingsView: View {
         if SettingsTabRouting.scheduledTasksNeedsBadge(jobs: store.scheduledJobs) {
             badged.insert(.operations)
         }
+        for item in store.selfCheckItems where !item.isOK {
+            badged.insert(SettingsTabRouting.targetCategory(forSelfCheckItem: item.item).tab)
+        }
         return badged
     }
 
@@ -149,7 +152,9 @@ struct SettingsView: View {
             },
             testOK: { raw in dataSourceResults[raw]?.ok },
             jobs: store.scheduledJobs
-        )
+        ) || store.selfCheckItems.contains { item in
+            !item.isOK && SettingsTabRouting.targetCategory(forSelfCheckItem: item.item) == cat
+        }
         let isDirty = cat.dataSource.map { dirtySources.contains($0.rawValue) } ?? false
 
         return SettingsNavRow(title: cat.label, selected: isOn) {
@@ -1330,6 +1335,7 @@ struct SelfCheckStatusStrip: View {
     /// nil = 经典折叠详情；非 nil = xcom 默认可点跳转。
     var onJump: ((SettingsCategory) -> Void)?
     @State private var expanded = false
+    @State private var showHealthyChecks = false
 
     private var failCount: Int { store.selfCheckItems.filter(\.isFail).count }
     private var warnCount: Int { store.selfCheckItems.filter(\.isWarn).count }
@@ -1392,8 +1398,29 @@ struct SelfCheckStatusStrip: View {
 
             if alwaysExpanded || expanded {
                 VStack(alignment: .leading, spacing: useTasksStyle ? SettingsFormStyle.groupSpacing : 6) {
-                    ForEach(store.selfCheckItems) { item in
+                    let parts = SelfCheckPresentation.partition(store.selfCheckItems)
+                    ForEach(parts.attention) { item in
                         selfCheckItemRow(item)
+                    }
+                    if !parts.ok.isEmpty {
+                        Button {
+                            showHealthyChecks.toggle()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: showHealthyChecks ? "chevron.down" : "chevron.right")
+                                    .font(.system(size: 10, weight: .semibold))
+                                Text("\(parts.ok.count) 项正常")
+                                    .font(KSSFont.themed(12, .medium, theme: theme))
+                                Spacer()
+                            }
+                            .foregroundStyle(theme.textSecondary)
+                        }
+                        .buttonStyle(.plain)
+                        if showHealthyChecks {
+                            ForEach(parts.ok) { item in
+                                selfCheckItemRow(item)
+                            }
+                        }
                     }
                     if store.selfCheckItems.isEmpty {
                         SettingsHintText(text: "尚未跑过自检，点右上角重新自检。", empty: true)
@@ -1425,7 +1452,7 @@ struct SelfCheckStatusStrip: View {
         if failCount == 0 && warnCount == 0 { return "自检全绿" }
         var parts: [String] = []
         if failCount > 0 { parts.append("\(failCount) 项异常") }
-        if warnCount > 0 { parts.append("\(warnCount) 项未配置") }
+        if warnCount > 0 { parts.append("\(warnCount) 项待处理") }
         return parts.joined(separator: " · ")
     }
 
@@ -1445,16 +1472,23 @@ struct SelfCheckStatusStrip: View {
                         theme: theme
                     ))
                     .foregroundStyle(theme.textPrimary)
-                Text(item.detail)
+                let detail = SelfCheckPresentation.rowDetail(item)
+                Text(detail.visible)
                     .font(KSSFont.themed(
                         useTasks ? SettingsFormStyle.meta : 11.5,
                         theme: theme
                     ))
                     .foregroundStyle(theme.textSecondary)
                     .lineLimit(2)
+                    .help(detail.help ?? "")
             }
             Spacer()
-            if let hint = item.fixHint, !item.isOK {
+            if item.item == "telegram", !item.isOK {
+                Text("填写 Telegram")
+                    .font(KSSFont.themed(useTasks ? SettingsFormStyle.metaSmall : 11, .semibold, theme: theme))
+                    .foregroundStyle(theme.accent)
+                    .lineLimit(1)
+            } else if let hint = item.fixHint, !item.isOK {
                 Text(hint)
                     .font(KSSFont.themed(useTasks ? SettingsFormStyle.metaSmall : 11, .semibold, theme: theme))
                     .foregroundStyle(theme.accent)
@@ -1596,9 +1630,11 @@ struct SelfCheckBanner: View {
                         HStack(spacing: 6) {
                             Text(item.displayName)
                                 .font(KSSFont.themed(11.5, .semibold, theme: theme))
-                            Text(item.detail)
+                            let detail = SelfCheckPresentation.rowDetail(item)
+                            Text(detail.visible)
                                 .font(KSSFont.themed(11.5, theme: theme))
                                 .foregroundStyle(theme.textSecondary)
+                                .help(detail.help ?? "")
                         }
                     }
                 }

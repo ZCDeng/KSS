@@ -81,7 +81,7 @@ struct AIChatView: View {
             switch self {
             case .progress: return "Progress"
             case .liveMarket: return "实时市场"
-            case .evidence: return "Evidence & Artifacts"
+            case .evidence: return "本轮证据"
             case .skills: return "Skills"
             case .context: return "记忆"
             }
@@ -366,7 +366,7 @@ struct AIChatView: View {
 
             Button { toggleOverlay(.sessions) } label: {
                 HStack(spacing: 6) {
-                    Text(store.agentSessions.first { $0.sessionId == store.selectedAgentSessionId }?.title ?? "新会话")
+                    Text(store.agentSessions.first { $0.sessionId == store.selectedAgentSessionId }?.displayTitle() ?? "新会话")
                         .font(KSSFont.themed(16, .bold, theme: theme))
                         .lineLimit(1)
                     Image(systemName: "chevron.up.chevron.down")
@@ -549,7 +549,7 @@ struct AIChatView: View {
                     }
                 }
 
-                inspectorSection(.skills, systemImage: "slider.horizontal.3", opens: .skills) {
+                inspectorSection(.skills, systemImage: "slider.horizontal.3") {
                     Text("\(sessionSkills.count) 个本会话技能 · \(enabledSkillCount) 个启用")
                         .foregroundStyle(theme.textSecondary)
                     if !sessionSkills.isEmpty {
@@ -564,13 +564,11 @@ struct AIChatView: View {
                         .foregroundStyle(theme.accent)
                 }
 
-                inspectorSection(.context, systemImage: "brain", opens: .context) {
+                inspectorSection(.context, systemImage: "brain") {
                     if !store.agentSourceRecalls.isEmpty {
                         Text("本轮召回 \(store.agentSourceRecalls.count) 条记忆")
                             .foregroundStyle(theme.textSecondary)
                     }
-                    Text("长期记忆:跨会话可复用的事实,发送时自动召回进上下文。")
-                        .foregroundStyle(theme.textSecondary)
                     Button("管理记忆…") { toggleOverlay(.context) }
                         .buttonStyle(.borderless)
                         .foregroundStyle(theme.accent)
@@ -1437,22 +1435,12 @@ struct AIChatView: View {
                     .padding(.bottom, 36)
                     .accessibilityHidden(true)
 
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Image(systemName: "sparkle")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(theme.accent)
-                    Text("今天想研究什么？")
-                        .font(KSSFont.themed(26, .bold, theme: theme))
-                        .foregroundStyle(theme.textPrimary)
-                }
-
-                Text("对话已升级为混合节奏：你的问题是聊天气泡，助手答复是印刷体。")
-                    .font(KSSFont.themed(14, theme: theme))
-                    .foregroundStyle(theme.textSecondary)
-                    .padding(.top, 10)
+                Text("今天想研究什么？")
+                    .font(KSSFont.themed(20, .bold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
 
                 focusResearchTaskRows
-                    .padding(.top, 30)
+                    .padding(.top, 20)
 
                 if store.researchCandidate != nil {
                     focusResearchCandidate
@@ -1489,8 +1477,8 @@ struct AIChatView: View {
                             .id("tool-progress")
                     }
                 }
-                // 与 composer/空态同一列宽(composerColumnWidth),左右边缘对齐。
-                .frame(maxWidth: SeesawXcomChrome.composerColumnWidth)
+                // DESIGN.md：对话正文 760pt，输入框 680pt。
+                .frame(maxWidth: SeesawXcomChrome.feedColumnWidth)
                 .padding(.horizontal, SeesawXcomChrome.rowHorizontalPadding)
                 .padding(.vertical, 22)
                 .frame(maxWidth: .infinity, alignment: .center)
@@ -1510,27 +1498,26 @@ struct AIChatView: View {
         let isUser = message.role == .user
 
         if isUser {
-            // Hybrid C: solid accent chat bubble — clearly product, not tool card.
+            // 克制的浅底气泡：背景贴着内容，宽度随文字收缩，不加阴影。
             HStack(alignment: .bottom, spacing: 0) {
                 Spacer(minLength: 96)
                 VStack(alignment: .trailing, spacing: 6) {
                     if !message.text.isEmpty {
                         markdownText(message.text)
-                            .font(KSSFont.themed(14.5, theme: theme))
-                            .foregroundStyle(Color.white)
+                            .font(KSSFont.themed(15, theme: theme))
+                            .foregroundStyle(theme.textPrimary)
                             .textSelection(.enabled)
                             .lineSpacing(3)
                             .fixedSize(horizontal: false, vertical: true)
                             .multilineTextAlignment(.leading)
-                            .tint(.white)
+                            .tint(theme.accent)
                     }
                     messageAttachmentStrip(message.attachments)
                 }
                 .padding(.horizontal, 15)
-                .padding(.vertical, 12)
-                .frame(maxWidth: SeesawXcomChrome.composerColumnWidth * 0.75, alignment: .trailing)
+                .padding(.vertical, 10)
                 .background(
-                    theme.accent,
+                    theme.accentSoft,
                     in: UnevenRoundedRectangle(
                         topLeadingRadius: 18,
                         bottomLeadingRadius: 18,
@@ -1538,7 +1525,6 @@ struct AIChatView: View {
                         topTrailingRadius: 18
                     )
                 )
-                .shadow(color: theme.accent.opacity(0.28), radius: 8, y: 3)
                 .contextMenu {
                     Button("复制内容", systemImage: "doc.on.doc") {
                         copyMessageText(message.text)
@@ -1547,16 +1533,12 @@ struct AIChatView: View {
                     Divider()
                     Button("记住这条消息") { store.proposeAgentMemory(message.text) }
                 }
+                .frame(maxWidth: SeesawXcomChrome.composerColumnWidth * 0.75, alignment: .trailing)
             }
             .padding(.vertical, 4)
         } else {
-            // Hybrid C: compact print column — height tracks content only.
-            HStack(alignment: .top, spacing: 10) {
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(Color(red: 0x1B / 255, green: 0x36 / 255, blue: 0x5D / 255).opacity(0.75))
-                    .frame(width: 2.5)
-                    .frame(minHeight: 18)
-
+            // 助手答复是透明的正文，不加容器或竖线；层级靠标题和消息间距。
+            HStack(alignment: .top, spacing: 0) {
                 VStack(alignment: .leading, spacing: 6) {
                     if !message.thinkingBlocks.isEmpty {
                         AgentThinkingDisclosure(
@@ -1890,6 +1872,42 @@ struct AIChatView: View {
         }
     }
 
+    private var composerModelShortLabel: String {
+        let provider = (store.agentPrimaryRoute?.providerId ?? store.agentProvider)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !provider.isEmpty { return provider }
+        let model = (store.agentPrimaryRoute?.modelId ?? store.agentModel)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return model.isEmpty ? "模型" : model
+    }
+
+    private func composerCapsule(
+        systemImage: String,
+        title: String,
+        emphasized: Bool,
+        showsBolt: Bool = false
+    ) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .semibold))
+            Text(title)
+                .font(KSSFont.themed(12, .semibold, theme: theme))
+                .lineLimit(1)
+            if showsBolt {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 8, weight: .bold))
+            }
+        }
+        .foregroundStyle(emphasized ? theme.accent : theme.textSecondary)
+        .padding(.horizontal, 10)
+        .frame(minHeight: 36)
+        .background(
+            (emphasized ? theme.accent : theme.textSecondary).opacity(0.12),
+            in: Capsule()
+        )
+        .contentShape(Capsule())
+    }
+
     /// 执行模式切换:逐次确认(默认) / 自动允许。自动模式下确认仍走完整
     /// grant/审计链路,只是不再弹窗打断(实测反馈:确认窗口很烦人)。
     private var composerApprovalMenu: some View {
@@ -1902,15 +1920,15 @@ struct AIChatView: View {
             .pickerStyle(.inline)
             .labelsHidden()
         } label: {
-            Image(systemName: store.writeApprovalMode == .auto ? "bolt.shield.fill" : "shield")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(store.writeApprovalMode == .auto ? Color.orange : theme.textSecondary)
-                .frame(width: 32, height: 32)
-                .contentShape(Circle())
+            composerCapsule(
+                systemImage: store.writeApprovalMode == .auto ? "bolt.shield.fill" : "shield",
+                title: store.writeApprovalMode == .auto ? "自动写入" : "逐次确认",
+                emphasized: store.writeApprovalMode == .auto
+            )
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .frame(width: 32, height: 32)
+        .fixedSize()
         .help(store.writeApprovalMode == .auto
               ? "执行模式:自动允许写操作（点击切换）"
               : "执行模式:写操作逐次确认（点击切换）")
@@ -1922,18 +1940,12 @@ struct AIChatView: View {
         Button {
             showComposerModelPopover.toggle()
         } label: {
-            HStack(spacing: 3) {
-                Image(systemName: "cpu")
-                    .font(.system(size: 13, weight: .semibold))
-                if composerThinkingLevel != "off" {
-                    Image(systemName: "bolt.fill")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(theme.accent)
-                }
-            }
-            .foregroundStyle(theme.textSecondary)
-            .frame(width: composerThinkingLevel == "off" ? 32 : 42, height: 32)
-            .contentShape(Rectangle())
+            composerCapsule(
+                systemImage: "cpu",
+                title: composerModelShortLabel,
+                emphasized: false,
+                showsBolt: composerThinkingLevel != "off"
+            )
         }
         .buttonStyle(.plain)
         .disabled(store.isChatStreaming)
@@ -2195,10 +2207,6 @@ struct AIChatView: View {
                 }
 
                 Spacer(minLength: 8)
-                Image(systemName: "arrow.up.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(theme.textSecondary)
-                    .padding(.top, 4)
             }
             .padding(.horizontal, 13)
             .padding(.vertical, 12)
@@ -2293,9 +2301,16 @@ struct AIChatView: View {
             .padding(12)
 
             ScrollView {
-                LazyVStack(spacing: 4) {
-                    ForEach(filteredSessions) { session in
-                        focusSessionRow(session)
+                LazyVStack(alignment: .leading, spacing: 4) {
+                    ForEach(AgentSession.recencyGroups(filteredSessions), id: \.label) { group in
+                        Text(group.label)
+                            .font(KSSFont.themed(11.5, .semibold, theme: theme))
+                            .foregroundStyle(theme.textSecondary)
+                            .padding(.horizontal, 12)
+                            .padding(.top, 8)
+                        ForEach(group.sessions) { session in
+                            focusSessionRow(session)
+                        }
                     }
 
                     if filteredSessions.isEmpty {
@@ -2329,16 +2344,22 @@ struct AIChatView: View {
                 .foregroundStyle(selected ? theme.accent : theme.textSecondary)
                 .frame(width: 28, height: 28)
 
-            Text(store.agentSessions.first(where: { $0.sessionId == session.sessionId })?.title ?? session.title)
+            Text(session.displayTitle())
                 .font(KSSFont.themed(13.5, selected ? .semibold : .regular, theme: theme))
                 .foregroundStyle(theme.textPrimary)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
+            if let time = session.listTimeLabel() {
+                Text(time)
+                    .font(KSSFont.themed(11.5, theme: theme).monospacedDigit())
+                    .foregroundStyle(theme.textSecondary)
+            }
+
             Button {
                 store.archiveAgentSession(session.sessionId)
             } label: {
-                Label("归档 \(session.title)", systemImage: "archivebox")
+                Label("归档 \(session.displayTitle())", systemImage: "archivebox")
                     .labelStyle(.iconOnly)
                     .frame(width: 28, height: 28)
             }
@@ -2371,7 +2392,7 @@ struct AIChatView: View {
     }
 
     private func promptRenameSession(_ session: AgentSession) {
-        let current = store.agentSessions.first(where: { $0.sessionId == session.sessionId })?.title ?? session.title
+        let current = (store.agentSessions.first(where: { $0.sessionId == session.sessionId }) ?? session).displayTitle()
         let alert = NSAlert()
         alert.messageText = "重命名会话"
         alert.informativeText = "为会话指定新标题"
@@ -2835,11 +2856,10 @@ struct AIChatView: View {
     }
 
     private var filteredSessions: [AgentSession] {
-        let query = sessionSearch.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return store.agentSessions }
-        return store.agentSessions.filter {
-            $0.title.localizedCaseInsensitiveContains(query)
-        }
+        AgentSession.listed(
+            store.agentSessions,
+            selectedId: store.selectedAgentSessionId,
+            search: sessionSearch)
     }
 
     private var selectedSkill: AgentSkill? {

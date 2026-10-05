@@ -185,7 +185,10 @@ struct RunbookView: View {
                         ) {
                             selection = .pipeline
                         } trailing: {
-                            SettingsStatusCapsule(text: pipelineCaption)
+                            SettingsStatusCapsule(
+                                text: pipelineCaption,
+                                tint: pipelineFailedCount > 0 ? theme.up : nil
+                            )
                         }
                     }
                 }
@@ -194,6 +197,10 @@ struct RunbookView: View {
             }
         }
         .background(theme.canvas)
+    }
+
+    private var pipelineFailedCount: Int {
+        store.scheduledJobs.filter { $0.health == .failed }.count
     }
 
     private var pipelineCaption: String {
@@ -312,6 +319,7 @@ struct TodayJobDetail: View {
                     )
                     .help(isBusy && !isThisRunning ? "已有任务在跑" : "运行此作业")
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 if let result {
                     TaskResultCard(result: result, compact: true)
@@ -321,7 +329,9 @@ struct TodayJobDetail: View {
                         .kssCard(padding: SettingsFormStyle.cardPadding)
                 }
 
-                SettingsBorderedAction(title: "打开完整日志", action: onOpenLogs)
+                if result != nil {
+                    SettingsBorderedAction(title: "打开完整日志", action: onOpenLogs)
+                }
             }
             .frame(maxWidth: 720, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)

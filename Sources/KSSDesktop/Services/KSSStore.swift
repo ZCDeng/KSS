@@ -1166,6 +1166,7 @@ final class KSSStore: ObservableObject {
         }
         hydrateAgentQueue(hydrated.queuedInputs)
         persistLastAgentSession(sessionId)
+        backfillSessionTitleIfNeeded(sessionId)
         return true
     }
 
@@ -1689,6 +1690,8 @@ final class KSSStore: ObservableObject {
             // list 未带 messages 时 bridge open 补全
             if session.messages == nil {
                 requestSessionOpenHydration(sessionId: sessionId)
+            } else {
+                backfillSessionTitleIfNeeded(sessionId)
             }
         } else if let cached = chatMessagesByAgentSession[sessionId] {
             chatMessages = cached
@@ -1950,6 +1953,12 @@ final class KSSStore: ObservableObject {
                 self.errorMessage = "队列操作失败：\(error.localizedDescription)"
             }
         }
+    }
+
+    /// 历史会话还挂着默认标题（常见为 sessionId 本身）时，打开即按首条用户消息补标题。
+    private func backfillSessionTitleIfNeeded(_ sessionId: String) {
+        guard let firstUser = chatMessages.first(where: { $0.role == .user })?.text else { return }
+        autoTitleSessionIfNeeded(sessionId, firstInput: firstUser)
     }
 
     /// 首条消息落地时把默认标题替换为派生标题,让会话列表可辨识。

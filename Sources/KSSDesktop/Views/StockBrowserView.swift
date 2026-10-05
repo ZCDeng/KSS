@@ -93,6 +93,12 @@ struct StockBrowserView: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
+                Text(title)
+                    .font(KSSFont.themed(17, .semibold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
                         .font(KSSFont.themed(12, theme: theme))
@@ -616,7 +622,7 @@ struct StockDetailView: View {
                             isLive: isFreshLive
                         )
                         StatTile(title: "MA5 / MA20", value: "\(KSSFormat.number(latest.ma5)) / \(KSSFormat.number(latest.ma20))")
-                        StatTile(title: "成交额", value: KSSFormat.compactMoney(latest.amount))
+                        StatTile(title: "成交额", value: KSSFormat.amountFromThousandYuan(latest.amount))
                     }
                 }
 
@@ -626,7 +632,7 @@ struct StockDetailView: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 10)], spacing: 10) {
                     StatTile(title: "20日收益", value: KSSFormat.percent(analysis.return20), tint: theme.signColor(analysis.return20))
                     StatTile(title: "60日收益", value: KSSFormat.percent(analysis.return60), tint: theme.signColor(analysis.return60))
-                    StatTile(title: "20日波动", value: KSSFormat.percent(analysis.volatility20))
+                    StatTile(title: "20日波动", value: KSSFormat.ratioPercent(analysis.volatility20))
                     StatTile(title: "60日回撤", value: KSSFormat.percent(analysis.maxDrawdown60), tint: theme.signColor(analysis.maxDrawdown60))
                     StatTile(title: "距20日高点", value: KSSFormat.percent(analysis.distanceToHigh20), tint: theme.signColor(analysis.distanceToHigh20))
                     StatTile(title: "MA20偏离", value: KSSFormat.percent(analysis.ma20Distance), tint: theme.signColor(analysis.ma20Distance))

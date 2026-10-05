@@ -43,17 +43,24 @@ struct HeatmapView: View {
 
     private func failureState(_ message: String) -> some View {
         VStack(spacing: 12) {
+            Text("热力图")
+                .font(KSSFont.themed(17, .semibold, theme: theme))
+                .foregroundStyle(theme.textPrimary)
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 26))
                 .foregroundStyle(theme.ma5)
-            Text("当前行情无法显示")
+            Text("行情服务没有响应")
                 .font(KSSFont.themed(16, .bold, theme: theme))
                 .foregroundStyle(theme.textPrimary)
+            Text("请确认本地数据服务在运行，然后重试。")
+                .font(KSSFont.themed(13, theme: theme))
+                .foregroundStyle(theme.textSecondary)
             Text(message)
-                .font(.system(size: 12, design: .monospaced))
+                .font(KSSFont.themed(11.5, theme: theme))
                 .foregroundStyle(theme.textSecondary)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: 520)
+                .frame(maxWidth: 420)
+                .help(message)
             Button {
                 Task { await store.loadHeatmapSnapshot() }
             } label: {
@@ -85,6 +92,23 @@ struct HeatmapView: View {
     }
 
     private func content(_ snapshot: HeatmapSnapshot) -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("热力图")
+                    .font(KSSFont.themed(17, .semibold, theme: theme))
+                    .foregroundStyle(theme.textPrimary)
+                Spacer()
+                Text("\(snapshot.source) · \(snapshot.tradeDate)")
+                    .font(KSSFont.themed(12, theme: theme).monospacedDigit())
+                    .foregroundStyle(theme.textSecondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            heatmapCanvas(snapshot)
+        }
+    }
+
+    private func heatmapCanvas(_ snapshot: HeatmapSnapshot) -> some View {
         ZStack {
             HeatmapWebView(snapshot: snapshot) { message in
                 switch message {

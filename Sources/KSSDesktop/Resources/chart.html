@@ -456,17 +456,33 @@
       if (intradayMode) return (intradayTF === "5m" ? "5分" : "1分");
       return ({ D: "日", W: "周", M: "月", Y: "年" }[currentTF] || "日") + "线";
     }
-    function pct(o, c) { return o ? ((c - o) / o * 100).toFixed(2) + "%" : "-"; }
+    // 图例涨跌幅以前一根 K 线收盘为基准，和页头「涨跌」同口径；
+    // 日内分钟线没有可比的昨收，不显示涨跌幅。
+    let prevCloseByKey = new Map();
+    function barKey(t) { return fmtTime(t).replace(/\D/g, "").slice(0, 8); }
+    function indexPrevCloses(candles) {
+      prevCloseByKey = new Map();
+      candles.forEach((c, i) => {
+        if (i > 0) prevCloseByKey.set(barKey(c.time), candles[i - 1].close);
+      });
+    }
+    function changePct(t, close) {
+      const prev = prevCloseByKey.get(barKey(t));
+      if (!prev) return null;
+      return (close - prev) / prev * 100;
+    }
     function num(v) { return v == null ? "-" : (Math.abs(v) >= 10000 ? (v / 10000).toFixed(1) + "万" : (+v).toFixed(2)); }
     function renderLegend(t, c, m5, m20, dif, dea, ob, bbiV, bUp, bMid, bLow, vwapV) {
-      const col = c.close >= c.open ? COLORS.up : COLORS.down;
+      const chg = intradayMode ? null : changePct(t, c.close);
+      const col = chg != null ? (chg >= 0 ? COLORS.up : COLORS.down) : (c.close >= c.open ? COLORS.up : COLORS.down);
+      const chgText = chg != null ? `<span style="color:${col}">${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%</span>` : "";
       let html =
         `<div class="row"><span class="k">${fmtTime(t)} · ${tfLegendLabel()}</span></div>` +
         `<div class="row"><span class="k">开</span><span>${c.open}</span>` +
         `<span class="k">高</span><span>${c.high}</span>` +
         `<span class="k">低</span><span>${c.low}</span>` +
         `<span class="k">收</span><span style="color:${col}">${c.close}</span>` +
-        `<span style="color:${col}">${pct(c.open, c.close)}</span></div>` +
+        `${chgText}</div>` +
         `<div class="row"><span class="vwap">VWAP ${vwapV != null ? vwapV : "-"}</span>`;
       if (!intradayMode) {
         html +=
@@ -563,6 +579,7 @@
       }));
       const vw = sessionVwap(vwBars);
 
+      indexPrevCloses(candles);
       candleSeries.setData(candles);
       volumeSeries.setData(vols);
       ma5Series.setData(sma(candles, 5));

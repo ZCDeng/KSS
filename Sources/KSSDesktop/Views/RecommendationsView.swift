@@ -153,14 +153,17 @@ struct RecommendationsView: View {
                             .font(.system(size: 11.5, design: .monospaced))
                             .foregroundStyle(theme.textSecondary)
                     }
+                    Text("仅研究对照")
+                        .font(KSSFont.themed(11, .semibold, theme: theme))
+                        .foregroundStyle(theme.textSecondary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(theme.surfaceContainer, in: Capsule())
+                        .help("主推荐仍为 log_mv，对照不混入正式纸交易")
                 }
                 Spacer(minLength: 8)
                 styleContrastLegend
             }
-
-            Text("主推荐仍为 log_mv · 对照不混入正式纸交易")
-                .font(KSSFont.themed(11, theme: theme))
-                .foregroundStyle(theme.textSecondary)
 
             if styleSlots.isEmpty {
                 Text("尚无风格对照快照。日更 formal-daily-picks 后会跑四风格；也可任务页触发 style-contrast-daily。")
@@ -330,11 +333,12 @@ struct RecommendationsView: View {
         HStack(spacing: 12) {
             SortHeaderCell(title: "#", key: RecSort.rank, selection: $sort, ascending: $ascending,
                            alignment: .leading, width: 44)
-            Text("名称 / 代码").frame(width: 140, alignment: .leading)
-            Text("入选理由").frame(maxWidth: .infinity, alignment: .leading)
+            Text("名称 / 代码").frame(maxWidth: .infinity, alignment: .leading)
             Text("状态").frame(width: 80, alignment: .center)
             Text("现价").frame(width: 72, alignment: .trailing)
-            Text("涨跌").frame(width: 64, alignment: .trailing)
+            if showsIntradayChange {
+                Text("涨跌").frame(width: 64, alignment: .trailing)
+            }
             Text("log_mv").frame(width: 72, alignment: .trailing)
             SortHeaderCell(title: "跟踪", key: RecSort.tracking, selection: $sort, ascending: $ascending,
                            alignment: .trailing, width: 72)
@@ -372,12 +376,8 @@ struct RecommendationsView: View {
                             showsDotWhenUnlabelled: false
                         )
                     }
-                    .frame(width: 140, alignment: .leading)
-                    Text(recReasonText(item))
-                        .font(KSSFont.themed(12.5, theme: theme))
-                        .foregroundStyle(theme.textBody)
-                        .lineLimit(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .help(recReasonText(item))
                     StatusBadge.tracking(item.status).frame(width: 80, alignment: .center)
                     recPriceCells(item)
                     Text(KSSFormat.number(item.factorValue, digits: 3))
@@ -438,30 +438,47 @@ struct RecommendationsView: View {
                 font: .system(size: 13, weight: .semibold, design: .monospaced)
             )
             .frame(width: 72, alignment: .trailing)
-            if disp.isLive {
-                LivePriceText(
-                    value: disp.pct,
-                    text: KSSFormat.pctPoints(disp.pct),
-                    baseColor: freshness == .stale ? theme.ma5 : theme.signColor(disp.pct),
-                    isLive: isFreshLive(disp),
-                    font: .system(size: 12, weight: .semibold, design: .monospaced)
-                )
-                .frame(width: 64, alignment: .trailing)
-            } else {
-                Text("—")
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(theme.textSecondary)
+            if showsIntradayChange {
+                if disp.isLive {
+                    LivePriceText(
+                        value: disp.pct,
+                        text: KSSFormat.pctPoints(disp.pct),
+                        baseColor: freshness == .stale ? theme.ma5 : theme.signColor(disp.pct),
+                        isLive: isFreshLive(disp),
+                        font: .system(size: 12, weight: .semibold, design: .monospaced)
+                    )
                     .frame(width: 64, alignment: .trailing)
+                } else {
+                    Text("—")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(theme.textSecondary)
+                        .frame(width: 64, alignment: .trailing)
+                }
             }
         } else {
             Text("—")
                 .font(.system(size: 13, design: .monospaced))
                 .foregroundStyle(theme.textSecondary)
                 .frame(width: 72, alignment: .trailing)
-            Text("—")
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(theme.textSecondary)
-                .frame(width: 64, alignment: .trailing)
+            if showsIntradayChange {
+                Text("—")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(width: 64, alignment: .trailing)
+            }
+        }
+    }
+
+    /// 没有任何实时涨跌时不留一列「—」。有一只是实时的，列就保留，缺的行仍用「—」对齐。
+    private var showsIntradayChange: Bool {
+        sortedRecs.contains { item in
+            let quote = realtimeQuotes[item.symbol.uppercased()]
+            guard let disp = RealtimeMerge.displayPrice(
+                snapshotClose: item.latestClose,
+                snapshotPct: nil,
+                quote: quote
+            ) else { return false }
+            return disp.isLive
         }
     }
 

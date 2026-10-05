@@ -219,10 +219,11 @@ struct IntelView: View {
                 Button {
                     Task { await store.summarizeAllIntelTracks() }
                 } label: {
-                    Image(systemName: "sparkles")
-                        .font(KSSFont.themed(14, .semibold, theme: theme))
+                    Label("提炼要点", systemImage: "sparkles")
+                        .font(KSSFont.themed(12, .semibold, theme: theme))
                         .foregroundStyle(theme.accent)
-                        .frame(width: 36, height: 36)
+                        .padding(.horizontal, 8)
+                        .frame(minHeight: 36)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -314,9 +315,10 @@ struct IntelView: View {
         let totalItems = tracks.reduce(0) { $0 + ($1.items?.count ?? 0) }
         let yupiN = yupiItemCount
         let days = digest?.recentDays ?? 7
-        let updated = digest?.generatedAt ?? "—"
+        let updated = digest?.generatedAt?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let updatedPart = (updated?.isEmpty == false && updated != "—") ? " · 更新于 \(updated!)" : ""
         let yupiPart = yupiN > 0 ? " · 热议 \(yupiN)" : ""
-        return "\(tracks.count) 赛道 / \(totalItems) 条\(yupiPart) · 近 \(days) 天 · 更新于 \(updated)"
+        return "\(tracks.count) 赛道 / \(totalItems) 条\(yupiPart) · 近 \(days) 天\(updatedPart)"
     }
 
     /// 列表内「热议·」条数（缓存字段缺失时的兜底计数）。
@@ -363,7 +365,9 @@ struct IntelView: View {
         if y.isHealthy { return nil }
         let raw = (y.reason ?? y.error ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if raw.isEmpty { return "热议未并入 · 检查设置→yupi 服务" }
-        // 截断过长 health 错误
+        if raw.localizedCaseInsensitiveContains("timed out") || raw.contains("POST /") {
+            return "热点汇总超时，已跳过"
+        }
         if raw.count > 96 { return String(raw.prefix(96)) + "…" }
         return raw
     }
@@ -429,7 +433,7 @@ struct IntelView: View {
                 }
                 .buttonStyle(.plain)
             } else if body.isEmpty {
-                Text("点右上角「一键提炼全部要点」生成 12 赛道全景热点")
+                Text("点右上角「提炼要点」生成 12 赛道全景热点")
                     .font(KSSFont.themed(12.5, theme: theme))
                     .foregroundStyle(theme.textSecondary)
             } else {

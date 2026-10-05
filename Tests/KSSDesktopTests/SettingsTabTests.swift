@@ -162,4 +162,19 @@ final class SettingsTabTests: XCTestCase {
         XCTAssertFalse(SettingsCredentialChangePolicy.shouldMarkDirty(isHydrating: true))
         XCTAssertTrue(SettingsCredentialChangePolicy.shouldMarkDirty(isHydrating: false))
     }
+
+    func testSelfCheckPartitionsFailuresFirstAndHidesPaths() {
+        let items = [
+            SelfCheckItem(item: "tushare", status: "ok", detail: "已配置", fixHint: nil, fixAction: nil),
+            SelfCheckItem(item: "telegram", status: "warn", detail: "未填写", fixHint: "去设置页数据源分区填写", fixAction: "open_settings"),
+            SelfCheckItem(item: "venv", status: "fail", detail: "/Users/zcdeng/projects/KSS/.venv", fixHint: nil, fixAction: nil),
+        ]
+        let parts = SelfCheckPresentation.partition(items)
+        XCTAssertEqual(parts.attention.map(\.item), ["venv", "telegram"])
+        XCTAssertEqual(parts.ok.map(\.item), ["tushare"])
+        let row = SelfCheckPresentation.rowDetail(items[2])
+        XCTAssertEqual(row.visible, "未通过")
+        XCTAssertEqual(row.help, "/Users/zcdeng/projects/KSS/.venv")
+        XCTAssertEqual(SelfCheckPresentation.rowDetail(items[1]).visible, "未填写")
+    }
 }
